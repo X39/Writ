@@ -1,0 +1,189 @@
+{
+  "output_name": "spec.md",
+  "files": [
+    {
+      "filename": "00_preamble.md",
+      "prepended": []
+    },
+    {
+      "filename": "01_table_of_contents.md",
+      "prepended": [
+        "# Writ Language Specification"
+      ]
+    },
+    {
+      "filename": "02_1_overview_design_philosophy.md",
+      "prepended": [
+        "# Writ Language Specification"
+      ]
+    },
+    {
+      "filename": "03_2_project_configuration_writ_toml.md",
+      "prepended": [
+        "# Writ Language Specification"
+      ]
+    },
+    {
+      "filename": "04_3_naming_conventions_style_guide.md",
+      "prepended": [
+        "# Writ Language Specification"
+      ]
+    },
+    {
+      "filename": "05_4_lexical_structure.md",
+      "prepended": [
+        "# Writ Language Specification"
+      ]
+    },
+    {
+      "filename": "06_5_type_system.md",
+      "prepended": [
+        "# Writ Language Specification"
+      ]
+    },
+    {
+      "filename": "07_6_primitive_types.md",
+      "prepended": [
+        "# Writ Language Specification"
+      ]
+    },
+    {
+      "filename": "08_7_variables_constants.md",
+      "prepended": [
+        "# Writ Language Specification"
+      ]
+    },
+    {
+      "filename": "09_8_structs.md",
+      "prepended": [
+        "# Writ Language Specification"
+      ]
+    },
+    {
+      "filename": "10_9_enums.md",
+      "prepended": [
+        "# Writ Language Specification"
+      ]
+    },
+    {
+      "filename": "11_10_contracts.md",
+      "prepended": [
+        "# Writ Language Specification"
+      ]
+    },
+    {
+      "filename": "12_11_generics.md",
+      "prepended": [
+        "# Writ Language Specification"
+      ]
+    },
+    {
+      "filename": "13_12_functions_fn.md",
+      "prepended": [
+        "# Writ Language Specification"
+      ]
+    },
+    {
+      "filename": "14_13_dialogue_blocks_dlg.md",
+      "prepended": [
+        "# Writ Language Specification"
+      ]
+    },
+    {
+      "filename": "15_14_entities.md",
+      "prepended": [
+        "# Writ Language Specification"
+      ]
+    },
+    {
+      "filename": "16_15_components.md",
+      "prepended": [
+        "# Writ Language Specification"
+      ]
+    },
+    {
+      "filename": "17_16_attributes.md",
+      "prepended": [
+        "# Writ Language Specification"
+      ]
+    },
+    {
+      "filename": "18_17_operators_overloading.md",
+      "prepended": [
+        "# Writ Language Specification"
+      ]
+    },
+    {
+      "filename": "19_18_error_handling.md",
+      "prepended": [
+        "# Writ Language Specification"
+      ]
+    },
+    {
+      "filename": "20_19_nullability_optionals.md",
+      "prepended": [
+        "# Writ Language Specification"
+      ]
+    },
+    {
+      "filename": "21_20_concurrency.md",
+      "prepended": [
+        "# Writ Language Specification"
+      ]
+    },
+    {
+      "filename": "22_21_scoping_rules.md",
+      "prepended": [
+        "# Writ Language Specification"
+      ]
+    },
+    {
+      "filename": "23_22_globals_atomic_access.md",
+      "prepended": [
+        "# Writ Language Specification"
+      ]
+    },
+    {
+      "filename": "24_23_modules_namespaces.md",
+      "prepended": [
+        "# Writ Language Specification"
+      ]
+    },
+    {
+      "filename": "25_24_external_declarations.md",
+      "prepended": [
+        "# Writ Language Specification"
+      ]
+    },
+    {
+      "filename": "26_25_localization.md",
+      "prepended": [
+        "# Writ Language Specification"
+      ]
+    },
+    {
+      "filename": "27_26_standard_library_builtins.md",
+      "prepended": [
+        "# Writ Language Specification"
+      ]
+    },
+    {
+      "filename": "28_27_grammar_summary_ebnf.md",
+      "prepended": [
+        "# Writ Language Specification"
+      ]
+    },
+    {
+      "filename": "29_28_lowering_reference.md",
+      "prepended": [
+        "# Writ Language Specification"
+      ]
+    },
+    {
+      "filename": "30_29_open_questions.md",
+      "prepended": [
+        "# Writ Language Specification"
+      ]
+    }
+  ]
+}
