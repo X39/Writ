@@ -6,6 +6,7 @@
 | Category              | Keywords                                                                                                 |
 |-----------------------|----------------------------------------------------------------------------------------------------------|
 | Declarations          | `fn`, `dlg`, `struct`, `enum`, `contract`, `impl`, `entity`, `component`, `namespace`, `extern`, `using` |
+| Visibility            | `pub`, `priv`                                                                                            |
 | Variables             | `let`, `mut`, `const`, `global`                                                                          |
 | Control flow          | `if`, `else`, `match`, `for`, `while`, `in`, `return`, `break`, `continue`                               |
 | Concurrency           | `spawn`, `detached`, `join`, `cancel`, `defer`                                                           |

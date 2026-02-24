@@ -12,12 +12,12 @@ The declarative form assigns the entire file to a single namespace:
 // file: survival/potions.writ
 namespace survival;
 
-struct HealthPotion {
+pub struct HealthPotion {
     charges: int,
     healAmount: int,
 }
 
-fn heal(target: Entity, amount: int) {
+pub fn heal(target: Entity, amount: int) {
     target[Health].current += amount;
 }
 ```
@@ -37,17 +37,17 @@ The block form wraps declarations in a `namespace name { }` block and supports n
 
 ```
 namespace survival {
-    struct HealthPotion {
+    pub struct HealthPotion {
         charges: int,
         healAmount: int,
     }
 
     namespace items {
-        struct Bread {
+        pub struct Bread {
             freshness: float,
         }
 
-        struct Water {
+        pub struct Water {
             purity: float,
         }
     }
@@ -73,13 +73,13 @@ namespace**. Root namespace declarations are accessible without any `::` prefix 
 // file: globals.writ
 // (no namespace declaration)
 
-const MAX_LEVEL: int = 50;
+pub const MAX_LEVEL: int = 50;
 
 // file: game/main.writ
 namespace game;
 
 fn example() {
-    let cap = MAX_LEVEL;   // accessible without qualification
+    let cap = MAX_LEVEL;   // accessible without qualification — pub + root namespace
 }
 ```
 
@@ -102,7 +102,8 @@ fn example() {
 }
 ```
 
-Without the `using`, these would require `survival::HealthPotion` and `survival::heal`.
+Without the `using`, these would require `survival::HealthPotion` and `survival::heal`. Only `pub` declarations from
+the target namespace are brought into scope.
 
 #### 23.4.1 Alias Form
 
@@ -160,14 +161,14 @@ consumers of that file's namespace must add their own `using` or use `::` qualif
 
 ### 23.5 Same-Namespace Visibility
 
-All declarations within the same namespace are visible to each other without `::` qualification, regardless of which
+`pub` declarations within the same namespace are visible to each other without `::` qualification, regardless of which
 file they are defined in:
 
 ```
 // file: survival/potions.writ
 namespace survival;
 
-struct HealthPotion {
+pub struct HealthPotion {
     charges: int,
     healAmount: int,
 }
@@ -176,24 +177,251 @@ struct HealthPotion {
 namespace survival;
 
 fn brewPotion() -> HealthPotion {
-    // HealthPotion is visible — same namespace, no :: needed
+    // HealthPotion is visible — same namespace, pub, no :: needed
     HealthPotion(charges: 3, healAmount: 50)
 }
 ```
 
-This holds for all declaration kinds: structs, enums, functions, entities, components, contracts, and constants.
+Non-`pub` top-level declarations are file-local and not visible from other files, even within the same namespace.
 
-### 23.6 Name Conflicts
+### 23.6 Visibility Modifiers
 
-If two namespaces define a type or function with the same name, and both are brought into scope via `using`, any *
-*unqualified** reference to that name is a compile error:
+Writ has two visibility keywords: `pub` and `priv`. Declarations default to **private**.
+
+| Modifier | Meaning                                                                                   |
+|----------|-------------------------------------------------------------------------------------------|
+| (none)   | **Private** — file-local for top-level declarations, type-private for members             |
+| `priv`   | **Private** (explicit) — same as no modifier, for when the author wants to be intentional |
+| `pub`    | **Public** — visible outside the file/type, accessible via `::` or `using`                |
+
+#### 23.6.1 Top-Level Declarations
+
+Top-level declarations (`fn`, `struct`, `enum`, `contract`, `entity`, `component`, `const`, `global`) default to
+**private**, meaning they are visible only within the declaring file. `pub` makes them visible to all files and
+namespaces.
+
+```
+namespace survival;
+
+// Private (default) — only visible within this file
+struct PotionRecipe {
+    ingredients: string[],
+    brewTime: float,
+}
+
+// Public — visible to any file via survival::HealthPotion or `using survival;`
+pub struct HealthPotion {
+    charges: int,
+    healAmount: int,
+}
+
+// Public — visible to any namespace
+pub fn heal(target: Entity, amount: int) {
+    target[Health].current += amount;
+}
+
+// Private — helper function, file-local
+fn calculateHealAmount(level: int) -> int {
+    level * 10
+}
+
+// Explicit priv — identical to no modifier, expresses intent
+priv fn internalHelper() {
+    // ...
+}
+```
+
+From another file in the same namespace:
+
+```
+// file: survival/crafting.writ
+namespace survival;
+
+fn example() {
+    let pot = HealthPotion(charges: 3, healAmount: 50);   // OK — HealthPotion is pub
+    heal(player, 25);                                      // OK — heal is pub
+    let r = PotionRecipe(ingredients: [], brewTime: 5.0);  // ERROR — PotionRecipe is private to its file
+}
+```
+
+From another namespace:
+
+```
+namespace game;
+using survival;
+
+fn example() {
+    heal(player, 25);                   // OK — heal is pub
+    let pot = HealthPotion();           // OK — HealthPotion is pub
+    let pot = survival::HealthPotion(); // OK — fully qualified also works
+    calculateHealAmount(5);             // ERROR — private, not visible outside its file
+}
+```
+
+**Exception — `dlg` declarations default to `pub`.** Dialogue blocks are intended to be called from other files and
+namespaces (via transitions, entity hooks, or direct invocation). A `dlg` can be made private with an explicit `priv`:
+
+```
+namespace quest;
+
+// Public by default — can be called from other files and namespaces
+dlg mainQuest(player: Entity) {
+    @Narrator Your adventure begins.
+}
+
+// Explicitly private — only used within this file as a helper
+priv dlg internalBranch() {
+    @Narrator This is an internal branch.
+}
+```
+
+#### 23.6.2 Type Members
+
+Members of structs, entities, and components (fields, properties, and methods) default to **type-private** — only the
+type's own methods can access them. `pub` makes members visible wherever the type itself is visible.
+
+```
+pub struct Merchant {
+    pub name: string,             // public — accessible wherever Merchant is visible
+    gold: int,                    // private — only Merchant's own methods can access
+    priv discount: float = 0.1,  // private (explicit) — same as no modifier
+}
+
+impl Merchant {
+    pub fn greet() -> string {
+        $"Welcome! I am {self.name}"
+    }
+
+    fn applyDiscount(price: int) -> int {
+        // Can access private fields — we're inside the type
+        price - (price * self.discount)
+    }
+}
+```
+
+```
+namespace survival;
+
+fn example(m: Merchant) {
+    let n = m.name;               // OK — pub
+    let g = m.gold;               // ERROR — private, only Merchant methods can access
+    let d = m.discount;           // ERROR — private
+}
+```
+
+#### 23.6.3 Entity and Component Members
+
+Entities and components follow the same rules as structs:
+
+```
+pub entity Guard {
+    pub name: string = "Guard",
+    alertLevel: int = 0,
+
+    use Speaker {
+        displayName: "Guard",
+    },
+    use Health {
+        current: 80,
+        max: 80,
+    },
+
+    pub fn greet() -> string {
+        $"Halt! I am {self.name}"
+    }
+
+    fn raiseAlert() {
+        self.alertLevel += 1;
+    }
+
+    on interact(who: Entity) {
+        self.raiseAlert();        // OK — on hooks are part of the type
+        -> guardDialog(self, who)
+    }
+}
+```
+
+Lifecycle hooks (`on`) do not take visibility modifiers — they are always type-private (invoked by the runtime, not
+called by user code).
+
+Component `use` declarations do not take visibility modifiers — component attachment is visible wherever the entity is
+visible. Component *field* and *method* visibility is governed by the component's own declarations.
+
+#### 23.6.4 Contracts and Implementations
+
+Contract method signatures do not take visibility modifiers. Contract methods define a public interface — any type
+implementing the contract must expose those methods publicly:
+
+```
+contract Tradeable {
+    fn getInventory() -> List<Item>;    // no modifier — always part of the public interface
+    fn trade(item: Item, with: Entity);
+}
+```
+
+Methods in `impl` blocks that fulfill a contract requirement are implicitly `pub` and cannot be made private:
+
+```
+impl Tradeable for Merchant {
+    fn getInventory() -> List<Item> { ... }   // OK — implicitly pub
+    fn trade(item: Item, with: Entity) { ... }
+
+    priv fn getInventory() -> List<Item> { ... }   // ERROR — contract methods cannot be private
+}
+```
+
+Additional non-contract methods in an `impl` block follow normal visibility rules:
+
+```
+impl Merchant {
+    pub fn greet() -> string { ... }
+    fn calculateMarkup() -> float { ... }    // private — only Merchant can call this
+}
+```
+
+#### 23.6.5 Enum Variants
+
+Enum variants do not take individual visibility modifiers. All variants share the visibility of the enum itself:
+
+```
+pub enum QuestStatus {
+    NotStarted,                    // all variants are pub because the enum is pub
+    InProgress(currentStep: int),
+    Completed,
+    Failed(reason: string),
+}
+```
+
+#### 23.6.6 Visibility Summary
+
+| Declaration context            | `pub`  | (none) / `priv`  |
+|--------------------------------|--------|------------------|
+| Top-level (`fn`, `struct`, …)  | Public | File-local       |
+| Top-level `dlg`                | Public | File-local*      |
+| Struct field                   | Public | Type-private     |
+| Struct method (in `impl`)      | Public | Type-private     |
+| Entity property                | Public | Type-private     |
+| Entity method                  | Public | Type-private     |
+| Entity lifecycle hook (`on`)   | —      | Always internal  |
+| Component field                | Public | Type-private     |
+| Component method               | Public | Type-private     |
+| Contract method signature      | —      | Always public    |
+| Contract impl method           | —      | Always public    |
+| Enum variant                   | —      | Inherits enum    |
+
+*`dlg` defaults to `pub`; an explicit `priv` makes it file-local. All other declarations default to private.
+
+### 23.7 Name Conflicts
+
+If two namespaces define a type or function with the same name, and both are brought into scope via `using`, any
+**unqualified** reference to that name is a compile error:
 
 ```
 namespace ns_a;
-struct Item { name: string }
+pub struct Item { name: string }
 
 namespace ns_b;
-struct Item { id: int }
+pub struct Item { id: int }
 ```
 
 ```
@@ -213,9 +441,12 @@ fn example() {
 The error occurs at the **usage site**, not at the `using` declaration. Having two `using` statements that *could*
 conflict is legal as long as no ambiguous name is actually used without qualification.
 
-### 23.7 Cross-Namespace Access
+> **Note:** Only `pub` declarations are visible outside their declaring file. A `using` only brings `pub` declarations
+> into scope. Private declarations are never accessible from other files, even with `::` qualification.
 
-The `::` operator accesses names within a namespace:
+### 23.8 Cross-Namespace Access
+
+The `::` operator accesses `pub` names within a namespace:
 
 ```
 let pot = survival::HealthPotion(charges: 3, healAmount: 50);
@@ -223,10 +454,11 @@ let bread = survival::items::Bread(freshness: 1.0);
 survival::heal(player, 25);
 ```
 
-Fully qualified names always work, regardless of `using` declarations. They also resolve ambiguity when multiple `using`
-statements bring conflicting names into scope.
+Fully qualified names always work for `pub` declarations, regardless of `using` declarations. They also resolve
+ambiguity when multiple `using` statements bring conflicting names into scope. Private declarations cannot be accessed
+via `::` from outside their file.
 
-### 23.8 Root Namespace Prefix (`::`)
+### 23.9 Root Namespace Prefix (`::`)
 
 A leading `::` with no left-hand side refers to the root namespace. This resolves ambiguity when a nested namespace
 shadows an outer one:
@@ -234,12 +466,12 @@ shadows an outer one:
 ```
 namespace engine {
     namespace audio {
-        struct Mixer { channels: int }
+        pub struct Mixer { channels: int }
     }
 }
 
 namespace audio {
-    struct Mixer { sampleRate: int }
+    pub struct Mixer { sampleRate: int }
 }
 ```
 
@@ -267,7 +499,7 @@ let y: ::survival::HealthPotion = x;
 ::survival::heal(player, 25);
 ```
 
-### 23.9 `::` Resolution
+### 23.10 `::` Resolution
 
 The `::` operator is used in three contexts:
 
@@ -280,7 +512,7 @@ namespace lookup is performed. If it names an enum type, variant lookup is perfo
 always starts from the root namespace. This is always unambiguous because namespaces and types occupy separate name
 spaces — a namespace `Option` and an enum `Option` cannot coexist (this would be a name conflict).
 
-### 23.10 File Path Convention
+### 23.11 File Path Convention
 
 Namespace structure **should** mirror the directory structure. This is a recommended convention, not a compiler-enforced
 rule:

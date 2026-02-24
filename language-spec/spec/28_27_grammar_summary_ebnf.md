@@ -11,7 +11,8 @@ using_decl     = 'using' ( IDENT '=' )? qualified_name ';' ;
 qualified_name = IDENT { '::' IDENT } ;
 rooted_name    = [ '::' ] qualified_name ;  /* leading :: = root namespace */
 
-declaration    = { attribute } ( fn_decl | dlg_decl | struct_decl
+visibility     = 'pub' | 'priv' ;
+declaration    = { attribute } [ visibility ] ( fn_decl | dlg_decl | struct_decl
                | enum_decl | contract_decl | impl_decl
                | entity_decl | component_decl | extern_decl
                | const_decl | global_decl ) ;
@@ -27,7 +28,7 @@ fn_decl        = 'fn' IDENT [ generic_params ] '(' [ params ] ')'
 dlg_decl       = 'dlg' IDENT [ '(' [ params ] ')' ] dlg_block ;
 
 struct_decl    = 'struct' IDENT [ generic_params ] '{'
-                 { IDENT ':' type [ '=' expr ] ',' } '}' ;
+                 { [ visibility ] IDENT ':' type [ '=' expr ] ',' } '}' ;
 enum_decl      = 'enum' IDENT [ generic_params ] '{'
                  { variant ',' } '}' ;
 variant        = IDENT [ '(' { IDENT ':' type ',' } ')' ] ;
@@ -35,15 +36,16 @@ variant        = IDENT [ '(' { IDENT ':' type ',' } ')' ] ;
 contract_decl  = 'contract' IDENT [ generic_params ] '{'
                  { fn_sig | op_sig } '}' ;
 impl_decl      = 'impl' [ contract 'for' ] type '{'
-                 { fn_decl | op_decl } '}' ;
+                 { [ visibility ] ( fn_decl | op_decl ) } '}' ;
 
 entity_decl    = 'entity' IDENT '{' { entity_member } '}' ;
-entity_member  = property | use_decl | fn_decl | on_decl ;
+entity_member  = [ visibility ] property | use_decl
+               | [ visibility ] fn_decl | on_decl ;
 property       = IDENT ':' type [ '=' expr ] ',' ;
 use_decl       = 'use' IDENT [ '{' { IDENT ':' expr ',' } '}' ] ',' ;
 on_decl        = 'on' IDENT [ '(' params ')' ] block ;
 
-component_decl = 'component' IDENT '{' { property | fn_decl } '}' ;
+component_decl = 'component' IDENT '{' { [ visibility ] ( property | fn_decl ) } '}' ;
 
 extern_decl    = 'extern' ( fn_sig ';' | struct_decl
                | component_decl ) ;

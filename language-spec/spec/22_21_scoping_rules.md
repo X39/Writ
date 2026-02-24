@@ -34,8 +34,8 @@ fn example(param: int) {          // param is in function scope
    compile errors.
 4. **Closure capture:** Lambdas and inline functions capture variables from enclosing scopes by reference (for
    `let mut`) or by value (for `let`).
-5. **Namespace scoping:** Top-level declarations are in their declared namespace. Access from other namespaces requires
-   `::` qualification or a `using` declaration (see Section 23).
+5. **Namespace scoping:** Top-level declarations are in their declared namespace. Non-`pub` declarations are file-local.
+   `pub` declarations are accessible from other files and namespaces via `::` or `using` (see Section 23).
 6. **`using` scoping:** A `using` declaration is scoped to its enclosing context — file-level `using` is visible
    throughout the file; `using` inside a namespace block is visible only within that block and its nested blocks.
 

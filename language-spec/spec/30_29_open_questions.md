@@ -12,9 +12,6 @@ Are anonymous tuple types `(int, string)` useful, or are named structs sufficien
 **Destructuring**
 Should `let (x, y) = getPosition();` or `let { name, gold } = merchant;` be supported?
 
-**Visibility modifiers**
-Should `pub`/`priv` exist on struct fields and functions, or is everything public?
-
 **Standard library API**
 Exact API surface for `List<T>`, `Map<K,V>`, `Set<T>`, `EntityList<T>`, iterators, string utilities, math functions.
 Core array operations (`T[]`) are defined in Section 6.3. Relationship between arrays and `List<T>` (wrapper, alias, or
