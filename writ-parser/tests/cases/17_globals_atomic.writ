@@ -1,0 +1,50 @@
+// === Test: Globals & Atomic Access ===
+// Validates global variables and atomic blocks (Section 22)
+
+namespace test_globals;
+
+// --- 22.1 Global variables ---
+pub global mut playerGold: int = 0;
+pub global mut playerName: string = "Hero";
+pub global mut questCount: int = 0;
+pub global mut isGameOver: bool = false;
+
+// --- Reading globals ---
+pub fn readGlobals() {
+    let gold = playerGold;
+    let name = playerName;
+    log($"{name} has {gold} gold");
+}
+
+// --- Writing globals ---
+pub fn writeGlobals() {
+    playerGold += 100;
+    questCount += 1;
+}
+
+// --- 22.3 Atomic blocks ---
+pub fn atomicAccess() {
+    atomic {
+        let current = playerGold;
+        playerGold = current + 100;
+    }
+}
+
+pub fn atomicMultiple() {
+    atomic {
+        playerGold -= 50;
+        questCount += 1;
+        if playerGold < 0 {
+            playerGold = 0;
+        }
+    }
+}
+
+// --- Globals in dialogue ---
+dlg shopPurchase(item: Item) {
+    $ atomic {
+        playerGold -= item.price;
+    }
+    @Merchant Thank you for your purchase!
+    @Narrator You now have {playerGold} gold.
+}

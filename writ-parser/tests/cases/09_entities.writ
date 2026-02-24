@@ -1,0 +1,159 @@
+// === Test: Entities & Components ===
+// Validates entity declarations, components, spawning, lifecycle hooks (Section 14, 15)
+
+namespace test_entities;
+
+// --- 15.1 External component (declared elsewhere, used here) ---
+extern component Speaker {
+    displayName: string,
+    color: string = "#FFFFFF",
+    portrait: string = "",
+}
+
+extern component Sprite {
+    texture: string,
+    visible: bool = true,
+}
+
+extern component Collider {
+    shape: string,
+    width: int,
+    height: int,
+}
+
+// --- 15.2 Script-defined component ---
+pub component Health {
+    pub current: int,
+    pub max: int,
+
+    pub fn damage(amount: int) {
+        self.current -= amount;
+        if self.current < 0 {
+            self.current = 0;
+        }
+    }
+
+    pub fn heal(amount: int) {
+        self.current += amount;
+        if self.current > self.max {
+            self.current = self.max;
+        }
+    }
+
+    pub fn isDead() -> bool {
+        self.current <= 0
+    }
+}
+
+// --- 14.1 Entity declaration ---
+pub entity Guard {
+    pub name: string = "Guard",
+    patrolRoute: List<Vec2> = List::new(),
+
+    use Speaker {
+        displayName: "Guard",
+    },
+    use Sprite {
+        texture: "res://sprites/guard.png",
+    },
+    use Collider {
+        shape: "rect",
+        width: 32,
+        height: 48,
+    },
+    use Health {
+        current: 80,
+        max: 80,
+    },
+
+    pub fn greet() -> string {
+        $"Halt! I am {self.name}"
+    }
+
+    on create {
+        log($"Guard spawned: {self.name}");
+    }
+
+    on interact(who: Entity) {
+        -> guardDialog(self, who)
+    }
+
+    on destroy {
+        dropLoot(self);
+    }
+}
+
+// --- 14.2 Spawning ---
+pub fn spawning() {
+    let guard = spawn Guard {
+        name: "Steve",
+        patrolRoute: [Vec2(x: 0.0, y: 0.0), Vec2(x: 10.0, y: 0.0)],
+    };
+
+    let defaultGuard = spawn Guard {};
+}
+
+// --- 14.3 Component access ---
+pub fn componentAccess(guard: Guard) {
+    // Known entity type — guaranteed
+    guard[Health].damage(10);
+    guard[Sprite].visible = false;
+
+    // Generic Entity reference — returns Option
+    let target: Entity = guard;
+    if let Option::Some(hp) = target[Health] {
+        hp.heal(20);
+    }
+
+    // Unwrap
+    target[Health]!.damage(10);
+}
+
+// --- 14.4 Singleton entities ---
+[Singleton]
+pub entity Narrator {
+    use Speaker {
+        displayName: "The Narrator",
+        color: "#CCCCCC",
+    },
+}
+
+[Singleton]
+pub entity OldTim {
+    use Speaker {
+        displayName: "Old Tim",
+        color: "#AA8833",
+        portrait: "res://portraits/tim.png",
+    },
+    use Sprite {
+        texture: "res://sprites/tim.png",
+    },
+    pub gold: int = 500,
+
+    on interact(who: Entity) {
+        -> shopDialog(who)
+    }
+}
+
+pub fn singletonAccess() {
+    let tim = Entity.getOrCreate<OldTim>();
+    tim.gold -= 10;
+}
+
+// --- 14.5 EntityList ---
+pub entity Party {
+    pub leader: Player,
+    pub members: EntityList<Entity> = EntityList::new(),
+
+    pub fn addMember(e: Entity) {
+        self.members.add(e);
+    }
+
+    pub fn healAll(amount: int) {
+        for member in self.members {
+            if let Option::Some(hp) = member[Health] {
+                hp.heal(amount);
+            }
+        }
+    }
+}

@@ -1,0 +1,48 @@
+// === Test: Variables & Constants ===
+// Validates let, let mut, const, global declarations (Section 7)
+
+namespace test_variables;
+
+// --- Constants ---
+pub const MAX_LEVEL: int = 50;
+pub const PI: float = 3.14159;
+pub const GAME_NAME: string = "Writ Quest";
+pub const IS_DEBUG: bool = true;
+
+// --- Globals ---
+pub global mut playerGold: int = 0;
+pub global mut playerName: string = "Hero";
+
+// --- Variable declarations ---
+pub fn variables() {
+    // Immutable binding
+    let x: int = 10;
+    let name = "Alice";
+
+    // Mutable binding
+    let mut count: int = 0;
+    count = count + 1;
+    count += 1;
+
+    // Type inference
+    let inferred = 42;
+    let inferred_float = 3.14;
+    let inferred_bool = true;
+    let inferred_string = "hello";
+
+    // Shadowing
+    let value = 10;
+    let value = "now a string";
+    let value = true;
+}
+
+// --- Shadowing across scopes ---
+pub fn shadowScopes() {
+    let x = 10;
+    if true {
+        let x = 20;    // shadows outer x
+        let y = x + 1; // y = 21
+    }
+    // x is still 10 here
+    let z = x;
+}

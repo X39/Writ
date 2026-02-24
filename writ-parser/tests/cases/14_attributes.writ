@@ -1,0 +1,72 @@
+// === Test: Attributes & Conditional Compilation ===
+// Validates attribute syntax and [Conditional] (Section 16)
+
+namespace test_attributes;
+
+// --- 16.1 Basic attribute syntax ---
+[Singleton]
+pub entity GameManager {
+    pub state: GameState = GameState::MainMenu,
+}
+
+// --- Attribute with arguments ---
+[Deprecated("Use newFunction instead")]
+pub fn oldFunction() {
+    // ...
+}
+
+// --- Multiple attributes ---
+[Singleton]
+[Serializable]
+pub entity SaveData {
+    pub playerName: string = "",
+    pub level: int = 1,
+    pub gold: int = 0,
+}
+
+// --- Attribute with named arguments ---
+[Import(lib: "physics", arch: "x64")]
+extern fn applyForce(entity: Entity, force: Vec2);
+
+// --- 16.4 Conditional compilation ---
+[Conditional("DEBUG")]
+pub fn debugLog(msg: string) {
+    log($"[DEBUG] {msg}");
+}
+
+// Non-conditional fallback (required)
+pub fn debugLog(msg: string) {
+    // no-op in release builds
+}
+
+[Conditional("EDITOR")]
+pub fn drawGizmos(entity: Entity) {
+    drawBoundingBox(entity);
+    drawCollider(entity);
+}
+
+pub fn drawGizmos(entity: Entity) {
+    // no-op when EDITOR is not defined
+}
+
+// --- Conditional with expressions ---
+[Conditional("VERBOSE_LOGGING")]
+pub fn verboseLog(category: string, msg: string) {
+    log($"[{category}] {msg}");
+}
+
+pub fn verboseLog(category: string, msg: string) {
+    // stripped in non-verbose builds
+}
+
+// --- Attributes on various declarations ---
+[Serializable]
+pub struct PlayerData {
+    pub name: string,
+    pub level: int,
+}
+
+[Deprecated("Use newComponent")]
+pub component OldComponent {
+    value: int,
+}

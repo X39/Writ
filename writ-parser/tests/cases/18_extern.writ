@@ -1,0 +1,56 @@
+// === Test: External Declarations ===
+// Validates extern fn, extern struct, extern component, imports (Section 24)
+
+namespace test_extern;
+
+// --- 24.1 Runtime-provided externals ---
+extern fn log(msg: string);
+extern fn random() -> float;
+extern fn randomRange(min: int, max: int) -> int;
+
+extern struct Vec2 {
+    x: float,
+    y: float,
+}
+
+extern struct Vec3 {
+    x: float,
+    y: float,
+    z: float,
+}
+
+extern component Transform {
+    position: Vec2,
+    rotation: float,
+    scale: Vec2,
+}
+
+extern component RigidBody {
+    velocity: Vec2,
+    mass: float,
+}
+
+// --- 24.2 Library imports ---
+[Import(lib: "physics")]
+extern fn applyForce(entity: Entity, force: Vec2);
+
+[Import(lib: "physics")]
+extern fn raycast(origin: Vec2, direction: Vec2, distance: float) -> Entity?;
+
+[Import(lib: "audio", arch: "x64")]
+extern fn playSoundNative(path: string, volume: float);
+
+[Import(lib: "render")]
+extern struct Texture {
+    width: int,
+    height: int,
+}
+
+// --- Using extern types ---
+pub fn useExterns() {
+    log("Hello from Writ!");
+    let r = random();
+    let n = randomRange(1, 100);
+    let pos = Vec2(x: 10.0, y: 20.0);
+    applyForce(player, Vec2(x: 0.0, y: -9.8));
+}

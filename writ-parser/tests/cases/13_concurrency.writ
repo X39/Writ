@@ -1,0 +1,77 @@
+// === Test: Concurrency ===
+// Validates spawn, detached, join, cancel, defer (Section 20)
+
+namespace test_concurrency;
+
+// --- 20.2 Spawn and join ---
+pub fn spawnAndJoin() {
+    let task = spawn loadChunk(x, y);
+    // ... do other work ...
+    let chunk = join task;
+}
+
+// --- Detached tasks ---
+pub fn detachedTask() {
+    detached playAmbientSound("forest");
+    // fire and forget — no handle returned
+}
+
+// --- Multiple spawns ---
+pub fn parallelLoad() {
+    let t1 = spawn loadTextures();
+    let t2 = spawn loadSounds();
+    let t3 = spawn loadScripts();
+
+    let textures = join t1;
+    let sounds = join t2;
+    let scripts = join t3;
+}
+
+// --- Cancel ---
+pub fn cancellation() {
+    let task = spawn longRunningSearch();
+
+    if userPressedEscape() {
+        cancel task;
+    }
+}
+
+// --- Defer ---
+pub fn deferUsage() {
+    let file = openFile("data.bin");
+    defer closeFile(file);
+
+    let data = readAll(file);
+    processData(data);
+    // closeFile(file) runs here, at end of scope
+}
+
+// --- Defer in nested scopes ---
+pub fn deferNested() {
+    let db = connectDB();
+    defer disconnectDB(db);
+
+    if needsTransaction {
+        let tx = beginTransaction(db);
+        defer rollbackIfNeeded(tx);
+
+        let result = try executeQuery(tx, query);
+        commitTransaction(tx);
+    }
+    // rollbackIfNeeded runs here (inner defer)
+    // disconnectDB runs at function exit (outer defer)
+}
+
+// --- Dialogue choice with concurrent background ---
+dlg explorationDialog(player: Entity) {
+    @Narrator You enter the cavern.
+    $ detached playAmbientSound("cave_drip");
+    $ choice {
+        "Go deeper" {
+            @Narrator You venture further in.
+        }
+        "Turn back" {
+            @Narrator You retreat to safety.
+        }
+    }
+}

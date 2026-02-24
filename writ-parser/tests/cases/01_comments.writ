@@ -1,0 +1,22 @@
+// === Test: Comments ===
+// Validates single-line and multi-line comment parsing (Section 4.3)
+
+// Single-line comment
+
+/* Multi-line comment */
+
+/* Multi-line
+   spanning
+   several lines */
+
+// Comment after code
+pub const X: int = 10; // trailing comment
+
+/* Comment before code */ pub const Y: int = 20;
+
+// Nested-style content in multi-line (not actually nested — just content)
+/* This has // single-line syntax inside and is fine */
+
+// Empty comment
+//
+/* */

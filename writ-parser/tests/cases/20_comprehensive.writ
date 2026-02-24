@@ -1,0 +1,181 @@
+// === Test: Comprehensive Integration ===
+// A realistic game script file combining multiple features
+
+namespace rpg::village;
+
+using rpg::items;
+using rpg::combat;
+
+// --- Constants ---
+pub const SHOP_TAX_RATE: float = 0.1;
+pub const MAX_INVENTORY: int = 20;
+
+// --- Global state ---
+pub global mut dayCount: int = 1;
+
+// --- Custom error ---
+pub struct ShopError {
+    msg: string,
+}
+
+impl Error for ShopError {
+    fn message() -> string {
+        self.msg
+    }
+}
+
+// --- Item struct ---
+pub struct ShopItem {
+    pub name: string,
+    pub price: int,
+    pub description: string,
+}
+
+impl Into<string> for ShopItem {
+    fn into() -> string {
+        $"{self.name} ({self.price}g)"
+    }
+}
+
+// --- Entity ---
+pub entity Shopkeeper {
+    pub name: string = "Merchant",
+    pub inventory: List<ShopItem> = List::new(),
+    priv markup: float = 1.2,
+
+    use Speaker {
+        displayName: "Merchant",
+        color: "#DAA520",
+    },
+    use Sprite {
+        texture: "res://sprites/merchant.png",
+    },
+
+    pub fn getPrice(item: ShopItem) -> int {
+        let base = item.price * self.markup;
+        let tax = base * SHOP_TAX_RATE;
+        base + tax
+    }
+
+    pub fn canAfford(buyer: Entity, item: ShopItem) -> bool {
+        buyer.gold >= self.getPrice(item)
+    }
+
+    fn restock() {
+        self.inventory = List::new();
+        self.inventory.push(ShopItem(name: "Sword", price: 100, description: "A sharp blade"));
+        self.inventory.push(ShopItem(name: "Shield", price: 75, description: "Sturdy protection"));
+        self.inventory.push(ShopItem(name: "Potion", price: 25, description: "Heals 50 HP"));
+    }
+
+    on create {
+        self.restock();
+        log($"Shopkeeper {self.name} created with {self.inventory.length} items");
+    }
+
+    on interact(who: Entity) {
+        -> shopDialog(self, who)
+    }
+}
+
+// --- Buy logic ---
+pub fn buyItem(buyer: Entity, shop: Shopkeeper, item: ShopItem) -> Result<ShopItem, ShopError> {
+    let price = shop.getPrice(item);
+
+    if buyer.gold < price {
+        Result::Err(ShopError(msg: $"Not enough gold. Need {price}, have {buyer.gold}"))
+    } else if buyer.inventory.length >= MAX_INVENTORY {
+        Result::Err(ShopError(msg: "Inventory full"))
+    } else {
+        atomic {
+            buyer.gold -= price;
+            shop.gold += price;
+        }
+        buyer.inventory.push(item);
+        Result::Ok(item)
+    }
+}
+
+// --- Shop dialogue ---
+dlg shopDialog(shop: Shopkeeper, customer: Entity) {
+    @Narrator You approach {shop.name}.
+    $ let items = shop.inventory;
+    @shop Welcome! I have {items.length} items for sale.
+
+    $ if items.length == 0 {
+        @shop Sorry, I'm all sold out. Come back tomorrow.
+    } else {
+        $ choice {
+            "Browse items" {
+                $ for item in items {
+                    @shop {item.name} — {shop.getPrice(item)} gold.
+                    @shop {item.description}
+                }
+                -> shopBuyDialog(shop, customer)
+            }
+            "Sell items" {
+                -> shopSellDialog(shop, customer)
+            }
+            "Leave" {
+                @shop Come back soon!
+            }
+        }
+    }
+}
+
+dlg shopBuyDialog(shop: Shopkeeper, customer: Entity) {
+    @shop What would you like to buy?
+    $ choice {
+        "Buy Sword" {
+            $ let result = buyItem(customer, shop, shop.inventory[0]);
+            $ match result {
+                Result::Ok(item) => {
+                    @shop Here's your {item.name}. Enjoy!
+                }
+                Result::Err(err) => {
+                    @shop Sorry — {err.message()}
+                }
+            }
+        }
+        "Buy Potion" {
+            $ let result = buyItem(customer, shop, shop.inventory[2]);
+            $ match result {
+                Result::Ok(item) => {
+                    @shop One potion, coming up!
+                }
+                Result::Err(err) => {
+                    @shop {err.message()}
+                }
+            }
+        }
+        "Never mind" {
+            @shop No problem!
+        }
+    }
+}
+
+priv dlg shopSellDialog(shop: Shopkeeper, customer: Entity) {
+    @shop What would you like to sell?
+    @Narrator (Sell dialog not yet implemented)
+}
+
+// --- Conditional debug logging ---
+[Conditional("DEBUG")]
+pub fn debugShopState(shop: Shopkeeper) {
+    log($"[SHOP] {shop.name}: {shop.inventory.length} items, markup={shop.markup}");
+    for item in shop.inventory {
+        log($"  - {item.name}: {item.price}g (final: {shop.getPrice(item)}g)");
+    }
+}
+
+pub fn debugShopState(shop: Shopkeeper) {
+    // no-op in release
+}
+
+// --- Day cycle ---
+pub fn advanceDay() {
+    atomic {
+        dayCount += 1;
+    }
+    log($"Day {dayCount} begins.");
+}

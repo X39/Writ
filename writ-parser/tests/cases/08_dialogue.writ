@@ -1,0 +1,120 @@
+// === Test: Dialogue Blocks ===
+// Validates dlg syntax, speakers, escapes, choices, conditionals, transitions (Section 13)
+
+namespace test_dialogue;
+
+// --- 13.1 Basic dialogue ---
+dlg greetPlayer(player: Entity) {
+    @Narrator Welcome, traveler.
+    @Narrator The world awaits you.
+}
+
+// --- 13.2 Speaker attribution ---
+dlg shopDialog(customer: Entity) {
+    @OldTim Welcome to my shop!
+    @OldTim Take a look around.
+    @Narrator You browse the wares.
+}
+
+// --- 13.3 The $ sigil ---
+dlg escapesDemo(player: Entity) {
+    // Single statement
+    $ let name = player.name;
+    @Narrator Hello, {name}.
+
+    // Block
+    $ {
+        let gold = player.gold;
+        let level = player.level;
+    }
+    @Narrator You have {gold} gold and are level {level}.
+
+    // Expression with side effect
+    $ player.reputation += 1;
+}
+
+// --- 13.4 Choices ---
+dlg choiceDemo(player: Entity) {
+    @Merchant What would you like?
+    $ choice {
+        "Buy a sword" {
+            $ player.gold -= 50;
+            @Merchant Here you go!
+        }
+        "Buy a shield" {
+            $ player.gold -= 30;
+            @Merchant A fine choice!
+        }
+        "Leave" {
+            @Merchant Come back soon.
+        }
+    }
+}
+
+// --- 13.5 Conditional dialogue ---
+dlg conditionalDemo(player: Entity) {
+    // $ if
+    $ if player.gold >= 100 {
+        @Merchant I see you are wealthy!
+    } else {
+        @Merchant Hmm, come back when you have more gold.
+    }
+
+    // $ match
+    $ match player.class {
+        Class::Warrior => {
+            @Merchant I have fine weapons for you.
+        }
+        Class::Mage => {
+            @Merchant Perhaps some scrolls?
+        }
+        Class::Rogue => {
+            @Merchant I have some... special items.
+        }
+    }
+}
+
+// --- 13.6 Transitions ---
+dlg mainDialog(player: Entity) {
+    @Narrator Where do you go?
+    $ choice {
+        "The shop" {
+            -> shopDialog(player)
+        }
+        "The arena" {
+            -> arenaDialog(player)
+        }
+    }
+}
+
+// --- 13.7 Localization keys ---
+dlg localizedDemo() {
+    @Narrator Welcome to the game. #welcome_msg
+    @Narrator Press any key to start. #press_start
+    $ choice {
+        "New Game" #choice_new {
+            @Narrator Starting new game. #starting
+        }
+        "Continue" #choice_continue {
+            @Narrator Loading save. #loading
+        }
+    }
+}
+
+// --- 13.8 Text styling (BBCode) ---
+dlg styledDemo() {
+    @Narrator This is [b]bold[/b] text.
+    @Narrator This is [i]italic[/i] and [color=red]red[/color].
+    @Narrator [shake]Danger![/shake] [wave]Hello~[/wave]
+}
+
+// --- Private dialogue (priv exception test) ---
+priv dlg internalHelper() {
+    @Narrator This is only used within this file.
+}
+
+// --- Dialogue with interpolation in lines ---
+dlg interpDemo(name: string, gold: int) {
+    @Narrator Hello, {name}. You have {gold} gold.
+    @Narrator That is {gold * 2} in double.
+}

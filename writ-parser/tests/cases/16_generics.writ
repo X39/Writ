@@ -1,0 +1,99 @@
+// === Test: Generics ===
+// Validates generic type parameters, bounds, and usage (Section 11)
+
+namespace test_generics;
+
+// --- Generic struct ---
+pub struct Container<T> {
+    pub value: T,
+}
+
+pub struct Pair<A, B> {
+    pub first: A,
+    pub second: B,
+}
+
+// --- Generic function ---
+pub fn identity<T>(value: T) -> T {
+    value
+}
+
+pub fn swap<A, B>(pair: Pair<A, B>) -> Pair<B, A> {
+    Pair(first: pair.second, second: pair.first)
+}
+
+// --- Bounded generics ---
+pub fn findMax<T: Ord>(items: T[]) -> T {
+    let mut max = items[0];
+    for item in items {
+        if item > max {
+            max = item;
+        }
+    }
+    max
+}
+
+// --- Multiple bounds ---
+pub fn printSorted<T: Ord + Into<string>>(items: T[]) {
+    let sorted = items.sort(fn(a, b) { a < b });
+    for item in sorted {
+        log(item.into<string>());
+    }
+}
+
+// --- Generic contract implementation ---
+pub struct Stack<T> {
+    items: T[] = [],
+}
+
+impl Stack<T> {
+    pub fn push(item: T) {
+        self.items.push(item);
+    }
+
+    pub fn pop() -> T? {
+        self.items.pop()
+    }
+
+    pub fn peek() -> T? {
+        if self.items.length == 0 {
+            null
+        } else {
+            self.items[^1]
+        }
+    }
+
+    pub fn isEmpty() -> bool {
+        self.items.length == 0
+    }
+}
+
+impl Iterable<T> for Stack<T> {
+    fn iterator() -> Iterator<T> {
+        self.items.iterator()
+    }
+}
+
+// --- Generic with contract bound ---
+pub contract Printable {
+    fn display() -> string;
+}
+
+pub fn printAll<T: Printable>(items: T[]) {
+    for item in items {
+        log(item.display());
+    }
+}
+
+// --- Usage ---
+pub fn genericUsage() {
+    let c = Container<int>(value: 42);
+    let p = Pair<string, int>(first: "score", second: 100);
+    let id = identity<int>(42);
+    let max = findMax<int>([3, 1, 4, 1, 5, 9]);
+
+    let mut stack = Stack<string>();
+    stack.push("first");
+    stack.push("second");
+    let top = stack.pop();
+}

@@ -1,0 +1,57 @@
+// === Test: Block Namespaces ===
+// Validates block namespace form, nesting, and using inside blocks (Section 23.2)
+
+// --- Block namespace (mutually exclusive with declarative form) ---
+namespace survival {
+    pub struct HealthPotion {
+        pub charges: int,
+        pub healAmount: int,
+    }
+
+    pub fn heal(target: Entity, amount: int) {
+        target[Health].current += amount;
+    }
+
+    // Nested namespace
+    namespace items {
+        pub struct Bread {
+            pub freshness: float,
+        }
+
+        pub struct Water {
+            pub purity: float,
+        }
+    }
+}
+
+// Multiple top-level blocks in same file
+namespace combat {
+    using survival;
+
+    pub fn attack(attacker: Entity, target: Entity, damage: int) {
+        target[Health]!.damage(damage);
+    }
+}
+
+// --- Root namespace prefix ---
+namespace engine {
+    namespace audio {
+        pub struct Mixer {
+            pub channels: int,
+        }
+    }
+}
+
+namespace audio {
+    pub struct Mixer {
+        pub sampleRate: int,
+    }
+}
+
+// Using leading :: to resolve from root
+namespace engine::audio;
+
+pub fn rootPrefixDemo() {
+    let a = Mixer(channels: 8);
+    let b = ::audio::Mixer(sampleRate: 44100);
+}

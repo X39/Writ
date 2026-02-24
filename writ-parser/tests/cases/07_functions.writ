@@ -1,0 +1,166 @@
+// === Test: Functions ===
+// Validates fn declarations, return semantics, overloading, lambdas (Section 12)
+
+namespace test_functions;
+
+// --- 12.1 Implicit return ---
+pub fn add(a: int, b: int) -> int {
+    a + b
+}
+
+// --- 12.1 Explicit return (early exit) ---
+pub fn clamp(value: int, max: int) -> int {
+    if value > max {
+        return max;
+    }
+    value
+}
+
+// --- Void function ---
+pub fn logDamage(amount: int) {
+    log($"Took {amount} damage");
+}
+
+// --- Explicit void annotation ---
+pub fn logDamageExplicit(amount: int) -> void {
+    log($"Took {amount} damage");
+}
+
+// --- Early exit from void ---
+pub fn maybeLog(amount: int, verbose: bool) {
+    if !verbose {
+        return;
+    }
+    log($"Took {amount} damage");
+}
+
+// --- 12.2.1 if/else as expression ---
+pub fn ifExpression(health: int) -> string {
+    let msg = if health > 50 {
+        "Healthy"
+    } else {
+        "Wounded"
+    };
+    msg
+}
+
+// --- Nested if/else expression ---
+pub fn tieredScore(score: int) -> string {
+    let tier = if score > 90 {
+        "S"
+    } else if score > 70 {
+        "A"
+    } else {
+        "B"
+    };
+    tier
+}
+
+// --- if as statement ---
+pub fn ifStatement(damaged: bool) {
+    if damaged {
+        playSound("hit");
+    }
+}
+
+// --- 12.2.3 for loop ---
+pub fn forLoops() {
+    for item in inventory {
+        log(item.name);
+    }
+
+    for i in 0..10 {
+        log($"Step {i}");
+    }
+
+    for member in party.members {
+        member[Health]!.heal(10);
+    }
+}
+
+// --- 12.2.4 while loop ---
+pub fn whileLoop(enemy: Entity) {
+    while enemy[Health].current > 0 {
+        attack(enemy);
+    }
+}
+
+// --- 12.2.5 break and continue ---
+pub fn breakContinue() {
+    for item in inventory {
+        if item.name == "Key" {
+            useKey(item);
+            break;
+        }
+    }
+
+    for member in party.members {
+        if member[Health]?.isDead() {
+            continue;
+        }
+        member[Health]!.heal(10);
+    }
+}
+
+// --- 12.3 Overloading ---
+pub fn damage(target: Entity, amount: int) {
+    target[Health]!.damage(amount);
+}
+
+pub fn damage(target: Entity, amount: int, type: DamageType) {
+    let modified = applyResistance(amount, target, type);
+    target[Health]!.damage(modified);
+}
+
+// --- 12.4 Lambdas ---
+pub fn lambdas() {
+    // Minimal — types inferred
+    let sorted = items.sort(fn(a, b) { a.gold > b.gold });
+
+    // Explicit types
+    let compare = fn(a: int, b: int) -> bool { a > b };
+
+    // Multi-statement body
+    let transform = fn(x: int) -> int {
+        let doubled = x * 2;
+        doubled + 1
+    };
+
+    // Early return in lambda
+    let clamp = fn(value: int, max: int) -> int {
+        if value > max {
+            return max;
+        }
+        value
+    };
+}
+
+// --- 12.4.2 Lambda type inference ---
+pub fn lambdaInference() {
+    // From function parameter type
+    applyToAll(scores, fn(x) { x * 2 });
+
+    // From variable type annotation
+    let f: fn(int) -> bool = fn(x) { x > 10 };
+
+    // No inference — types required
+    let g = fn(x: int) -> bool { x > 10 };
+}
+
+// --- 12.4.3 Function types ---
+pub fn functionTypes() {
+    let predicate: fn(int) -> bool = fn(x) { x > 0 };
+    let action: fn(Entity) = fn(e) { e.destroy(); };
+    let combine: fn(int, int) -> int = fn(a, b) { a + b };
+}
+
+// --- 12.4.4 Capture semantics ---
+pub fn captureSemantics() {
+    let bonus = 10;
+    let mut count = 0;
+
+    let process = fn(x: int) -> int {
+        count += 1;
+        x + bonus
+    };
+}

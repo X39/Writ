@@ -1,0 +1,61 @@
+// === Test: Structs ===
+// Validates struct declarations, construction, and impl blocks (Section 8)
+
+namespace test_structs;
+
+// --- Basic struct ---
+pub struct Merchant {
+    pub name: string,
+    pub gold: int,
+    reputation: float,
+}
+
+// --- Struct with impl ---
+impl Merchant {
+    pub fn greet() -> string {
+        $"Welcome! I am {self.name}"
+    }
+
+    fn calculateDiscount(price: int) -> float {
+        price * self.reputation
+    }
+}
+
+// --- Struct with defaults ---
+pub struct Config {
+    pub width: int = 800,
+    pub height: int = 600,
+    pub title: string = "Game",
+    fullscreen: bool = false,
+}
+
+// --- Construction ---
+pub fn construction() {
+    let m = Merchant(name: "Old Tim", gold: 100, reputation: 0.8);
+    let c = Config(title: "My Game");
+    let d = Config();
+}
+
+// --- Field access ---
+pub fn fieldAccess() {
+    let m = Merchant(name: "Old Tim", gold: 100, reputation: 0.8);
+    let n = m.name;
+    let g = m.gold;
+    let greeting = m.greet();
+}
+
+// --- Generic struct ---
+pub struct Pair<T> {
+    pub first: T,
+    pub second: T,
+}
+
+pub struct KeyValue<K, V> {
+    pub key: K,
+    pub value: V,
+}
+
+pub fn generics() {
+    let p = Pair<int>(first: 1, second: 2);
+    let kv = KeyValue<string, int>(key: "score", value: 100);
+}

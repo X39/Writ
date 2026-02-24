@@ -1,0 +1,82 @@
+// === Test: Ranges & Indexing ===
+// Validates .., ..=, ^n, array indexing, range slicing (Section 6.6–6.9)
+
+namespace test_ranges;
+
+// --- Range expressions ---
+pub fn ranges() {
+    // Exclusive range
+    let r = 0..10;
+
+    // Inclusive range
+    let ri = 0..=10;
+
+    // In for loop
+    for i in 0..10 {
+        log($"Step {i}");
+    }
+
+    for i in 0..=10 {
+        log($"Step {i}");
+    }
+
+    // Half-open ranges
+    let from = 5..;
+    let to = ..10;
+    let toInclusive = ..=10;
+    let full = ..;
+}
+
+// --- Array indexing ---
+pub fn arrayIndexing() {
+    let items: int[] = [10, 20, 30, 40, 50];
+
+    let first = items[0];
+    let third = items[2];
+
+    // From-end indexing
+    let last = items[^1];
+    let secondLast = items[^2];
+}
+
+// --- Range slicing ---
+pub fn rangeSlicing() {
+    let items: int[] = [10, 20, 30, 40, 50];
+
+    let slice = items[1..3];         // [20, 30]
+    let sliceInc = items[1..=3];     // [20, 30, 40]
+    let fromStart = items[..3];      // [10, 20, 30]
+    let toEnd = items[2..];          // [30, 40, 50]
+    let lastTwo = items[^2..];       // [40, 50]
+    let all = items[..];             // copy of all
+}
+
+// --- Array literals ---
+pub fn arrayLiterals() {
+    let empty: int[] = [];
+    let ints = [1, 2, 3, 4, 5];
+    let strings = ["a", "b", "c"];
+    let nested: int[][] = [[1, 2], [3, 4]];
+}
+
+// --- Array operations (Section 6.3) ---
+pub fn arrayOps() {
+    let mut items: int[] = [1, 2, 3];
+    let len = items.length;
+    items.push(4);
+    let popped = items.pop();
+    let contains = items.contains(2);
+}
+
+// --- Range in for loop with iteration ---
+pub fn rangeIteration() {
+    let sum = 0;
+    for i in 1..=100 {
+        sum += i;
+    }
+
+    // Float range
+    for f in 0.0..5.0 {
+        log($"Value: {f}");
+    }
+}

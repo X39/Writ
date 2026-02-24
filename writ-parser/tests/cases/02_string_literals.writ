@@ -1,0 +1,60 @@
+// === Test: String Literals ===
+// Validates all four string literal forms (Section 4.4)
+
+namespace test_strings;
+
+// --- 4.4.1 Basic Strings ---
+pub fn basicStrings() {
+    let empty = "";
+    let simple = "Hello, world!";
+    let escaped = "Hello\nWorld\t!";
+    let backslash = "C:\\Users\\data";
+    let quote = "She said \"hello\"";
+    let null_char = "null: \0";
+    let carriage = "line\r\n";
+    let unicode = "\u{1F600}";
+    let continuation = "this is a long \
+                        string on one line";
+}
+
+// --- 4.4.2 Formattable Strings ---
+pub fn formattableStrings() {
+    let name = "Alice";
+    let greeting = $"Hello, {name}!";
+    let expr = $"Damage: {base * modifier}";
+    let nested_braces = $"JSON: {{\"key\": \"{name}\"}}";
+    let multi_expr = $"{a} + {b} = {a + b}";
+}
+
+// --- 4.4.3 Raw Strings ---
+pub fn rawStrings() {
+    let raw = """
+        No \n escaping here.
+        Backslashes are literal: C:\Users\data
+        """;
+
+    let with_quotes = """"
+        This contains """ inside.
+        """";
+
+    let five_quotes = """""
+        Contains """ and """" inside.
+        """"";
+}
+
+// --- 4.4.4 Formattable Raw Strings ---
+pub fn formattableRawStrings() {
+    let name = "Alice";
+    let report = $"""
+        Name: {name}
+        Level: {level}
+        """;
+
+    let json = $"""
+        {{"name": "{name}", "level": {level}}}
+        """;
+
+    let with_quotes = $""""
+        Template: """ and {expr} interpolation.
+        """";
+}

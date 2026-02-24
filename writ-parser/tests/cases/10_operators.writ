@@ -1,0 +1,89 @@
+// === Test: Operators & Expressions ===
+// Validates operator precedence, compound assignment, derived operators (Section 17)
+
+namespace test_operators;
+
+// --- Arithmetic ---
+pub fn arithmetic() {
+    let a = 10 + 5;
+    let b = 10 - 5;
+    let c = 10 * 5;
+    let d = 10 / 5;
+    let e = 10 % 3;
+    let f = -a;
+    let g = !true;
+}
+
+// --- Comparison ---
+pub fn comparison() {
+    let eq = 10 == 10;
+    let neq = 10 != 5;
+    let lt = 5 < 10;
+    let gt = 10 > 5;
+    let lte = 5 <= 10;
+    let gte = 10 >= 5;
+}
+
+// --- Logical ---
+pub fn logical() {
+    let and = true && false;
+    let or = true || false;
+    let not = !true;
+    let complex = (a > 0) && (b < 10) || (c == 5);
+}
+
+// --- Bitwise ---
+pub fn bitwise() {
+    let band = flags & mask;
+    let bor = flags | mask;
+}
+
+// --- Compound assignment ---
+pub fn compoundAssignment() {
+    let mut x = 10;
+    x += 5;
+    x -= 3;
+    x *= 2;
+    x /= 4;
+    x %= 3;
+}
+
+// --- Precedence (highest to lowest from Section 17.1) ---
+pub fn precedence() {
+    // Unary binds tighter than binary
+    let a = -x + y;         // (-x) + y
+    let b = !flag && other;  // (!flag) && other
+
+    // Multiplication before addition
+    let c = a + b * c;      // a + (b * c)
+
+    // Comparison before logical
+    let d = x > 5 && y < 10; // (x > 5) && (y < 10)
+
+    // Explicit grouping
+    let e = (a + b) * (c + d);
+}
+
+// --- Member access and indexing ---
+pub fn accessOps() {
+    let name = player.name;
+    let hp = player[Health].current;
+    let item = inventory[0];
+    let nested = grid[0][1];
+    let method = player.greet();
+    let chain = player[Health].heal(10);
+}
+
+// --- Null propagation and unwrap ---
+pub fn nullOps() {
+    let name = player?.name;
+    let hp = entity[Health]?.current;
+    let forced = entity[Health]!.current;
+}
+
+// --- Calling conventions ---
+pub fn calls() {
+    let result = add(1, 2);
+    let converted = health.into<string>();
+    let spawned = spawn Guard {};
+}

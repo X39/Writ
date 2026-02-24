@@ -1,0 +1,45 @@
+// === Test: Localization ===
+// Validates localization keys, locale overrides (Section 25)
+
+namespace test_localization;
+
+// --- 25.2 Manual localization keys ---
+dlg localizedGreeting(name: string) {
+    @Narrator Welcome, {name}! #greeting_welcome
+    @Narrator The adventure begins. #greeting_adventure
+}
+
+// --- Choices with keys ---
+dlg localizedChoices() {
+    @Narrator What do you do? #main_choice_prompt
+    $ choice {
+        "Fight" #main_choice_fight {
+            @Narrator You draw your sword. #fight_draw
+        }
+        "Run" #main_choice_run {
+            @Narrator You flee! #fight_flee
+        }
+        "Talk" #main_choice_talk {
+            @Narrator You try to reason. #fight_reason
+        }
+    }
+}
+
+// --- 25.6 Structural overrides with [Locale] ---
+dlg questIntro(player: Entity) {
+    @Narrator Greetings, adventurer. #quest_greet
+    @Narrator A dragon threatens the land. #quest_dragon
+}
+
+[Locale("ja")]
+dlg questIntro(player: Entity) {
+    @Narrator 冒険者よ、よく来た。 #quest_greet
+    @Narrator ドラゴンがこの地を脅かしている。 #quest_dragon
+    @Narrator 力を貸してくれ。 #quest_help
+}
+
+[Locale("de")]
+dlg questIntro(player: Entity) {
+    @Narrator Willkommen, Abenteurer. #quest_greet
+    @Narrator Ein Drache bedroht das Land. #quest_dragon
+}

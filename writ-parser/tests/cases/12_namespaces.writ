@@ -1,0 +1,76 @@
+// === Test: Namespaces & Visibility ===
+// Validates namespace forms, using, visibility modifiers (Section 23)
+
+// --- 23.1 Declarative namespace ---
+namespace test_namespaces;
+
+using survival;
+
+// --- Visibility modifiers ---
+
+// Private by default — file-local
+struct InternalHelper {
+    data: int,
+}
+
+// Public — visible across namespaces
+pub struct PublicType {
+    pub name: string,
+    value: int,       // private — type-private
+}
+
+// Public function
+pub fn publicApi(x: int) -> int {
+    x * internalHelper(x)
+}
+
+// Private function — file-local
+fn internalHelper(x: int) -> int {
+    x + 1
+}
+
+// Explicit priv — same as default
+priv fn alsoPrivate() {
+    // ...
+}
+
+// Public constant
+pub const VERSION: string = "1.0";
+
+// Private constant
+const INTERNAL_LIMIT: int = 100;
+
+// --- dlg defaults to pub ---
+dlg publicDialog() {
+    @Narrator This is public by default.
+}
+
+priv dlg privateDialog() {
+    @Narrator This is private — file-local only.
+}
+
+// --- Type member visibility ---
+pub struct Merchant {
+    pub name: string,
+    gold: int,
+    priv discount: float = 0.1,
+}
+
+impl Merchant {
+    pub fn greet() -> string {
+        $"Welcome! I am {self.name}"
+    }
+
+    fn calculateMarkup() -> float {
+        self.discount * 2.0
+    }
+}
+
+// --- Using declarations ---
+pub fn usingDemo() {
+    // Uses survival:: types brought in by `using survival;` at top
+    let pot = HealthPotion(charges: 3, healAmount: 50);
+
+    // Fully qualified still works
+    let bread = survival::items::Bread(freshness: 1.0);
+}

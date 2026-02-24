@@ -1,0 +1,81 @@
+// === Test: Error Handling & Nullability ===
+// Validates ?, !, try, Option, Result (Sections 18, 19)
+
+namespace test_errors;
+
+// --- 19. Nullability ---
+pub fn nullability() {
+    // Optional type via ?
+    let maybe: int? = null;
+    let present: int? = 42;
+
+    // Null check
+    if maybe != null {
+        let value = maybe!;
+    }
+}
+
+// --- 18.1 The ? operator (null propagation) ---
+pub fn nullPropagation(player: Entity) -> string? {
+    let hp = player[Health]?.current;
+    let name = player?.name;
+    name
+}
+
+// --- Chained ? ---
+pub fn chainedPropagation(party: Party) -> int? {
+    let leaderHp = party.leader?[Health]?.current;
+    leaderHp
+}
+
+// --- 18.2 The ! operator (unwrap or crash) ---
+pub fn unwrap(player: Entity) {
+    let hp = player[Health]!.current;
+    let name: string = player.name!;
+}
+
+// --- 18.3 The try keyword ---
+pub fn tryUsage() -> Result<int, GameError> {
+    let file = try openFile("save.dat");
+    let data = try readData(file);
+    let score = try parseScore(data);
+    Result::Ok(score)
+}
+
+// --- 18.4 Error contract ---
+pub struct SaveError {
+    path: string,
+    reason: string,
+}
+
+impl Error for SaveError {
+    fn message() -> string {
+        $"Failed to save {self.path}: {self.reason}"
+    }
+}
+
+// --- Result handling ---
+pub fn resultHandling() {
+    let result = loadGame("save.dat");
+
+    match result {
+        Result::Ok(data) => { processData(data); }
+        Result::Err(err) => { log(err.message()); }
+    }
+}
+
+// --- Combined patterns ---
+pub fn combinedPatterns(entity: Entity) {
+    // ? on component access returning Option
+    if let Option::Some(hp) = entity[Health] {
+        if hp.isDead() {
+            log("Entity is dead");
+        }
+    }
+
+    // ! when confident
+    entity[Health]!.damage(10);
+
+    // ? propagation in chain
+    let display = entity[Speaker]?.displayName;
+}

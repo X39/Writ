@@ -1,0 +1,87 @@
+// === Test: Enums & Pattern Matching ===
+// Validates enum declarations, match, and if let (Section 9)
+
+namespace test_enums;
+
+// --- Basic enum ---
+pub enum Direction {
+    North,
+    South,
+    East,
+    West,
+}
+
+// --- Enum with data ---
+pub enum QuestStatus {
+    NotStarted,
+    InProgress(currentStep: int),
+    Completed,
+    Failed(reason: string),
+}
+
+// --- Match expression ---
+pub fn describeQuest(status: QuestStatus) -> string {
+    match status {
+        QuestStatus::NotStarted => { "Not yet begun." }
+        QuestStatus::InProgress(step) => { $"On step {step}" }
+        QuestStatus::Completed => { "Done!" }
+        QuestStatus::Failed(reason) => { $"Failed: {reason}" }
+    }
+}
+
+// --- Match as statement ---
+pub fn handleEvent(event: Event) {
+    match event {
+        Event::Click(pos) => { handleClick(pos); }
+        Event::Key(code) => { handleKey(code); }
+    }
+}
+
+// --- Match assigned to variable ---
+pub fn matchAssignment(d: Direction) -> int {
+    let dx = match d {
+        Direction::North => { 0 }
+        Direction::South => { 0 }
+        Direction::East => { 1 }
+        Direction::West => { -1 }
+    };
+    dx
+}
+
+// --- Nested match ---
+pub fn nestedMatch(difficulty: Difficulty, level: int) -> int {
+    let reward = match difficulty {
+        Difficulty::Easy => {
+            match level {
+                1 => { 10 }
+                2 => { 20 }
+            }
+        }
+        Difficulty::Hard => { 100 }
+    };
+    reward
+}
+
+// --- Builtin enums ---
+pub fn optionUsage() {
+    let maybe: int? = null;
+    let present: int? = 42;
+}
+
+pub fn resultUsage() -> Result<int, GameError> {
+    Result::Ok(42)
+}
+
+// --- if let ---
+pub fn ifLetUsage(party: Party) {
+    if let Option::Some(healer) = party.healer {
+        healer.heal(player);
+    }
+
+    // With else
+    if let Option::Some(quest) = activeQuest {
+        showQuestUI(quest);
+    } else {
+        showNoQuestMessage();
+    }
+}

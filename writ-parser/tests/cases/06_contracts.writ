@@ -1,0 +1,124 @@
+// === Test: Contracts ===
+// Validates contract declarations, implementations, and operator overloading (Section 10)
+
+namespace test_contracts;
+
+// --- Basic contract ---
+pub contract Interactable {
+    fn onInteract(who: Entity);
+}
+
+pub contract Tradeable {
+    fn getInventory() -> List<Item>;
+    fn trade(item: Item, with: Entity);
+}
+
+// --- Contract implementation ---
+impl Interactable for Merchant {
+    fn onInteract(who: Entity) {
+        openTradeDialog(who);
+    }
+}
+
+// --- Contract as bound ---
+pub fn interactWith(thing: Interactable) {
+    thing.onInteract(player);
+}
+
+// --- Operator overloading via impl ---
+pub struct Vec2 {
+    pub x: float,
+    pub y: float,
+}
+
+impl Vec2 {
+    pub operator +(other: Vec2) -> Vec2 {
+        Vec2(x: self.x + other.x, y: self.y + other.y)
+    }
+
+    pub operator -(other: Vec2) -> Vec2 {
+        Vec2(x: self.x - other.x, y: self.y - other.y)
+    }
+
+    pub operator *(scalar: float) -> Vec2 {
+        Vec2(x: self.x * scalar, y: self.y * scalar)
+    }
+
+    pub operator ==(other: Vec2) -> bool {
+        self.x == other.x && self.y == other.y
+    }
+
+    pub operator <(other: Vec2) -> bool {
+        self.magnitude() < other.magnitude()
+    }
+
+    pub operator -() -> Vec2 {
+        Vec2(x: -self.x, y: -self.y)
+    }
+}
+
+// --- Into<T> conversion ---
+impl Into<string> for Vec2 {
+    fn into() -> string {
+        $"({self.x}, {self.y})"
+    }
+}
+
+impl Into<float> for Vec2 {
+    fn into() -> float {
+        self.magnitude()
+    }
+}
+
+// --- Iterable<T> ---
+pub struct NumberRange {
+    start: int,
+    end: int,
+}
+
+impl Iterable<int> for NumberRange {
+    fn iterator() -> Iterator<int> {
+        NumberRangeIterator(current: self.start, end: self.end)
+    }
+}
+
+// --- Index and IndexSet ---
+pub struct Grid<T> {
+    data: T[],
+    width: int,
+}
+
+impl Index<int, T> for Grid<T> {
+    pub operator [](key: int) -> T {
+        self.data[key]
+    }
+}
+
+impl IndexSet<int, T> for Grid<T> {
+    pub operator []=(key: int, value: T) {
+        self.data[key] = value;
+    }
+}
+
+// --- Error contract ---
+pub struct GameError {
+    code: int,
+    msg: string,
+}
+
+impl Error for GameError {
+    fn message() -> string {
+        $"Error {self.code}: {self.msg}"
+    }
+}
+
+// --- Usage ---
+pub fn contractUsage() {
+    let a = Vec2(x: 1.0, y: 2.0);
+    let b = Vec2(x: 3.0, y: 4.0);
+    let c = a + b;
+    let d = a * 2.0;
+    let neg = -a;
+    let eq = a == b;
+    let label = a.into<string>();
+}
