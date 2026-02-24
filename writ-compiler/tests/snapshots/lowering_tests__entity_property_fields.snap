@@ -1,0 +1,47 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Struct(
+            AstStructDecl {
+                attrs: [],
+                vis: None,
+                name: "Guard",
+                name_span: 7..12,
+                generics: [],
+                fields: [
+                    AstStructField {
+                        vis: None,
+                        name: "name",
+                        name_span: 15..19,
+                        ty: Named {
+                            name: "string",
+                            span: 21..27,
+                        },
+                        default: None,
+                        span: 15..28,
+                    },
+                    AstStructField {
+                        vis: None,
+                        name: "level",
+                        name_span: 29..34,
+                        ty: Named {
+                            name: "int",
+                            span: 36..39,
+                        },
+                        default: Some(
+                            IntLit {
+                                value: 1,
+                                span: 42..43,
+                            },
+                        ),
+                        span: 29..43,
+                    },
+                ],
+                span: 0..45,
+            },
+        ),
+    ],
+}

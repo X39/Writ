@@ -1,4 +1,4 @@
-# Writ Language Specification
+# 1. Writ Language Specification
 ## 22. Globals & Atomic Access
 
 ### 22.1 Global Variables

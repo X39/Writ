@@ -1,0 +1,120 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Fn(
+            AstFnDecl {
+                attrs: [],
+                vis: None,
+                name: "annoying",
+                name_span: 4..12,
+                generics: [],
+                params: [],
+                return_type: None,
+                body: [
+                    Let {
+                        mutable: false,
+                        name: "_guard",
+                        name_span: 18..23,
+                        ty: None,
+                        value: GenericCall {
+                            callee: MemberAccess {
+                                object: Ident {
+                                    name: "Entity",
+                                    span: 18..23,
+                                },
+                                field: "getOrCreate",
+                                field_span: 18..23,
+                                span: 18..23,
+                            },
+                            type_args: [
+                                Named {
+                                    name: "Guard",
+                                    span: 18..23,
+                                },
+                            ],
+                            args: [],
+                            span: 18..23,
+                        },
+                        span: 18..23,
+                    },
+                    Expr {
+                        expr: Call {
+                            callee: Ident {
+                                name: "say_localized",
+                                span: 17..35,
+                            },
+                            args: [
+                                AstArg {
+                                    name: None,
+                                    value: Ident {
+                                        name: "_guard",
+                                        span: 18..23,
+                                    },
+                                    span: 17..35,
+                                },
+                                AstArg {
+                                    name: None,
+                                    value: StringLit {
+                                        value: "5268ffd5",
+                                        span: 17..35,
+                                    },
+                                    span: 17..35,
+                                },
+                                AstArg {
+                                    name: None,
+                                    value: StringLit {
+                                        value: "Move along.",
+                                        span: 24..35,
+                                    },
+                                    span: 17..35,
+                                },
+                            ],
+                            span: 17..35,
+                        },
+                        span: 17..35,
+                    },
+                    Expr {
+                        expr: Call {
+                            callee: Ident {
+                                name: "say_localized",
+                                span: 36..54,
+                            },
+                            args: [
+                                AstArg {
+                                    name: None,
+                                    value: Ident {
+                                        name: "_guard",
+                                        span: 37..42,
+                                    },
+                                    span: 36..54,
+                                },
+                                AstArg {
+                                    name: None,
+                                    value: StringLit {
+                                        value: "5168fe42",
+                                        span: 36..54,
+                                    },
+                                    span: 36..54,
+                                },
+                                AstArg {
+                                    name: None,
+                                    value: StringLit {
+                                        value: "Move along.",
+                                        span: 43..54,
+                                    },
+                                    span: 36..54,
+                                },
+                            ],
+                            span: 36..54,
+                        },
+                        span: 36..54,
+                    },
+                ],
+                span: 0..56,
+            },
+        ),
+    ],
+}

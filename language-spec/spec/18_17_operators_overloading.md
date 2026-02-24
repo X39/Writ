@@ -1,4 +1,4 @@
-# Writ Language Specification
+# 1. Writ Language Specification
 ## 17. Operators & Overloading
 
 ### 17.1 Operator Precedence (highest to lowest)
@@ -28,20 +28,20 @@ corresponding builtin contract.
 impl vec2 {
     // Binary operators
     operator +(other: vec2) -> vec2 {
-        vec2(self.x + other.x, self.y + other.y)
+        vec2 { x: self.x + other.x, y: self.y + other.y }
     }
 
     operator *(scalar: float) -> vec2 {
-        vec2(self.x * scalar, self.y * scalar)
+        vec2 { x: self.x * scalar, y: self.y * scalar }
     }
 
     operator %(other: vec2) -> vec2 {
-        vec2(self.x % other.x, self.y % other.y)
+        vec2 { x: self.x % other.x, y: self.y % other.y }
     }
 
     // Unary operators
     operator -() -> vec2 {
-        vec2(-self.x, -self.y)
+        vec2 { x: -self.x, y: -self.y }
     }
 
     // Comparison

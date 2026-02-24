@@ -1,0 +1,68 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Fn(
+            AstFnDecl {
+                attrs: [],
+                vis: None,
+                name: "greet",
+                name_span: 4..9,
+                generics: [],
+                params: [
+                    AstParam {
+                        name: "player",
+                        name_span: 10..16,
+                        ty: Named {
+                            name: "Entity",
+                            span: 18..24,
+                        },
+                        span: 10..24,
+                    },
+                ],
+                return_type: None,
+                body: [
+                    Expr {
+                        expr: Call {
+                            callee: Ident {
+                                name: "say_localized",
+                                span: 28..48,
+                            },
+                            args: [
+                                AstArg {
+                                    name: None,
+                                    value: Ident {
+                                        name: "player",
+                                        span: 29..35,
+                                    },
+                                    span: 28..48,
+                                },
+                                AstArg {
+                                    name: None,
+                                    value: StringLit {
+                                        value: "8fc9f7db",
+                                        span: 28..48,
+                                    },
+                                    span: 28..48,
+                                },
+                                AstArg {
+                                    name: None,
+                                    value: StringLit {
+                                        value: "Hello there.",
+                                        span: 36..48,
+                                    },
+                                    span: 28..48,
+                                },
+                            ],
+                            span: 28..48,
+                        },
+                        span: 28..48,
+                    },
+                ],
+                span: 0..50,
+            },
+        ),
+    ],
+}

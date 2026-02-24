@@ -1,4 +1,4 @@
-# Writ Language Specification
+# 1. Writ Language Specification
 ## 4. Lexical Structure
 
 ### 4.1 Keywords
@@ -15,6 +15,10 @@
 | Values                | `true`, `false`, `null`, `self`                                                                          |
 | Entity                | `use`, `on`                                                                                              |
 | Concurrency (globals) | `atomic`                                                                                                 |
+
+> **Context-sensitive keywords:** `entity`, `component`, `use`, and `on` are reserved in declaration context
+> (where they begin a declaration) but may be used as identifiers in expression context. For example, a local
+> variable named `use` or a function parameter named `on` is valid.
 
 ### 4.2 Sigils & Delimiters
 
@@ -92,6 +96,9 @@ To include a literal brace, double it:
 let json = $"{{\"name\": \"{name}\"}}";
 // Result: {"name": "Alice"}
 ```
+
+Interpolated expressions may be any valid expression, including nested formattable strings (`$"outer {$"inner {x}"}"`),
+`if`/`else`, `match`, blocks, lambdas, and method chains.
 
 Formattable strings support all the same escape sequences as basic strings.
 

@@ -1,4 +1,4 @@
-# Writ Language Specification
+# 1. Writ Language Specification
 ## 2. Project Configuration (writ.toml)
 
 Every Writ project requires a `writ.toml` file at the project root. This file defines project metadata, compiler

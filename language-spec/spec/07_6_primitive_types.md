@@ -1,4 +1,4 @@
-# Writ Language Specification
+# 1. Writ Language Specification
 ## 6. Primitive Types
 
 | Type     | Description                      | Default Value |
@@ -95,7 +95,8 @@ The parser resolves (1) vs (2) by position: `[` at the start of an expression is
 postfix. For (3), see [Section 16.3](#163-parser-disambiguation).
 
 > **Note:** `string` is listed in the primitive types table despite not being a machine word, because it is a language
-> keyword. Arrays follow the same pattern — compiler-known, with dedicated syntax, but not a single machine word. Standard
+> keyword. Arrays follow the same pattern — compiler-known, with dedicated syntax, but not a single machine word.
+> Standard
 > library types like `List<T>` may provide higher-level collection abstractions on top of arrays.
 
 ### 6.6 Ranges

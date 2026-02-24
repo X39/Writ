@@ -1,4 +1,4 @@
-# Writ Language Specification
+# 1. Writ Language Specification
 ## 26. Standard Library Builtins
 
 ### 26.1 Compiler-Known Types

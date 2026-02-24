@@ -1,0 +1,55 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Fn(
+            AstFnDecl {
+                attrs: [],
+                vis: None,
+                name: "add",
+                name_span: 3..6,
+                generics: [],
+                params: [
+                    AstParam {
+                        name: "a",
+                        name_span: 7..8,
+                        ty: Named {
+                            name: "int",
+                            span: 10..13,
+                        },
+                        span: 7..13,
+                    },
+                    AstParam {
+                        name: "b",
+                        name_span: 15..16,
+                        ty: Named {
+                            name: "int",
+                            span: 18..21,
+                        },
+                        span: 15..21,
+                    },
+                ],
+                return_type: Some(
+                    Named {
+                        name: "int",
+                        span: 26..29,
+                    },
+                ),
+                body: [
+                    Return {
+                        value: Some(
+                            Ident {
+                                name: "a",
+                                span: 39..40,
+                            },
+                        ),
+                        span: 32..41,
+                    },
+                ],
+                span: 0..43,
+            },
+        ),
+    ],
+}

@@ -1,0 +1,27 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: "(ast, errors)"
+---
+(
+    Ast {
+        items: [
+            Struct(
+                AstStructDecl {
+                    attrs: [],
+                    vis: None,
+                    name: "Guard",
+                    name_span: 7..12,
+                    generics: [],
+                    fields: [],
+                    span: 0..31,
+                },
+            ),
+        ],
+    },
+    [
+        UnknownLifecycleEvent {
+            event: "explode",
+            span: 18..25,
+        },
+    ],
+)

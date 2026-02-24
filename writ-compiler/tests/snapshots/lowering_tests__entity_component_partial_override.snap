@@ -1,0 +1,102 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Struct(
+            AstStructDecl {
+                attrs: [],
+                vis: None,
+                name: "Guard",
+                name_span: 7..12,
+                generics: [],
+                fields: [
+                    AstStructField {
+                        vis: None,
+                        name: "$Health",
+                        name_span: 19..25,
+                        ty: Named {
+                            name: "Health",
+                            span: 19..25,
+                        },
+                        default: Some(
+                            StructLit {
+                                name: "Health",
+                                name_span: 19..25,
+                                fields: [
+                                    (
+                                        "current",
+                                        28..35,
+                                        IntLit {
+                                            value: 50,
+                                            span: 37..39,
+                                        },
+                                    ),
+                                ],
+                                span: 15..41,
+                            },
+                        ),
+                        span: 15..41,
+                    },
+                ],
+                span: 0..43,
+            },
+        ),
+        Impl(
+            AstImplDecl {
+                contract: Some(
+                    Generic {
+                        name: "ComponentAccess",
+                        args: [
+                            Named {
+                                name: "Health",
+                                span: 19..25,
+                            },
+                        ],
+                        span: 19..25,
+                    },
+                ),
+                target: Named {
+                    name: "Guard",
+                    span: 7..12,
+                },
+                members: [
+                    Fn(
+                        AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "get",
+                            name_span: 19..25,
+                            generics: [],
+                            params: [],
+                            return_type: Some(
+                                Named {
+                                    name: "Health",
+                                    span: 19..25,
+                                },
+                            ),
+                            body: [
+                                Return {
+                                    value: Some(
+                                        MemberAccess {
+                                            object: SelfLit {
+                                                span: 19..25,
+                                            },
+                                            field: "$Health",
+                                            field_span: 19..25,
+                                            span: 19..25,
+                                        },
+                                    ),
+                                    span: 19..25,
+                                },
+                            ],
+                            span: 15..41,
+                        },
+                    ),
+                ],
+                span: 15..41,
+            },
+        ),
+    ],
+}

@@ -1,0 +1,40 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: "(ast, errors)"
+---
+(
+    Ast {
+        items: [
+            Struct(
+                AstStructDecl {
+                    attrs: [],
+                    vis: None,
+                    name: "Guard",
+                    name_span: 7..12,
+                    generics: [],
+                    fields: [
+                        AstStructField {
+                            vis: None,
+                            name: "Health",
+                            name_span: 15..21,
+                            ty: Named {
+                                name: "int",
+                                span: 23..26,
+                            },
+                            default: None,
+                            span: 15..27,
+                        },
+                    ],
+                    span: 0..56,
+                },
+            ),
+        ],
+    },
+    [
+        PropertyComponentCollision {
+            name: "Health",
+            entity: "Guard",
+            span: 32..38,
+        },
+    ],
+)

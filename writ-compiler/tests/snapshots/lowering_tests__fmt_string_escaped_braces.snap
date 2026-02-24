@@ -1,0 +1,33 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Fn(
+            AstFnDecl {
+                attrs: [],
+                vis: None,
+                name: "f",
+                name_span: 3..4,
+                generics: [],
+                params: [],
+                return_type: None,
+                body: [
+                    Let {
+                        mutable: false,
+                        name: "x",
+                        name_span: 13..14,
+                        ty: None,
+                        value: StringLit {
+                            value: "{{literal}}",
+                            span: 19..30,
+                        },
+                        span: 9..32,
+                    },
+                ],
+                span: 0..34,
+            },
+        ),
+    ],
+}

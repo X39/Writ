@@ -1,0 +1,130 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Impl(
+            AstImplDecl {
+                contract: None,
+                target: Named {
+                    name: "vec2",
+                    span: 5..9,
+                },
+                members: [
+                    Fn(
+                        AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "length",
+                            name_span: 15..21,
+                            generics: [],
+                            params: [],
+                            return_type: Some(
+                                Named {
+                                    name: "float",
+                                    span: 27..32,
+                                },
+                            ),
+                            body: [
+                                Expr {
+                                    expr: FloatLit {
+                                        value: 0.0,
+                                        span: 35..38,
+                                    },
+                                    span: 35..38,
+                                },
+                            ],
+                            span: 12..40,
+                        },
+                    ),
+                ],
+                span: 0..89,
+            },
+        ),
+        Impl(
+            AstImplDecl {
+                contract: Some(
+                    Generic {
+                        name: "Add",
+                        args: [
+                            Named {
+                                name: "vec2",
+                                span: 59..63,
+                            },
+                            Named {
+                                name: "vec2",
+                                span: 68..72,
+                            },
+                        ],
+                        span: 41..87,
+                    },
+                ),
+                target: Named {
+                    name: "vec2",
+                    span: 5..9,
+                },
+                members: [
+                    Fn(
+                        AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "add",
+                            name_span: 50..51,
+                            generics: [],
+                            params: [
+                                AstParam {
+                                    name: "other",
+                                    name_span: 52..57,
+                                    ty: Named {
+                                        name: "vec2",
+                                        span: 59..63,
+                                    },
+                                    span: 52..63,
+                                },
+                            ],
+                            return_type: Some(
+                                Named {
+                                    name: "vec2",
+                                    span: 68..72,
+                                },
+                            ),
+                            body: [
+                                Expr {
+                                    expr: Call {
+                                        callee: Ident {
+                                            name: "vec2",
+                                            span: 75..79,
+                                        },
+                                        args: [
+                                            AstArg {
+                                                name: None,
+                                                value: IntLit {
+                                                    value: 0,
+                                                    span: 80..81,
+                                                },
+                                                span: 80..81,
+                                            },
+                                            AstArg {
+                                                name: None,
+                                                value: IntLit {
+                                                    value: 0,
+                                                    span: 83..84,
+                                                },
+                                                span: 83..84,
+                                            },
+                                        ],
+                                        span: 75..85,
+                                    },
+                                    span: 75..85,
+                                },
+                            ],
+                            span: 41..87,
+                        },
+                    ),
+                ],
+                span: 41..87,
+            },
+        ),
+    ],
+}

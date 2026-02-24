@@ -1,0 +1,208 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Struct(
+            AstStructDecl {
+                attrs: [],
+                vis: None,
+                name: "Guard",
+                name_span: 7..12,
+                generics: [],
+                fields: [
+                    AstStructField {
+                        vis: None,
+                        name: "name",
+                        name_span: 15..19,
+                        ty: Named {
+                            name: "string",
+                            span: 21..27,
+                        },
+                        default: None,
+                        span: 15..28,
+                    },
+                    AstStructField {
+                        vis: None,
+                        name: "$Health",
+                        name_span: 33..39,
+                        ty: Named {
+                            name: "Health",
+                            span: 33..39,
+                        },
+                        default: Some(
+                            StructLit {
+                                name: "Health",
+                                name_span: 33..39,
+                                fields: [
+                                    (
+                                        "current",
+                                        42..49,
+                                        IntLit {
+                                            value: 80,
+                                            span: 51..53,
+                                        },
+                                    ),
+                                    (
+                                        "max",
+                                        55..58,
+                                        IntLit {
+                                            value: 80,
+                                            span: 60..62,
+                                        },
+                                    ),
+                                ],
+                                span: 29..65,
+                            },
+                        ),
+                        span: 29..65,
+                    },
+                ],
+                span: 0..146,
+            },
+        ),
+        Impl(
+            AstImplDecl {
+                contract: None,
+                target: Named {
+                    name: "Guard",
+                    span: 7..12,
+                },
+                members: [
+                    Fn(
+                        AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "greet",
+                            name_span: 69..74,
+                            generics: [],
+                            params: [],
+                            return_type: Some(
+                                Named {
+                                    name: "string",
+                                    span: 80..86,
+                                },
+                            ),
+                            body: [
+                                Return {
+                                    value: Some(
+                                        StringLit {
+                                            value: "\"hello\"",
+                                            span: 96..103,
+                                        },
+                                    ),
+                                    span: 89..104,
+                                },
+                            ],
+                            span: 66..106,
+                        },
+                    ),
+                ],
+                span: 0..146,
+            },
+        ),
+        Impl(
+            AstImplDecl {
+                contract: Some(
+                    Generic {
+                        name: "ComponentAccess",
+                        args: [
+                            Named {
+                                name: "Health",
+                                span: 33..39,
+                            },
+                        ],
+                        span: 33..39,
+                    },
+                ),
+                target: Named {
+                    name: "Guard",
+                    span: 7..12,
+                },
+                members: [
+                    Fn(
+                        AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "get",
+                            name_span: 33..39,
+                            generics: [],
+                            params: [],
+                            return_type: Some(
+                                Named {
+                                    name: "Health",
+                                    span: 33..39,
+                                },
+                            ),
+                            body: [
+                                Return {
+                                    value: Some(
+                                        MemberAccess {
+                                            object: SelfLit {
+                                                span: 33..39,
+                                            },
+                                            field: "$Health",
+                                            field_span: 33..39,
+                                            span: 33..39,
+                                        },
+                                    ),
+                                    span: 33..39,
+                                },
+                            ],
+                            span: 29..65,
+                        },
+                    ),
+                ],
+                span: 29..65,
+            },
+        ),
+        Impl(
+            AstImplDecl {
+                contract: Some(
+                    Named {
+                        name: "OnCreate",
+                        span: 110..116,
+                    },
+                ),
+                target: Named {
+                    name: "Guard",
+                    span: 7..12,
+                },
+                members: [
+                    Fn(
+                        AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "on_create",
+                            name_span: 110..116,
+                            generics: [],
+                            params: [],
+                            return_type: None,
+                            body: [
+                                Let {
+                                    mutable: false,
+                                    name: "ready",
+                                    name_span: 123..128,
+                                    ty: Some(
+                                        Named {
+                                            name: "bool",
+                                            span: 130..134,
+                                        },
+                                    ),
+                                    value: BoolLit {
+                                        value: true,
+                                        span: 137..141,
+                                    },
+                                    span: 119..142,
+                                },
+                            ],
+                            span: 107..144,
+                        },
+                    ),
+                ],
+                span: 107..144,
+            },
+        ),
+    ],
+}

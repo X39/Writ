@@ -1,0 +1,182 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Fn(
+            AstFnDecl {
+                attrs: [],
+                vis: None,
+                name: "chat",
+                name_span: 4..8,
+                generics: [],
+                params: [],
+                return_type: None,
+                body: [
+                    Let {
+                        mutable: false,
+                        name: "_narrator",
+                        name_span: 14..22,
+                        ty: None,
+                        value: GenericCall {
+                            callee: MemberAccess {
+                                object: Ident {
+                                    name: "Entity",
+                                    span: 14..22,
+                                },
+                                field: "getOrCreate",
+                                field_span: 14..22,
+                                span: 14..22,
+                            },
+                            type_args: [
+                                Named {
+                                    name: "Narrator",
+                                    span: 14..22,
+                                },
+                            ],
+                            args: [],
+                            span: 14..22,
+                        },
+                        span: 14..22,
+                    },
+                    Let {
+                        mutable: false,
+                        name: "_player",
+                        name_span: 31..37,
+                        ty: None,
+                        value: GenericCall {
+                            callee: MemberAccess {
+                                object: Ident {
+                                    name: "Entity",
+                                    span: 31..37,
+                                },
+                                field: "getOrCreate",
+                                field_span: 31..37,
+                                span: 31..37,
+                            },
+                            type_args: [
+                                Named {
+                                    name: "Player",
+                                    span: 31..37,
+                                },
+                            ],
+                            args: [],
+                            span: 31..37,
+                        },
+                        span: 31..37,
+                    },
+                    Expr {
+                        expr: Call {
+                            callee: Ident {
+                                name: "say_localized",
+                                span: 13..29,
+                            },
+                            args: [
+                                AstArg {
+                                    name: None,
+                                    value: Ident {
+                                        name: "_narrator",
+                                        span: 14..22,
+                                    },
+                                    span: 13..29,
+                                },
+                                AstArg {
+                                    name: None,
+                                    value: StringLit {
+                                        value: "deddd168",
+                                        span: 13..29,
+                                    },
+                                    span: 13..29,
+                                },
+                                AstArg {
+                                    name: None,
+                                    value: StringLit {
+                                        value: "Hello.",
+                                        span: 23..29,
+                                    },
+                                    span: 13..29,
+                                },
+                            ],
+                            span: 13..29,
+                        },
+                        span: 13..29,
+                    },
+                    Expr {
+                        expr: Call {
+                            callee: Ident {
+                                name: "say_localized",
+                                span: 30..46,
+                            },
+                            args: [
+                                AstArg {
+                                    name: None,
+                                    value: Ident {
+                                        name: "_player",
+                                        span: 31..37,
+                                    },
+                                    span: 30..46,
+                                },
+                                AstArg {
+                                    name: None,
+                                    value: StringLit {
+                                        value: "bb7c88ae",
+                                        span: 30..46,
+                                    },
+                                    span: 30..46,
+                                },
+                                AstArg {
+                                    name: None,
+                                    value: StringLit {
+                                        value: "Hi back.",
+                                        span: 38..46,
+                                    },
+                                    span: 30..46,
+                                },
+                            ],
+                            span: 30..46,
+                        },
+                        span: 30..46,
+                    },
+                    Expr {
+                        expr: Call {
+                            callee: Ident {
+                                name: "say_localized",
+                                span: 47..69,
+                            },
+                            args: [
+                                AstArg {
+                                    name: None,
+                                    value: Ident {
+                                        name: "_narrator",
+                                        span: 48..56,
+                                    },
+                                    span: 47..69,
+                                },
+                                AstArg {
+                                    name: None,
+                                    value: StringLit {
+                                        value: "3d8956ca",
+                                        span: 47..69,
+                                    },
+                                    span: 47..69,
+                                },
+                                AstArg {
+                                    name: None,
+                                    value: StringLit {
+                                        value: "How are you?",
+                                        span: 57..69,
+                                    },
+                                    span: 47..69,
+                                },
+                            ],
+                            span: 47..69,
+                        },
+                        span: 47..69,
+                    },
+                ],
+                span: 0..71,
+            },
+        ),
+    ],
+}

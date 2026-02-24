@@ -1,4 +1,4 @@
-# Writ Language Specification
+# 1. Writ Language Specification
 ## 25. Localization
 
 Writ provides a localization system designed around standard game industry workflows. Dialogue text remains clean in

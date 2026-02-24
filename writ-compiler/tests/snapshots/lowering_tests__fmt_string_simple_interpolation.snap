@@ -1,0 +1,74 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Fn(
+            AstFnDecl {
+                attrs: [],
+                vis: None,
+                name: "f",
+                name_span: 3..4,
+                generics: [],
+                params: [
+                    AstParam {
+                        name: "name",
+                        name_span: 5..9,
+                        ty: Named {
+                            name: "string",
+                            span: 11..17,
+                        },
+                        span: 5..17,
+                    },
+                ],
+                return_type: None,
+                body: [
+                    Let {
+                        mutable: false,
+                        name: "x",
+                        name_span: 25..26,
+                        ty: None,
+                        value: Binary {
+                            left: Binary {
+                                left: StringLit {
+                                    value: "Hello ",
+                                    span: 31..37,
+                                },
+                                op: Add,
+                                right: GenericCall {
+                                    callee: MemberAccess {
+                                        object: Ident {
+                                            name: "name",
+                                            span: 38..42,
+                                        },
+                                        field: "into",
+                                        field_span: 37..43,
+                                        span: 37..43,
+                                    },
+                                    type_args: [
+                                        Named {
+                                            name: "string",
+                                            span: 37..43,
+                                        },
+                                    ],
+                                    args: [],
+                                    span: 37..43,
+                                },
+                                span: 29..45,
+                            },
+                            op: Add,
+                            right: StringLit {
+                                value: "!",
+                                span: 43..44,
+                            },
+                            span: 29..45,
+                        },
+                        span: 21..46,
+                    },
+                ],
+                span: 0..48,
+            },
+        ),
+    ],
+}

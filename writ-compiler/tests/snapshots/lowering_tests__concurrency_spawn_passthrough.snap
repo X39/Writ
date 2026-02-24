@@ -1,0 +1,36 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Fn(
+            AstFnDecl {
+                attrs: [],
+                vis: None,
+                name: "f",
+                name_span: 3..4,
+                generics: [],
+                params: [],
+                return_type: None,
+                body: [
+                    Expr {
+                        expr: Spawn {
+                            expr: Call {
+                                callee: Ident {
+                                    name: "doWork",
+                                    span: 15..21,
+                                },
+                                args: [],
+                                span: 15..23,
+                            },
+                            span: 9..23,
+                        },
+                        span: 9..24,
+                    },
+                ],
+                span: 0..26,
+            },
+        ),
+    ],
+}

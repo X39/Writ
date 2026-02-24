@@ -9,11 +9,26 @@ dlg greetPlayer(player: Entity) {
     @Narrator The world awaits you.
 }
 
-// --- 13.2 Speaker attribution ---
+// --- 13.1b Basic dialogue without parens ---
+dlg worldIntro {
+    @Narrator The world awaits.
+}
+
+// --- 13.2 Speaker attribution (inline form) ---
 dlg shopDialog(customer: Entity) {
     @OldTim Welcome to my shop!
     @OldTim Take a look around.
     @Narrator You browse the wares.
+}
+
+// --- 13.2b Speaker attribution (standalone form) ---
+dlg standaloneSpeaker(player: Entity) {
+    @Narrator
+    You enter a dimly lit room.
+    The air smells of old parchment.
+    @OldTim
+    Welcome, traveler!
+    I've been expecting you.
 }
 
 // --- 13.3 The $ sigil ---
@@ -74,6 +89,31 @@ dlg conditionalDemo(player: Entity) {
     }
 }
 
+// --- 13.5b Nested: choice inside conditional, conditional inside choice ---
+dlg nestedDemo(player: Entity) {
+    @Merchant Welcome!
+    $ choice {
+        "Show me your wares" {
+            $ if player.gold < 10 {
+                @Merchant You seem a bit short on coin.
+            } else {
+                @Merchant Here's what I have.
+                $ choice {
+                    "Buy sword" {
+                        @Merchant Fine choice!
+                    }
+                    "Never mind" {
+                        @Merchant Come back anytime.
+                    }
+                }
+            }
+        }
+        "Goodbye" {
+            @Merchant Farewell, traveler.
+        }
+    }
+}
+
 // --- 13.6 Transitions ---
 dlg mainDialog(player: Entity) {
     @Narrator Where do you go?
@@ -83,6 +123,20 @@ dlg mainDialog(player: Entity) {
         }
         "The arena" {
             -> arenaDialog(player)
+        }
+    }
+}
+
+// --- 13.6b No-arg transitions ---
+dlg questIntro {
+    @Narrator A great evil threatens the land.
+    $ choice {
+        "Tell me more" {
+            -> questDetails
+        }
+        "Not interested" {
+            @Narrator Very well. Perhaps another time.
+            -> townSquare
         }
     }
 }
@@ -101,11 +155,12 @@ dlg localizedDemo() {
     }
 }
 
-// --- 13.8 Text styling (BBCode) ---
+// --- 13.8 Text styling (BBCode passthrough) ---
 dlg styledDemo() {
     @Narrator This is [b]bold[/b] text.
     @Narrator This is [i]italic[/i] and [color=red]red[/color].
     @Narrator [shake]Danger![/shake] [wave]Hello~[/wave]
+    @Narrator ...[pause=1000] Run!
 }
 
 // --- Private dialogue (priv exception test) ---

@@ -1,0 +1,36 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Fn(
+            AstFnDecl {
+                attrs: [],
+                vis: None,
+                name: "f",
+                name_span: 3..4,
+                generics: [],
+                params: [],
+                return_type: None,
+                body: [
+                    Expr {
+                        expr: Defer {
+                            expr: Call {
+                                callee: Ident {
+                                    name: "cleanup",
+                                    span: 15..22,
+                                },
+                                args: [],
+                                span: 15..24,
+                            },
+                            span: 9..24,
+                        },
+                        span: 9..25,
+                    },
+                ],
+                span: 0..27,
+            },
+        ),
+    ],
+}

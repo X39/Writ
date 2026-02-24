@@ -1,4 +1,4 @@
-# Writ Language Specification
+# 1. Writ Language Specification
 ## 23. Modules & Namespaces
 
 Every Writ source file belongs to a namespace. Namespaces organize declarations into logical groups and prevent name
@@ -97,7 +97,7 @@ namespace game;
 using survival;
 
 fn example() {
-    let pot = HealthPotion(charges: 3, healAmount: 50);
+    let pot = new HealthPotion { charges: 3, healAmount: 50 };
     heal(pot, 25);
 }
 ```
@@ -113,7 +113,7 @@ The alias form binds a namespace to a shorter name:
 using items = survival::items;
 
 fn example() {
-    let bread = items::Bread(freshness: 1.0);
+    let bread = new items::Bread { freshness: 1.0 };
 }
 ```
 
@@ -144,7 +144,7 @@ namespace game {
     using combat;
 
     fn example() {
-        let pot = HealthPotion(charges: 3, healAmount: 50);
+        let pot = new HealthPotion { charges: 3, healAmount: 50 };
     }
 }
 ```
@@ -178,7 +178,7 @@ namespace survival;
 
 fn brewPotion() -> HealthPotion {
     // HealthPotion is visible — same namespace, pub, no :: needed
-    HealthPotion(charges: 3, healAmount: 50)
+    new HealthPotion { charges: 3, healAmount: 50 }
 }
 ```
 
@@ -238,9 +238,9 @@ From another file in the same namespace:
 namespace survival;
 
 fn example() {
-    let pot = HealthPotion(charges: 3, healAmount: 50);   // OK — HealthPotion is pub
-    heal(player, 25);                                      // OK — heal is pub
-    let r = PotionRecipe(ingredients: [], brewTime: 5.0);  // ERROR — PotionRecipe is private to its file
+    let pot = new HealthPotion { charges: 3, healAmount: 50 };   // OK — HealthPotion is pub
+    heal(player, 25);                                           // OK — heal is pub
+    let r = new PotionRecipe { ingredients: [], brewTime: 5.0 };  // ERROR — PotionRecipe is private to its file
 }
 ```
 
@@ -251,9 +251,9 @@ namespace game;
 using survival;
 
 fn example() {
-    heal(player, 25);                   // OK — heal is pub
-    let pot = HealthPotion();           // OK — HealthPotion is pub
-    let pot = survival::HealthPotion(); // OK — fully qualified also works
+    heal(player, 25);                       // OK — heal is pub
+    let pot = new HealthPotion {};           // OK — HealthPotion is pub
+    let pot = new survival::HealthPotion {}; // OK — fully qualified also works
     calculateHealAmount(5);             // ERROR — private, not visible outside its file
 }
 ```
@@ -288,11 +288,11 @@ pub struct Merchant {
 }
 
 impl Merchant {
-    pub fn greet() -> string {
+    pub fn greet(self) -> string {
         $"Welcome! I am {self.name}"
     }
 
-    fn applyDiscount(price: int) -> int {
+    fn applyDiscount(self, price: int) -> int {
         // Can access private fields — we're inside the type
         price - (price * self.discount)
     }
@@ -326,11 +326,11 @@ pub entity Guard {
         max: 80,
     },
 
-    pub fn greet() -> string {
+    pub fn greet(self) -> string {
         $"Halt! I am {self.name}"
     }
 
-    fn raiseAlert() {
+    fn raiseAlert(mut self) {
         self.alertLevel += 1;
     }
 
@@ -345,7 +345,7 @@ Lifecycle hooks (`on`) do not take visibility modifiers — they are always type
 called by user code).
 
 Component `use` declarations do not take visibility modifiers — component attachment is visible wherever the entity is
-visible. Component *field* and *method* visibility is governed by the component's own declarations.
+visible. Component field visibility is governed by the component's own declarations.
 
 #### 23.6.4 Contracts and Implementations
 
@@ -354,8 +354,8 @@ implementing the contract must expose those methods publicly:
 
 ```
 contract Tradeable {
-    fn getInventory() -> List<Item>;    // no modifier — always part of the public interface
-    fn trade(item: Item, with: Entity);
+    fn getInventory(self) -> List<Item>;    // no modifier — always part of the public interface
+    fn trade(mut self, item: Item, with: Entity);
 }
 ```
 
@@ -363,10 +363,10 @@ Methods in `impl` blocks that fulfill a contract requirement are implicitly `pub
 
 ```
 impl Tradeable for Merchant {
-    fn getInventory() -> List<Item> { ... }   // OK — implicitly pub
-    fn trade(item: Item, with: Entity) { ... }
+    fn getInventory(self) -> List<Item> { ... }   // OK — implicitly pub
+    fn trade(mut self, item: Item, with: Entity) { ... }
 
-    priv fn getInventory() -> List<Item> { ... }   // ERROR — contract methods cannot be private
+    priv fn getInventory(self) -> List<Item> { ... }   // ERROR — contract methods cannot be private
 }
 ```
 
@@ -374,8 +374,8 @@ Additional non-contract methods in an `impl` block follow normal visibility rule
 
 ```
 impl Merchant {
-    pub fn greet() -> string { ... }
-    fn calculateMarkup() -> float { ... }    // private — only Merchant can call this
+    pub fn greet(self) -> string { ... }
+    fn calculateMarkup(self) -> float { ... }    // private — only Merchant can call this
 }
 ```
 
@@ -394,20 +394,19 @@ pub enum QuestStatus {
 
 #### 23.6.6 Visibility Summary
 
-| Declaration context            | `pub`  | (none) / `priv`  |
-|--------------------------------|--------|------------------|
-| Top-level (`fn`, `struct`, …)  | Public | File-local       |
-| Top-level `dlg`                | Public | File-local*      |
-| Struct field                   | Public | Type-private     |
-| Struct method (in `impl`)      | Public | Type-private     |
-| Entity property                | Public | Type-private     |
-| Entity method                  | Public | Type-private     |
-| Entity lifecycle hook (`on`)   | —      | Always internal  |
-| Component field                | Public | Type-private     |
-| Component method               | Public | Type-private     |
-| Contract method signature      | —      | Always public    |
-| Contract impl method           | —      | Always public    |
-| Enum variant                   | —      | Inherits enum    |
+| Declaration context           | `pub`  | (none) / `priv` |
+|-------------------------------|--------|-----------------|
+| Top-level (`fn`, `struct`, …) | Public | File-local      |
+| Top-level `dlg`               | Public | File-local*     |
+| Struct field                  | Public | Type-private    |
+| Struct method (in `impl`)     | Public | Type-private    |
+| Entity property               | Public | Type-private    |
+| Entity method                 | Public | Type-private    |
+| Entity lifecycle hook (`on`)  | —      | Always internal |
+| Component field               | Public | Type-private    |
+| Contract method signature     | —      | Always public   |
+| Contract impl method          | —      | Always public   |
+| Enum variant                  | —      | Inherits enum   |
 
 *`dlg` defaults to `pub`; an explicit `priv` makes it file-local. All other declarations default to private.
 
@@ -449,8 +448,8 @@ conflict is legal as long as no ambiguous name is actually used without qualific
 The `::` operator accesses `pub` names within a namespace:
 
 ```
-let pot = survival::HealthPotion(charges: 3, healAmount: 50);
-let bread = survival::items::Bread(freshness: 1.0);
+let pot = new survival::HealthPotion { charges: 3, healAmount: 50 };
+let bread = new survival::items::Bread { freshness: 1.0 };
 survival::heal(player, 25);
 ```
 
@@ -494,7 +493,7 @@ root.
 The leading `::` works in all expression and type contexts:
 
 ```
-let x = ::survival::HealthPotion(charges: 3, healAmount: 50);
+let x = new ::survival::HealthPotion { charges: 3, healAmount: 50 };
 let y: ::survival::HealthPotion = x;
 ::survival::heal(player, 25);
 ```
@@ -528,7 +527,8 @@ The compiler does not validate that file paths match namespace declarations. A f
 server flags it as a warning.
 
 > **Note:** All files in the project are gathered and indexed before compilation. The compiler discovers all `.writ`
-> files in the project directory (as defined by `writ.toml`) and uses namespace declarations — not file paths — for symbol
+> files in the project directory (as defined by `writ.toml`) and uses namespace declarations — not file paths — for
+> symbol
 > resolution.
 
 ---

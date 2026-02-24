@@ -1,0 +1,67 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Impl(
+            AstImplDecl {
+                contract: Some(
+                    Generic {
+                        name: "IndexMut",
+                        args: [
+                            Named {
+                                name: "int",
+                                span: 32..35,
+                            },
+                            Named {
+                                name: "string",
+                                span: 42..48,
+                            },
+                        ],
+                        span: 14..53,
+                    },
+                ),
+                target: Named {
+                    name: "MyList",
+                    span: 5..11,
+                },
+                members: [
+                    Fn(
+                        AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "index_set",
+                            name_span: 23..26,
+                            generics: [],
+                            params: [
+                                AstParam {
+                                    name: "idx",
+                                    name_span: 27..30,
+                                    ty: Named {
+                                        name: "int",
+                                        span: 32..35,
+                                    },
+                                    span: 27..35,
+                                },
+                                AstParam {
+                                    name: "val",
+                                    name_span: 37..40,
+                                    ty: Named {
+                                        name: "string",
+                                        span: 42..48,
+                                    },
+                                    span: 37..48,
+                                },
+                            ],
+                            return_type: None,
+                            body: [],
+                            span: 14..53,
+                        },
+                    ),
+                ],
+                span: 14..53,
+            },
+        ),
+    ],
+}

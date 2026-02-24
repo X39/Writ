@@ -1,4 +1,4 @@
-# Writ Language Specification
+# 1. Writ Language Specification
 ## 21. Scoping Rules
 
 Writ uses lexical (static) scoping. Every `{ }` block introduces a new scope. Variables are visible from their

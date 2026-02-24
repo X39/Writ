@@ -1,0 +1,595 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Fn(
+            AstFnDecl {
+                attrs: [],
+                vis: None,
+                name: "describe",
+                name_span: 3..11,
+                generics: [],
+                params: [
+                    AstParam {
+                        name: "name",
+                        name_span: 12..16,
+                        ty: Generic {
+                            name: "Option",
+                            args: [
+                                Named {
+                                    name: "string",
+                                    span: 18..24,
+                                },
+                            ],
+                            span: 18..25,
+                        },
+                        span: 12..25,
+                    },
+                ],
+                return_type: Some(
+                    Named {
+                        name: "string",
+                        span: 30..36,
+                    },
+                ),
+                body: [
+                    Return {
+                        value: Some(
+                            StringLit {
+                                value: "\"unknown\"",
+                                span: 50..59,
+                            },
+                        ),
+                        span: 43..60,
+                    },
+                ],
+                span: 0..62,
+            },
+        ),
+        Impl(
+            AstImplDecl {
+                contract: Some(
+                    Generic {
+                        name: "Eq",
+                        args: [
+                            Named {
+                                name: "Score",
+                                span: 100..105,
+                            },
+                        ],
+                        span: 81..123,
+                    },
+                ),
+                target: Named {
+                    name: "Score",
+                    span: 69..74,
+                },
+                members: [
+                    Fn(
+                        AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "eq",
+                            name_span: 90..92,
+                            generics: [],
+                            params: [
+                                AstParam {
+                                    name: "other",
+                                    name_span: 93..98,
+                                    ty: Named {
+                                        name: "Score",
+                                        span: 100..105,
+                                    },
+                                    span: 93..105,
+                                },
+                            ],
+                            return_type: Some(
+                                Named {
+                                    name: "bool",
+                                    span: 110..114,
+                                },
+                            ),
+                            body: [
+                                Expr {
+                                    expr: BoolLit {
+                                        value: true,
+                                        span: 117..121,
+                                    },
+                                    span: 117..121,
+                                },
+                            ],
+                            span: 81..123,
+                        },
+                    ),
+                ],
+                span: 81..123,
+            },
+        ),
+        Impl(
+            AstImplDecl {
+                contract: Some(
+                    Generic {
+                        name: "Ne",
+                        args: [
+                            Named {
+                                name: "Score",
+                                span: 100..105,
+                            },
+                        ],
+                        span: 64..125,
+                    },
+                ),
+                target: Named {
+                    name: "Score",
+                    span: 69..74,
+                },
+                members: [
+                    Fn(
+                        AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "ne",
+                            name_span: 64..125,
+                            generics: [],
+                            params: [
+                                AstParam {
+                                    name: "other",
+                                    name_span: 64..125,
+                                    ty: Named {
+                                        name: "Score",
+                                        span: 100..105,
+                                    },
+                                    span: 64..125,
+                                },
+                            ],
+                            return_type: Some(
+                                Named {
+                                    name: "bool",
+                                    span: 64..125,
+                                },
+                            ),
+                            body: [
+                                Return {
+                                    value: Some(
+                                        UnaryPrefix {
+                                            op: Not,
+                                            expr: Binary {
+                                                left: SelfLit {
+                                                    span: 64..125,
+                                                },
+                                                op: Eq,
+                                                right: Ident {
+                                                    name: "other",
+                                                    span: 64..125,
+                                                },
+                                                span: 64..125,
+                                            },
+                                            span: 64..125,
+                                        },
+                                    ),
+                                    span: 64..125,
+                                },
+                            ],
+                            span: 64..125,
+                        },
+                    ),
+                ],
+                span: 64..125,
+            },
+        ),
+        Fn(
+            AstFnDecl {
+                attrs: [],
+                vis: None,
+                name: "greet",
+                name_span: 131..136,
+                generics: [],
+                params: [
+                    AstParam {
+                        name: "player",
+                        name_span: 137..143,
+                        ty: Named {
+                            name: "Entity",
+                            span: 145..151,
+                        },
+                        span: 137..151,
+                    },
+                ],
+                return_type: None,
+                body: [
+                    Let {
+                        mutable: false,
+                        name: "_narrator",
+                        name_span: 183..191,
+                        ty: None,
+                        value: GenericCall {
+                            callee: MemberAccess {
+                                object: Ident {
+                                    name: "Entity",
+                                    span: 183..191,
+                                },
+                                field: "getOrCreate",
+                                field_span: 183..191,
+                                span: 183..191,
+                            },
+                            type_args: [
+                                Named {
+                                    name: "Narrator",
+                                    span: 183..191,
+                                },
+                            ],
+                            args: [],
+                            span: 183..191,
+                        },
+                        span: 183..191,
+                    },
+                    Expr {
+                        expr: Call {
+                            callee: Ident {
+                                name: "say_localized",
+                                span: 159..177,
+                            },
+                            args: [
+                                AstArg {
+                                    name: None,
+                                    value: Ident {
+                                        name: "player",
+                                        span: 160..166,
+                                    },
+                                    span: 159..177,
+                                },
+                                AstArg {
+                                    name: None,
+                                    value: StringLit {
+                                        value: "c5e26495",
+                                        span: 159..177,
+                                    },
+                                    span: 159..177,
+                                },
+                                AstArg {
+                                    name: None,
+                                    value: StringLit {
+                                        value: "Hey there.",
+                                        span: 167..177,
+                                    },
+                                    span: 159..177,
+                                },
+                            ],
+                            span: 159..177,
+                        },
+                        span: 159..177,
+                    },
+                    Expr {
+                        expr: Call {
+                            callee: Ident {
+                                name: "choice",
+                                span: 205..277,
+                            },
+                            args: [
+                                AstArg {
+                                    name: None,
+                                    value: ArrayLit {
+                                        elements: [
+                                            Call {
+                                                callee: Ident {
+                                                    name: "Option",
+                                                    span: 215..238,
+                                                },
+                                                args: [
+                                                    AstArg {
+                                                        name: None,
+                                                        value: StringLit {
+                                                            value: "\"Yes\"",
+                                                            span: 215..220,
+                                                        },
+                                                        span: 215..238,
+                                                    },
+                                                    AstArg {
+                                                        name: None,
+                                                        value: Lambda {
+                                                            params: [],
+                                                            return_type: None,
+                                                            body: [
+                                                                Expr {
+                                                                    expr: Call {
+                                                                        callee: Ident {
+                                                                            name: "say_localized",
+                                                                            span: 223..236,
+                                                                        },
+                                                                        args: [
+                                                                            AstArg {
+                                                                                name: None,
+                                                                                value: Ident {
+                                                                                    name: "player",
+                                                                                    span: 224..230,
+                                                                                },
+                                                                                span: 223..236,
+                                                                            },
+                                                                            AstArg {
+                                                                                name: None,
+                                                                                value: StringLit {
+                                                                                    value: "919fb50c",
+                                                                                    span: 223..236,
+                                                                                },
+                                                                                span: 223..236,
+                                                                            },
+                                                                            AstArg {
+                                                                                name: None,
+                                                                                value: StringLit {
+                                                                                    value: "Sure.",
+                                                                                    span: 231..236,
+                                                                                },
+                                                                                span: 223..236,
+                                                                            },
+                                                                        ],
+                                                                        span: 223..236,
+                                                                    },
+                                                                    span: 223..236,
+                                                                },
+                                                            ],
+                                                            span: 215..238,
+                                                        },
+                                                        span: 215..238,
+                                                    },
+                                                ],
+                                                span: 215..238,
+                                            },
+                                            Call {
+                                                callee: Ident {
+                                                    name: "Option",
+                                                    span: 247..271,
+                                                },
+                                                args: [
+                                                    AstArg {
+                                                        name: None,
+                                                        value: StringLit {
+                                                            value: "\"No\"",
+                                                            span: 247..251,
+                                                        },
+                                                        span: 247..271,
+                                                    },
+                                                    AstArg {
+                                                        name: None,
+                                                        value: Lambda {
+                                                            params: [],
+                                                            return_type: None,
+                                                            body: [
+                                                                Expr {
+                                                                    expr: Call {
+                                                                        callee: Ident {
+                                                                            name: "say_localized",
+                                                                            span: 254..269,
+                                                                        },
+                                                                        args: [
+                                                                            AstArg {
+                                                                                name: None,
+                                                                                value: Ident {
+                                                                                    name: "_narrator",
+                                                                                    span: 255..263,
+                                                                                },
+                                                                                span: 254..269,
+                                                                            },
+                                                                            AstArg {
+                                                                                name: None,
+                                                                                value: StringLit {
+                                                                                    value: "cde37ceb",
+                                                                                    span: 254..269,
+                                                                                },
+                                                                                span: 254..269,
+                                                                            },
+                                                                            AstArg {
+                                                                                name: None,
+                                                                                value: StringLit {
+                                                                                    value: "Okay.",
+                                                                                    span: 264..269,
+                                                                                },
+                                                                                span: 254..269,
+                                                                            },
+                                                                        ],
+                                                                        span: 254..269,
+                                                                    },
+                                                                    span: 254..269,
+                                                                },
+                                                            ],
+                                                            span: 247..271,
+                                                        },
+                                                        span: 247..271,
+                                                    },
+                                                ],
+                                                span: 247..271,
+                                            },
+                                        ],
+                                        span: 205..277,
+                                    },
+                                    span: 205..277,
+                                },
+                            ],
+                            span: 205..277,
+                        },
+                        span: 205..277,
+                    },
+                    Return {
+                        value: Some(
+                            Call {
+                                callee: Ident {
+                                    name: "greet",
+                                    span: 285..290,
+                                },
+                                args: [
+                                    AstArg {
+                                        name: None,
+                                        value: Ident {
+                                            name: "player",
+                                            span: 291..297,
+                                        },
+                                        span: 282..298,
+                                    },
+                                ],
+                                span: 282..298,
+                            },
+                        ),
+                        span: 282..298,
+                    },
+                ],
+                span: 127..300,
+            },
+        ),
+        Struct(
+            AstStructDecl {
+                attrs: [
+                    AstAttribute {
+                        name: "Singleton",
+                        name_span: 303..312,
+                        args: [],
+                        span: 302..313,
+                    },
+                ],
+                vis: None,
+                name: "Narrator",
+                name_span: 321..329,
+                generics: [],
+                fields: [
+                    AstStructField {
+                        vis: None,
+                        name: "name",
+                        name_span: 336..340,
+                        ty: Named {
+                            name: "string",
+                            span: 342..348,
+                        },
+                        default: Some(
+                            StringLit {
+                                value: "\"Narrator\"",
+                                span: 351..361,
+                            },
+                        ),
+                        span: 336..362,
+                    },
+                    AstStructField {
+                        vis: None,
+                        name: "$Speaker",
+                        name_span: 371..378,
+                        ty: Named {
+                            name: "Speaker",
+                            span: 371..378,
+                        },
+                        default: Some(
+                            StructLit {
+                                name: "Speaker",
+                                name_span: 371..378,
+                                fields: [],
+                                span: 367..382,
+                            },
+                        ),
+                        span: 367..382,
+                    },
+                ],
+                span: 314..426,
+            },
+        ),
+        Impl(
+            AstImplDecl {
+                contract: Some(
+                    Generic {
+                        name: "ComponentAccess",
+                        args: [
+                            Named {
+                                name: "Speaker",
+                                span: 371..378,
+                            },
+                        ],
+                        span: 371..378,
+                    },
+                ),
+                target: Named {
+                    name: "Narrator",
+                    span: 321..329,
+                },
+                members: [
+                    Fn(
+                        AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "get",
+                            name_span: 371..378,
+                            generics: [],
+                            params: [],
+                            return_type: Some(
+                                Named {
+                                    name: "Speaker",
+                                    span: 371..378,
+                                },
+                            ),
+                            body: [
+                                Return {
+                                    value: Some(
+                                        MemberAccess {
+                                            object: SelfLit {
+                                                span: 371..378,
+                                            },
+                                            field: "$Speaker",
+                                            field_span: 371..378,
+                                            span: 371..378,
+                                        },
+                                    ),
+                                    span: 371..378,
+                                },
+                            ],
+                            span: 367..382,
+                        },
+                    ),
+                ],
+                span: 367..382,
+            },
+        ),
+        Impl(
+            AstImplDecl {
+                contract: Some(
+                    Named {
+                        name: "OnCreate",
+                        span: 390..396,
+                    },
+                ),
+                target: Named {
+                    name: "Narrator",
+                    span: 321..329,
+                },
+                members: [
+                    Fn(
+                        AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "on_create",
+                            name_span: 390..396,
+                            generics: [],
+                            params: [],
+                            return_type: None,
+                            body: [
+                                Let {
+                                    mutable: false,
+                                    name: "ready",
+                                    name_span: 403..408,
+                                    ty: Some(
+                                        Named {
+                                            name: "bool",
+                                            span: 410..414,
+                                        },
+                                    ),
+                                    value: BoolLit {
+                                        value: true,
+                                        span: 417..421,
+                                    },
+                                    span: 399..422,
+                                },
+                            ],
+                            span: 387..424,
+                        },
+                    ),
+                ],
+                span: 387..424,
+            },
+        ),
+    ],
+}

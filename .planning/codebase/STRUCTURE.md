@@ -1,0 +1,237 @@
+# Codebase Structure
+
+**Analysis Date:** 2026-02-26
+
+## Directory Layout
+
+```
+Writ/
+├── Cargo.toml                          # Workspace configuration
+├── Cargo.lock                          # Dependency lock file
+├── README.MD                           # Project overview
+├── .gitignore                          # Git exclusions
+├── .github/                            # GitHub metadata (workflows, etc.)
+├── .idea/                              # IDE configuration
+├── .planning/                          # GSD planning documents (generated)
+│   ├── codebase/                       # Codebase analysis documents
+│   │   ├── ARCHITECTURE.md
+│   │   ├── STRUCTURE.md
+│   │   ├── CONVENTIONS.md
+│   │   ├── TESTING.md
+│   │   ├── STACK.md
+│   │   ├── INTEGRATIONS.md
+│   │   └── CONCERNS.md
+│   └── [phase planning docs...]
+├── language-spec/                      # Writ language specification
+│   ├── spec/                           # Spec markdown files (20+ docs)
+│   │   ├── 00_preamble.md
+│   │   ├── 05_4_lexical_structure.md
+│   │   ├── 06_5_type_system.md
+│   │   ├── 14_13_dialogue_blocks_dlg.md
+│   │   └── [17+ more spec files]
+│   └── .split_config.json
+├── resources/                          # Asset files
+│   └── icon_128.svg                    # Writ logo
+├── target/                             # Build artifacts (Cargo output)
+│
+├── writ-parser/                        # PHASE 1: LEXER & PARSER
+│   ├── Cargo.toml
+│   ├── src/
+│   │   ├── lib.rs                      # Public API exports
+│   │   ├── lexer.rs                    # Tokenization (453 lines)
+│   │   ├── parser.rs                   # CST generation (2929 lines)
+│   │   └── cst.rs                      # CST type definitions (892 lines)
+│   └── tests/
+│       ├── lexer_tests.rs              # Lexer unit tests
+│       ├── parser_tests.rs             # Parser unit tests (comprehensive)
+│       └── cases/                      # Test input files
+│           ├── 01_comments.writ
+│           ├── 02_string_literals.writ
+│           ├── 03_variables_constants.writ
+│           ├── 04_structs.writ
+│           ├── 05_enums.writ
+│           ├── 06_contracts.writ
+│           ├── 07_functions.writ
+│           ├── 08_dialogue.writ
+│           ├── 09_entities.writ
+│           ├── 10_operators.writ
+│           ├── 11_error_handling.writ
+│           ├── 12_namespaces.writ
+│           ├── 12b_namespace_block.writ
+│           ├── 13_concurrency.writ
+│           ├── 14_attributes.writ
+│           ├── 15_ranges_indexing.writ
+│           ├── 16_generics.writ
+│           ├── 17_globals_atomic.writ
+│           ├── 18_extern.writ
+│           └── 19_localization.writ
+│
+├── writ-compiler/                      # PHASE 2+: COMPILER (stub)
+│   ├── Cargo.toml
+│   └── src/
+│       └── main.rs                     # Placeholder
+│
+├── writ-cli/                           # USER INTERFACE (stub)
+│   ├── Cargo.toml
+│   └── src/
+│       └── main.rs                     # Placeholder
+│
+└── writ-runtime/                       # PHASE 3+: RUNTIME (stub)
+    ├── Cargo.toml
+    └── src/
+        └── main.rs                     # Placeholder
+```
+
+## Directory Purposes
+
+**writ-parser:**
+- Purpose: Complete language lexer and parser producing full-fidelity CST
+- Contains: Token definitions, lexer rules, parser combinators, CST types
+- Key files: `src/lib.rs` (exports), `src/lexer.rs` (scanning), `src/parser.rs` (parsing), `src/cst.rs` (tree types)
+- Status: MVP complete—handles all language constructs with error recovery
+
+**writ-compiler:**
+- Purpose: Semantic analysis, type checking, code generation
+- Contains: Stub implementation only
+- Key files: `src/main.rs`
+- Status: Not started (Phase 2+)
+
+**writ-cli:**
+- Purpose: Command-line interface and file handling
+- Contains: Stub implementation only
+- Key files: `src/main.rs`
+- Status: Not started (Phase 2+)
+
+**writ-runtime:**
+- Purpose: Runtime environment and code execution
+- Contains: Stub implementation only
+- Key files: `src/main.rs`
+- Status: Not started (Phase 3+)
+
+**language-spec:**
+- Purpose: Authoritative Writ language specification (20+ markdown documents)
+- Contains: Lexical structure, type system, operators, declarations, dialogue, ECS, concurrency
+- Status: Complete specification for reference
+
+**resources:**
+- Purpose: Static assets (logos, icons, branding)
+- Contains: SVG assets
+- Status: Icon present
+
+**.planning:**
+- Purpose: Generated analysis and planning documents (GSD system)
+- Contains: Architecture analysis, phase plans, milestones, research
+- Status: Auto-generated by orchestrator
+
+## Key File Locations
+
+**Entry Points:**
+
+- `writ-parser/src/lib.rs`: Public API—export lex, parse, CST types
+- `writ-parser/src/parser.rs:2908` (`parse` function): Main parsing entry point
+- `writ-parser/src/lexer.rs:445` (`lex` function): Tokenization entry point
+
+**Configuration:**
+
+- `Cargo.toml`: Workspace configuration with 4 member crates
+- `writ-parser/Cargo.toml`: Parser dependencies (chumsky, logos)
+- `writ-cli/Cargo.toml`: CLI configuration (empty, to be filled)
+- `writ-compiler/Cargo.toml`: Compiler configuration (empty, to be filled)
+- `writ-runtime/Cargo.toml`: Runtime configuration (empty, to be filled)
+
+**Core Logic:**
+
+- `writ-parser/src/lexer.rs`: Logos enum and tokenization rules
+- `writ-parser/src/parser.rs`: Chumsky parser combinators (2929 lines of recursive parsers)
+- `writ-parser/src/cst.rs`: Complete CST node type hierarchy
+
+**Testing:**
+
+- `writ-parser/tests/lexer_tests.rs`: Lexer unit tests with roundtrip verification
+- `writ-parser/tests/parser_tests.rs`: Parser unit tests covering all language constructs
+- `writ-parser/tests/cases/*.writ`: 20 comprehensive test input files
+
+## Naming Conventions
+
+**Files:**
+
+- Rust modules: `lowercase_with_underscores.rs` (e.g., `lexer.rs`, `cst.rs`, `parser.rs`)
+- Test files: `{name}_tests.rs` or `{name}_test.rs` (e.g., `lexer_tests.rs`, `parser_tests.rs`)
+- Spec files: `{number}_{section}_{title}.md` (e.g., `05_4_lexical_structure.md`, `14_13_dialogue_blocks_dlg.md`)
+- Test case files: `{number:02}_{name}.writ` (e.g., `01_comments.writ`, `08_dialogue.writ`)
+
+**Directories:**
+
+- Crate root dirs: `lowercase-kebab-case` (e.g., `writ-parser`, `writ-compiler`)
+- Internal dirs: `lowercase_underscores` (e.g., `cases/` for test inputs)
+- Config dirs: dot-prefixed (e.g., `.github/`, `.idea/`, `.planning/`)
+
+**Rust Code:**
+
+- Type names (enums, structs): `PascalCase` (e.g., `Token`, `Expr`, `Stmt`, `DlgLine`, `TypeExpr`)
+- Function names: `snake_case` (e.g., `parse()`, `lex()`, `program_parser()`)
+- Constants: `SCREAMING_SNAKE_CASE` (not yet used in Phase 1)
+- Enum variants: `PascalCase` (e.g., `Token::Ident`, `Expr::Binary`, `Stmt::Let`)
+
+## Where to Add New Code
+
+**New Lexer Feature:**
+- Primary code: `writ-parser/src/lexer.rs` (add Token variant, update Logos enum or callback)
+- Tests: `writ-parser/tests/lexer_tests.rs` (add test function)
+- Test case: `writ-parser/tests/cases/{NN}_{name}.writ` (add example file)
+
+**New Expression Form:**
+- Primary code: `writ-parser/src/cst.rs` (add Expr variant) + `writ-parser/src/parser.rs` (add combinator)
+- Tests: `writ-parser/tests/parser_tests.rs` (add test function with helper)
+- Test case: Use existing `cases/10_operators.writ` or create new case file
+
+**New Statement Type:**
+- Primary code: `writ-parser/src/cst.rs` (add Stmt variant) + `writ-parser/src/parser.rs` (add parser)
+- Tests: `writ-parser/tests/parser_tests.rs` (add test)
+- Test case: Existing case files or new case
+
+**New Declaration (Struct, Enum, Function, Dialogue, etc.):**
+- Primary code: `writ-parser/src/cst.rs` (add struct/enum, add to Item enum) + `writ-parser/src/parser.rs` (add declaration parser)
+- Tests: `writ-parser/tests/parser_tests.rs` (add comprehensive tests)
+- Test case: `writ-parser/tests/cases/{NN}_{name}.writ`
+
+**Compiler Backend (Phase 2+):**
+- Primary code: `writ-compiler/src/` (will contain AST lowering, type checking, codegen)
+- Dependency: Import from `writ_parser` crate
+
+**CLI Tool (Phase 2+):**
+- Primary code: `writ-cli/src/` (file I/O, error reporting, command handling)
+- Dependency: Use `writ_parser` and eventually `writ_compiler`
+
+**Runtime Engine (Phase 3+):**
+- Primary code: `writ-runtime/src/` (VM/interpreter, entity-component system, dialogue execution)
+- Dependency: Output from `writ_compiler`
+
+## Special Directories
+
+**target/:**
+- Purpose: Cargo build output
+- Generated: Yes
+- Committed: No (in .gitignore)
+
+**.planning/:**
+- Purpose: GSD system planning and analysis documents
+- Generated: Yes (by orchestrator)
+- Committed: Yes (tracked as documentation)
+- Contents: Phase plans, analysis docs, milestones, research
+
+**language-spec/spec/:**
+- Purpose: Source markdown specification documents
+- Generated: No
+- Committed: Yes
+- Usage: Reference for parser implementation and compiler phases
+
+**resources/:**
+- Purpose: Static assets
+- Generated: No
+- Committed: Yes
+- Contents: Logo SVG
+
+---
+
+*Structure analysis: 2026-02-26*

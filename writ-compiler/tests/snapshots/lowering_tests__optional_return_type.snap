@@ -1,0 +1,45 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Fn(
+            AstFnDecl {
+                attrs: [],
+                vis: None,
+                name: "find",
+                name_span: 3..7,
+                generics: [],
+                params: [],
+                return_type: Some(
+                    Generic {
+                        name: "Option",
+                        args: [
+                            Named {
+                                name: "int",
+                                span: 13..16,
+                            },
+                        ],
+                        span: 13..17,
+                    },
+                ),
+                body: [
+                    Return {
+                        value: Some(
+                            Path {
+                                segments: [
+                                    "Option",
+                                    "None",
+                                ],
+                                span: 27..31,
+                            },
+                        ),
+                        span: 20..32,
+                    },
+                ],
+                span: 0..34,
+            },
+        ),
+    ],
+}

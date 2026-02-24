@@ -1,0 +1,116 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Fn(
+            AstFnDecl {
+                attrs: [],
+                vis: None,
+                name: "intro",
+                name_span: 4..9,
+                generics: [],
+                params: [
+                    AstParam {
+                        name: "name",
+                        name_span: 10..14,
+                        ty: Named {
+                            name: "string",
+                            span: 16..22,
+                        },
+                        span: 10..22,
+                    },
+                ],
+                return_type: None,
+                body: [
+                    Let {
+                        mutable: false,
+                        name: "_narrator",
+                        name_span: 27..35,
+                        ty: None,
+                        value: GenericCall {
+                            callee: MemberAccess {
+                                object: Ident {
+                                    name: "Entity",
+                                    span: 27..35,
+                                },
+                                field: "getOrCreate",
+                                field_span: 27..35,
+                                span: 27..35,
+                            },
+                            type_args: [
+                                Named {
+                                    name: "Narrator",
+                                    span: 27..35,
+                                },
+                            ],
+                            args: [],
+                            span: 27..35,
+                        },
+                        span: 27..35,
+                    },
+                    Expr {
+                        expr: Call {
+                            callee: Ident {
+                                name: "say_localized",
+                                span: 26..42,
+                            },
+                            args: [
+                                AstArg {
+                                    name: None,
+                                    value: Ident {
+                                        name: "_narrator",
+                                        span: 27..35,
+                                    },
+                                    span: 26..42,
+                                },
+                                AstArg {
+                                    name: None,
+                                    value: StringLit {
+                                        value: "ae3cbcf6",
+                                        span: 26..42,
+                                    },
+                                    span: 26..42,
+                                },
+                                AstArg {
+                                    name: None,
+                                    value: StringLit {
+                                        value: "Hello.",
+                                        span: 36..42,
+                                    },
+                                    span: 26..42,
+                                },
+                            ],
+                            span: 26..42,
+                        },
+                        span: 26..42,
+                    },
+                    Return {
+                        value: Some(
+                            Call {
+                                callee: Ident {
+                                    name: "farewell",
+                                    span: 46..54,
+                                },
+                                args: [
+                                    AstArg {
+                                        name: None,
+                                        value: Ident {
+                                            name: "name",
+                                            span: 55..59,
+                                        },
+                                        span: 43..60,
+                                    },
+                                ],
+                                span: 43..60,
+                            },
+                        ),
+                        span: 43..60,
+                    },
+                ],
+                span: 0..62,
+            },
+        ),
+    ],
+}

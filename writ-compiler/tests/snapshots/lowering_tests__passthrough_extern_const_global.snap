@@ -1,0 +1,66 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Extern(
+            Fn(
+                AstFnSig {
+                    attrs: [],
+                    vis: None,
+                    name: "print",
+                    name_span: 10..15,
+                    generics: [],
+                    params: [
+                        AstParam {
+                            name: "msg",
+                            name_span: 16..19,
+                            ty: Named {
+                                name: "string",
+                                span: 21..27,
+                            },
+                            span: 16..27,
+                        },
+                    ],
+                    return_type: None,
+                    span: 7..29,
+                },
+            ),
+        ),
+        Const(
+            AstConstDecl {
+                attrs: [],
+                vis: None,
+                name: "MAX_LEVEL",
+                name_span: 36..45,
+                ty: Named {
+                    name: "int",
+                    span: 47..50,
+                },
+                value: IntLit {
+                    value: 99,
+                    span: 53..55,
+                },
+                span: 30..56,
+            },
+        ),
+        Global(
+            AstGlobalDecl {
+                attrs: [],
+                vis: None,
+                name: "score",
+                name_span: 68..73,
+                ty: Named {
+                    name: "int",
+                    span: 75..78,
+                },
+                value: IntLit {
+                    value: 0,
+                    span: 81..82,
+                },
+                span: 57..83,
+            },
+        ),
+    ],
+}

@@ -1,4 +1,4 @@
-# Writ Language Specification
+# 1. Writ Language Specification
 ## 28. Lowering Reference
 
 All higher-level constructs lower to simpler primitives before execution.
@@ -65,22 +65,29 @@ fn greetPlayer(name: string) {
 
 ### 28.3 Entity Lowering
 
-Entities lower to structs with component fields, constructor functions, and registered lifecycle hooks. The exact
-lowering is runtime-specific, but conceptually:
+Entities lower to TypeDefs (kind=Entity) with fields, component slots, methods, and lifecycle hooks. Components are
+extern and data-only — they are host-managed instances attached to the entity.
 
 ```
-// entity Guard { use Health { current: 80, max: 80 }, ... }
-// lowers to approximately:
-struct Guard {
-    _health: Health,
-    _sprite: Sprite,
-    name: string,
-}
-// + constructor with defaults
-// + ComponentAccess<Health> impl
-// + ComponentAccess<Sprite> impl
-// + lifecycle hook registrations
+// entity Guard { name: string = "Guard", health: int = 80, use Sprite { ... }, ... }
+// produces:
+//   TypeDef(Guard, kind=Entity)
+//     fields: [name: string, health: int, maxHealth: int, ...]
+//     component_slots: [Speaker, Sprite, Collider]
+//     component_overrides: [Speaker.displayName="Guard", Sprite.texture="res://...", ...]
+//     lifecycle: [on_create, on_destroy, on_finalize, on_serialize, on_deserialize]
+
+// Methods lower to:
+//   fn Guard::greet(self: Guard) -> string { ... }
+//   fn Guard::__on_create(mut self: Guard) { ... }     // from: on create { ... }
+//   fn Guard::__on_interact(mut self: Guard, who: Entity) { ... }
+//   fn Guard::__on_destroy(mut self: Guard) { ... }
+//   fn Guard::__on_finalize(mut self: Guard) { ... }
+//   fn Guard::__on_serialize(mut self: Guard) { ... }
+//   fn Guard::__on_deserialize(mut self: Guard) { ... }
 ```
+
+See [Section 14.7](15_14_entities.md#147-entity-lowering) for the full lowering specification.
 
 ### 28.4 Localized Dialogue Lowering
 
@@ -104,15 +111,33 @@ The runtime's `say_localized` implementation:
 
 ### 28.5 Runtime Functions
 
-The runtime must provide these core functions:
+The runtime must provide these core functions in the `Runtime` namespace. Dialogue functions are **transition points** —
+they suspend execution until the host responds (see §13.9, IL spec §1.14.2).
 
-| Function             | Signature                                                          | Behavior                                        |
-|----------------------|--------------------------------------------------------------------|-------------------------------------------------|
-| `say`                | `fn say(speaker: Entity, text: string)`                            | Display text, yield until player advances       |
-| `say_localized`      | `fn say_localized(speaker: Entity, key: string, fallback: string)` | Localized display with string table lookup      |
-| `choice`             | `fn choice(options: List<...>)`                                    | Present choices, yield, execute selected branch |
-| `Entity.getOrCreate` | `fn getOrCreate<T>() -> T`                                         | Get or create singleton entity instance         |
-| `Entity.findAll`     | `fn findAll<T>() -> EntityList<T>`                                 | Find all entities of a type                     |
+| Function             | Signature                                                          | Behavior                                                                      |
+|----------------------|--------------------------------------------------------------------|-------------------------------------------------------------------------------|
+| `say`                | `fn say(speaker: Entity, text: string)`                            | Display text, **suspend** until player advances                               |
+| `say_localized`      | `fn say_localized(speaker: Entity, key: string, fallback: string)` | Localized display with string table lookup, **suspend** until player advances |
+| `choice`             | `fn choice(options: List<...>) -> int`                             | Present choices, **suspend** until player selects, return selected index      |
+| `Entity.getOrCreate` | `fn getOrCreate<T>() -> T`                                         | Get or create singleton entity instance                                       |
+| `Entity.findAll`     | `fn findAll<T>() -> EntityList<T>`                                 | Find all entities of a type                                                   |
+| `Entity.destroy`     | `fn destroy(entity: Entity)`                                       | Destroy entity, fire `on destroy`, mark dead                                  |
+| `Entity.isAlive`     | `fn isAlive(entity: Entity) -> bool`                               | Check if handle refers to a live entity                                       |
+
+---
+
+# Writ IL Specification
+
+**Draft v0.1** — February 2026
+
+---
+
+The intermediate language specification for the Writ virtual machine. Defines the register-based IL design,
+instruction set, binary module format, and execution model.
+
+Architectural choices that govern the entire IL design are documented in sections 1.1–1.17. The instruction
+set reference follows in sections 2.0–2.16. Instruction encoding tables and opcode assignments are in
+sections 3.0–3.2.
 
 ---
 

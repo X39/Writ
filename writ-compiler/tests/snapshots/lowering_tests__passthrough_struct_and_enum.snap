@@ -1,0 +1,84 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Struct(
+            AstStructDecl {
+                attrs: [],
+                vis: None,
+                name: "Point",
+                name_span: 7..12,
+                generics: [],
+                fields: [
+                    AstStructField {
+                        vis: None,
+                        name: "x",
+                        name_span: 15..16,
+                        ty: Named {
+                            name: "float",
+                            span: 18..23,
+                        },
+                        default: None,
+                        span: 15..23,
+                    },
+                    AstStructField {
+                        vis: None,
+                        name: "y",
+                        name_span: 25..26,
+                        ty: Named {
+                            name: "float",
+                            span: 28..33,
+                        },
+                        default: None,
+                        span: 25..33,
+                    },
+                ],
+                span: 0..35,
+            },
+        ),
+        Enum(
+            AstEnumDecl {
+                attrs: [],
+                vis: None,
+                name: "Color",
+                name_span: 41..46,
+                generics: [],
+                variants: [
+                    AstEnumVariant {
+                        name: "Red",
+                        name_span: 49..52,
+                        fields: None,
+                        span: 49..52,
+                    },
+                    AstEnumVariant {
+                        name: "Green",
+                        name_span: 54..59,
+                        fields: None,
+                        span: 54..59,
+                    },
+                    AstEnumVariant {
+                        name: "Blue",
+                        name_span: 61..65,
+                        fields: Some(
+                            [
+                                AstParam {
+                                    name: "intensity",
+                                    name_span: 66..75,
+                                    ty: Named {
+                                        name: "int",
+                                        span: 77..80,
+                                    },
+                                    span: 66..80,
+                                },
+                            ],
+                        ),
+                        span: 61..81,
+                    },
+                ],
+                span: 36..83,
+            },
+        ),
+    ],
+}

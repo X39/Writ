@@ -1,4 +1,4 @@
-# Writ Language Specification
+# 1. Writ Language Specification
 ## 10. Contracts
 
 Contracts define a set of methods and/or operators that a type must implement. They serve the role of interfaces/traits
@@ -6,23 +6,23 @@ and are the foundation for bounded generics, operator overloading, and component
 
 ```
 contract Interactable {
-    fn onInteract(who: Entity);
+    fn onInteract(mut self, who: Entity);
 }
 
 contract Tradeable {
-    fn getInventory() -> List<Item>;
-    fn trade(item: Item, with: Entity);
+    fn getInventory(self) -> List<Item>;
+    fn trade(mut self, item: Item, with: Entity);
 }
 
 // Implementation for a struct
 impl Interactable for Merchant {
-    fn onInteract(who: Entity) {
+    fn onInteract(mut self, who: Entity) {
         // open trade dialog
     }
 }
 
 // Using contracts as bounds
-fn interactWith(thing: Interactable) {
+fn interactWith(mut thing: Interactable) {
     thing.onInteract(player);
 }
 ```
@@ -72,17 +72,17 @@ These contracts are implicitly defined by the compiler and map to operator synta
 
 **Iteration:**
 
-| Contract      | Behavior                        | Signature                      |
-|---------------|---------------------------------|--------------------------------|
-| `Iterable<T>` | Enables `for` loops (see 10.3)  | `fn iterator() -> Iterator<T>` |
-| `Iterator<T>` | Produces elements one at a time | `fn next() -> T?`              |
+| Contract      | Behavior                        | Signature                          |
+|---------------|---------------------------------|------------------------------------|
+| `Iterable<T>` | Enables `for` loops (see 10.3)  | `fn iterator(self) -> Iterator<T>` |
+| `Iterator<T>` | Produces elements one at a time | `fn next(mut self) -> T?`          |
 
 **Conversion and special contracts:**
 
-| Contract  | Behavior                   | Signature                |
-|-----------|----------------------------|--------------------------|
-| `Into<T>` | Type conversion (see 10.2) | `fn into() -> T`         |
-| `Error`   | Result `E` bound           | `fn message() -> string` |
+| Contract  | Behavior                   | Signature                    |
+|-----------|----------------------------|------------------------------|
+| `Into<T>` | Type conversion (see 10.2) | `fn into(self) -> T`         |
+| `Error`   | Result `E` bound           | `fn message(self) -> string` |
 
 > **Note:** When a user writes `operator +` in an `impl` block, the compiler automatically registers it as an
 > implementation of the `Add` contract. Users never need to write `impl Add<...> for ...` directly.
@@ -95,14 +95,19 @@ and dispatches through the corresponding arithmetic contract. They are not indep
 The `Into<T>` contract is the universal conversion mechanism. A type may implement `Into<T>` for multiple target types.
 
 ```
-impl Into<string> for Health {
-    fn into() -> string {
+struct HealthInfo {
+    current: int,
+    max: int,
+}
+
+impl Into<string> for HealthInfo {
+    fn into(self) -> string {
         $"{self.current}/{self.max}"
     }
 }
 
-impl Into<float> for Health {
-    fn into() -> float {
+impl Into<float> for HealthInfo {
+    fn into(self) -> float {
         self.current / self.max
     }
 }
@@ -111,8 +116,8 @@ impl Into<float> for Health {
 **Calling convention:** Conversions are always invoked with an explicit type parameter on the call site:
 
 ```
-let label = health.into<string>();    // "75/100"
-let ratio = health.into<float>();     // 0.75
+let label = hp.into<string>();    // "75/100"
+let ratio = hp.into<float>();     // 0.75
 ```
 
 The `<T>` on the call disambiguates which `Into<T>` implementation to dispatch. There is no implicit conversion at
@@ -123,7 +128,7 @@ inside `$"..."` or dialogue text), the compiler implicitly calls `.into<string>(
 `Into<T>` is invoked without an explicit call.
 
 ```
-let hp = Health { current: 75, max: 100 };
+let hp = new HealthInfo { current: 75, max: 100 };
 let msg = $"HP: {hp}";
 // Equivalent to: $"HP: {hp.into<string>()}"
 ```
@@ -168,14 +173,16 @@ User-defined types can implement `Iterable<T>` to participate in `for` loops:
 
 ```
 impl Iterable<Entity> for Party {
-    fn iterator() -> Iterator<Entity> {
+    fn iterator(self) -> Iterator<Entity> {
         self.members.iterator()
     }
 }
 
 // Now usable in for loops:
 for member in party {
-    member[Health]!.heal(10);
+    if let Option::Some(hp) = member[Health] {
+        hp.current = min(hp.current + 10, hp.max);
+    }
 }
 ```
 

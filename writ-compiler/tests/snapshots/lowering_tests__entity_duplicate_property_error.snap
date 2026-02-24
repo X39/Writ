@@ -1,0 +1,40 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: "(ast, errors)"
+---
+(
+    Ast {
+        items: [
+            Struct(
+                AstStructDecl {
+                    attrs: [],
+                    vis: None,
+                    name: "Guard",
+                    name_span: 7..12,
+                    generics: [],
+                    fields: [
+                        AstStructField {
+                            vis: None,
+                            name: "name",
+                            name_span: 15..19,
+                            ty: Named {
+                                name: "string",
+                                span: 21..27,
+                            },
+                            default: None,
+                            span: 15..28,
+                        },
+                    ],
+                    span: 0..40,
+                },
+            ),
+        ],
+    },
+    [
+        DuplicateProperty {
+            property: "name",
+            entity: "Guard",
+            span: 29..33,
+        },
+    ],
+)

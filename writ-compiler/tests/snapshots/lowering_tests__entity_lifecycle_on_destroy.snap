@@ -1,0 +1,49 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Struct(
+            AstStructDecl {
+                attrs: [],
+                vis: None,
+                name: "Guard",
+                name_span: 7..12,
+                generics: [],
+                fields: [],
+                span: 0..31,
+            },
+        ),
+        Impl(
+            AstImplDecl {
+                contract: Some(
+                    Named {
+                        name: "OnDestroy",
+                        span: 18..25,
+                    },
+                ),
+                target: Named {
+                    name: "Guard",
+                    span: 7..12,
+                },
+                members: [
+                    Fn(
+                        AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "on_destroy",
+                            name_span: 18..25,
+                            generics: [],
+                            params: [],
+                            return_type: None,
+                            body: [],
+                            span: 15..29,
+                        },
+                    ),
+                ],
+                span: 15..29,
+            },
+        ),
+    ],
+}

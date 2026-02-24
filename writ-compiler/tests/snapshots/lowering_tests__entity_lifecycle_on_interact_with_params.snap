@@ -1,0 +1,76 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Struct(
+            AstStructDecl {
+                attrs: [],
+                vis: None,
+                name: "Guard",
+                name_span: 7..12,
+                generics: [],
+                fields: [],
+                span: 0..72,
+            },
+        ),
+        Impl(
+            AstImplDecl {
+                contract: Some(
+                    Named {
+                        name: "OnInteract",
+                        span: 18..26,
+                    },
+                ),
+                target: Named {
+                    name: "Guard",
+                    span: 7..12,
+                },
+                members: [
+                    Fn(
+                        AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "on_interact",
+                            name_span: 18..26,
+                            generics: [],
+                            params: [
+                                AstParam {
+                                    name: "who",
+                                    name_span: 27..30,
+                                    ty: Named {
+                                        name: "Entity",
+                                        span: 32..38,
+                                    },
+                                    span: 27..38,
+                                },
+                            ],
+                            return_type: None,
+                            body: [
+                                Let {
+                                    mutable: false,
+                                    name: "msg",
+                                    name_span: 46..49,
+                                    ty: Some(
+                                        Named {
+                                            name: "string",
+                                            span: 51..57,
+                                        },
+                                    ),
+                                    value: StringLit {
+                                        value: "\"hello\"",
+                                        span: 60..67,
+                                    },
+                                    span: 42..68,
+                                },
+                            ],
+                            span: 15..70,
+                        },
+                    ),
+                ],
+                span: 15..70,
+            },
+        ),
+    ],
+}

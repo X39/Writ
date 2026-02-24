@@ -1,0 +1,93 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Struct(
+            AstStructDecl {
+                attrs: [],
+                vis: None,
+                name: "Guard",
+                name_span: 7..12,
+                generics: [],
+                fields: [
+                    AstStructField {
+                        vis: None,
+                        name: "$Speaker",
+                        name_span: 19..26,
+                        ty: Named {
+                            name: "Speaker",
+                            span: 19..26,
+                        },
+                        default: Some(
+                            StructLit {
+                                name: "Speaker",
+                                name_span: 19..26,
+                                fields: [],
+                                span: 15..29,
+                            },
+                        ),
+                        span: 15..29,
+                    },
+                ],
+                span: 0..31,
+            },
+        ),
+        Impl(
+            AstImplDecl {
+                contract: Some(
+                    Generic {
+                        name: "ComponentAccess",
+                        args: [
+                            Named {
+                                name: "Speaker",
+                                span: 19..26,
+                            },
+                        ],
+                        span: 19..26,
+                    },
+                ),
+                target: Named {
+                    name: "Guard",
+                    span: 7..12,
+                },
+                members: [
+                    Fn(
+                        AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "get",
+                            name_span: 19..26,
+                            generics: [],
+                            params: [],
+                            return_type: Some(
+                                Named {
+                                    name: "Speaker",
+                                    span: 19..26,
+                                },
+                            ),
+                            body: [
+                                Return {
+                                    value: Some(
+                                        MemberAccess {
+                                            object: SelfLit {
+                                                span: 19..26,
+                                            },
+                                            field: "$Speaker",
+                                            field_span: 19..26,
+                                            span: 19..26,
+                                        },
+                                    ),
+                                    span: 19..26,
+                                },
+                            ],
+                            span: 15..29,
+                        },
+                    ),
+                ],
+                span: 15..29,
+            },
+        ),
+    ],
+}

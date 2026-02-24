@@ -6,6 +6,9 @@
       <sourceFolder url="file://$MODULE_DIR$/writ-compiler/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/writ-parser/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/writ-runtime/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/writ-parser/examples" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/writ-parser/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/writ-compiler/tests" isTestSource="true" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />

@@ -1,4 +1,4 @@
-# Writ Language Specification
+# 1. Writ Language Specification
 ## 7. Variables & Constants
 
 ### 7.1 Variable Declarations
@@ -9,7 +9,7 @@ the initializer or can be explicitly annotated.
 ```
 let name = "Aria";              // immutable, inferred string
 let mut health = 100;            // mutable, inferred int
-let pos: vec2 = vec2(0.0, 0.0);  // explicit type annotation
+let pos: vec2 = vec2 { x: 0.0, y: 0.0 };  // explicit type annotation
 
 name = "Bob";      // COMPILE ERROR: name is immutable
 health += 10;       // ok: health is mutable

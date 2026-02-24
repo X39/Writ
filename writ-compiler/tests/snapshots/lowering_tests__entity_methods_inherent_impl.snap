@@ -1,0 +1,71 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Struct(
+            AstStructDecl {
+                attrs: [],
+                vis: None,
+                name: "Guard",
+                name_span: 7..12,
+                generics: [],
+                fields: [
+                    AstStructField {
+                        vis: None,
+                        name: "name",
+                        name_span: 15..19,
+                        ty: Named {
+                            name: "string",
+                            span: 21..27,
+                        },
+                        default: None,
+                        span: 15..28,
+                    },
+                ],
+                span: 0..71,
+            },
+        ),
+        Impl(
+            AstImplDecl {
+                contract: None,
+                target: Named {
+                    name: "Guard",
+                    span: 7..12,
+                },
+                members: [
+                    Fn(
+                        AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "greet",
+                            name_span: 32..37,
+                            generics: [],
+                            params: [],
+                            return_type: Some(
+                                Named {
+                                    name: "string",
+                                    span: 43..49,
+                                },
+                            ),
+                            body: [
+                                Return {
+                                    value: Some(
+                                        StringLit {
+                                            value: "\"hello\"",
+                                            span: 59..66,
+                                        },
+                                    ),
+                                    span: 52..67,
+                                },
+                            ],
+                            span: 29..69,
+                        },
+                    ),
+                ],
+                span: 0..71,
+            },
+        ),
+    ],
+}

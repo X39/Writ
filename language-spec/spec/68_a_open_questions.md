@@ -1,5 +1,5 @@
-# Writ Language Specification
-## 29. Open Questions
+# Appendix
+## A. Open Questions
 
 The following design questions remain unresolved and are tracked for future specification revisions.
 
@@ -24,7 +24,8 @@ Should the runtime support live script reloading during development?
 What does `Entity.getOrCreate` return for a destroyed singleton? Recreate silently, return Option, or crash?
 
 **Component dynamic add/remove**
-Can components be added to or removed from entities at runtime, or is the component set fixed at spawn time?
+Components are extern and data-only (host-provided). The component set is fixed at construction time by the entity
+declaration. Dynamic add/remove would require host engine support and is not a language-level feature.
 
 **EntityList.with\<T\>() narrowing**
 Should `.with<Component>()` refine the type so that component access is guaranteed non-optional within the filtered set?
@@ -42,3 +43,4 @@ forms)?
 **Properties & UI binding**
 Should Writ have a `property` keyword with get/set accessors, an `[Observable]` attribute, or both? How should game UI
 bind to script-side state — push-based (change notifications), pull-based (polling), or a declarative binding syntax?
+

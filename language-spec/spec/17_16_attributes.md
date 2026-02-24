@@ -1,4 +1,4 @@
-# Writ Language Specification
+# 1. Writ Language Specification
 ## 16. Attributes
 
 Attributes provide metadata on declarations using `[]` syntax. They are placed on the line before the declaration they

@@ -1,0 +1,421 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Impl(
+            AstImplDecl {
+                contract: Some(
+                    Generic {
+                        name: "Eq",
+                        args: [
+                            Named {
+                                name: "MyNum",
+                                span: 32..37,
+                            },
+                        ],
+                        span: 13..55,
+                    },
+                ),
+                target: Named {
+                    name: "MyNum",
+                    span: 5..10,
+                },
+                members: [
+                    Fn(
+                        AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "eq",
+                            name_span: 22..24,
+                            generics: [],
+                            params: [
+                                AstParam {
+                                    name: "other",
+                                    name_span: 25..30,
+                                    ty: Named {
+                                        name: "MyNum",
+                                        span: 32..37,
+                                    },
+                                    span: 25..37,
+                                },
+                            ],
+                            return_type: Some(
+                                Named {
+                                    name: "bool",
+                                    span: 42..46,
+                                },
+                            ),
+                            body: [
+                                Expr {
+                                    expr: BoolLit {
+                                        value: true,
+                                        span: 49..53,
+                                    },
+                                    span: 49..53,
+                                },
+                            ],
+                            span: 13..55,
+                        },
+                    ),
+                ],
+                span: 13..55,
+            },
+        ),
+        Impl(
+            AstImplDecl {
+                contract: Some(
+                    Generic {
+                        name: "Ord",
+                        args: [
+                            Named {
+                                name: "MyNum",
+                                span: 74..79,
+                            },
+                        ],
+                        span: 56..98,
+                    },
+                ),
+                target: Named {
+                    name: "MyNum",
+                    span: 5..10,
+                },
+                members: [
+                    Fn(
+                        AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "lt",
+                            name_span: 65..66,
+                            generics: [],
+                            params: [
+                                AstParam {
+                                    name: "other",
+                                    name_span: 67..72,
+                                    ty: Named {
+                                        name: "MyNum",
+                                        span: 74..79,
+                                    },
+                                    span: 67..79,
+                                },
+                            ],
+                            return_type: Some(
+                                Named {
+                                    name: "bool",
+                                    span: 84..88,
+                                },
+                            ),
+                            body: [
+                                Expr {
+                                    expr: BoolLit {
+                                        value: false,
+                                        span: 91..96,
+                                    },
+                                    span: 91..96,
+                                },
+                            ],
+                            span: 56..98,
+                        },
+                    ),
+                ],
+                span: 56..98,
+            },
+        ),
+        Impl(
+            AstImplDecl {
+                contract: Some(
+                    Generic {
+                        name: "Ne",
+                        args: [
+                            Named {
+                                name: "MyNum",
+                                span: 32..37,
+                            },
+                        ],
+                        span: 0..100,
+                    },
+                ),
+                target: Named {
+                    name: "MyNum",
+                    span: 5..10,
+                },
+                members: [
+                    Fn(
+                        AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "ne",
+                            name_span: 0..100,
+                            generics: [],
+                            params: [
+                                AstParam {
+                                    name: "other",
+                                    name_span: 0..100,
+                                    ty: Named {
+                                        name: "MyNum",
+                                        span: 32..37,
+                                    },
+                                    span: 0..100,
+                                },
+                            ],
+                            return_type: Some(
+                                Named {
+                                    name: "bool",
+                                    span: 0..100,
+                                },
+                            ),
+                            body: [
+                                Return {
+                                    value: Some(
+                                        UnaryPrefix {
+                                            op: Not,
+                                            expr: Binary {
+                                                left: SelfLit {
+                                                    span: 0..100,
+                                                },
+                                                op: Eq,
+                                                right: Ident {
+                                                    name: "other",
+                                                    span: 0..100,
+                                                },
+                                                span: 0..100,
+                                            },
+                                            span: 0..100,
+                                        },
+                                    ),
+                                    span: 0..100,
+                                },
+                            ],
+                            span: 0..100,
+                        },
+                    ),
+                ],
+                span: 0..100,
+            },
+        ),
+        Impl(
+            AstImplDecl {
+                contract: Some(
+                    Generic {
+                        name: "Gt",
+                        args: [
+                            Named {
+                                name: "MyNum",
+                                span: 74..79,
+                            },
+                        ],
+                        span: 0..100,
+                    },
+                ),
+                target: Named {
+                    name: "MyNum",
+                    span: 5..10,
+                },
+                members: [
+                    Fn(
+                        AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "gt",
+                            name_span: 0..100,
+                            generics: [],
+                            params: [
+                                AstParam {
+                                    name: "other",
+                                    name_span: 0..100,
+                                    ty: Named {
+                                        name: "MyNum",
+                                        span: 74..79,
+                                    },
+                                    span: 0..100,
+                                },
+                            ],
+                            return_type: Some(
+                                Named {
+                                    name: "bool",
+                                    span: 0..100,
+                                },
+                            ),
+                            body: [
+                                Return {
+                                    value: Some(
+                                        Binary {
+                                            left: Ident {
+                                                name: "other",
+                                                span: 0..100,
+                                            },
+                                            op: Lt,
+                                            right: SelfLit {
+                                                span: 0..100,
+                                            },
+                                            span: 0..100,
+                                        },
+                                    ),
+                                    span: 0..100,
+                                },
+                            ],
+                            span: 0..100,
+                        },
+                    ),
+                ],
+                span: 0..100,
+            },
+        ),
+        Impl(
+            AstImplDecl {
+                contract: Some(
+                    Generic {
+                        name: "LtEq",
+                        args: [
+                            Named {
+                                name: "MyNum",
+                                span: 32..37,
+                            },
+                        ],
+                        span: 0..100,
+                    },
+                ),
+                target: Named {
+                    name: "MyNum",
+                    span: 5..10,
+                },
+                members: [
+                    Fn(
+                        AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "lt_eq",
+                            name_span: 0..100,
+                            generics: [],
+                            params: [
+                                AstParam {
+                                    name: "other",
+                                    name_span: 0..100,
+                                    ty: Named {
+                                        name: "MyNum",
+                                        span: 32..37,
+                                    },
+                                    span: 0..100,
+                                },
+                            ],
+                            return_type: Some(
+                                Named {
+                                    name: "bool",
+                                    span: 0..100,
+                                },
+                            ),
+                            body: [
+                                Return {
+                                    value: Some(
+                                        Binary {
+                                            left: Binary {
+                                                left: SelfLit {
+                                                    span: 0..100,
+                                                },
+                                                op: Lt,
+                                                right: Ident {
+                                                    name: "other",
+                                                    span: 0..100,
+                                                },
+                                                span: 0..100,
+                                            },
+                                            op: Or,
+                                            right: Binary {
+                                                left: SelfLit {
+                                                    span: 0..100,
+                                                },
+                                                op: Eq,
+                                                right: Ident {
+                                                    name: "other",
+                                                    span: 0..100,
+                                                },
+                                                span: 0..100,
+                                            },
+                                            span: 0..100,
+                                        },
+                                    ),
+                                    span: 0..100,
+                                },
+                            ],
+                            span: 0..100,
+                        },
+                    ),
+                ],
+                span: 0..100,
+            },
+        ),
+        Impl(
+            AstImplDecl {
+                contract: Some(
+                    Generic {
+                        name: "GtEq",
+                        args: [
+                            Named {
+                                name: "MyNum",
+                                span: 32..37,
+                            },
+                        ],
+                        span: 0..100,
+                    },
+                ),
+                target: Named {
+                    name: "MyNum",
+                    span: 5..10,
+                },
+                members: [
+                    Fn(
+                        AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "gt_eq",
+                            name_span: 0..100,
+                            generics: [],
+                            params: [
+                                AstParam {
+                                    name: "other",
+                                    name_span: 0..100,
+                                    ty: Named {
+                                        name: "MyNum",
+                                        span: 32..37,
+                                    },
+                                    span: 0..100,
+                                },
+                            ],
+                            return_type: Some(
+                                Named {
+                                    name: "bool",
+                                    span: 0..100,
+                                },
+                            ),
+                            body: [
+                                Return {
+                                    value: Some(
+                                        UnaryPrefix {
+                                            op: Not,
+                                            expr: Binary {
+                                                left: SelfLit {
+                                                    span: 0..100,
+                                                },
+                                                op: Lt,
+                                                right: Ident {
+                                                    name: "other",
+                                                    span: 0..100,
+                                                },
+                                                span: 0..100,
+                                            },
+                                            span: 0..100,
+                                        },
+                                    ),
+                                    span: 0..100,
+                                },
+                            ],
+                            span: 0..100,
+                        },
+                    ),
+                ],
+                span: 0..100,
+            },
+        ),
+    ],
+}

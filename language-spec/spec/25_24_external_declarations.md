@@ -1,4 +1,4 @@
-# Writ Language Specification
+# 1. Writ Language Specification
 ## 24. External Declarations
 
 External declarations describe types, functions, components, and other constructs not implemented in Writ. They have no
@@ -37,7 +37,7 @@ extern struct Entity {
     fn destroy();
 }
 
-// Runtime-provided components
+// Runtime-provided components (data-only — no methods)
 extern component Sprite {
     texture: string,
     scale: float = 1.0,
@@ -51,9 +51,13 @@ extern component Speaker {
     voice: string = "",
 }
 
+extern component Health {
+    current: int,
+    max: int,
+}
+
 // Entity namespace utilities
 extern fn Entity.getOrCreate<T>() -> T;
-extern fn Entity.spawn<T>() -> T;
 extern fn Entity.findAll<T>() -> EntityList<T>;
 extern fn Entity.findNearest<T>(position: vec2) -> T?;
 ```
@@ -174,7 +178,8 @@ runtime MAY reject a library load for any reason, including security policy (e.g
 sandboxing). The behavior is the same: crash with defer unwinding.
 
 > **Rationale:** Library imports are an injection surface. The runtime is the gatekeeper — it decides which libraries
-> are permitted. Making failures unrecoverable prevents scripts from silently falling back to alternate code paths when a
+> are permitted. Making failures unrecoverable prevents scripts from silently falling back to alternate code paths when
+> a
 > library is blocked, which could mask security violations.
 
 ---

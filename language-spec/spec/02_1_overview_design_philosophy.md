@@ -1,4 +1,4 @@
-# Writ Language Specification
+# 1. Writ Language Specification
 ## 1. Overview & Design Philosophy
 
 Writ is a statically-typed game scripting language designed around two core constructs: `fn` for general-purpose C-style

@@ -1,4 +1,4 @@
-# Writ Language Specification
+# 1. Writ Language Specification
 ## 13. Dialogue Blocks (dlg)
 
 Dialogue blocks are the primary authoring construct for game dialogue. They provide a specialized syntax where plain
@@ -12,6 +12,19 @@ dlg greetPlayer(playerName: string) {
     @Narrator
     How are you today?
     I hope you're doing well.
+}
+```
+
+The parameter list is optional for `dlg` declarations. Both `dlg name { ... }` and `dlg name() { ... }` are valid when
+there are no parameters. This is unique to `dlg` — functions (`fn`) always require parentheses.
+
+```
+dlg worldIntro {              // no parens — valid
+    @Narrator The world awaits.
+}
+
+dlg worldIntro() {            // empty parens — also valid
+    @Narrator The world awaits.
 }
 ```
 
@@ -149,18 +162,28 @@ dlg merchant(gold: int) {
 The `->` operator performs a terminal transition to another dialogue. It is a tail call — execution does not return. It
 must be the last statement in its block.
 
+Transitions have two forms:
+
+- `-> name` — No-argument transition. The target dialogue must have no required parameters.
+- `-> name(args)` — Transition with arguments passed to the target dialogue.
+
 ```
 dlg questIntro {
     @Narrator A great evil threatens the land.
     $ choice {
         "Tell me more" {
-            -> questDetails
+            -> questDetails               // no-arg transition
         }
         "Not interested" {
             @Narrator Very well. Perhaps another time.
-            -> townSquare
+            -> townSquare                 // no-arg transition
         }
     }
+}
+
+dlg shopEntry(player: Entity) {
+    @Narrator You enter the shop.
+    -> shopDialog(player)                 // transition with argument
 }
 ```
 
@@ -225,7 +248,24 @@ unrecognized by a runtime should be stripped and the inner text displayed normal
 > **Note:** Styling tags are a runtime convention, not a compiler-enforced syntax. The compiler does not validate tag
 > names or nesting — it simply passes the text through. Localization tools should preserve tags in translations.
 
-### 13.9 Dialogue Line Semantics
+### 13.9 Dialogue Suspension
+
+Dialogue operations are **transition points** — the runtime suspends execution and yields control to the host engine.
+The core dialogue functions live in the `Runtime` namespace and are provided by the runtime, not the script:
+
+- `Runtime.say(speaker, text)` — Display a line of dialogue. Suspends until the host signals the player has advanced.
+- `Runtime.say_localized(speaker, key, fallback)` — Localized variant. Same suspension semantics.
+- `Runtime.choice(options)` — Present choices to the player. Suspends until the host signals which option was selected.
+
+These functions are not callable directly from user code under the `Runtime` prefix — the compiler lowers dialogue
+syntax
+(`@Speaker text`, `$ choice { ... }`) into calls to these functions automatically. See §28.5 for the full lowering.
+
+The host is responsible for presenting the dialogue UI, advancing text, and returning choice selections. The runtime
+does not prescribe how the host implements these — only that the runtime suspends until the host responds. This follows
+the suspend-and-confirm model (see IL spec §1.14.2).
+
+### 13.10 Dialogue Line Semantics
 
 Dialogue text lines (unquoted text after a speaker, or continuation lines) are **implicitly formattable**. Interpolation
 with `{expr}` is always available without a `$` prefix — the `dlg` context provides this automatically.

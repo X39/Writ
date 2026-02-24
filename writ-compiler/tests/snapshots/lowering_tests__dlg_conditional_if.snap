@@ -1,0 +1,149 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Fn(
+            AstFnDecl {
+                attrs: [],
+                vis: None,
+                name: "check",
+                name_span: 4..9,
+                generics: [],
+                params: [
+                    AstParam {
+                        name: "flag",
+                        name_span: 10..14,
+                        ty: Named {
+                            name: "bool",
+                            span: 16..20,
+                        },
+                        span: 10..20,
+                    },
+                ],
+                return_type: None,
+                body: [
+                    Let {
+                        mutable: false,
+                        name: "_narrator",
+                        name_span: 25..33,
+                        ty: None,
+                        value: GenericCall {
+                            callee: MemberAccess {
+                                object: Ident {
+                                    name: "Entity",
+                                    span: 25..33,
+                                },
+                                field: "getOrCreate",
+                                field_span: 25..33,
+                                span: 25..33,
+                            },
+                            type_args: [
+                                Named {
+                                    name: "Narrator",
+                                    span: 25..33,
+                                },
+                            ],
+                            args: [],
+                            span: 25..33,
+                        },
+                        span: 25..33,
+                    },
+                    Expr {
+                        expr: If {
+                            condition: Ident {
+                                name: "flag",
+                                span: 39..43,
+                            },
+                            then_block: [
+                                Expr {
+                                    expr: Call {
+                                        callee: Ident {
+                                            name: "say_localized",
+                                            span: 46..50,
+                                        },
+                                        args: [
+                                            AstArg {
+                                                name: None,
+                                                value: Ident {
+                                                    name: "_narrator",
+                                                    span: 25..33,
+                                                },
+                                                span: 46..50,
+                                            },
+                                            AstArg {
+                                                name: None,
+                                                value: StringLit {
+                                                    value: "d15d7120",
+                                                    span: 46..50,
+                                                },
+                                                span: 46..50,
+                                            },
+                                            AstArg {
+                                                name: None,
+                                                value: StringLit {
+                                                    value: "Yes!",
+                                                    span: 46..50,
+                                                },
+                                                span: 46..50,
+                                            },
+                                        ],
+                                        span: 46..50,
+                                    },
+                                    span: 46..50,
+                                },
+                            ],
+                            else_block: Some(
+                                Block {
+                                    stmts: [
+                                        Expr {
+                                            expr: Call {
+                                                callee: Ident {
+                                                    name: "say_localized",
+                                                    span: 60..63,
+                                                },
+                                                args: [
+                                                    AstArg {
+                                                        name: None,
+                                                        value: Ident {
+                                                            name: "_narrator",
+                                                            span: 25..33,
+                                                        },
+                                                        span: 60..63,
+                                                    },
+                                                    AstArg {
+                                                        name: None,
+                                                        value: StringLit {
+                                                            value: "58b14e8c",
+                                                            span: 60..63,
+                                                        },
+                                                        span: 60..63,
+                                                    },
+                                                    AstArg {
+                                                        name: None,
+                                                        value: StringLit {
+                                                            value: "No!",
+                                                            span: 60..63,
+                                                        },
+                                                        span: 60..63,
+                                                    },
+                                                ],
+                                                span: 60..63,
+                                            },
+                                            span: 60..63,
+                                        },
+                                    ],
+                                    span: 58..65,
+                                },
+                            ),
+                            span: 39..65,
+                        },
+                        span: 39..65,
+                    },
+                ],
+                span: 0..67,
+            },
+        ),
+    ],
+}

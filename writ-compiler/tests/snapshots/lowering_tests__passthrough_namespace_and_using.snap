@@ -1,0 +1,27 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Namespace(
+            Declarative {
+                path: [
+                    "game",
+                    "core",
+                ],
+                span: 0..21,
+            },
+        ),
+        Using(
+            AstUsingDecl {
+                alias: None,
+                path: [
+                    "std",
+                    "io",
+                ],
+                span: 22..36,
+            },
+        ),
+    ],
+}

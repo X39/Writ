@@ -1,4 +1,4 @@
-# Writ Language Specification
+# 1. Writ Language Specification
 ## 18. Error Handling
 
 Writ separates error handling into distinct, non-overlapping mechanisms:
@@ -46,7 +46,7 @@ fn loadBothQuests() -> Result<QuestPair, Error> {
 
 ```
 contract Error {
-    fn message() -> string;
+    fn message(self) -> string;
 }
 
 struct QuestError {
@@ -55,7 +55,7 @@ struct QuestError {
 }
 
 impl Error for QuestError {
-    fn message() -> string {
+    fn message(self) -> string {
         $"Quest error {self.code}: {self.detail}"
     }
 }

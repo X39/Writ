@@ -1,0 +1,65 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: "(ast, errors)"
+---
+(
+    Ast {
+        items: [
+            Fn(
+                AstFnDecl {
+                    attrs: [],
+                    vis: None,
+                    name: "orphan",
+                    name_span: 4..10,
+                    generics: [],
+                    params: [],
+                    return_type: None,
+                    body: [
+                        Expr {
+                            expr: Call {
+                                callee: Ident {
+                                    name: "say_localized",
+                                    span: 15..27,
+                                },
+                                args: [
+                                    AstArg {
+                                        name: None,
+                                        value: Error {
+                                            span: 15..27,
+                                        },
+                                        span: 15..27,
+                                    },
+                                    AstArg {
+                                        name: None,
+                                        value: StringLit {
+                                            value: "5836d297",
+                                            span: 15..27,
+                                        },
+                                        span: 15..27,
+                                    },
+                                    AstArg {
+                                        name: None,
+                                        value: StringLit {
+                                            value: "Hello world.",
+                                            span: 15..27,
+                                        },
+                                        span: 15..27,
+                                    },
+                                ],
+                                span: 15..27,
+                            },
+                            span: 15..27,
+                        },
+                    ],
+                    span: 0..29,
+                },
+            ),
+        ],
+    },
+    [
+        UnknownSpeaker {
+            name: "",
+            span: 15..27,
+        },
+    ],
+)

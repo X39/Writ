@@ -1,4 +1,4 @@
-# Writ Language Specification
+# 1. Writ Language Specification
 ## 3. Naming Conventions & Style Guide
 
 The following naming conventions are enforced by the compiler as warnings and by the language server as suggestions.

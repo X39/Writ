@@ -1,0 +1,38 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Struct(
+            AstStructDecl {
+                attrs: [
+                    AstAttribute {
+                        name: "Singleton",
+                        name_span: 1..10,
+                        args: [],
+                        span: 0..11,
+                    },
+                ],
+                vis: None,
+                name: "Narrator",
+                name_span: 19..27,
+                generics: [],
+                fields: [
+                    AstStructField {
+                        vis: None,
+                        name: "name",
+                        name_span: 30..34,
+                        ty: Named {
+                            name: "string",
+                            span: 36..42,
+                        },
+                        default: None,
+                        span: 30..42,
+                    },
+                ],
+                span: 12..44,
+            },
+        ),
+    ],
+}

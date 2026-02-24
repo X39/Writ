@@ -1,0 +1,104 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: "(ast, errors)"
+---
+(
+    Ast {
+        items: [
+            Fn(
+                AstFnDecl {
+                    attrs: [],
+                    vis: None,
+                    name: "intro",
+                    name_span: 4..9,
+                    generics: [],
+                    params: [],
+                    return_type: None,
+                    body: [
+                        Let {
+                            mutable: false,
+                            name: "_narrator",
+                            name_span: 27..35,
+                            ty: None,
+                            value: GenericCall {
+                                callee: MemberAccess {
+                                    object: Ident {
+                                        name: "Entity",
+                                        span: 27..35,
+                                    },
+                                    field: "getOrCreate",
+                                    field_span: 27..35,
+                                    span: 27..35,
+                                },
+                                type_args: [
+                                    Named {
+                                        name: "Narrator",
+                                        span: 27..35,
+                                    },
+                                ],
+                                args: [],
+                                span: 27..35,
+                            },
+                            span: 27..35,
+                        },
+                        Return {
+                            value: Some(
+                                Call {
+                                    callee: Ident {
+                                        name: "farewell",
+                                        span: 17..25,
+                                    },
+                                    args: [],
+                                    span: 14..25,
+                                },
+                            ),
+                            span: 14..25,
+                        },
+                        Expr {
+                            expr: Call {
+                                callee: Ident {
+                                    name: "say_localized",
+                                    span: 26..60,
+                                },
+                                args: [
+                                    AstArg {
+                                        name: None,
+                                        value: Ident {
+                                            name: "_narrator",
+                                            span: 27..35,
+                                        },
+                                        span: 26..60,
+                                    },
+                                    AstArg {
+                                        name: None,
+                                        value: StringLit {
+                                            value: "af8d2347",
+                                            span: 26..60,
+                                        },
+                                        span: 26..60,
+                                    },
+                                    AstArg {
+                                        name: None,
+                                        value: StringLit {
+                                            value: "This should not be here.",
+                                            span: 36..60,
+                                        },
+                                        span: 26..60,
+                                    },
+                                ],
+                                span: 26..60,
+                            },
+                            span: 26..60,
+                        },
+                    ],
+                    span: 0..62,
+                },
+            ),
+        ],
+    },
+    [
+        NonTerminalTransition {
+            span: 14..25,
+        },
+    ],
+)

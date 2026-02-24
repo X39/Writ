@@ -1,4 +1,4 @@
-# Writ Language Specification
+# 1. Writ Language Specification
 ## 27. Grammar Summary (EBNF)
 
 A simplified EBNF sketch of the core grammar. Not exhaustive but captures key structural rules.
@@ -14,7 +14,7 @@ rooted_name    = [ '::' ] qualified_name ;  /* leading :: = root namespace */
 visibility     = 'pub' | 'priv' ;
 declaration    = { attribute } [ visibility ] ( fn_decl | dlg_decl | struct_decl
                | enum_decl | contract_decl | impl_decl
-               | entity_decl | component_decl | extern_decl
+               | entity_decl | extern_decl
                | const_decl | global_decl ) ;
 
 attribute      = '[' attr_item { ',' attr_item } ']' ;
@@ -28,7 +28,8 @@ fn_decl        = 'fn' IDENT [ generic_params ] '(' [ params ] ')'
 dlg_decl       = 'dlg' IDENT [ '(' [ params ] ')' ] dlg_block ;
 
 struct_decl    = 'struct' IDENT [ generic_params ] '{'
-                 { [ visibility ] IDENT ':' type [ '=' expr ] ',' } '}' ;
+                 { struct_member } '}' ;
+struct_member  = [ visibility ] property | on_decl ;
 enum_decl      = 'enum' IDENT [ generic_params ] '{'
                  { variant ',' } '}' ;
 variant        = IDENT [ '(' { IDENT ':' type ',' } ')' ] ;
@@ -45,13 +46,18 @@ property       = IDENT ':' type [ '=' expr ] ',' ;
 use_decl       = 'use' IDENT [ '{' { IDENT ':' expr ',' } '}' ] ',' ;
 on_decl        = 'on' IDENT [ '(' params ')' ] block ;
 
-component_decl = 'component' IDENT '{' { [ visibility ] ( property | fn_decl ) } '}' ;
+/* Components are always extern — see extern_decl */
+component_decl = 'component' IDENT '{' { [ visibility ] property } '}' ;
 
 extern_decl    = 'extern' ( fn_sig ';' | struct_decl
                | component_decl ) ;
 
 const_decl     = 'const' IDENT ':' type '=' expr ';' ;
 global_decl    = 'global' 'mut' IDENT ':' type '=' expr ';' ;
+
+/* Construction expression */
+new_expr       = 'new' rooted_name [ '<' type { ',' type } '>' ]
+                 '{' { IDENT ':' expr ',' } '}' ;
 
 /* Lambdas (anonymous functions) */
 lambda         = 'fn' '(' [ lambda_params ] ')' [ '->' type ] block ;
@@ -95,6 +101,42 @@ dlg_choice     = 'choice' '{' { STRING [ '#' IDENT ] dlg_block } '}' ;
 dlg_if         = 'if' expr dlg_block [ 'else' ( dlg_if | dlg_block ) ] ;
 dlg_match      = 'match' expr '{' { pattern '=>' dlg_block } '}' ;
 transition     = '->' IDENT ;
+
+/* Patterns (used in match arms and if-let) */
+pattern        = literal_pat | wildcard_pat | enum_pat | or_pat
+               | range_pat | binding_pat ;
+literal_pat    = INT_LIT | STRING_LIT | 'true' | 'false' | 'null' ;
+wildcard_pat   = '_' ;
+binding_pat    = IDENT ;          /* matches anything, binds to name */
+enum_pat       = rooted_name '(' [ pattern { ',' pattern } ] ')' ;
+or_pat         = pattern '|' pattern { '|' pattern } ;
+range_pat      = INT_LIT '..=' INT_LIT ;
+
+/* Statements */
+statement      = var_decl | expr_stmt | for_stmt | while_stmt
+               | 'break' ';' | 'continue' ';' | 'return' [ expr ] ';' ;
+expr_stmt      = expr ';' ;
+
+/* Blocks and control flow */
+block          = '{' { statement | block_expr } [ expr ] '}' ;
+block_expr     = if_expr | match_expr ;   /* no trailing ; required */
+if_expr        = 'if' expr block [ 'else' ( if_expr | block ) ] ;
+match_expr     = 'match' expr '{' { pattern '=>' block } '}' ;
+for_stmt       = 'for' IDENT 'in' expr block ;
+while_stmt     = 'while' expr block ;
+
+/* Expressions (simplified — see Section 17.1 for full precedence) */
+expression     = literal | IDENT | unary_expr | binary_expr | call_expr
+               | member_expr | index_expr | if_expr | match_expr
+               | lambda | block | range_expr | array_literal
+               | new_expr ;
+call_expr      = expr [ '<' type { ',' type } '>' ] '(' [ args ] ')' ;
+args           = arg { ',' arg } ;
+arg            = [ IDENT ':' ] expr ;     /* positional or named */
+member_expr    = expr '.' IDENT ;
+index_expr     = expr '[' expr ']' ;
+unary_expr     = ( '-' | '!' | 'try' ) expr ;
+binary_expr    = expr BINARY_OP expr ;    /* see Section 17.1 for operators */
 
 /* Types */
 type           = IDENT [ '<' type { ',' type } '>' ] [ '[]' ] [ '?' ] ;

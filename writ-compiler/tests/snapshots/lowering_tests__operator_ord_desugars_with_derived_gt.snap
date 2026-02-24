@@ -1,0 +1,135 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Impl(
+            AstImplDecl {
+                contract: Some(
+                    Generic {
+                        name: "Ord",
+                        args: [
+                            Named {
+                                name: "MyNum",
+                                span: 31..36,
+                            },
+                        ],
+                        span: 13..55,
+                    },
+                ),
+                target: Named {
+                    name: "MyNum",
+                    span: 5..10,
+                },
+                members: [
+                    Fn(
+                        AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "lt",
+                            name_span: 22..23,
+                            generics: [],
+                            params: [
+                                AstParam {
+                                    name: "other",
+                                    name_span: 24..29,
+                                    ty: Named {
+                                        name: "MyNum",
+                                        span: 31..36,
+                                    },
+                                    span: 24..36,
+                                },
+                            ],
+                            return_type: Some(
+                                Named {
+                                    name: "bool",
+                                    span: 41..45,
+                                },
+                            ),
+                            body: [
+                                Expr {
+                                    expr: BoolLit {
+                                        value: false,
+                                        span: 48..53,
+                                    },
+                                    span: 48..53,
+                                },
+                            ],
+                            span: 13..55,
+                        },
+                    ),
+                ],
+                span: 13..55,
+            },
+        ),
+        Impl(
+            AstImplDecl {
+                contract: Some(
+                    Generic {
+                        name: "Gt",
+                        args: [
+                            Named {
+                                name: "MyNum",
+                                span: 31..36,
+                            },
+                        ],
+                        span: 0..57,
+                    },
+                ),
+                target: Named {
+                    name: "MyNum",
+                    span: 5..10,
+                },
+                members: [
+                    Fn(
+                        AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "gt",
+                            name_span: 0..57,
+                            generics: [],
+                            params: [
+                                AstParam {
+                                    name: "other",
+                                    name_span: 0..57,
+                                    ty: Named {
+                                        name: "MyNum",
+                                        span: 31..36,
+                                    },
+                                    span: 0..57,
+                                },
+                            ],
+                            return_type: Some(
+                                Named {
+                                    name: "bool",
+                                    span: 0..57,
+                                },
+                            ),
+                            body: [
+                                Return {
+                                    value: Some(
+                                        Binary {
+                                            left: Ident {
+                                                name: "other",
+                                                span: 0..57,
+                                            },
+                                            op: Lt,
+                                            right: SelfLit {
+                                                span: 0..57,
+                                            },
+                                            span: 0..57,
+                                        },
+                                    ),
+                                    span: 0..57,
+                                },
+                            ],
+                            span: 0..57,
+                        },
+                    ),
+                ],
+                span: 0..57,
+            },
+        ),
+    ],
+}

@@ -1,4 +1,4 @@
-# Writ Language Specification
+# 1. Writ Language Specification
 ## 20. Concurrency
 
 All function calls implicitly yield if needed (coroutine-based). Script authors do not think about async/await for
@@ -23,7 +23,7 @@ script author.
 ```
 dlg boulderScene {
     @Narrator The ground shakes...
-    $ let task = spawn moveBoulder(vec2(10, 5));
+    $ let task = spawn moveBoulder(vec2 { x: 10.0, y: 5.0 });
     @Narrator Quick, get out of the way!
     $ choice {
         "Run!" {

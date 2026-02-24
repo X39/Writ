@@ -1,0 +1,121 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Struct(
+            AstStructDecl {
+                attrs: [],
+                vis: None,
+                name: "Guard",
+                name_span: 7..12,
+                generics: [],
+                fields: [
+                    AstStructField {
+                        vis: None,
+                        name: "name",
+                        name_span: 15..19,
+                        ty: Named {
+                            name: "string",
+                            span: 21..27,
+                        },
+                        default: None,
+                        span: 15..28,
+                    },
+                    AstStructField {
+                        vis: None,
+                        name: "$Health",
+                        name_span: 33..39,
+                        ty: Named {
+                            name: "Health",
+                            span: 33..39,
+                        },
+                        default: Some(
+                            StructLit {
+                                name: "Health",
+                                name_span: 33..39,
+                                fields: [
+                                    (
+                                        "current",
+                                        42..49,
+                                        IntLit {
+                                            value: 80,
+                                            span: 51..53,
+                                        },
+                                    ),
+                                    (
+                                        "max",
+                                        55..58,
+                                        IntLit {
+                                            value: 80,
+                                            span: 60..62,
+                                        },
+                                    ),
+                                ],
+                                span: 29..64,
+                            },
+                        ),
+                        span: 29..64,
+                    },
+                ],
+                span: 0..66,
+            },
+        ),
+        Impl(
+            AstImplDecl {
+                contract: Some(
+                    Generic {
+                        name: "ComponentAccess",
+                        args: [
+                            Named {
+                                name: "Health",
+                                span: 33..39,
+                            },
+                        ],
+                        span: 33..39,
+                    },
+                ),
+                target: Named {
+                    name: "Guard",
+                    span: 7..12,
+                },
+                members: [
+                    Fn(
+                        AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "get",
+                            name_span: 33..39,
+                            generics: [],
+                            params: [],
+                            return_type: Some(
+                                Named {
+                                    name: "Health",
+                                    span: 33..39,
+                                },
+                            ),
+                            body: [
+                                Return {
+                                    value: Some(
+                                        MemberAccess {
+                                            object: SelfLit {
+                                                span: 33..39,
+                                            },
+                                            field: "$Health",
+                                            field_span: 33..39,
+                                            span: 33..39,
+                                        },
+                                    ),
+                                    span: 33..39,
+                                },
+                            ],
+                            span: 29..64,
+                        },
+                    ),
+                ],
+                span: 29..64,
+            },
+        ),
+    ],
+}

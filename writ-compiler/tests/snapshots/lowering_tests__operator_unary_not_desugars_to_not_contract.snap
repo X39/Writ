@@ -1,0 +1,70 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Impl(
+            AstImplDecl {
+                contract: Some(
+                    Generic {
+                        name: "Not",
+                        args: [
+                            Named {
+                                name: "MyBool",
+                                span: 30..36,
+                            },
+                        ],
+                        span: 14..54,
+                    },
+                ),
+                target: Named {
+                    name: "MyBool",
+                    span: 5..11,
+                },
+                members: [
+                    Fn(
+                        AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "not",
+                            name_span: 23..24,
+                            generics: [],
+                            params: [],
+                            return_type: Some(
+                                Named {
+                                    name: "MyBool",
+                                    span: 30..36,
+                                },
+                            ),
+                            body: [
+                                Expr {
+                                    expr: Call {
+                                        callee: Ident {
+                                            name: "MyBool",
+                                            span: 39..45,
+                                        },
+                                        args: [
+                                            AstArg {
+                                                name: None,
+                                                value: BoolLit {
+                                                    value: false,
+                                                    span: 46..51,
+                                                },
+                                                span: 46..51,
+                                            },
+                                        ],
+                                        span: 39..52,
+                                    },
+                                    span: 39..52,
+                                },
+                            ],
+                            span: 14..54,
+                        },
+                    ),
+                ],
+                span: 14..54,
+            },
+        ),
+    ],
+}

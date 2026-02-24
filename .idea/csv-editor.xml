@@ -10,13 +10,6 @@
             </Attribute>
           </value>
         </entry>
-        <entry key="\language-spec\spec\26_25_localization.md">
-          <value>
-            <Attribute>
-              <option name="separator" value="," />
-            </Attribute>
-          </value>
-        </entry>
       </map>
     </option>
   </component>

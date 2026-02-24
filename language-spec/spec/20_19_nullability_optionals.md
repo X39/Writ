@@ -1,4 +1,4 @@
-# Writ Language Specification
+# 1. Writ Language Specification
 ## 19. Nullability & Optionals
 
 `T?` is syntactic sugar for `Option<T>`. All types are non-nullable by default. The `null` keyword is sugar for

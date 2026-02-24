@@ -8,181 +8,415 @@
     {
       "filename": "01_table_of_contents.md",
       "prepended": [
-        "# Writ Language Specification"
+        "# 1. Writ Language Specification"
       ]
     },
     {
       "filename": "02_1_overview_design_philosophy.md",
       "prepended": [
-        "# Writ Language Specification"
+        "# 1. Writ Language Specification"
       ]
     },
     {
       "filename": "03_2_project_configuration_writ_toml.md",
       "prepended": [
-        "# Writ Language Specification"
+        "# 1. Writ Language Specification"
       ]
     },
     {
       "filename": "04_3_naming_conventions_style_guide.md",
       "prepended": [
-        "# Writ Language Specification"
+        "# 1. Writ Language Specification"
       ]
     },
     {
       "filename": "05_4_lexical_structure.md",
       "prepended": [
-        "# Writ Language Specification"
+        "# 1. Writ Language Specification"
       ]
     },
     {
       "filename": "06_5_type_system.md",
       "prepended": [
-        "# Writ Language Specification"
+        "# 1. Writ Language Specification"
       ]
     },
     {
       "filename": "07_6_primitive_types.md",
       "prepended": [
-        "# Writ Language Specification"
+        "# 1. Writ Language Specification"
       ]
     },
     {
       "filename": "08_7_variables_constants.md",
       "prepended": [
-        "# Writ Language Specification"
+        "# 1. Writ Language Specification"
       ]
     },
     {
       "filename": "09_8_structs.md",
       "prepended": [
-        "# Writ Language Specification"
+        "# 1. Writ Language Specification"
       ]
     },
     {
       "filename": "10_9_enums.md",
       "prepended": [
-        "# Writ Language Specification"
+        "# 1. Writ Language Specification"
       ]
     },
     {
       "filename": "11_10_contracts.md",
       "prepended": [
-        "# Writ Language Specification"
+        "# 1. Writ Language Specification"
       ]
     },
     {
       "filename": "12_11_generics.md",
       "prepended": [
-        "# Writ Language Specification"
+        "# 1. Writ Language Specification"
       ]
     },
     {
       "filename": "13_12_functions_fn.md",
       "prepended": [
-        "# Writ Language Specification"
+        "# 1. Writ Language Specification"
       ]
     },
     {
       "filename": "14_13_dialogue_blocks_dlg.md",
       "prepended": [
-        "# Writ Language Specification"
+        "# 1. Writ Language Specification"
       ]
     },
     {
       "filename": "15_14_entities.md",
       "prepended": [
-        "# Writ Language Specification"
+        "# 1. Writ Language Specification"
       ]
     },
     {
       "filename": "16_15_components.md",
       "prepended": [
-        "# Writ Language Specification"
+        "# 1. Writ Language Specification"
       ]
     },
     {
       "filename": "17_16_attributes.md",
       "prepended": [
-        "# Writ Language Specification"
+        "# 1. Writ Language Specification"
       ]
     },
     {
       "filename": "18_17_operators_overloading.md",
       "prepended": [
-        "# Writ Language Specification"
+        "# 1. Writ Language Specification"
       ]
     },
     {
       "filename": "19_18_error_handling.md",
       "prepended": [
-        "# Writ Language Specification"
+        "# 1. Writ Language Specification"
       ]
     },
     {
       "filename": "20_19_nullability_optionals.md",
       "prepended": [
-        "# Writ Language Specification"
+        "# 1. Writ Language Specification"
       ]
     },
     {
       "filename": "21_20_concurrency.md",
       "prepended": [
-        "# Writ Language Specification"
+        "# 1. Writ Language Specification"
       ]
     },
     {
       "filename": "22_21_scoping_rules.md",
       "prepended": [
-        "# Writ Language Specification"
+        "# 1. Writ Language Specification"
       ]
     },
     {
       "filename": "23_22_globals_atomic_access.md",
       "prepended": [
-        "# Writ Language Specification"
+        "# 1. Writ Language Specification"
       ]
     },
     {
       "filename": "24_23_modules_namespaces.md",
       "prepended": [
-        "# Writ Language Specification"
+        "# 1. Writ Language Specification"
       ]
     },
     {
       "filename": "25_24_external_declarations.md",
       "prepended": [
-        "# Writ Language Specification"
+        "# 1. Writ Language Specification"
       ]
     },
     {
       "filename": "26_25_localization.md",
       "prepended": [
-        "# Writ Language Specification"
+        "# 1. Writ Language Specification"
       ]
     },
     {
       "filename": "27_26_standard_library_builtins.md",
       "prepended": [
-        "# Writ Language Specification"
+        "# 1. Writ Language Specification"
       ]
     },
     {
       "filename": "28_27_grammar_summary_ebnf.md",
       "prepended": [
-        "# Writ Language Specification"
+        "# 1. Writ Language Specification"
       ]
     },
     {
       "filename": "29_28_lowering_reference.md",
       "prepended": [
-        "# Writ Language Specification"
+        "# 1. Writ Language Specification"
       ]
     },
     {
-      "filename": "30_29_open_questions.md",
+      "filename": "30_2_1_register_based_virtual_machine.md",
       "prepended": [
-        "# Writ Language Specification"
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "31_2_2_typed_il_with_generic_preservation.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "32_2_3_execution_model_cooperative_yielding_with_preemptive_serialization.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "33_2_4_binary_format.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "34_2_5_instruction_encoding.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "35_2_6_calling_convention.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "36_2_7_operator_dispatch.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "37_2_8_serialization_critical_sections_removed.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "38_2_9_memory_model.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "39_2_10_self_parameter.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "40_2_11_construction_model.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "41_2_12_delegate_model_closures_function_values.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "42_2_13_save_load_serialization.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "43_2_14_runtime_host_interface.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "44_2_15_il_type_system.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "45_2_16_il_module_format.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "46_2_17_execution_model.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "47_2_18_writ_runtime_module_contents.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "48_3_0_meta.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "49_3_1_data_movement.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "50_3_2_integer_arithmetic.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "51_3_3_float_arithmetic.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "52_3_4_bitwise_logical.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "53_3_5_comparison.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "54_3_6_control_flow.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "55_3_7_calls.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "56_3_8_object_model.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "57_3_9_arrays.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "58_3_10_type_operations.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "59_3_11_concurrency.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "60_3_12_globals_atomics.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "61_3_13_conversion.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "62_3_14_strings.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "63_3_15_boxing.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "64_3_16_serialization_control_removed.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "65_4_0_instruction_count_by_category.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "66_4_1_instruction_shape_reference.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "67_4_2_opcode_assignment_table.md",
+      "prepended": [
+        "# Writ IL Specification"
+      ]
+    },
+    {
+      "filename": "68_a_open_questions.md",
+      "prepended": [
+        "# Appendix"
+      ]
+    },
+    {
+      "filename": "69_b_il_decision_log.md",
+      "prepended": [
+        "# Appendix"
       ]
     }
   ]

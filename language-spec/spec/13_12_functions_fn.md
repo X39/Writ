@@ -1,4 +1,4 @@
-# Writ Language Specification
+# 1. Writ Language Specification
 ## 12. Functions (fn)
 
 Functions are the primary code construct. They follow C-style syntax with explicit type annotations.
@@ -53,6 +53,11 @@ fn maybeLog(amount: int, verbose: bool) {
 
 The rule applies uniformly to all blocks: function bodies, `if`/`else` branches, `match` arms, and lambda bodies. A
 block's value is always the last expression. If the block ends with a `;`, it evaluates to void.
+
+> **Semicolons and block-bodied constructs:** Block-bodied constructs (`if`, `match`, `for`, `while`) are
+> terminated by their closing `}` when used as statements. `if` and `match` are expressions — they can appear
+> anywhere an expression is valid, including the right-hand side of `let`. `for` and `while` are statements.
+> In `let x = if ... { } else { };`, the `;` terminates the `let` statement, not the `if` expression.
 
 ### 12.2 Expressions and Blocks
 
@@ -132,14 +137,16 @@ for i in 0..10 {
 }
 
 for member in party.members {
-    member[Health]!.heal(10);
+    if let Option::Some(hp) = member[Health] {
+        hp.current = min(hp.current + 10, hp.max);
+    }
 }
 ```
 
 #### 12.2.4 while Loops
 
 ```
-while enemy[Health].current > 0 {
+while enemy[Health]!.current > 0 {
     attack(enemy);
 }
 ```
@@ -158,10 +165,12 @@ for item in inventory {
 }
 
 for member in party.members {
-    if member[Health]?.isDead() {
-        continue;
+    if let Option::Some(hp) = member[Health] {
+        if hp.current <= 0 {
+            continue;
+        }
+        hp.current = min(hp.current + 10, hp.max);
     }
-    member[Health]!.heal(10);
 }
 ```
 
@@ -172,12 +181,12 @@ The compiler resolves calls based on argument types at the call site.
 
 ```
 fn damage(target: Entity, amount: int) {
-    target[Health]!.damage(amount);
+    target[Health]!.current -= amount;
 }
 
 fn damage(target: Entity, amount: int, type: DamageType) {
     let modified = applyResistance(amount, target, type);
-    target[Health]!.damage(modified);
+    target[Health]!.current -= modified;
 }
 
 // Resolved by argument count / types
@@ -256,7 +265,7 @@ Function types are written as `fn(ParamTypes) -> ReturnType`. Functions that ret
 
 ```
 let predicate: fn(int) -> bool = fn(x) { x > 0 };
-let action: fn(Entity) = fn(e) { e.destroy(); };
+let action: fn(Entity) = fn(e) { Entity.destroy(e); };
 let combine: fn(int, int) -> int = fn(a, b) { a + b };
 ```
 
@@ -273,6 +282,103 @@ let process = fn(x: int) -> int {
     count += 1;                  // mutates the outer count
     x + bonus
 };
+```
+
+### 12.5 Methods and the `self` Parameter
+
+Methods declared inside `impl` blocks, entity bodies, or component bodies take an explicit `self` or `mut self`
+parameter as their first argument. The `self` keyword refers to the instance the method is called on.
+
+#### 12.5.1 Immutable and Mutable Receivers
+
+- `self` — immutable receiver. The method can read fields and call other `self` methods, but cannot modify fields
+  or call `mut self` methods through `self`.
+- `mut self` — mutable receiver. The method can read and modify fields, and call any method through `self`.
+
+```
+fn greet(self) -> string {
+    $"Welcome! I am {self.name}"     // OK — reading a field
+}
+
+fn damage(mut self, amount: int) {
+    self.current -= amount;          // OK — mut self allows field writes
+}
+```
+
+The caller's binding must be mutable to call a `mut self` method:
+
+```
+let guard = new Guard {};
+guard.greet();          // OK — greet takes self (immutable)
+guard.damage(10);       // ERROR — damage takes mut self, but guard is not mut
+
+let mut guard2 = new Guard {};
+guard2.damage(10);      // OK — guard2 is mutable
+```
+
+#### 12.5.2 Static Functions
+
+Functions in `impl` blocks that do not take `self` are static functions. They are called on the type, not on an
+instance:
+
+```
+impl Merchant {
+    fn create(name: string) -> Merchant {
+        new Merchant { name: name, gold: 0, reputation: 0.8 }
+    }
+}
+
+let m = Merchant::create("Tim");
+```
+
+#### 12.5.3 Operators
+
+Operator declarations use the `operator` keyword and have an implicit `self` receiver — the left operand (or sole
+operand for unary operators). Mutability is determined by the operator kind:
+
+- Read operators (`+`, `-`, `*`, `/`, `%`, `==`, `<`, `[]`, unary `-`, `!`): implicit immutable `self`.
+- Write operators (`[]=`): implicit mutable `self`.
+
+```
+impl vec2 {
+    operator +(other: vec2) -> vec2 {          // implicit self (immutable)
+        vec2(self.x + other.x, self.y + other.y)
+    }
+
+    operator []=(index: int, value: float) {   // implicit mut self
+        match index {
+            0 => { self.x = value; }
+            1 => { self.y = value; }
+        }
+    }
+}
+```
+
+#### 12.5.4 Lifecycle Hooks
+
+Lifecycle hooks use the `on` keyword and have an implicit `mut self` receiver. They do not use explicit `self` in their
+syntax because their signature is fixed by the runtime.
+
+**Universal hooks** (available on structs and entities):
+
+| Hook             | Purpose                                                   |
+|------------------|-----------------------------------------------------------|
+| `on create`      | Post-initialization logic (runs after all fields are set) |
+| `on finalize`    | GC cleanup (non-deterministic timing)                     |
+| `on serialize`   | Prepare for serialization (park native state)             |
+| `on deserialize` | Restore after deserialization (recreate native state)     |
+
+**Entity-specific hooks:**
+
+| Hook                       | Purpose                                                       |
+|----------------------------|---------------------------------------------------------------|
+| `on destroy`               | Deterministic cleanup when `Entity.destroy(entity)` is called |
+| `on interact(who: Entity)` | Host-triggered interaction event                              |
+
+```
+on create {
+    log($"Spawned: {self.name}");   // self is implicitly available and mutable
+}
 ```
 
 ---

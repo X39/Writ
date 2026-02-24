@@ -1,0 +1,75 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Impl(
+            AstImplDecl {
+                contract: Some(
+                    Generic {
+                        name: "Index",
+                        args: [
+                            Named {
+                                name: "int",
+                                span: 31..34,
+                            },
+                            Named {
+                                name: "string",
+                                span: 39..45,
+                            },
+                        ],
+                        span: 14..58,
+                    },
+                ),
+                target: Named {
+                    name: "MyList",
+                    span: 5..11,
+                },
+                members: [
+                    Fn(
+                        AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "index",
+                            name_span: 23..25,
+                            generics: [],
+                            params: [
+                                AstParam {
+                                    name: "idx",
+                                    name_span: 26..29,
+                                    ty: Named {
+                                        name: "int",
+                                        span: 31..34,
+                                    },
+                                    span: 26..34,
+                                },
+                            ],
+                            return_type: Some(
+                                Named {
+                                    name: "string",
+                                    span: 39..45,
+                                },
+                            ),
+                            body: [
+                                Expr {
+                                    expr: Call {
+                                        callee: Ident {
+                                            name: "string",
+                                            span: 48..54,
+                                        },
+                                        args: [],
+                                        span: 48..56,
+                                    },
+                                    span: 48..56,
+                                },
+                            ],
+                            span: 14..58,
+                        },
+                    ),
+                ],
+                span: 14..58,
+            },
+        ),
+    ],
+}

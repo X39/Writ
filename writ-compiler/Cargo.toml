@@ -4,3 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+writ-parser = { path = "../writ-parser" }
+chumsky = { version = "0.12.0", features = ["pratt"] }
+thiserror = "2.0"
+
+[dev-dependencies]
+insta = { version = "1", features = ["ron"] }
