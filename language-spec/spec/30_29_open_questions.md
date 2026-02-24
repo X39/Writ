@@ -38,3 +38,7 @@ How are entity and game state serialized for save/load? Automatic, opt-in via at
 **Localization pluralization**
 How should pluralization rules be handled across locales (e.g., `{count} items` where some languages have complex plural
 forms)?
+
+**Properties & UI binding**
+Should Writ have a `property` keyword with get/set accessors, an `[Observable]` attribute, or both? How should game UI
+bind to script-side state — push-based (change notifications), pull-based (polling), or a declarative binding syntax?
