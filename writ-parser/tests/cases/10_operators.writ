@@ -85,5 +85,5 @@ pub fn nullOps() {
 pub fn calls() {
     let result = add(1, 2);
     let converted = health.into<string>();
-    let spawned = spawn Guard {};
+    let spawned = spawn new Guard {};
 }

@@ -1,0 +1,45 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Entity(
+            AstEntityDecl {
+                attrs: [],
+                vis: None,
+                name: "Guard",
+                name_span: 7..12,
+                properties: [],
+                component_slots: [
+                    AstComponentSlot {
+                        component: "Health",
+                        component_span: 19..25,
+                        overrides: [
+                            (
+                                "current",
+                                28..35,
+                                IntLit {
+                                    value: 80,
+                                    span: 37..39,
+                                },
+                            ),
+                            (
+                                "max",
+                                41..44,
+                                IntLit {
+                                    value: 100,
+                                    span: 46..49,
+                                },
+                            ),
+                        ],
+                        span: 15..51,
+                    },
+                ],
+                hooks: [],
+                inherent_impl: None,
+                span: 0..53,
+            },
+        ),
+    ],
+}

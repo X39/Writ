@@ -43,7 +43,7 @@ Ast {
                     Expr {
                         expr: Call {
                             callee: Ident {
-                                name: "say_localized",
+                                name: "say",
                                 span: 14..30,
                             },
                             args: [
@@ -52,14 +52,6 @@ Ast {
                                     value: Ident {
                                         name: "_narrator",
                                         span: 15..23,
-                                    },
-                                    span: 14..30,
-                                },
-                                AstArg {
-                                    name: None,
-                                    value: StringLit {
-                                        value: "ae3cbcf6",
-                                        span: 14..30,
                                     },
                                     span: 14..30,
                                 },
@@ -79,7 +71,7 @@ Ast {
                     Expr {
                         expr: Call {
                             callee: Ident {
-                                name: "say_localized",
+                                name: "say",
                                 span: 31..49,
                             },
                             args: [
@@ -88,14 +80,6 @@ Ast {
                                     value: Ident {
                                         name: "_narrator",
                                         span: 32..40,
-                                    },
-                                    span: 31..49,
-                                },
-                                AstArg {
-                                    name: None,
-                                    value: StringLit {
-                                        value: "5adf80cb",
-                                        span: 31..49,
                                     },
                                     span: 31..49,
                                 },

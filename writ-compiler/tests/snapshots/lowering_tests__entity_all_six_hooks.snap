@@ -1,0 +1,261 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Entity(
+            AstEntityDecl {
+                attrs: [],
+                vis: None,
+                name: "Guard",
+                name_span: 7..12,
+                properties: [],
+                component_slots: [],
+                hooks: [
+                    AstEntityHook {
+                        contract: "OnCreate",
+                        contract_span: 18..24,
+                        method: AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "on_create",
+                            name_span: 18..24,
+                            generics: [],
+                            params: [
+                                SelfParam {
+                                    mutable: true,
+                                    span: 18..24,
+                                },
+                            ],
+                            return_type: None,
+                            body: [
+                                Let {
+                                    mutable: false,
+                                    name: "a",
+                                    name_span: 31..32,
+                                    ty: Some(
+                                        Named {
+                                            name: "int",
+                                            span: 34..37,
+                                        },
+                                    ),
+                                    value: IntLit {
+                                        value: 1,
+                                        span: 40..41,
+                                    },
+                                    span: 27..42,
+                                },
+                            ],
+                            span: 15..44,
+                        },
+                        span: 15..44,
+                    },
+                    AstEntityHook {
+                        contract: "OnDestroy",
+                        contract_span: 48..55,
+                        method: AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "on_destroy",
+                            name_span: 48..55,
+                            generics: [],
+                            params: [
+                                SelfParam {
+                                    mutable: true,
+                                    span: 48..55,
+                                },
+                            ],
+                            return_type: None,
+                            body: [
+                                Let {
+                                    mutable: false,
+                                    name: "b",
+                                    name_span: 62..63,
+                                    ty: Some(
+                                        Named {
+                                            name: "int",
+                                            span: 65..68,
+                                        },
+                                    ),
+                                    value: IntLit {
+                                        value: 2,
+                                        span: 71..72,
+                                    },
+                                    span: 58..73,
+                                },
+                            ],
+                            span: 45..75,
+                        },
+                        span: 45..75,
+                    },
+                    AstEntityHook {
+                        contract: "OnInteract",
+                        contract_span: 79..87,
+                        method: AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "on_interact",
+                            name_span: 79..87,
+                            generics: [],
+                            params: [
+                                SelfParam {
+                                    mutable: true,
+                                    span: 79..87,
+                                },
+                                Regular(
+                                    AstParam {
+                                        name: "who",
+                                        name_span: 88..91,
+                                        ty: Named {
+                                            name: "Entity",
+                                            span: 93..99,
+                                        },
+                                        span: 88..99,
+                                    },
+                                ),
+                            ],
+                            return_type: None,
+                            body: [
+                                Let {
+                                    mutable: false,
+                                    name: "c",
+                                    name_span: 107..108,
+                                    ty: Some(
+                                        Named {
+                                            name: "int",
+                                            span: 110..113,
+                                        },
+                                    ),
+                                    value: IntLit {
+                                        value: 3,
+                                        span: 116..117,
+                                    },
+                                    span: 103..118,
+                                },
+                            ],
+                            span: 76..120,
+                        },
+                        span: 76..120,
+                    },
+                    AstEntityHook {
+                        contract: "OnFinalize",
+                        contract_span: 124..132,
+                        method: AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "on_finalize",
+                            name_span: 124..132,
+                            generics: [],
+                            params: [
+                                SelfParam {
+                                    mutable: true,
+                                    span: 124..132,
+                                },
+                            ],
+                            return_type: None,
+                            body: [
+                                Let {
+                                    mutable: false,
+                                    name: "d",
+                                    name_span: 139..140,
+                                    ty: Some(
+                                        Named {
+                                            name: "int",
+                                            span: 142..145,
+                                        },
+                                    ),
+                                    value: IntLit {
+                                        value: 4,
+                                        span: 148..149,
+                                    },
+                                    span: 135..150,
+                                },
+                            ],
+                            span: 121..152,
+                        },
+                        span: 121..152,
+                    },
+                    AstEntityHook {
+                        contract: "OnSerialize",
+                        contract_span: 156..165,
+                        method: AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "on_serialize",
+                            name_span: 156..165,
+                            generics: [],
+                            params: [
+                                SelfParam {
+                                    mutable: true,
+                                    span: 156..165,
+                                },
+                            ],
+                            return_type: None,
+                            body: [
+                                Let {
+                                    mutable: false,
+                                    name: "e",
+                                    name_span: 172..173,
+                                    ty: Some(
+                                        Named {
+                                            name: "int",
+                                            span: 175..178,
+                                        },
+                                    ),
+                                    value: IntLit {
+                                        value: 5,
+                                        span: 181..182,
+                                    },
+                                    span: 168..183,
+                                },
+                            ],
+                            span: 153..185,
+                        },
+                        span: 153..185,
+                    },
+                    AstEntityHook {
+                        contract: "OnDeserialize",
+                        contract_span: 189..200,
+                        method: AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "on_deserialize",
+                            name_span: 189..200,
+                            generics: [],
+                            params: [
+                                SelfParam {
+                                    mutable: true,
+                                    span: 189..200,
+                                },
+                            ],
+                            return_type: None,
+                            body: [
+                                Let {
+                                    mutable: false,
+                                    name: "f",
+                                    name_span: 207..208,
+                                    ty: Some(
+                                        Named {
+                                            name: "int",
+                                            span: 210..213,
+                                        },
+                                    ),
+                                    value: IntLit {
+                                        value: 6,
+                                        span: 216..217,
+                                    },
+                                    span: 203..218,
+                                },
+                            ],
+                            span: 186..220,
+                        },
+                        span: 186..220,
+                    },
+                ],
+                inherent_impl: None,
+                span: 0..222,
+            },
+        ),
+    ],
+}

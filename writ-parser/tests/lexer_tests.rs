@@ -1,4 +1,4 @@
-use writ_parser::{lex, Token};
+use writ_parser::{dedent_raw_string, lex, process_escapes, EscapeError, Token};
 
 // =============================================================
 // Lossless Roundtrip Tests (LEX-02, INTG-02)
@@ -196,7 +196,8 @@ fn empty_string() {
 
 #[test]
 fn raw_string_triple_quotes() {
-    let src = "\"\"\"hello world\"\"\"";
+    // Valid raw string: opening """ followed by newline, closing """ on its own line
+    let src = "\"\"\"\nhello world\n\"\"\"";
     let tokens = lex(src);
     let non_ws: Vec<_> = tokens
         .iter()
@@ -213,8 +214,8 @@ fn raw_string_triple_quotes() {
 
 #[test]
 fn raw_string_four_quotes() {
-    // """" contains """ inside """"
-    let src = "\"\"\"\"contains \"\"\" inside\"\"\"\"";
+    // """" contains """ inside """" — valid: newline after opening, closing on own line
+    let src = "\"\"\"\"\ncontains \"\"\" inside\n\"\"\"\"";
     let tokens = lex(src);
     let non_ws: Vec<_> = tokens
         .iter()
@@ -231,8 +232,8 @@ fn raw_string_four_quotes() {
 
 #[test]
 fn raw_string_five_quotes() {
-    // """"" contains """ and """" inside """""
-    let src = "\"\"\"\"\"contains \"\"\" and \"\"\"\" inside\"\"\"\"\"";
+    // """"" contains """ and """" inside """"" — valid: newline after opening, closing on own line
+    let src = "\"\"\"\"\"\ncontains \"\"\" and \"\"\"\" inside\n\"\"\"\"\"";
     let tokens = lex(src);
     let non_ws: Vec<_> = tokens
         .iter()
@@ -572,4 +573,340 @@ fn spans_cover_exact_source_text() {
             _ => {}
         }
     }
+}
+
+// =============================================================
+// Raw String Delimiter Validation (LEX-01, LEX-02)
+// =============================================================
+
+#[test]
+fn raw_string_opening_not_followed_by_newline_is_error() {
+    // """hello""" — opening """ must be followed by newline
+    let src = "\"\"\"hello\"\"\"";
+    let tokens = lex(src);
+    let has_error = tokens.iter().any(|(t, _)| matches!(t, Token::Error));
+    assert!(
+        has_error,
+        "Raw string without newline after opening should produce Error token, got {:?}",
+        tokens
+    );
+}
+
+#[test]
+fn raw_string_closing_not_on_own_line_is_error() {
+    // """\ncontent""" — closing """ has content before it on same line
+    let src = "\"\"\"\ncontent\"\"\"";
+    let tokens = lex(src);
+    let has_error = tokens.iter().any(|(t, _)| matches!(t, Token::Error));
+    assert!(
+        has_error,
+        "Raw string with closing not on own line should produce Error token, got {:?}",
+        tokens
+    );
+}
+
+#[test]
+fn raw_string_content_on_opening_line_is_error() {
+    // """content\n""" — content immediately after opening quotes (not newline)
+    let src = "\"\"\"content\n\"\"\"";
+    let tokens = lex(src);
+    let has_error = tokens.iter().any(|(t, _)| matches!(t, Token::Error));
+    assert!(
+        has_error,
+        "Raw string with content on opening line should produce Error token, got {:?}",
+        tokens
+    );
+}
+
+#[test]
+fn formattable_raw_string_invalid_opening_is_error() {
+    let src = "$\"\"\"hello\"\"\"";
+    let tokens = lex(src);
+    let has_error = tokens.iter().any(|(t, _)| matches!(t, Token::Error));
+    assert!(
+        has_error,
+        "Formattable raw string without newline after opening should produce Error token, got {:?}",
+        tokens
+    );
+}
+
+#[test]
+fn formattable_raw_string_invalid_closing_is_error() {
+    let src = "$\"\"\"\ncontent\"\"\"";
+    let tokens = lex(src);
+    let has_error = tokens.iter().any(|(t, _)| matches!(t, Token::Error));
+    assert!(
+        has_error,
+        "Formattable raw string with closing not on own line should produce Error token, got {:?}",
+        tokens
+    );
+}
+
+#[test]
+fn raw_string_valid_multiline_still_works() {
+    // Regression: valid raw string with indentation should still lex
+    let src = "\"\"\"\n    hello world\n    \"\"\"";
+    let tokens = lex(src);
+    let non_ws: Vec<_> = tokens
+        .iter()
+        .filter(|(t, _)| !matches!(t, Token::Whitespace))
+        .collect();
+    assert_eq!(non_ws.len(), 1);
+    assert!(matches!(non_ws[0].0, Token::RawStringLit));
+}
+
+#[test]
+fn formattable_raw_string_valid_multiline_still_works() {
+    let src = "$\"\"\"\n    hello {name}\n    \"\"\"";
+    let tokens = lex(src);
+    let non_ws: Vec<_> = tokens
+        .iter()
+        .filter(|(t, _)| !matches!(t, Token::Whitespace))
+        .collect();
+    assert_eq!(non_ws.len(), 1);
+    assert!(matches!(non_ws[0].0, Token::FormattableRawStringLit));
+}
+
+#[test]
+fn raw_string_four_quotes_valid_structure() {
+    // Regression: 4-quote raw string with valid structure
+    let src = "\"\"\"\"\n    contains \"\"\" inside\n    \"\"\"\"";
+    let tokens = lex(src);
+    let non_ws: Vec<_> = tokens
+        .iter()
+        .filter(|(t, _)| !matches!(t, Token::Whitespace))
+        .collect();
+    assert_eq!(
+        non_ws.len(),
+        1,
+        "Four-quote raw string with valid structure should lex, got {:?}",
+        non_ws
+    );
+    assert!(matches!(non_ws[0].0, Token::RawStringLit));
+}
+
+#[test]
+fn raw_string_closing_with_only_whitespace_before() {
+    // Valid: closing """ with spaces before it on the same line
+    let src = "\"\"\"\nhello\n    \"\"\"";
+    let tokens = lex(src);
+    let non_ws: Vec<_> = tokens
+        .iter()
+        .filter(|(t, _)| !matches!(t, Token::Whitespace))
+        .collect();
+    assert_eq!(non_ws.len(), 1);
+    assert!(matches!(non_ws[0].0, Token::RawStringLit));
+}
+
+#[test]
+fn raw_string_crlf_after_opening() {
+    // Valid: \r\n after opening delimiter
+    let src = "\"\"\"\r\nhello\n\"\"\"";
+    let tokens = lex(src);
+    let non_ws: Vec<_> = tokens
+        .iter()
+        .filter(|(t, _)| !matches!(t, Token::Whitespace))
+        .collect();
+    assert_eq!(non_ws.len(), 1);
+    assert!(matches!(non_ws[0].0, Token::RawStringLit));
+}
+
+// =============================================================
+// Unicode Escape in Formattable Strings (LEX-04)
+// =============================================================
+
+#[test]
+fn formattable_string_unicode_escape_not_interpolation() {
+    // $"emoji: \u{1F600}" — \u{ should NOT start interpolation
+    let src = "$\"emoji: \\u{1F600}\"";
+    let tokens = lex(src);
+    let non_ws: Vec<_> = tokens
+        .iter()
+        .filter(|(t, _)| !matches!(t, Token::Whitespace))
+        .collect();
+    assert_eq!(
+        non_ws.len(),
+        1,
+        "\\u{{...}} should not split the formattable string, got {:?}",
+        non_ws
+    );
+    assert!(matches!(non_ws[0].0, Token::FormattableStringLit));
+}
+
+#[test]
+fn formattable_string_unicode_escape_with_real_interpolation() {
+    // $"\u{41} says {name}" — both unicode escape and real interpolation
+    let src = "$\"\\u{41} says {name}\"";
+    let tokens = lex(src);
+    let non_ws: Vec<_> = tokens
+        .iter()
+        .filter(|(t, _)| !matches!(t, Token::Whitespace))
+        .collect();
+    assert_eq!(
+        non_ws.len(),
+        1,
+        "Mix of \\u{{}} and {{}} interpolation should be one token, got {:?}",
+        non_ws
+    );
+    assert!(matches!(non_ws[0].0, Token::FormattableStringLit));
+}
+
+#[test]
+fn formattable_string_without_unicode_escape_still_works() {
+    // Regression: normal interpolation still works
+    let src = "$\"hello {name}!\"";
+    let tokens = lex(src);
+    let non_ws: Vec<_> = tokens
+        .iter()
+        .filter(|(t, _)| !matches!(t, Token::Whitespace))
+        .collect();
+    assert_eq!(non_ws.len(), 1);
+    assert!(matches!(non_ws[0].0, Token::FormattableStringLit));
+}
+
+// =============================================================
+// Raw String Dedentation Tests (LEX-03)
+// =============================================================
+
+#[test]
+fn dedent_simple_block() {
+    // Simulates content between """\n...\n"""
+    // First line is empty (after opening """), last line is closing indent
+    let content = "\n    hello\n    world\n    ";
+    let result = dedent_raw_string(content);
+    assert_eq!(result, "hello\nworld");
+}
+
+#[test]
+fn dedent_mixed_indentation() {
+    let content = "\n    outer\n        inner\n    ";
+    let result = dedent_raw_string(content);
+    assert_eq!(result, "outer\n    inner");
+}
+
+#[test]
+fn dedent_blank_lines_excluded() {
+    let content = "\n    hello\n\n    world\n    ";
+    let result = dedent_raw_string(content);
+    assert_eq!(result, "hello\n\nworld");
+}
+
+#[test]
+fn dedent_whitespace_only_line_excluded() {
+    let content = "\n    hello\n        \n    world\n    ";
+    let result = dedent_raw_string(content);
+    assert_eq!(result, "hello\n\nworld");
+}
+
+#[test]
+fn dedent_tabs() {
+    let content = "\n\t\thello\n\t\tworld\n\t\t";
+    let result = dedent_raw_string(content);
+    assert_eq!(result, "hello\nworld");
+}
+
+#[test]
+fn dedent_no_indentation() {
+    let content = "\nhello\nworld\n";
+    let result = dedent_raw_string(content);
+    assert_eq!(result, "hello\nworld");
+}
+
+#[test]
+fn dedent_single_content_line() {
+    let content = "\n    hello\n    ";
+    let result = dedent_raw_string(content);
+    assert_eq!(result, "hello");
+}
+
+#[test]
+fn dedent_empty_content() {
+    let content = "\n    ";
+    let result = dedent_raw_string(content);
+    assert_eq!(result, "");
+}
+
+// =============================================================
+// Escape Processing Tests (LEX-05)
+// =============================================================
+
+#[test]
+fn escapes_no_escapes() {
+    assert_eq!(process_escapes("hello world").unwrap(), "hello world");
+}
+
+#[test]
+fn escapes_basic_escapes() {
+    assert_eq!(process_escapes("a\\nb").unwrap(), "a\nb");
+    assert_eq!(process_escapes("a\\tb").unwrap(), "a\tb");
+    assert_eq!(process_escapes("a\\rb").unwrap(), "a\rb");
+    assert_eq!(process_escapes("a\\0b").unwrap(), "a\0b");
+    assert_eq!(process_escapes("a\\\\b").unwrap(), "a\\b");
+    assert_eq!(process_escapes("a\\\"b").unwrap(), "a\"b");
+}
+
+#[test]
+fn escapes_unicode_ascii() {
+    assert_eq!(process_escapes("\\u{41}").unwrap(), "A");
+}
+
+#[test]
+fn escapes_unicode_emoji() {
+    assert_eq!(process_escapes("\\u{1F600}").unwrap(), "\u{1F600}");
+}
+
+#[test]
+fn escapes_unicode_empty_rejected() {
+    assert!(matches!(
+        process_escapes("\\u{}"),
+        Err(EscapeError::EmptyUnicodeEscape)
+    ));
+}
+
+#[test]
+fn escapes_unicode_invalid_hex() {
+    assert!(matches!(
+        process_escapes("\\u{GGGG}"),
+        Err(EscapeError::InvalidUnicodeHex(_))
+    ));
+}
+
+#[test]
+fn escapes_unicode_too_long() {
+    assert!(matches!(
+        process_escapes("\\u{1234567}"),
+        Err(EscapeError::UnicodeTooLong(_))
+    ));
+}
+
+#[test]
+fn escapes_invalid_escape_q() {
+    assert!(matches!(
+        process_escapes("hello\\qworld"),
+        Err(EscapeError::InvalidEscape('q'))
+    ));
+}
+
+#[test]
+fn escapes_invalid_escape_p() {
+    assert!(matches!(
+        process_escapes("\\p"),
+        Err(EscapeError::InvalidEscape('p'))
+    ));
+}
+
+#[test]
+fn escapes_trailing_backslash() {
+    assert!(matches!(
+        process_escapes("hello\\"),
+        Err(EscapeError::TrailingBackslash)
+    ));
+}
+
+#[test]
+fn escapes_mixed_valid() {
+    assert_eq!(
+        process_escapes("\\u{48}ello\\n\\tworld\\\\end").unwrap(),
+        "Hello\n\tworld\\end"
+    );
 }

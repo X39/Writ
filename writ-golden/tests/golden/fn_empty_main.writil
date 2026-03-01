@@ -1,0 +1,6 @@
+.module "main" "0.1.0" {
+    .extern "writ-runtime" "1.0.0"
+    .method "main" () -> void mut {
+        RET_VOID
+    }
+}

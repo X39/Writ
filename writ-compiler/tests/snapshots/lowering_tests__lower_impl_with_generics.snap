@@ -1,0 +1,58 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Impl(
+            AstImplDecl {
+                generics: [
+                    AstGenericParam {
+                        name: "T",
+                        name_span: 5..6,
+                        bounds: [],
+                        span: 5..6,
+                    },
+                ],
+                contract: Some(
+                    Generic {
+                        name: "Printable",
+                        args: [
+                            Named {
+                                name: "T",
+                                span: 18..19,
+                            },
+                        ],
+                        span: 8..20,
+                    },
+                ),
+                target: Generic {
+                    name: "Container",
+                    args: [
+                        Named {
+                            name: "T",
+                            span: 35..36,
+                        },
+                    ],
+                    span: 25..37,
+                },
+                members: [
+                    Fn(
+                        AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "print",
+                            name_span: 43..48,
+                            generics: [],
+                            params: [],
+                            return_type: None,
+                            body: [],
+                            span: 40..54,
+                        },
+                    ),
+                ],
+                span: 0..56,
+            },
+        ),
+    ],
+}

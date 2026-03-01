@@ -4,14 +4,13 @@ expression: ast
 ---
 Ast {
     items: [
-        Struct(
-            AstStructDecl {
+        Entity(
+            AstEntityDecl {
                 attrs: [],
                 vis: None,
                 name: "Guard",
                 name_span: 7..12,
-                generics: [],
-                fields: [
+                properties: [
                     AstStructField {
                         vis: None,
                         name: "name",
@@ -24,46 +23,49 @@ Ast {
                         span: 15..28,
                     },
                 ],
-                span: 0..71,
-            },
-        ),
-        Impl(
-            AstImplDecl {
-                contract: None,
-                target: Named {
-                    name: "Guard",
-                    span: 7..12,
-                },
-                members: [
-                    Fn(
-                        AstFnDecl {
-                            attrs: [],
-                            vis: None,
-                            name: "greet",
-                            name_span: 32..37,
-                            generics: [],
-                            params: [],
-                            return_type: Some(
-                                Named {
-                                    name: "string",
-                                    span: 43..49,
-                                },
-                            ),
-                            body: [
-                                Return {
-                                    value: Some(
-                                        StringLit {
-                                            value: "\"hello\"",
-                                            span: 59..66,
+                component_slots: [],
+                hooks: [],
+                inherent_impl: Some(
+                    AstImplDecl {
+                        generics: [],
+                        contract: None,
+                        target: Named {
+                            name: "Guard",
+                            span: 7..12,
+                        },
+                        members: [
+                            Fn(
+                                AstFnDecl {
+                                    attrs: [],
+                                    vis: None,
+                                    name: "greet",
+                                    name_span: 32..37,
+                                    generics: [],
+                                    params: [],
+                                    return_type: Some(
+                                        Named {
+                                            name: "string",
+                                            span: 43..49,
                                         },
                                     ),
-                                    span: 52..67,
+                                    body: [
+                                        Return {
+                                            value: Some(
+                                                StringLit {
+                                                    value: "\"hello\"",
+                                                    span: 59..66,
+                                                },
+                                            ),
+                                            span: 52..67,
+                                        },
+                                    ],
+                                    span: 29..69,
                                 },
-                            ],
-                            span: 29..69,
-                        },
-                    ),
-                ],
+                            ),
+                        ],
+                        span: 0..71,
+                    },
+                ),
                 span: 0..71,
             },
         ),

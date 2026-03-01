@@ -21,28 +21,10 @@ extern component Collider {
     height: int,
 }
 
-// --- 15.2 Script-defined component ---
-pub component Health {
-    pub current: int,
-    pub max: int,
-
-    pub fn damage(amount: int) {
-        self.current -= amount;
-        if self.current < 0 {
-            self.current = 0;
-        }
-    }
-
-    pub fn heal(amount: int) {
-        self.current += amount;
-        if self.current > self.max {
-            self.current = self.max;
-        }
-    }
-
-    pub fn isDead() -> bool {
-        self.current <= 0
-    }
+// --- 15.2 Extern component (data-only, methods not allowed) ---
+extern component Health {
+    current: int,
+    max: int,
 }
 
 // --- 14.1 Entity declaration ---
@@ -85,12 +67,12 @@ pub entity Guard {
 
 // --- 14.2 Spawning ---
 pub fn spawning() {
-    let guard = spawn Guard {
+    let guard = spawn new Guard {
         name: "Steve",
         patrolRoute: [Vec2(x: 0.0, y: 0.0), Vec2(x: 10.0, y: 0.0)],
     };
 
-    let defaultGuard = spawn Guard {};
+    let defaultGuard = spawn new Guard {};
 }
 
 // --- 14.3 Component access ---

@@ -133,8 +133,8 @@ pub struct FnDecl<'src> {
     pub name: Spanned<&'src str>,
     /// Optional generic parameters.
     pub generics: Option<Vec<Spanned<GenericParam<'src>>>>,
-    /// Parameter list.
-    pub params: Vec<Spanned<Param<'src>>>,
+    /// Parameter list (may include self/mut self as first param).
+    pub params: Vec<Spanned<FnParam<'src>>>,
     /// Optional return type.
     pub return_type: Option<Spanned<TypeExpr<'src>>>,
     /// Function body statements.
@@ -150,12 +150,14 @@ pub struct FnSig<'src> {
     pub attrs: Vec<Spanned<Vec<Attribute<'src>>>>,
     /// Optional visibility modifier.
     pub vis: Option<Visibility>,
+    /// Optional qualifier for dotted names: `Type.method` -> qualifier = Some("Type")
+    pub qualifier: Option<Spanned<&'src str>>,
     /// Function name.
     pub name: Spanned<&'src str>,
     /// Optional generic parameters.
     pub generics: Option<Vec<Spanned<GenericParam<'src>>>>,
-    /// Parameter list.
-    pub params: Vec<Spanned<Param<'src>>>,
+    /// Parameter list (may include self/mut self as first param).
+    pub params: Vec<Spanned<FnParam<'src>>>,
     /// Optional return type.
     pub return_type: Option<Spanned<TypeExpr<'src>>>,
 }
@@ -219,8 +221,8 @@ pub struct StructDecl<'src> {
     pub name: Spanned<&'src str>,
     /// Optional generic parameters.
     pub generics: Option<Vec<Spanned<GenericParam<'src>>>>,
-    /// Struct fields.
-    pub fields: Vec<Spanned<StructField<'src>>>,
+    /// Struct members: fields and lifecycle hooks interleaved.
+    pub members: Vec<Spanned<StructMember<'src>>>,
 }
 
 /// A struct field: `[vis] name: type [= default]`
@@ -234,6 +236,18 @@ pub struct StructField<'src> {
     pub ty: Spanned<TypeExpr<'src>>,
     /// Optional default value.
     pub default: Option<Spanned<Expr<'src>>>,
+}
+
+/// A member inside a struct body: field or lifecycle hook.
+#[derive(Debug, Clone, PartialEq)]
+pub enum StructMember<'src> {
+    /// Field: `[vis] name: type [= default]`
+    Field(StructField<'src>),
+    /// Lifecycle hook: `on event { body }`
+    OnHook {
+        event: Spanned<&'src str>,
+        body: Vec<Spanned<Stmt<'src>>>,
+    },
 }
 
 /// Enum declaration: `[attrs] [vis] enum Name [<generics>] { variants }`
@@ -310,6 +324,8 @@ pub enum OpSymbol {
     Not,
     Index,
     IndexSet,
+    BitAnd,
+    BitOr,
 }
 
 /// Operator declaration with body: `operator SYMBOL (params) [-> type] { body }`
@@ -327,9 +343,11 @@ pub struct OpDecl<'src> {
     pub body: Vec<Spanned<Stmt<'src>>>,
 }
 
-/// Impl block: `impl [Contract for] Type { members }`
+/// Impl block: `impl [<generics>] [Contract for] Type { members }`
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImplDecl<'src> {
+    /// Optional generic parameters: `impl<T> ...`
+    pub generics: Option<Vec<Spanned<GenericParam<'src>>>>,
     /// Optional contract being implemented.
     pub contract: Option<Spanned<TypeExpr<'src>>>,
     /// Target type.
@@ -416,15 +434,15 @@ pub enum ComponentMember<'src> {
     Fn(Spanned<FnDecl<'src>>),
 }
 
-/// Extern declaration: `extern fn|struct|component ...`
+/// Extern declaration: `[vis] extern fn|struct|component ...`
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExternDecl<'src> {
-    /// Extern function (signature only): `extern fn name(...) [-> type];`
-    Fn(Spanned<FnSig<'src>>),
-    /// Extern struct: `extern struct Name { fields }`
-    Struct(Spanned<StructDecl<'src>>),
-    /// Extern component: `extern component Name { fields }`
-    Component(Spanned<ComponentDecl<'src>>),
+    /// Extern function (signature only): `[vis] extern fn name(...) [-> type];`
+    Fn(Option<Visibility>, Spanned<FnSig<'src>>),
+    /// Extern struct: `[vis] extern struct Name { fields }`
+    Struct(Option<Visibility>, Spanned<StructDecl<'src>>),
+    /// Extern component: `[vis] extern component Name { fields }`
+    Component(Option<Visibility>, Spanned<ComponentDecl<'src>>),
 }
 
 // =========================================================
@@ -433,12 +451,17 @@ pub enum ExternDecl<'src> {
 
 /// Type expressions in Writ source code.
 ///
-/// Covers simple named types, generic types, array types, nullable types,
-/// function types, and void.
+/// Covers simple named types, qualified paths, generic types, array types,
+/// nullable types, function types, and void.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeExpr<'src> {
     /// Simple named type: `int`, `string`, `Entity`
     Named(&'src str),
+    /// Qualified type path: `a::b::Type`, `::std::collections::Map`
+    Qualified {
+        segments: Vec<Spanned<&'src str>>,
+        rooted: bool,
+    },
     /// Generic type: `List<T>`, `Result<A, B>`
     Generic(Box<Spanned<TypeExpr<'src>>>, Vec<Spanned<TypeExpr<'src>>>),
     /// Array type: `T[]`
@@ -486,8 +509,11 @@ pub enum Expr<'src> {
     // Identifiers and paths
     /// Identifier: `x`, `foo`
     Ident(&'src str),
-    /// Path expression: `a::b::c`
-    Path(Vec<Spanned<&'src str>>),
+    /// Path expression: `a::b::c`, `::module::func`
+    Path {
+        segments: Vec<Spanned<&'src str>>,
+        rooted: bool,
+    },
 
     // Binary operations
     /// Binary operation: `a + b`, `x == y`
@@ -510,6 +536,12 @@ pub enum Expr<'src> {
     Call(Box<Spanned<Expr<'src>>>, Vec<Spanned<Arg<'src>>>),
     /// Generic call: `f<T>(args)`
     GenericCall(Box<Spanned<Expr<'src>>>, Vec<Spanned<TypeExpr<'src>>>, Vec<Spanned<Arg<'src>>>),
+
+    /// New construction: `new Type { field: value, ... }`
+    New {
+        ty: Box<Spanned<TypeExpr<'src>>>,
+        fields: Vec<Spanned<NewField<'src>>>,
+    },
 
     // Control flow (expression forms)
     /// If expression: `if cond { } else { }`
@@ -550,8 +582,8 @@ pub enum Expr<'src> {
     // Concurrency
     /// Spawn expression: `spawn expr`
     Spawn(Box<Spanned<Expr<'src>>>),
-    /// Detached spawn: `detached expr`
-    Detached(Box<Spanned<Expr<'src>>>),
+    /// Spawn detached expression: `spawn detached expr` (fused, not nested)
+    SpawnDetached(Box<Spanned<Expr<'src>>>),
     /// Join expression: `join expr`
     Join(Box<Spanned<Expr<'src>>>),
     /// Cancel expression: `cancel expr`
@@ -604,6 +636,8 @@ pub enum BinaryOp {
     Or,
     BitAnd,
     BitOr,
+    Shl,
+    Shr,
 }
 
 /// Prefix (unary) operators.
@@ -658,6 +692,15 @@ pub struct Arg<'src> {
     /// Named argument label (e.g., `field:` in `Point(x: 1)`), or None for positional.
     pub name: Option<Spanned<&'src str>>,
     /// The argument value expression.
+    pub value: Spanned<Expr<'src>>,
+}
+
+/// A field initializer in a `new` expression: `name: expr`
+#[derive(Debug, Clone, PartialEq)]
+pub struct NewField<'src> {
+    /// Field name.
+    pub name: Spanned<&'src str>,
+    /// Field value expression.
     pub value: Spanned<Expr<'src>>,
 }
 
@@ -748,8 +791,6 @@ pub enum Stmt<'src> {
     Return(Option<Spanned<Expr<'src>>>),
     /// Atomic block: `atomic { ... }`
     Atomic(Vec<Spanned<Stmt<'src>>>),
-    /// Dialogue declaration: `[priv] dlg name[(params)] { body }`
-    DlgDecl(Spanned<DlgDecl<'src>>),
     /// Transition statement: `-> target(args)` (used in on handlers and dialogue)
     Transition(Spanned<DlgTransition<'src>>),
 }
@@ -758,9 +799,13 @@ pub enum Stmt<'src> {
 // Dialogue
 // =========================================================
 
-/// A dialogue declaration: `dlg name[(params)] { body }`
+/// A dialogue declaration: `[attrs] [vis] dlg name[(params)] { body }`
 #[derive(Debug, Clone, PartialEq)]
 pub struct DlgDecl<'src> {
+    /// Stacked attribute blocks (each inner Vec is one `[...]` block).
+    pub attrs: Vec<Spanned<Vec<Attribute<'src>>>>,
+    /// Optional visibility modifier.
+    pub vis: Option<Visibility>,
     /// Dialogue name identifier.
     pub name: Spanned<&'src str>,
     /// Optional parameter list (None = no parens, Some(vec![]) = empty parens).
@@ -771,13 +816,22 @@ pub struct DlgDecl<'src> {
 
 /// A parameter with name and type annotation.
 ///
-/// Reusable for `fn` params in Phase 4.
+/// Reusable for `fn` params, dialogue params, enum variant fields.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param<'src> {
     /// Parameter name.
     pub name: Spanned<&'src str>,
     /// Type annotation.
     pub ty: Spanned<TypeExpr<'src>>,
+}
+
+/// A function parameter entry: either a regular named param or a self param.
+#[derive(Debug, Clone, PartialEq)]
+pub enum FnParam<'src> {
+    /// Regular parameter: `name: type`
+    Regular(Param<'src>),
+    /// Self parameter: `self` or `mut self`
+    SelfParam { mutable: bool },
 }
 
 /// All dialogue line forms.

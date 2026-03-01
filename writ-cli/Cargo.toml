@@ -3,4 +3,23 @@ name = "writ-cli"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "writ"
+path = "src/main.rs"
+
 [dependencies]
+writ-module = { path = "../writ-module" }
+writ-runtime = { path = "../writ-runtime" }
+writ-assembler = { path = "../writ-assembler" }
+writ-compiler = { path = "../writ-compiler" }
+writ-diagnostics = { path = "../writ-diagnostics" }
+writ-parser = { path = "../writ-parser" }
+clap = { version = "4.5", features = ["derive"] }
+
+[dev-dependencies]
+writ-module = { path = "../writ-module" }
+writ-assembler = { path = "../writ-assembler" }
+writ-runtime = { path = "../writ-runtime" }
+writ-compiler = { path = "../writ-compiler" }
+writ-diagnostics = { path = "../writ-diagnostics" }
+writ-parser = { path = "../writ-parser" }

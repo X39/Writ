@@ -1,0 +1,187 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Fn(
+            AstFnDecl {
+                attrs: [],
+                vis: None,
+                name: "scene",
+                name_span: 4..9,
+                generics: [],
+                params: [
+                    Regular(
+                        AstParam {
+                            name: "player",
+                            name_span: 10..16,
+                            ty: Named {
+                                name: "Entity",
+                                span: 18..24,
+                            },
+                            span: 10..24,
+                        },
+                    ),
+                    Regular(
+                        AstParam {
+                            name: "mood",
+                            name_span: 26..30,
+                            ty: Named {
+                                name: "int",
+                                span: 32..35,
+                            },
+                            span: 26..35,
+                        },
+                    ),
+                ],
+                return_type: None,
+                body: [
+                    Let {
+                        mutable: false,
+                        name: "_narrator",
+                        name_span: 70..78,
+                        ty: None,
+                        value: GenericCall {
+                            callee: MemberAccess {
+                                object: Ident {
+                                    name: "Entity",
+                                    span: 70..78,
+                                },
+                                field: "getOrCreate",
+                                field_span: 70..78,
+                                span: 70..78,
+                            },
+                            type_args: [
+                                Named {
+                                    name: "Narrator",
+                                    span: 70..78,
+                                },
+                            ],
+                            args: [],
+                            span: 70..78,
+                        },
+                        span: 70..78,
+                    },
+                    Expr {
+                        expr: Match {
+                            scrutinee: Ident {
+                                name: "mood",
+                                span: 55..59,
+                            },
+                            arms: [
+                                AstMatchArm {
+                                    pattern: Literal {
+                                        expr: IntLit {
+                                            value: 1,
+                                            span: 62..63,
+                                        },
+                                        span: 62..63,
+                                    },
+                                    body: [
+                                        Expr {
+                                            expr: Call {
+                                                callee: Ident {
+                                                    name: "say",
+                                                    span: 69..99,
+                                                },
+                                                args: [
+                                                    AstArg {
+                                                        name: None,
+                                                        value: Ident {
+                                                            name: "_narrator",
+                                                            span: 70..78,
+                                                        },
+                                                        span: 69..99,
+                                                    },
+                                                    AstArg {
+                                                        name: None,
+                                                        value: StringLit {
+                                                            value: "The player is happy.",
+                                                            span: 79..99,
+                                                        },
+                                                        span: 69..99,
+                                                    },
+                                                ],
+                                                span: 69..99,
+                                            },
+                                            span: 69..99,
+                                        },
+                                    ],
+                                    span: 62..101,
+                                },
+                                AstMatchArm {
+                                    pattern: Wildcard {
+                                        span: 102..103,
+                                    },
+                                    body: [
+                                        Expr {
+                                            expr: Call {
+                                                callee: Ident {
+                                                    name: "say",
+                                                    span: 109..137,
+                                                },
+                                                args: [
+                                                    AstArg {
+                                                        name: None,
+                                                        value: Ident {
+                                                            name: "_narrator",
+                                                            span: 110..118,
+                                                        },
+                                                        span: 109..137,
+                                                    },
+                                                    AstArg {
+                                                        name: None,
+                                                        value: StringLit {
+                                                            value: "The player is sad.",
+                                                            span: 119..137,
+                                                        },
+                                                        span: 109..137,
+                                                    },
+                                                ],
+                                                span: 109..137,
+                                            },
+                                            span: 109..137,
+                                        },
+                                    ],
+                                    span: 102..139,
+                                },
+                            ],
+                            span: 55..141,
+                        },
+                        span: 55..141,
+                    },
+                    Expr {
+                        expr: Call {
+                            callee: Ident {
+                                name: "say",
+                                span: 142..154,
+                            },
+                            args: [
+                                AstArg {
+                                    name: None,
+                                    value: Ident {
+                                        name: "player",
+                                        span: 40..46,
+                                    },
+                                    span: 142..154,
+                                },
+                                AstArg {
+                                    name: None,
+                                    value: StringLit {
+                                        value: "After match.",
+                                        span: 142..154,
+                                    },
+                                    span: 142..154,
+                                },
+                            ],
+                            span: 142..154,
+                        },
+                        span: 142..154,
+                    },
+                ],
+                span: 0..156,
+            },
+        ),
+    ],
+}

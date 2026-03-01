@@ -12,22 +12,24 @@ Ast {
                 name_span: 4..9,
                 generics: [],
                 params: [
-                    AstParam {
-                        name: "player",
-                        name_span: 10..16,
-                        ty: Named {
-                            name: "Entity",
-                            span: 18..24,
+                    Regular(
+                        AstParam {
+                            name: "player",
+                            name_span: 10..16,
+                            ty: Named {
+                                name: "Entity",
+                                span: 18..24,
+                            },
+                            span: 10..24,
                         },
-                        span: 10..24,
-                    },
+                    ),
                 ],
                 return_type: None,
                 body: [
                     Expr {
                         expr: Call {
                             callee: Ident {
-                                name: "say_localized",
+                                name: "say",
                                 span: 28..50,
                             },
                             args: [
@@ -36,14 +38,6 @@ Ast {
                                     value: Ident {
                                         name: "player",
                                         span: 29..35,
-                                    },
-                                    span: 28..50,
-                                },
-                                AstArg {
-                                    name: None,
-                                    value: StringLit {
-                                        value: "75609d59",
-                                        span: 28..50,
                                     },
                                     span: 28..50,
                                 },

@@ -16,20 +16,28 @@ Ast {
                 body: [
                     Expr {
                         expr: Defer {
-                            expr: Call {
-                                callee: Ident {
-                                    name: "cleanup",
-                                    span: 15..22,
-                                },
-                                args: [],
-                                span: 15..24,
+                            expr: Block {
+                                stmts: [
+                                    Expr {
+                                        expr: Call {
+                                            callee: Ident {
+                                                name: "cleanup",
+                                                span: 17..24,
+                                            },
+                                            args: [],
+                                            span: 17..26,
+                                        },
+                                        span: 17..27,
+                                    },
+                                ],
+                                span: 15..29,
                             },
-                            span: 9..24,
+                            span: 9..29,
                         },
-                        span: 9..25,
+                        span: 9..29,
                     },
                 ],
-                span: 0..27,
+                span: 0..31,
             },
         ),
     ],

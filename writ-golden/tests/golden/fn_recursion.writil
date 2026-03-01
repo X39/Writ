@@ -1,0 +1,37 @@
+.module "main" "0.1.0" {
+    .extern "writ-runtime" "1.0.0"
+    .method "factorial" (n: int) -> int pub mut {
+        .reg r0 int
+        .reg r1 int
+        .reg r2 bool
+        .reg r3 bool
+        .reg r4 int
+        .reg r5 int
+        .reg r6 int
+        .reg r7 int
+        .reg r8 int
+        .reg r9 int
+        LOAD_INT r1, 1
+        CMP_LT_I r2, r1, r0
+        NOT r3, r2
+        BR_FALSE r3, 34
+        LOAD_INT r5, 1
+        MOV r4, r5
+        BR 54
+        LOAD_INT r7, 1
+        SUB_I r8, r0, r7
+        CALL r6, 117440513, r8, 1
+        MUL_I r9, r0, r6
+        MOV r4, r9
+        RET r4
+    }
+    .method "main" () -> void pub mut {
+        .reg r0 int
+        .reg r1 int
+        LOAD_INT r1, 5
+        CALL r0, 117440513, r1, 1
+        RET_VOID
+    }
+    // .export "main" method 117440514
+    // .export "factorial" method 117440513
+}

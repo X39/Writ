@@ -15,17 +15,14 @@ Ast {
                 return_type: None,
                 body: [
                     Expr {
-                        expr: Spawn {
-                            expr: Detached {
-                                expr: Call {
-                                    callee: Ident {
-                                        name: "doWork",
-                                        span: 24..30,
-                                    },
-                                    args: [],
-                                    span: 24..32,
+                        expr: SpawnDetached {
+                            expr: Call {
+                                callee: Ident {
+                                    name: "doWork",
+                                    span: 24..30,
                                 },
-                                span: 15..32,
+                                args: [],
+                                span: 24..32,
                             },
                             span: 9..32,
                         },

@@ -12,7 +12,7 @@ pub fn spawnAndJoin() {
 
 // --- Detached tasks ---
 pub fn detachedTask() {
-    detached playAmbientSound("forest");
+    spawn detached playAmbientSound("forest");
     // fire and forget — no handle returned
 }
 
@@ -39,7 +39,7 @@ pub fn cancellation() {
 // --- Defer ---
 pub fn deferUsage() {
     let file = openFile("data.bin");
-    defer closeFile(file);
+    defer { closeFile(file); }
 
     let data = readAll(file);
     processData(data);
@@ -49,11 +49,11 @@ pub fn deferUsage() {
 // --- Defer in nested scopes ---
 pub fn deferNested() {
     let db = connectDB();
-    defer disconnectDB(db);
+    defer { disconnectDB(db); }
 
     if needsTransaction {
         let tx = beginTransaction(db);
-        defer rollbackIfNeeded(tx);
+        defer { rollbackIfNeeded(tx); }
 
         let result = try executeQuery(tx, query);
         commitTransaction(tx);
@@ -65,7 +65,7 @@ pub fn deferNested() {
 // --- Dialogue choice with concurrent background ---
 dlg explorationDialog(player: Entity) {
     @Narrator You enter the cavern.
-    $ detached playAmbientSound("cave_drip");
+    $ spawn detached playAmbientSound("cave_drip");
     $ choice {
         "Go deeper" {
             @Narrator You venture further in.

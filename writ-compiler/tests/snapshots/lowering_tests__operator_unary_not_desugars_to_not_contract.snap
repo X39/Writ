@@ -6,6 +6,7 @@ Ast {
     items: [
         Impl(
             AstImplDecl {
+                generics: [],
                 contract: Some(
                     Generic {
                         name: "Not",
@@ -30,7 +31,12 @@ Ast {
                             name: "not",
                             name_span: 23..24,
                             generics: [],
-                            params: [],
+                            params: [
+                                SelfParam {
+                                    mutable: false,
+                                    span: 14..54,
+                                },
+                            ],
                             return_type: Some(
                                 Named {
                                     name: "MyBool",

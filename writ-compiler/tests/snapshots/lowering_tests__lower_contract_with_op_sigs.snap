@@ -1,0 +1,52 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Contract(
+            AstContractDecl {
+                attrs: [],
+                vis: None,
+                name: "Addable",
+                name_span: 9..16,
+                generics: [
+                    AstGenericParam {
+                        name: "T",
+                        name_span: 17..18,
+                        bounds: [],
+                        span: 17..18,
+                    },
+                ],
+                members: [
+                    OpSig(
+                        AstOpSig {
+                            vis: None,
+                            symbol: Add,
+                            symbol_span: 31..32,
+                            params: [
+                                AstParam {
+                                    name: "other",
+                                    name_span: 33..38,
+                                    ty: Named {
+                                        name: "T",
+                                        span: 40..41,
+                                    },
+                                    span: 33..41,
+                                },
+                            ],
+                            return_type: Some(
+                                Named {
+                                    name: "T",
+                                    span: 46..47,
+                                },
+                            ),
+                            span: 22..48,
+                        },
+                    ),
+                ],
+                span: 0..50,
+            },
+        ),
+    ],
+}

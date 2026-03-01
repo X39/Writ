@@ -29,6 +29,10 @@ fn nested_block_comment<'src>(lex: &mut logos::Lexer<'src, Token<'src>>) -> bool
 /// Logos callback for raw strings with N-quote delimiter matching.
 /// The lexer has already matched `"""`. This callback counts any additional
 /// opening quotes and scans for the matching closing delimiter.
+///
+/// Validation rules (spec v0.4):
+/// - Opening delimiter must be immediately followed by a newline (`\n` or `\r\n`).
+/// - Closing delimiter must appear on its own line (only whitespace before it).
 fn raw_string<'src>(lex: &mut logos::Lexer<'src, Token<'src>>) -> bool {
     let remainder = lex.remainder();
     let bytes = remainder.as_bytes();
@@ -45,6 +49,13 @@ fn raw_string<'src>(lex: &mut logos::Lexer<'src, Token<'src>>) -> bool {
         return false;
     }
 
+    // Opening delimiter must be followed by newline
+    match bytes[search_start] {
+        b'\n' => {}
+        b'\r' if search_start + 1 < bytes.len() && bytes[search_start + 1] == b'\n' => {}
+        _ => return false, // opening delimiter not followed by newline
+    }
+
     // Scan for exactly `total_quotes` consecutive quotes not followed by another quote
     let mut i = search_start;
     while i < bytes.len() {
@@ -58,6 +69,18 @@ fn raw_string<'src>(lex: &mut logos::Lexer<'src, Token<'src>>) -> bool {
 
             // Check if we found exactly the right number of closing quotes
             if quote_count == total_quotes {
+                // Validate: closing delimiter must be on its own line
+                // Scan backwards from quote_start to find the preceding newline
+                let mut j = quote_start;
+                while j > search_start && bytes[j - 1] != b'\n' {
+                    j -= 1;
+                }
+                // Everything from j..quote_start must be whitespace
+                let prefix = &bytes[j..quote_start];
+                if !prefix.iter().all(|&b| b == b' ' || b == b'\t' || b == b'\r') {
+                    return false; // closing delimiter not on its own line
+                }
+
                 lex.bump(i);
                 return true;
             }
@@ -74,6 +97,9 @@ fn raw_string<'src>(lex: &mut logos::Lexer<'src, Token<'src>>) -> bool {
 /// Logos callback for formattable strings: `$"..."` with `{expr}` interpolation.
 /// The lexer has already matched `$"`. Scans for closing `"` while tracking brace depth.
 /// In Phase 1, the entire string (including interpolation) is captured as one opaque token.
+///
+/// Unicode escapes (`\u{XXXX}`) are recognized and skipped without incrementing
+/// brace depth, so they are not treated as interpolation slots.
 fn formattable_string<'src>(lex: &mut logos::Lexer<'src, Token<'src>>) -> bool {
     let remainder = lex.remainder();
     let bytes = remainder.as_bytes();
@@ -83,8 +109,22 @@ fn formattable_string<'src>(lex: &mut logos::Lexer<'src, Token<'src>>) -> bool {
     while i < bytes.len() {
         match bytes[i] {
             b'\\' => {
-                // Skip escape sequence
-                i += 2;
+                i += 1; // skip the backslash
+                if i < bytes.len() {
+                    if bytes[i] == b'u' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+                        // \u{...} unicode escape — skip past the closing }
+                        // Do NOT increment brace_depth
+                        i += 2; // skip 'u' and '{'
+                        while i < bytes.len() && bytes[i] != b'}' {
+                            i += 1;
+                        }
+                        if i < bytes.len() {
+                            i += 1; // skip '}'
+                        }
+                    } else {
+                        i += 1; // skip the escaped character
+                    }
+                }
             }
             b'{' => {
                 brace_depth += 1;
@@ -112,6 +152,10 @@ fn formattable_string<'src>(lex: &mut logos::Lexer<'src, Token<'src>>) -> bool {
 /// Logos callback for formattable raw strings: `$"""..."""` with interpolation.
 /// The lexer has already matched `$"""`. Counts additional quotes and scans for
 /// matching closing delimiter while allowing `{expr}` interpolation.
+///
+/// Validation rules (spec v0.4):
+/// - Opening delimiter must be immediately followed by a newline (`\n` or `\r\n`).
+/// - Closing delimiter must appear on its own line (only whitespace before it).
 fn formattable_raw_string<'src>(lex: &mut logos::Lexer<'src, Token<'src>>) -> bool {
     let remainder = lex.remainder();
     let bytes = remainder.as_bytes();
@@ -125,6 +169,13 @@ fn formattable_raw_string<'src>(lex: &mut logos::Lexer<'src, Token<'src>>) -> bo
         return false;
     }
 
+    // Opening delimiter must be followed by newline
+    match bytes[search_start] {
+        b'\n' => {}
+        b'\r' if search_start + 1 < bytes.len() && bytes[search_start + 1] == b'\n' => {}
+        _ => return false, // opening delimiter not followed by newline
+    }
+
     // Scan for exactly `total_quotes` consecutive quotes
     let mut i = search_start;
     while i < bytes.len() {
@@ -135,6 +186,16 @@ fn formattable_raw_string<'src>(lex: &mut logos::Lexer<'src, Token<'src>>) -> bo
             }
             let quote_count = i - quote_start;
             if quote_count == total_quotes {
+                // Validate: closing delimiter must be on its own line
+                let mut j = quote_start;
+                while j > search_start && bytes[j - 1] != b'\n' {
+                    j -= 1;
+                }
+                let prefix = &bytes[j..quote_start];
+                if !prefix.iter().all(|&b| b == b' ' || b == b'\t' || b == b'\r') {
+                    return false; // closing delimiter not on its own line
+                }
+
                 lex.bump(i);
                 return true;
             }
@@ -186,6 +247,8 @@ pub enum Token<'src> {
     KwExtern,
     #[token("using")]
     KwUsing,
+    #[token("new")]
+    KwNew,
 
     // =========================================================
     // Keywords — Visibility

@@ -1,0 +1,11 @@
+pub fn factorial(n: int) -> int {
+    if n <= 1 {
+        1
+    } else {
+        n * factorial(n - 1)
+    }
+}
+
+pub fn main() {
+    let result: int = factorial(5);
+}

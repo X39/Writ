@@ -4,7 +4,8 @@ use writ_parser::cst::{
 };
 use crate::ast::AstDecl;
 use crate::ast::decl::{
-    AstFnDecl, AstImplDecl, AstImplMember, AstStructDecl, AstStructField,
+    AstComponentSlot, AstEntityDecl, AstEntityHook, AstFnDecl, AstFnParam,
+    AstImplDecl, AstImplMember, AstStructField,
 };
 use crate::ast::expr::AstExpr;
 use crate::ast::stmt::AstStmt;
@@ -136,7 +137,7 @@ fn partition_entity_members<'src>(
             EntityMember::On { event, params, body } => {
                 let event_name = event.0;
                 match event_name {
-                    "create" | "interact" | "destroy" => {
+                    "create" | "interact" | "destroy" | "finalize" | "serialize" | "deserialize" => {
                         hooks.push(EntityHook { event, params, body, span: member_span });
                     }
                     _ => {
@@ -160,11 +161,12 @@ fn partition_entity_members<'src>(
 
 /// Lowers an `entity` declaration to `Vec<AstDecl>`.
 ///
-/// Emission order (deterministic):
-/// 1. `AstDecl::Struct` — always emitted; carries [Singleton] if present.
-/// 2. `AstDecl::Impl` (inherent) — emitted only if methods are non-empty.
-/// 3. `AstDecl::Impl(ComponentAccess<T>)` — one per use clause, in source order.
-/// 4. `AstDecl::Impl(OnCreate|OnInteract|OnDestroy)` — one per hook, in source order.
+/// Emits a single `AstDecl::Entity(AstEntityDecl)` containing:
+/// - Properties (regular typed fields)
+/// - Component slots (host-managed descriptors, not inline struct fields)
+/// - Lifecycle hooks (all six: create, destroy, interact, finalize, serialize, deserialize)
+///   with implicit `mut self` injected as first parameter
+/// - Optional inherent impl for methods
 pub fn lower_entity(
     entity: EntityDecl<'_>,
     entity_span: SimpleSpan,
@@ -180,171 +182,140 @@ pub fn lower_entity(
     // Step 2: Partition members with validation
     let partitioned = partition_entity_members(entity.members, &entity_name, ctx);
 
-    let mut result: Vec<AstDecl> = Vec::new();
+    // =========================================================
+    // Properties: regular typed fields
+    // =========================================================
+    let properties: Vec<AstStructField> = partitioned.properties.iter()
+        .map(|prop| {
+            let lowered_ty = lower_type(prop.ty.clone());
+            let lowered_default = prop.default.clone().map(|d| lower_expr(d, ctx));
+            AstStructField {
+                vis: lower_vis(prop.vis.clone()),
+                name: prop.name.0.to_string(),
+                name_span: prop.name.1,
+                ty: lowered_ty,
+                default: lowered_default,
+                span: prop.span,
+            }
+        })
+        .collect();
 
     // =========================================================
-    // Emit 1: AstDecl::Struct — always emitted
+    // Component slots: host-managed descriptors (ENT-02)
     // =========================================================
-    let mut fields: Vec<AstStructField> = Vec::new();
+    let component_slots: Vec<AstComponentSlot> = partitioned.use_clauses.iter()
+        .map(|use_clause| {
+            let comp_name = use_clause.component.0.to_string();
+            let comp_span = use_clause.component.1;
 
-    // Property fields (lowered from EntityMember::Property)
-    for prop in &partitioned.properties {
-        let lowered_ty = lower_type(prop.ty.clone());
-        let lowered_default = prop.default.clone().map(|d| lower_expr(d, ctx));
-        fields.push(AstStructField {
-            vis: lower_vis(prop.vis.clone()),
-            name: prop.name.0.to_string(),
-            name_span: prop.name.1,
-            ty: lowered_ty,
-            default: lowered_default,
-            span: prop.span,
-        });
-    }
+            let overrides: Vec<(String, SimpleSpan, AstExpr)> = use_clause.fields.iter()
+                .map(|(uf, _uf_span)| {
+                    let field_name = uf.name.0.to_string();
+                    let field_name_span = uf.name.1;
+                    let value = lower_expr(uf.value.clone(), ctx);
+                    (field_name, field_name_span, value)
+                })
+                .collect();
 
-    // Component fields: one $ComponentName field per use clause
-    for use_clause in &partitioned.use_clauses {
-        let comp_name = use_clause.component.0.to_string();
-        let comp_span = use_clause.component.1;
-
-        // Build StructLit fields from use clause's UseField list
-        let struct_lit_fields: Vec<(String, SimpleSpan, AstExpr)> = use_clause.fields.iter()
-            .map(|(uf, _uf_span)| {
-                let field_name = uf.name.0.to_string();
-                let field_name_span = uf.name.1;
-                let value = lower_expr(uf.value.clone(), ctx);
-                (field_name, field_name_span, value)
-            })
-            .collect();
-
-        fields.push(AstStructField {
-            vis: None, // component fields are user-unreachable
-            name: format!("${}", comp_name),
-            name_span: comp_span,
-            ty: AstType::Named { name: comp_name.clone(), span: comp_span },
-            default: Some(AstExpr::StructLit {
-                name: comp_name.clone(),
-                name_span: comp_span,
-                fields: struct_lit_fields,
+            AstComponentSlot {
+                component: comp_name,
+                component_span: comp_span,
+                overrides,
                 span: use_clause.span,
-            }),
-            span: use_clause.span,
-        });
-    }
-
-    result.push(AstDecl::Struct(AstStructDecl {
-        attrs,
-        vis,
-        name: entity_name.clone(),
-        name_span: entity_name_span,
-        generics: vec![],
-        fields,
-        span: entity_span,
-    }));
+            }
+        })
+        .collect();
 
     // =========================================================
-    // Emit 2: AstDecl::Impl (inherent) — only if methods non-empty
+    // Hooks: lifecycle event registrations (ENT-01, ENT-03)
+    // All hooks get implicit `mut self` as first parameter
     // =========================================================
-    if !partitioned.methods.is_empty() {
+    let hooks: Vec<AstEntityHook> = partitioned.hooks.into_iter()
+        .map(|hook| {
+            let event_name = hook.event.0;
+            let event_span = hook.event.1;
+
+            let (contract_name, method_name) = match event_name {
+                "create"      => ("OnCreate",      "on_create"),
+                "interact"    => ("OnInteract",    "on_interact"),
+                "destroy"     => ("OnDestroy",     "on_destroy"),
+                "finalize"    => ("OnFinalize",    "on_finalize"),
+                "serialize"   => ("OnSerialize",   "on_serialize"),
+                "deserialize" => ("OnDeserialize", "on_deserialize"),
+                // Unreachable: partition_entity_members already filtered unknown events
+                _ => unreachable!("unknown lifecycle event passed validation: {}", event_name),
+            };
+
+            // Build params with implicit mut self injection (ENT-03, spec §14.6)
+            let mut params: Vec<AstFnParam> = Vec::new();
+            // Inject implicit mut self as first parameter
+            params.push(AstFnParam::SelfParam { mutable: true, span: event_span });
+            // Then add any explicit params (e.g., `who: Entity` for interact)
+            if let Some(explicit_params) = hook.params {
+                for (param, param_span) in explicit_params {
+                    params.push(AstFnParam::Regular(lower_param(param, param_span)));
+                }
+            }
+
+            // Lower hook body
+            let body: Vec<AstStmt> = hook.body
+                .into_iter()
+                .map(|s| lower_stmt(s, ctx))
+                .collect();
+
+            let method = AstFnDecl {
+                attrs: vec![],
+                vis: None,
+                name: method_name.to_string(),
+                name_span: event_span,
+                generics: vec![],
+                params,
+                return_type: None,
+                body,
+                span: hook.span,
+            };
+
+            AstEntityHook {
+                contract: contract_name.to_string(),
+                contract_span: event_span,
+                method,
+                span: hook.span,
+            }
+        })
+        .collect();
+
+    // =========================================================
+    // Inherent impl: methods (if any)
+    // =========================================================
+    let inherent_impl = if !partitioned.methods.is_empty() {
         let members: Vec<AstImplMember> = partitioned.methods
             .into_iter()
             .map(|(fn_decl, fn_span)| AstImplMember::Fn(lower_fn(fn_decl, fn_span, ctx)))
             .collect();
 
-        result.push(AstDecl::Impl(AstImplDecl {
+        Some(AstImplDecl {
+            generics: vec![],
             contract: None,
             target: AstType::Named { name: entity_name.clone(), span: entity_name_span },
             members,
             span: entity_span,
-        }));
-    }
+        })
+    } else {
+        None
+    };
 
     // =========================================================
-    // Emit 3: AstDecl::Impl(ComponentAccess<T>) — one per use clause
+    // Emit single AstDecl::Entity (ENT-04)
     // =========================================================
-    for use_clause in &partitioned.use_clauses {
-        let comp_name = use_clause.component.0.to_string();
-        let comp_span = use_clause.component.1;
-
-        // fn get(self) -> ComponentName { self.$ComponentName }
-        let get_fn = AstFnDecl {
-            attrs: vec![],
-            vis: None,
-            name: "get".to_string(),
-            name_span: comp_span,
-            generics: vec![],
-            params: vec![],
-            return_type: Some(AstType::Named { name: comp_name.clone(), span: comp_span }),
-            body: vec![AstStmt::Return {
-                value: Some(AstExpr::MemberAccess {
-                    object: Box::new(AstExpr::SelfLit { span: comp_span }),
-                    field: format!("${}", comp_name),
-                    field_span: comp_span,
-                    span: comp_span,
-                }),
-                span: comp_span,
-            }],
-            span: use_clause.span,
-        };
-
-        result.push(AstDecl::Impl(AstImplDecl {
-            contract: Some(AstType::Generic {
-                name: "ComponentAccess".to_string(),
-                args: vec![AstType::Named { name: comp_name.clone(), span: comp_span }],
-                span: comp_span,
-            }),
-            target: AstType::Named { name: entity_name.clone(), span: entity_name_span },
-            members: vec![AstImplMember::Fn(get_fn)],
-            span: use_clause.span,
-        }));
-    }
-
-    // =========================================================
-    // Emit 4: AstDecl::Impl (lifecycle hooks) — one per hook
-    // =========================================================
-    for hook in partitioned.hooks {
-        let event_name = hook.event.0;
-        let event_span = hook.event.1;
-
-        let (contract_name, method_name) = match event_name {
-            "create"    => ("OnCreate".to_string(),   "on_create".to_string()),
-            "interact"  => ("OnInteract".to_string(), "on_interact".to_string()),
-            "destroy"   => ("OnDestroy".to_string(),  "on_destroy".to_string()),
-            // Unreachable: partition_entity_members already filtered unknown events
-            _ => unreachable!("unknown lifecycle event passed validation: {}", event_name),
-        };
-
-        // Lower hook params if present
-        let params = hook.params
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(param, param_span)| lower_param(param, param_span))
-            .collect();
-
-        // Lower hook body
-        let body: Vec<AstStmt> = hook.body
-            .into_iter()
-            .map(|s| lower_stmt(s, ctx))
-            .collect();
-
-        let hook_fn = AstFnDecl {
-            attrs: vec![],
-            vis: None,
-            name: method_name,
-            name_span: event_span,
-            generics: vec![],
-            params,
-            return_type: None,
-            body,
-            span: hook.span,
-        };
-
-        result.push(AstDecl::Impl(AstImplDecl {
-            contract: Some(AstType::Named { name: contract_name, span: event_span }),
-            target: AstType::Named { name: entity_name.clone(), span: entity_name_span },
-            members: vec![AstImplMember::Fn(hook_fn)],
-            span: hook.span,
-        }));
-    }
-
-    result
+    vec![AstDecl::Entity(AstEntityDecl {
+        attrs,
+        vis,
+        name: entity_name,
+        name_span: entity_name_span,
+        properties,
+        component_slots,
+        hooks,
+        inherent_impl,
+        span: entity_span,
+    })]
 }

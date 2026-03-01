@@ -4,8 +4,8 @@ expression: ast
 ---
 Ast {
     items: [
-        Struct(
-            AstStructDecl {
+        Entity(
+            AstEntityDecl {
                 attrs: [
                     AstAttribute {
                         name: "Singleton",
@@ -17,8 +17,7 @@ Ast {
                 vis: None,
                 name: "Narrator",
                 name_span: 19..27,
-                generics: [],
-                fields: [
+                properties: [
                     AstStructField {
                         vis: None,
                         name: "name",
@@ -31,6 +30,9 @@ Ast {
                         span: 30..42,
                     },
                 ],
+                component_slots: [],
+                hooks: [],
+                inherent_impl: None,
                 span: 12..44,
             },
         ),

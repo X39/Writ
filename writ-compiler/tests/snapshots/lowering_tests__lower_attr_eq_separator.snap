@@ -1,0 +1,41 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Extern(
+            Fn(
+                None,
+                AstFnSig {
+                    attrs: [
+                        AstAttribute {
+                            name: "Import",
+                            name_span: 1..7,
+                            args: [
+                                Named {
+                                    name: "lib",
+                                    name_span: 8..11,
+                                    value: StringLit {
+                                        value: "\"physics\"",
+                                        span: 14..23,
+                                    },
+                                },
+                            ],
+                            span: 0..25,
+                        },
+                    ],
+                    vis: None,
+                    qualifier: None,
+                    qualifier_span: None,
+                    name: "applyForce",
+                    name_span: 36..46,
+                    generics: [],
+                    params: [],
+                    return_type: None,
+                    span: 33..49,
+                },
+            ),
+        ),
+    ],
+}

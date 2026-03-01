@@ -12,15 +12,17 @@ Ast {
                 name_span: 4..9,
                 generics: [],
                 params: [
-                    AstParam {
-                        name: "flag",
-                        name_span: 10..14,
-                        ty: Named {
-                            name: "bool",
-                            span: 16..20,
+                    Regular(
+                        AstParam {
+                            name: "flag",
+                            name_span: 10..14,
+                            ty: Named {
+                                name: "bool",
+                                span: 16..20,
+                            },
+                            span: 10..20,
                         },
-                        span: 10..20,
-                    },
+                    ),
                 ],
                 return_type: None,
                 body: [
@@ -60,7 +62,7 @@ Ast {
                                 Expr {
                                     expr: Call {
                                         callee: Ident {
-                                            name: "say_localized",
+                                            name: "say",
                                             span: 46..50,
                                         },
                                         args: [
@@ -69,14 +71,6 @@ Ast {
                                                 value: Ident {
                                                     name: "_narrator",
                                                     span: 25..33,
-                                                },
-                                                span: 46..50,
-                                            },
-                                            AstArg {
-                                                name: None,
-                                                value: StringLit {
-                                                    value: "d15d7120",
-                                                    span: 46..50,
                                                 },
                                                 span: 46..50,
                                             },
@@ -100,7 +94,7 @@ Ast {
                                         Expr {
                                             expr: Call {
                                                 callee: Ident {
-                                                    name: "say_localized",
+                                                    name: "say",
                                                     span: 60..63,
                                                 },
                                                 args: [
@@ -109,14 +103,6 @@ Ast {
                                                         value: Ident {
                                                             name: "_narrator",
                                                             span: 25..33,
-                                                        },
-                                                        span: 60..63,
-                                                    },
-                                                    AstArg {
-                                                        name: None,
-                                                        value: StringLit {
-                                                            value: "58b14e8c",
-                                                            span: 60..63,
                                                         },
                                                         span: 60..63,
                                                     },

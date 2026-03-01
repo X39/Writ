@@ -5,98 +5,33 @@ expression: "(ast, errors)"
 (
     Ast {
         items: [
-            Struct(
-                AstStructDecl {
+            Entity(
+                AstEntityDecl {
                     attrs: [],
                     vis: None,
                     name: "Guard",
                     name_span: 7..12,
-                    generics: [],
-                    fields: [
-                        AstStructField {
-                            vis: None,
-                            name: "$Health",
-                            name_span: 19..25,
-                            ty: Named {
-                                name: "Health",
-                                span: 19..25,
-                            },
-                            default: Some(
-                                StructLit {
-                                    name: "Health",
-                                    name_span: 19..25,
-                                    fields: [
-                                        (
-                                            "current",
-                                            28..35,
-                                            IntLit {
-                                                value: 80,
-                                                span: 37..39,
-                                            },
-                                        ),
-                                    ],
-                                    span: 15..42,
-                                },
-                            ),
+                    properties: [],
+                    component_slots: [
+                        AstComponentSlot {
+                            component: "Health",
+                            component_span: 19..25,
+                            overrides: [
+                                (
+                                    "current",
+                                    28..35,
+                                    IntLit {
+                                        value: 80,
+                                        span: 37..39,
+                                    },
+                                ),
+                            ],
                             span: 15..42,
                         },
                     ],
+                    hooks: [],
+                    inherent_impl: None,
                     span: 0..68,
-                },
-            ),
-            Impl(
-                AstImplDecl {
-                    contract: Some(
-                        Generic {
-                            name: "ComponentAccess",
-                            args: [
-                                Named {
-                                    name: "Health",
-                                    span: 19..25,
-                                },
-                            ],
-                            span: 19..25,
-                        },
-                    ),
-                    target: Named {
-                        name: "Guard",
-                        span: 7..12,
-                    },
-                    members: [
-                        Fn(
-                            AstFnDecl {
-                                attrs: [],
-                                vis: None,
-                                name: "get",
-                                name_span: 19..25,
-                                generics: [],
-                                params: [],
-                                return_type: Some(
-                                    Named {
-                                        name: "Health",
-                                        span: 19..25,
-                                    },
-                                ),
-                                body: [
-                                    Return {
-                                        value: Some(
-                                            MemberAccess {
-                                                object: SelfLit {
-                                                    span: 19..25,
-                                                },
-                                                field: "$Health",
-                                                field_span: 19..25,
-                                                span: 19..25,
-                                            },
-                                        ),
-                                        span: 19..25,
-                                    },
-                                ],
-                                span: 15..42,
-                            },
-                        ),
-                    ],
-                    span: 15..42,
                 },
             ),
         ],

@@ -1,0 +1,80 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Impl(
+            AstImplDecl {
+                generics: [],
+                contract: Some(
+                    Generic {
+                        name: "Add",
+                        args: [
+                            Named {
+                                name: "Vec2",
+                                span: 30..34,
+                            },
+                            Named {
+                                name: "Vec2",
+                                span: 39..43,
+                            },
+                        ],
+                        span: 12..61,
+                    },
+                ),
+                target: Named {
+                    name: "Vec2",
+                    span: 5..9,
+                },
+                members: [
+                    Fn(
+                        AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "add",
+                            name_span: 21..22,
+                            generics: [],
+                            params: [
+                                SelfParam {
+                                    mutable: false,
+                                    span: 12..61,
+                                },
+                                Regular(
+                                    AstParam {
+                                        name: "other",
+                                        name_span: 23..28,
+                                        ty: Named {
+                                            name: "Vec2",
+                                            span: 30..34,
+                                        },
+                                        span: 23..34,
+                                    },
+                                ),
+                            ],
+                            return_type: Some(
+                                Named {
+                                    name: "Vec2",
+                                    span: 39..43,
+                                },
+                            ),
+                            body: [
+                                Return {
+                                    value: Some(
+                                        Ident {
+                                            name: "other",
+                                            span: 53..58,
+                                        },
+                                    ),
+                                    span: 46..59,
+                                },
+                            ],
+                            span: 12..61,
+                        },
+                    ),
+                ],
+                span: 12..61,
+            },
+        ),
+    ],
+}

@@ -1,0 +1,15 @@
+﻿fn main() {
+    let opt_val_keyword: bool? = null;
+    let opt_val_type: Option<bool> = Option::None;
+    let opt_implicit = Option::Some(true);
+    let opt_call_some = produce_option_some();
+    let opt_call_none = produce_option_none();
+}
+
+fn produce_option_some() -> Option<bool> {
+    Option::Some(true)
+}
+
+fn produce_option_none() -> Option<bool> {
+    Option::None
+}

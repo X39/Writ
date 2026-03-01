@@ -6,22 +6,27 @@ Ast {
     items: [
         Extern(
             Fn(
+                None,
                 AstFnSig {
                     attrs: [],
                     vis: None,
+                    qualifier: None,
+                    qualifier_span: None,
                     name: "print",
                     name_span: 10..15,
                     generics: [],
                     params: [
-                        AstParam {
-                            name: "msg",
-                            name_span: 16..19,
-                            ty: Named {
-                                name: "string",
-                                span: 21..27,
+                        Regular(
+                            AstParam {
+                                name: "msg",
+                                name_span: 16..19,
+                                ty: Named {
+                                    name: "string",
+                                    span: 21..27,
+                                },
+                                span: 16..27,
                             },
-                            span: 16..27,
-                        },
+                        ),
                     ],
                     return_type: None,
                     span: 7..29,

@@ -11,17 +11,17 @@ pub mod entity;
 use chumsky::span::SimpleSpan;
 use writ_parser::cst::{
     Attribute, AttrArg, ComponentDecl, ComponentMember, ConstDecl, ContractDecl, ContractMember,
-    EnumDecl, EnumVariant, ExternDecl, FnDecl, FnSig, GlobalDecl, Item,
+    EnumDecl, EnumVariant, ExternDecl, FnDecl, FnParam, FnSig, GlobalDecl, Item,
     NamespaceDecl, OpSig, OpSymbol, Param, GenericParam, Spanned, StructDecl, StructField,
-    UsingDecl, Visibility,
+    StructMember, UsingDecl, Visibility,
 };
 use crate::ast::{Ast, AstDecl};
 use crate::ast::decl::{
     AstAttribute, AstAttributeArg, AstComponentDecl, AstComponentMember, AstConstDecl,
     AstContractDecl, AstContractMember, AstEnumDecl, AstEnumVariant, AstExternDecl, AstFnDecl,
-    AstFnSig, AstGenericParam, AstGlobalDecl, AstNamespaceDecl,
-    AstOpSig, AstOpSymbol, AstParam, AstStructDecl, AstStructField, AstUsingDecl,
-    AstVisibility,
+    AstFnParam, AstFnSig, AstGenericParam, AstGlobalDecl, AstNamespaceDecl,
+    AstOpSig, AstOpSymbol, AstParam, AstStructDecl, AstStructField, AstStructMember,
+    AstUsingDecl, AstVisibility,
 };
 use crate::lower::context::LoweringContext;
 use crate::lower::error::LoweringError;
@@ -138,7 +138,7 @@ pub(crate) fn lower_fn(f: FnDecl<'_>, fn_span: SimpleSpan, ctx: &mut LoweringCon
         params: f
             .params
             .into_iter()
-            .map(|(param, param_span)| lower_param(param, param_span))
+            .map(|(param, param_span)| lower_fn_param(param, param_span))
             .collect(),
         return_type: f.return_type.map(lower_type),
         body: f.body.into_iter().map(|s| lower_stmt(s, ctx)).collect(),
@@ -150,6 +150,8 @@ fn lower_fn_sig(f: FnSig<'_>, sig_span: SimpleSpan, ctx: &mut LoweringContext) -
     AstFnSig {
         attrs: lower_attrs(f.attrs, ctx),
         vis: lower_vis(f.vis),
+        qualifier: f.qualifier.as_ref().map(|(q, _)| q.to_string()),
+        qualifier_span: f.qualifier.as_ref().map(|(_, s)| *s),
         name: f.name.0.to_string(),
         name_span: f.name.1,
         generics: f
@@ -161,7 +163,7 @@ fn lower_fn_sig(f: FnSig<'_>, sig_span: SimpleSpan, ctx: &mut LoweringContext) -
         params: f
             .params
             .into_iter()
-            .map(|(param, param_span)| lower_param(param, param_span))
+            .map(|(param, param_span)| lower_fn_param(param, param_span))
             .collect(),
         return_type: f.return_type.map(lower_type),
         span: sig_span,
@@ -195,6 +197,8 @@ fn lower_op_symbol(sym: OpSymbol) -> AstOpSymbol {
         OpSymbol::Not => AstOpSymbol::Not,
         OpSymbol::Index => AstOpSymbol::Index,
         OpSymbol::IndexSet => AstOpSymbol::IndexSet,
+        OpSymbol::BitAnd => AstOpSymbol::BitAnd,
+        OpSymbol::BitOr => AstOpSymbol::BitOr,
     }
 }
 
@@ -216,6 +220,28 @@ pub(crate) fn lower_param(param: Param<'_>, param_span: SimpleSpan) -> AstParam 
         name_span: param.name.1,
         ty: lower_type(param.ty),
         span: param_span,
+    }
+}
+
+pub(crate) fn lower_fn_param(param: FnParam<'_>, param_span: SimpleSpan) -> AstFnParam {
+    match param {
+        FnParam::Regular(p) => AstFnParam::Regular(lower_param(p, param_span)),
+        FnParam::SelfParam { mutable } => AstFnParam::SelfParam {
+            mutable,
+            span: param_span,
+        },
+    }
+}
+
+fn lower_struct_member(member: StructMember<'_>, member_span: SimpleSpan, ctx: &mut LoweringContext) -> AstStructMember {
+    match member {
+        StructMember::Field(field) => AstStructMember::Field(lower_struct_field(field, member_span, ctx)),
+        StructMember::OnHook { event, body } => AstStructMember::OnHook {
+            event: event.0.to_string(),
+            event_span: event.1,
+            body: body.into_iter().map(|s| lower_stmt(s, ctx)).collect(),
+            span: member_span,
+        },
     }
 }
 
@@ -284,12 +310,18 @@ pub(crate) fn lower_struct_field(field: StructField<'_>, field_span: SimpleSpan,
 fn lower_namespace(ns: NamespaceDecl<'_>, ns_span: SimpleSpan, ctx: &mut LoweringContext) -> AstDecl {
     match ns {
         NamespaceDecl::Declarative(path) => {
+            let segments: Vec<String> = path.iter().map(|(s, _)| s.to_string()).collect();
+            ctx.set_namespace(segments.clone());
             AstDecl::Namespace(AstNamespaceDecl::Declarative {
-                path: path.into_iter().map(|(s, _)| s.to_string()).collect(),
+                path: segments,
                 span: ns_span,
             })
         }
         NamespaceDecl::Block(path, items) => {
+            let segments: Vec<String> = path.iter().map(|(s, _)| s.to_string()).collect();
+            let seg_count = segments.len();
+            ctx.push_namespace(&segments);
+
             let mut decls = Vec::new();
             for (item, _item_span) in items {
                 match item {
@@ -337,6 +369,9 @@ fn lower_namespace(ns: NamespaceDecl<'_>, ns_span: SimpleSpan, ctx: &mut Lowerin
                     }
                 }
             }
+
+            ctx.pop_namespace(seg_count);
+
             AstDecl::Namespace(AstNamespaceDecl::Block {
                 path: path.into_iter().map(|(s, _)| s.to_string()).collect(),
                 items: decls,
@@ -366,10 +401,10 @@ fn lower_struct(s: StructDecl<'_>, s_span: SimpleSpan, ctx: &mut LoweringContext
             .into_iter()
             .map(|(gp, gp_span)| lower_generic_param(gp, gp_span))
             .collect(),
-        fields: s
-            .fields
+        members: s
+            .members
             .into_iter()
-            .map(|(field, field_span)| lower_struct_field(field, field_span, ctx))
+            .map(|(member, member_span)| lower_struct_member(member, member_span, ctx))
             .collect(),
         span: s_span,
     }
@@ -470,10 +505,10 @@ fn lower_component(
 
 fn lower_extern(e: ExternDecl<'_>, _e_span: SimpleSpan, ctx: &mut LoweringContext) -> AstExternDecl {
     match e {
-        ExternDecl::Fn((sig, sig_span)) => AstExternDecl::Fn(lower_fn_sig(sig, sig_span, ctx)),
-        ExternDecl::Struct((s, s_span)) => AstExternDecl::Struct(lower_struct(s, s_span, ctx)),
-        ExternDecl::Component((c, c_span)) => {
-            AstExternDecl::Component(lower_component(c, c_span, ctx))
+        ExternDecl::Fn(vis, (sig, sig_span)) => AstExternDecl::Fn(lower_vis(vis), lower_fn_sig(sig, sig_span, ctx)),
+        ExternDecl::Struct(vis, (s, s_span)) => AstExternDecl::Struct(lower_vis(vis), lower_struct(s, s_span, ctx)),
+        ExternDecl::Component(vis, (c, c_span)) => {
+            AstExternDecl::Component(lower_vis(vis), lower_component(c, c_span, ctx))
         }
     }
 }

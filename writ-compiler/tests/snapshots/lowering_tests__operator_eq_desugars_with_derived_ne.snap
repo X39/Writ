@@ -6,6 +6,7 @@ Ast {
     items: [
         Impl(
             AstImplDecl {
+                generics: [],
                 contract: Some(
                     Generic {
                         name: "Eq",
@@ -31,15 +32,21 @@ Ast {
                             name_span: 21..23,
                             generics: [],
                             params: [
-                                AstParam {
-                                    name: "other",
-                                    name_span: 24..29,
-                                    ty: Named {
-                                        name: "vec2",
-                                        span: 31..35,
-                                    },
-                                    span: 24..35,
+                                SelfParam {
+                                    mutable: false,
+                                    span: 12..53,
                                 },
+                                Regular(
+                                    AstParam {
+                                        name: "other",
+                                        name_span: 24..29,
+                                        ty: Named {
+                                            name: "vec2",
+                                            span: 31..35,
+                                        },
+                                        span: 24..35,
+                                    },
+                                ),
                             ],
                             return_type: Some(
                                 Named {
@@ -65,6 +72,7 @@ Ast {
         ),
         Impl(
             AstImplDecl {
+                generics: [],
                 contract: Some(
                     Generic {
                         name: "Ne",
@@ -90,15 +98,17 @@ Ast {
                             name_span: 0..55,
                             generics: [],
                             params: [
-                                AstParam {
-                                    name: "other",
-                                    name_span: 0..55,
-                                    ty: Named {
-                                        name: "vec2",
-                                        span: 31..35,
+                                Regular(
+                                    AstParam {
+                                        name: "other",
+                                        name_span: 0..55,
+                                        ty: Named {
+                                            name: "vec2",
+                                            span: 31..35,
+                                        },
+                                        span: 0..55,
                                     },
-                                    span: 0..55,
-                                },
+                                ),
                             ],
                             return_type: Some(
                                 Named {

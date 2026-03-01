@@ -1,0 +1,32 @@
+.module "main" "0.1.0" {
+    .extern "writ-runtime" "1.0.0"
+    .method "add" (a: int, b: int) -> int pub mut {
+        .reg r0 int
+        .reg r1 int
+        .reg r2 int
+        ADD_I r2, r0, r1
+        RET r2
+    }
+    .method "is_positive" (n: int) -> bool pub mut {
+        .reg r0 int
+        .reg r1 int
+        .reg r2 bool
+        LOAD_INT r1, 0
+        CMP_LT_I r2, r1, r0
+        RET r2
+    }
+    .method "main" () -> void pub mut {
+        .reg r0 int
+        .reg r1 int
+        .reg r2 int
+        .reg r3 bool
+        LOAD_INT r1, 3
+        LOAD_INT r2, 4
+        CALL r0, 117440513, r1, 2
+        CALL r3, 117440514, r0, 1
+        RET_VOID
+    }
+    // .export "add" method 117440513
+    // .export "is_positive" method 117440514
+    // .export "main" method 117440515
+}

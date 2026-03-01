@@ -4,45 +4,39 @@ expression: ast
 ---
 Ast {
     items: [
-        Struct(
-            AstStructDecl {
+        Entity(
+            AstEntityDecl {
                 attrs: [],
                 vis: None,
                 name: "Guard",
                 name_span: 7..12,
-                generics: [],
-                fields: [],
-                span: 0..31,
-            },
-        ),
-        Impl(
-            AstImplDecl {
-                contract: Some(
-                    Named {
-                        name: "OnDestroy",
-                        span: 18..25,
-                    },
-                ),
-                target: Named {
-                    name: "Guard",
-                    span: 7..12,
-                },
-                members: [
-                    Fn(
-                        AstFnDecl {
+                properties: [],
+                component_slots: [],
+                hooks: [
+                    AstEntityHook {
+                        contract: "OnDestroy",
+                        contract_span: 18..25,
+                        method: AstFnDecl {
                             attrs: [],
                             vis: None,
                             name: "on_destroy",
                             name_span: 18..25,
                             generics: [],
-                            params: [],
+                            params: [
+                                SelfParam {
+                                    mutable: true,
+                                    span: 18..25,
+                                },
+                            ],
                             return_type: None,
                             body: [],
                             span: 15..29,
                         },
-                    ),
+                        span: 15..29,
+                    },
                 ],
-                span: 15..29,
+                inherent_impl: None,
+                span: 0..31,
             },
         ),
     ],

@@ -1,0 +1,56 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Fn(
+            AstFnDecl {
+                attrs: [],
+                vis: None,
+                name: "f",
+                name_span: 3..4,
+                generics: [],
+                params: [],
+                return_type: None,
+                body: [
+                    Let {
+                        mutable: false,
+                        name: "p",
+                        name_span: 13..14,
+                        ty: None,
+                        value: New {
+                            ty: Named {
+                                name: "Point",
+                                span: 21..26,
+                            },
+                            fields: [
+                                AstNewField {
+                                    name: "x",
+                                    name_span: 29..30,
+                                    value: IntLit {
+                                        value: 1,
+                                        span: 32..33,
+                                    },
+                                    span: 29..33,
+                                },
+                                AstNewField {
+                                    name: "y",
+                                    name_span: 35..36,
+                                    value: IntLit {
+                                        value: 2,
+                                        span: 38..39,
+                                    },
+                                    span: 35..39,
+                                },
+                            ],
+                            span: 17..41,
+                        },
+                        span: 9..42,
+                    },
+                ],
+                span: 0..44,
+            },
+        ),
+    ],
+}

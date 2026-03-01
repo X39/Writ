@@ -1,0 +1,72 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Namespace(
+            Block {
+                path: [
+                    "my_mod",
+                ],
+                items: [
+                    Fn(
+                        AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "greet",
+                            name_span: 23..28,
+                            generics: [],
+                            params: [
+                                Regular(
+                                    AstParam {
+                                        name: "player",
+                                        name_span: 29..35,
+                                        ty: Named {
+                                            name: "Entity",
+                                            span: 37..43,
+                                        },
+                                        span: 29..43,
+                                    },
+                                ),
+                            ],
+                            return_type: None,
+                            body: [
+                                Expr {
+                                    expr: Call {
+                                        callee: Ident {
+                                            name: "say",
+                                            span: 47..67,
+                                        },
+                                        args: [
+                                            AstArg {
+                                                name: None,
+                                                value: Ident {
+                                                    name: "player",
+                                                    span: 48..54,
+                                                },
+                                                span: 47..67,
+                                            },
+                                            AstArg {
+                                                name: None,
+                                                value: StringLit {
+                                                    value: "Hello there.",
+                                                    span: 55..67,
+                                                },
+                                                span: 47..67,
+                                            },
+                                        ],
+                                        span: 47..67,
+                                    },
+                                    span: 47..67,
+                                },
+                            ],
+                            span: 19..69,
+                        },
+                    ),
+                ],
+                span: 0..71,
+            },
+        ),
+    ],
+}

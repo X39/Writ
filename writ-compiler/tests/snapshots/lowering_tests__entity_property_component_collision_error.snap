@@ -5,14 +5,13 @@ expression: "(ast, errors)"
 (
     Ast {
         items: [
-            Struct(
-                AstStructDecl {
+            Entity(
+                AstEntityDecl {
                     attrs: [],
                     vis: None,
                     name: "Guard",
                     name_span: 7..12,
-                    generics: [],
-                    fields: [
+                    properties: [
                         AstStructField {
                             vis: None,
                             name: "Health",
@@ -25,6 +24,9 @@ expression: "(ast, errors)"
                             span: 15..27,
                         },
                     ],
+                    component_slots: [],
+                    hooks: [],
+                    inherent_impl: None,
                     span: 0..56,
                 },
             ),

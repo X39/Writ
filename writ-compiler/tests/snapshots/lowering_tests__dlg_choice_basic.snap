@@ -43,7 +43,7 @@ Ast {
                     Expr {
                         expr: Call {
                             callee: Ident {
-                                name: "say_localized",
+                                name: "say",
                                 span: 12..40,
                             },
                             args: [
@@ -52,14 +52,6 @@ Ast {
                                     value: Ident {
                                         name: "_narrator",
                                         span: 13..21,
-                                    },
-                                    span: 12..40,
-                                },
-                                AstArg {
-                                    name: None,
-                                    value: StringLit {
-                                        value: "122c751a",
-                                        span: 12..40,
                                     },
                                     span: 12..40,
                                 },
@@ -103,6 +95,14 @@ Ast {
                                                     },
                                                     AstArg {
                                                         name: None,
+                                                        value: StringLit {
+                                                            value: "219273af",
+                                                            span: 52..79,
+                                                        },
+                                                        span: 52..79,
+                                                    },
+                                                    AstArg {
+                                                        name: None,
                                                         value: Lambda {
                                                             params: [],
                                                             return_type: None,
@@ -110,7 +110,7 @@ Ast {
                                                                 Expr {
                                                                     expr: Call {
                                                                         callee: Ident {
-                                                                            name: "say_localized",
+                                                                            name: "say",
                                                                             span: 61..77,
                                                                         },
                                                                         args: [
@@ -119,14 +119,6 @@ Ast {
                                                                                 value: Ident {
                                                                                     name: "_narrator",
                                                                                     span: 62..70,
-                                                                                },
-                                                                                span: 61..77,
-                                                                            },
-                                                                            AstArg {
-                                                                                name: None,
-                                                                                value: StringLit {
-                                                                                    value: "5acc284b",
-                                                                                    span: 61..77,
                                                                                 },
                                                                                 span: 61..77,
                                                                             },
@@ -167,6 +159,14 @@ Ast {
                                                     },
                                                     AstArg {
                                                         name: None,
+                                                        value: StringLit {
+                                                            value: "dacd3489",
+                                                            span: 80..106,
+                                                        },
+                                                        span: 80..106,
+                                                    },
+                                                    AstArg {
+                                                        name: None,
                                                         value: Lambda {
                                                             params: [],
                                                             return_type: None,
@@ -174,7 +174,7 @@ Ast {
                                                                 Expr {
                                                                     expr: Call {
                                                                         callee: Ident {
-                                                                            name: "say_localized",
+                                                                            name: "say",
                                                                             span: 88..104,
                                                                         },
                                                                         args: [
@@ -183,14 +183,6 @@ Ast {
                                                                                 value: Ident {
                                                                                     name: "_narrator",
                                                                                     span: 89..97,
-                                                                                },
-                                                                                span: 88..104,
-                                                                            },
-                                                                            AstArg {
-                                                                                name: None,
-                                                                                value: StringLit {
-                                                                                    value: "02d86f56",
-                                                                                    span: 88..104,
                                                                                 },
                                                                                 span: 88..104,
                                                                             },

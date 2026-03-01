@@ -1,0 +1,32 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Struct(
+            AstStructDecl {
+                attrs: [],
+                vis: None,
+                name: "Bar",
+                name_span: 7..10,
+                generics: [],
+                members: [
+                    OnHook {
+                        event: "create",
+                        event_span: 16..22,
+                        body: [],
+                        span: 13..26,
+                    },
+                    OnHook {
+                        event: "finalize",
+                        event_span: 31..39,
+                        body: [],
+                        span: 28..43,
+                    },
+                ],
+                span: 0..45,
+            },
+        ),
+    ],
+}

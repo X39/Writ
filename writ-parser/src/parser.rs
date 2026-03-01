@@ -54,8 +54,6 @@ enum ExprPostfix<'src> {
         Vec<cst::Spanned<cst::TypeExpr<'src>>>,
         Vec<cst::Spanned<cst::Arg<'src>>>,
     ),
-    /// `{ field: value, ... }` -- brace construction
-    BraceConstruct(Vec<cst::Spanned<cst::Arg<'src>>>),
 }
 
 /// Parse type expressions: simple types, generic types, array types,
@@ -81,12 +79,37 @@ where
     I: ValueInput<'tokens, Token = Token<'src>, Span = Span>,
 {
     recursive(|type_expr| {
-        // Base: simple named type or void
-        let named = select! {
-            Token::Ident(name) => cst::TypeExpr::Named(name),
+        // Void type (keyword, must be tried before ident-based paths)
+        let void_type = select! {
             Token::KwVoid => cst::TypeExpr::Void,
         }
         .map_with(|t, e| (t, e.span()));
+
+        // Ident token for type paths
+        let ident_token_for_type = select! {
+            Token::Ident(name) => name,
+        };
+
+        // Qualified or named type: [::] ident (:: ident)*
+        // Single-segment → Named, multi-segment or rooted → Qualified
+        let named_or_qualified = just(Token::ColonColon).or_not()
+            .then(
+                ident_token_for_type
+                    .map_with(|name, e| (name, e.span()))
+                    .separated_by(just(Token::ColonColon))
+                    .at_least(1)
+                    .collect::<Vec<_>>(),
+            )
+            .map_with(|(root_prefix, segments): (Option<_>, Vec<cst::Spanned<&'src str>>), e| {
+                if root_prefix.is_none() && segments.len() == 1 {
+                    (cst::TypeExpr::Named(segments[0].0), e.span())
+                } else {
+                    (cst::TypeExpr::Qualified {
+                        segments,
+                        rooted: root_prefix.is_some(),
+                    }, e.span())
+                }
+            });
 
         // Function type: fn(A, B) -> C
         let fn_type = just(Token::KwFn)
@@ -110,8 +133,8 @@ where
                 )
             });
 
-        // Atom: function type or named (try fn_type first since it starts with keyword)
-        let atom = fn_type.or(named);
+        // Atom: function type, void, or named/qualified path
+        let atom = fn_type.or(void_type).or(named_or_qualified);
 
         // Postfix: generics <T, U>, array [], nullable ?
         // Applied left-to-right: Name<T>[]? means ((Name<T>)[])?
@@ -674,9 +697,11 @@ where
                 // Atoms: base expressions consumed by the Pratt parser
                 // =============================================
 
-                // Literals
+                // Literals (includes hex and binary integer literals)
                 let literal = select! {
                     Token::IntLit(n) => cst::Expr::IntLit(n),
+                    Token::HexLit(n) => cst::Expr::IntLit(n),
+                    Token::BinLit(n) => cst::Expr::IntLit(n),
                     Token::FloatLit(n) => cst::Expr::FloatLit(n),
                     Token::StringLit(s) => cst::Expr::StringLit(s),
                     Token::KwTrue => cst::Expr::BoolLit(true),
@@ -703,6 +728,7 @@ where
                     Token::KwComponent => "component",
                     Token::KwUse => "use",
                     Token::KwOn => "on",
+                    Token::KwNew => "new",
                 };
 
                 // Identifier (may be start of path a::b::c or root path ::a::b)
@@ -718,9 +744,10 @@ where
                         if root_prefix.is_none() && segments.len() == 1 {
                             (cst::Expr::Ident(segments[0].0), e.span())
                         } else {
-                            // Root prefix (::) is represented as an empty first segment
-                            // or we just use Path with segments (root distinguished by context)
-                            (cst::Expr::Path(segments), e.span())
+                            (cst::Expr::Path {
+                                segments,
+                                rooted: root_prefix.is_some(),
+                            }, e.span())
                         }
                     });
 
@@ -903,13 +930,15 @@ where
                         )
                     });
 
-                // Concurrency prefix keywords: spawn, detached, join, cancel, defer, try
+                // Concurrency prefix keywords: spawn, spawn detached, join, cancel, defer, try
+                // spawn detached must come before spawn (both start with KwSpawn)
+                let spawn_detached_expr = just(Token::KwSpawn)
+                    .ignore_then(just(Token::KwDetached))
+                    .ignore_then(expr.clone())
+                    .map_with(|e, extra| (cst::Expr::SpawnDetached(Box::new(e)), extra.span()));
                 let spawn_expr = just(Token::KwSpawn)
                     .ignore_then(expr.clone())
                     .map_with(|e, extra| (cst::Expr::Spawn(Box::new(e)), extra.span()));
-                let detached_expr = just(Token::KwDetached)
-                    .ignore_then(expr.clone())
-                    .map_with(|e, extra| (cst::Expr::Detached(Box::new(e)), extra.span()));
                 let join_expr = just(Token::KwJoin)
                     .ignore_then(expr.clone())
                     .map_with(|e, extra| (cst::Expr::Join(Box::new(e)), extra.span()));
@@ -917,11 +946,42 @@ where
                     .ignore_then(expr.clone())
                     .map_with(|e, extra| (cst::Expr::Cancel(Box::new(e)), extra.span()));
                 let defer_expr = just(Token::KwDefer)
-                    .ignore_then(expr.clone())
-                    .map_with(|e, extra| (cst::Expr::Defer(Box::new(e)), extra.span()));
+                    .ignore_then(
+                        block.clone()
+                            .map_with(|stmts, e| (cst::Expr::Block(stmts), e.span()))
+                    )
+                    .map_with(|block_expr, extra| (cst::Expr::Defer(Box::new(block_expr)), extra.span()));
                 let try_expr = just(Token::KwTry)
                     .ignore_then(expr.clone())
                     .map_with(|e, extra| (cst::Expr::Try(Box::new(e)), extra.span()));
+
+                // New construction: new Type { field: value, ... }
+                let new_field = select! { Token::Ident(name) => name }
+                    .map_with(|n, e| (n, e.span()))
+                    .then_ignore(just(Token::Colon))
+                    .then(expr.clone())
+                    .map_with(|(name, value), e| {
+                        (cst::NewField { name, value }, e.span())
+                    });
+
+                let new_expr = just(Token::KwNew)
+                    .ignore_then(type_expr())
+                    .then(
+                        new_field
+                            .separated_by(just(Token::Comma))
+                            .allow_trailing()
+                            .collect::<Vec<_>>()
+                            .delimited_by(just(Token::LBrace), just(Token::RBrace)),
+                    )
+                    .map_with(|(ty, fields), e| {
+                        (
+                            cst::Expr::New {
+                                ty: Box::new(ty),
+                                fields,
+                            },
+                            e.span(),
+                        )
+                    });
 
                 // Formattable string: $"Hello {name}!" or $"""Hello {name}!"""
                 // Parse the opaque token by splitting into text/expr segments
@@ -986,13 +1046,15 @@ where
                 // Generic call must come before ident_or_path so chumsky
                 // tries the f<T>(args) parse first.
                 let atom = choice((
-                    // Concurrency prefix keywords
+                    // Concurrency prefix keywords (spawn detached before spawn)
+                    spawn_detached_expr,
                     spawn_expr,
-                    detached_expr,
                     join_expr,
                     cancel_expr,
                     defer_expr,
                     try_expr,
+                    // New construction: new Type { ... }
+                    new_expr,
                     // Block-bodied expressions
                     if_expr,
                     match_expr,
@@ -1035,6 +1097,9 @@ where
                 // Postfix chain: member access, bracket access, calls, ?, !
                 // =============================================
 
+                // Clone atom before it's consumed by foldl_with, for use in bracket-inner parser
+                let atom_for_bracket = atom.clone();
+
                 let postfix_chain = atom.foldl_with(
                     choice((
                         // Generic method call: .method<T>(args) -- before regular member access
@@ -1064,26 +1129,70 @@ where
                             .map(|(field, maybe_args)| {
                                 ExprPostfix::MemberOrMethod(field, maybe_args)
                             }),
-                        // Bracket access: [expr]
-                        expr.clone()
-                            .delimited_by(just(Token::LBracket), just(Token::RBracket))
-                            .map(ExprPostfix::Bracket),
+                        // Bracket access: [expr], [^expr], [^a..^b], [a..], [..b], [..]
+                        // ^expr (from-end) is only valid inside bracket access.
+                        // Uses atom-level expressions for range operands so that
+                        // `..` is not consumed by the full expression parser.
+                        {
+                            let bracket_primary = atom_for_bracket.clone();
+
+                            // from-end: ^expr
+                            let from_end_p = just(Token::Caret)
+                                .ignore_then(bracket_primary.clone())
+                                .map_with(|e, extra| (cst::Expr::FromEnd(Box::new(e)), extra.span()));
+                            // A range operand: ^expr or atom (non-range expression)
+                            let range_operand = from_end_p.clone().or(bracket_primary);
+
+                            let range_kind = just(Token::DotDotEq).to(cst::RangeKind::Inclusive)
+                                .or(just(Token::DotDot).to(cst::RangeKind::Exclusive));
+
+                            // Full range: start..end, start..=end
+                            let full_range = range_operand.clone()
+                                .then(range_kind.clone())
+                                .then(range_operand.clone())
+                                .map_with(|((start, kind), end), e| {
+                                    (cst::Expr::Range(
+                                        Some(Box::new(start)),
+                                        kind,
+                                        Some(Box::new(end)),
+                                    ), e.span())
+                                });
+                            // Half-open range (start only): start.., start..=
+                            let start_only_range = range_operand.clone()
+                                .then(range_kind.clone())
+                                .map_with(|(start, kind), e| {
+                                    (cst::Expr::Range(
+                                        Some(Box::new(start)),
+                                        kind,
+                                        None,
+                                    ), e.span())
+                                });
+                            // Half-open range (end only): ..end, ..=end
+                            let end_only_range = range_kind.clone()
+                                .then(range_operand)
+                                .map_with(|(kind, end), e| {
+                                    (cst::Expr::Range(
+                                        None,
+                                        kind,
+                                        Some(Box::new(end)),
+                                    ), e.span())
+                                });
+                            // Full unbounded range: .., ..=
+                            let unbounded_range = range_kind
+                                .map_with(|kind, e| {
+                                    (cst::Expr::Range(None, kind, None), e.span())
+                                });
+
+                            // For non-range bracket access, use from_end or full expr
+                            let bracket_atom = from_end_p.or(expr.clone());
+
+                            // Try ranges first (most specific), then fall back to plain bracket access
+                            choice((full_range, start_only_range, end_only_range, unbounded_range, bracket_atom))
+                                .delimited_by(just(Token::LBracket), just(Token::RBracket))
+                                .map(ExprPostfix::Bracket)
+                        },
                         // Call: (args)
                         args.clone().map(ExprPostfix::Call),
-                        // Brace construction: { field: value, ... }
-                        // Named args required (at least name: expr) to disambiguate from block
-                        select! { Token::Ident(name) => name }
-                            .map_with(|n, e| (n, e.span()))
-                            .then_ignore(just(Token::Colon))
-                            .then(expr.clone())
-                            .map_with(|(name, value), e| {
-                                (cst::Arg { name: Some(name), value }, e.span())
-                            })
-                            .separated_by(just(Token::Comma))
-                            .allow_trailing()
-                            .collect::<Vec<_>>()
-                            .delimited_by(just(Token::LBrace), just(Token::RBrace))
-                            .map(ExprPostfix::BraceConstruct),
                         // Postfix ?: null propagation
                         just(Token::Question).to(ExprPostfix::NullPropagate),
                         // Postfix !: unwrap
@@ -1133,9 +1242,6 @@ where
                             ExprPostfix::Call(a) => {
                                 (cst::Expr::Call(Box::new(left), a), span)
                             }
-                            ExprPostfix::BraceConstruct(a) => {
-                                (cst::Expr::Call(Box::new(left), a), span)
-                            }
                             ExprPostfix::NullPropagate => (
                                 cst::Expr::UnaryPostfix(
                                     Box::new(left),
@@ -1183,9 +1289,7 @@ where
                                 e.span(),
                             )
                         }),
-                        prefix(14, just(Token::Caret), |_, rhs, e| {
-                            (cst::Expr::FromEnd(Box::new(rhs)), e.span())
-                        }),
+                        // Note: ^ (from-end) removed from general prefix — only valid inside [] brackets
                         // --- Multiplicative: *, /, % ---
                         infix(left(12), just(Token::Star), |l, _, r, e| {
                             (
@@ -1233,6 +1337,30 @@ where
                                 cst::Expr::Binary(
                                     Box::new(l),
                                     cst::BinaryOp::Sub,
+                                    Box::new(r),
+                                ),
+                                e.span(),
+                            )
+                        }),
+                        // --- Shift: <<, >> ---
+                        // NOTE: << and >> are NOT lexed as single tokens to avoid
+                        // ambiguity with nested generics (e.g., Map<string, List<int>>).
+                        // Instead, they are parsed as two adjacent < or > tokens.
+                        infix(left(10), just(Token::Lt).then(just(Token::Lt)), |l, _, r, e| {
+                            (
+                                cst::Expr::Binary(
+                                    Box::new(l),
+                                    cst::BinaryOp::Shl,
+                                    Box::new(r),
+                                ),
+                                e.span(),
+                            )
+                        }),
+                        infix(left(10), just(Token::Gt).then(just(Token::Gt)), |l, _, r, e| {
+                            (
+                                cst::Expr::Binary(
+                                    Box::new(l),
+                                    cst::BinaryOp::Shr,
                                     Box::new(r),
                                 ),
                                 e.span(),
@@ -1984,6 +2112,8 @@ where
             .map_with(|((name, params), body), e| {
                 (
                     cst::DlgDecl {
+                        attrs: Vec::new(),
+                        vis: None,
                         name,
                         params,
                         body,
@@ -2131,12 +2261,12 @@ where
         ));
 
         // --- Attribute parser ---
-        // Single attribute argument: named (ident: expr) or positional (expr)
+        // Single attribute argument: named (ident = expr) or positional (expr)
         let attr_arg = choice((
-            // Named arg: ident: expr
+            // Named arg: ident = expr (v0.4: uses = not :)
             select! { Token::Ident(name) => name }
                 .map_with(|n, e| (n, e.span()))
-                .then_ignore(just(Token::Colon))
+                .then_ignore(just(Token::Eq))
                 .then(expr.clone())
                 .map_with(|(name, value), e| {
                     (cst::AttrArg::Named(name, value), e.span())
@@ -2188,11 +2318,54 @@ where
             .then(type_expr())
             .map_with(|(name, ty), e| (cst::Param { name, ty }, e.span()));
 
-        let fn_param_list = fn_param
+        // Plain param list (Param, no self) — for dialogue, enum variants, entity on-handlers
+        let fn_param_list = fn_param.clone()
             .separated_by(just(Token::Comma))
             .allow_trailing()
             .collect::<Vec<_>>()
             .delimited_by(just(Token::LParen), just(Token::RParen));
+
+        // Self parameter: `self` or `mut self`
+        let self_param = choice((
+            just(Token::KwMut)
+                .ignore_then(just(Token::KwSelf))
+                .map_with(|_, e| (cst::FnParam::SelfParam { mutable: true }, e.span())),
+            just(Token::KwSelf)
+                .map_with(|_, e| (cst::FnParam::SelfParam { mutable: false }, e.span())),
+        ));
+
+        // Regular param wrapped as FnParam
+        let regular_fn_param = fn_param.clone()
+            .map(|(p, span)| (cst::FnParam::Regular(p), span));
+
+        // Function param list with optional leading self (FnParam) — for fn/method declarations
+        let fn_param_list_with_self = choice((
+            // self [, regular_params...]
+            self_param.clone()
+                .then(
+                    just(Token::Comma)
+                        .ignore_then(
+                            regular_fn_param.clone()
+                                .separated_by(just(Token::Comma))
+                                .allow_trailing()
+                                .collect::<Vec<_>>()
+                        )
+                        .or_not()
+                )
+                .map(|(self_p, rest)| {
+                    let mut params = vec![self_p];
+                    if let Some(rest) = rest {
+                        params.extend(rest);
+                    }
+                    params
+                }),
+            // regular params only (no self)
+            regular_fn_param.clone()
+                .separated_by(just(Token::Comma))
+                .allow_trailing()
+                .collect::<Vec<_>>(),
+        ))
+        .delimited_by(just(Token::LParen), just(Token::RParen));
 
         // --- fn_decl parser ---
         // fn name [<generics>] (params) [-> type] { body }
@@ -2202,7 +2375,7 @@ where
                     .map_with(|n, e| (n, e.span())),
             )
             .then(generic_params().or_not())
-            .then(fn_param_list.clone())
+            .then(fn_param_list_with_self.clone())
             .then(just(Token::Arrow).ignore_then(type_expr()).or_not())
             .then(block.clone())
             .map(|((((name, generics), params), return_type), body)| {
@@ -2333,6 +2506,29 @@ where
                 )
             });
 
+        // Struct lifecycle hook: on event { body }
+        let struct_on_hook = just(Token::KwOn)
+            .ignore_then(
+                select! { Token::Ident(name) => name }
+                    .map_with(|n, e| (n, e.span())),
+            )
+            .then(block.clone())
+            .map_with(|(event, body), e| {
+                (cst::StructMember::OnHook { event, body }, e.span())
+            });
+
+        // Struct field wrapped as StructMember
+        let struct_field_member = struct_field.clone()
+            .map(|(sf, span)| {
+                (cst::StructMember::Field(sf), span)
+            });
+
+        // Struct member: hook or field (hooks first to match `on` keyword before field ident)
+        let struct_member = choice((
+            struct_on_hook,
+            struct_field_member,
+        ));
+
         let struct_decl = just(Token::KwStruct)
             .ignore_then(
                 select! { Token::Ident(name) => name }
@@ -2340,18 +2536,18 @@ where
             )
             .then(generic_params().or_not())
             .then(
-                struct_field.clone()
+                struct_member.clone()
                     .separated_by(just(Token::Comma))
                     .allow_trailing()
                     .collect::<Vec<_>>()
                     .delimited_by(just(Token::LBrace), just(Token::RBrace)),
             )
-            .map(|((name, generics), fields)| cst::StructDecl {
+            .map(|((name, generics), members)| cst::StructDecl {
                 attrs: Vec::new(),
                 vis: None,
                 name,
                 generics,
-                fields,
+                members,
             });
 
         // --- enum_decl parser ---
@@ -2395,12 +2591,13 @@ where
                     .map_with(|n, e| (n, e.span())),
             )
             .then(generic_params().or_not())
-            .then(fn_param_list.clone())
+            .then(fn_param_list_with_self.clone())
             .then(just(Token::Arrow).ignore_then(type_expr()).or_not())
             .then_ignore(just(Token::Semi))
             .map(|(((name, generics), params), return_type)| cst::FnSig {
                 attrs: Vec::new(),
                 vis: None,
+                qualifier: None,
                 name,
                 generics,
                 params,
@@ -2408,11 +2605,56 @@ where
             });
 
         // --- contract_decl parser ---
-        // [vis] contract Name [<generics>] { fn_sig; ... }
-        let contract_member = fn_sig.clone()
+        // [vis] contract Name [<generics>] { fn_sig | op_sig ; ... }
+
+        // Operator signature (bodyless): operator SYMBOL (params) [-> type];
+        // Re-define op_symbol inline here since it will also be used in op_decl below
+        let contract_op_symbol = choice((
+            just(Token::LBracket)
+                .then(just(Token::RBracket))
+                .then(just(Token::Eq))
+                .to(cst::OpSymbol::IndexSet),
+            just(Token::LBracket)
+                .then(just(Token::RBracket))
+                .to(cst::OpSymbol::Index),
+            just(Token::Plus).to(cst::OpSymbol::Add),
+            just(Token::Minus).to(cst::OpSymbol::Sub),
+            just(Token::Star).to(cst::OpSymbol::Mul),
+            just(Token::Slash).to(cst::OpSymbol::Div),
+            just(Token::Percent).to(cst::OpSymbol::Mod),
+            just(Token::EqEq).to(cst::OpSymbol::Eq),
+            just(Token::Lt).to(cst::OpSymbol::Lt),
+            just(Token::Bang).to(cst::OpSymbol::Not),
+            just(Token::Amp).to(cst::OpSymbol::BitAnd),
+            just(Token::Pipe).to(cst::OpSymbol::BitOr),
+        ))
+        .map_with(|sym, e| (sym, e.span()));
+
+        let op_sig = visibility.clone().or_not()
+            .then_ignore(select! { Token::Ident("operator") => () })
+            .then(contract_op_symbol)
+            .then(fn_param_list.clone())
+            .then(just(Token::Arrow).ignore_then(type_expr()).or_not())
+            .then_ignore(just(Token::Semi))
+            .map_with(|(((vis, symbol), params), return_type), e| {
+                (
+                    cst::ContractMember::OpSig(cst::OpSig {
+                        vis,
+                        symbol,
+                        params,
+                        return_type,
+                    }),
+                    e.span(),
+                )
+            });
+
+        let contract_fn_member = fn_sig.clone()
             .map_with(|sig, e| {
                 (cst::ContractMember::FnSig(sig), e.span())
             });
+
+        // op_sig must come before fn_sig since both can start with visibility then an ident
+        let contract_member = choice((op_sig, contract_fn_member));
 
         let contract_decl = just(Token::KwContract)
             .ignore_then(
@@ -2452,6 +2694,8 @@ where
             just(Token::EqEq).to(cst::OpSymbol::Eq),
             just(Token::Lt).to(cst::OpSymbol::Lt),
             just(Token::Bang).to(cst::OpSymbol::Not),
+            just(Token::Amp).to(cst::OpSymbol::BitAnd),
+            just(Token::Pipe).to(cst::OpSymbol::BitOr),
         ))
         .map_with(|sym, e| (sym, e.span()));
 
@@ -2493,10 +2737,11 @@ where
         ));
 
         // --- impl_decl parser ---
-        // impl [Contract for] Type { members }
+        // impl [<generics>] [Contract for] Type { members }
         // Strategy: try "contract for type" form first via backtracking
         let impl_decl = just(Token::KwImpl)
-            .ignore_then(
+            .ignore_then(generic_params().or_not())
+            .then(
                 // Try: type_expr KwFor type_expr (contract-for form)
                 type_expr()
                     .then_ignore(just(Token::KwFor))
@@ -2513,7 +2758,8 @@ where
                     .collect::<Vec<_>>()
                     .delimited_by(just(Token::LBrace), just(Token::RBrace)),
             )
-            .map(|((contract, target), members)| cst::ImplDecl {
+            .map(|((generics, (contract, target)), members)| cst::ImplDecl {
+                generics,
                 contract,
                 target,
                 members,
@@ -2657,18 +2903,32 @@ where
         // extern fn ...; | extern struct ... { } | extern component ... { }
         let extern_fn = just(Token::KwFn)
             .ignore_then(
+                // Try dotted name: Type.method
                 select! { Token::Ident(name) => name }
-                    .map_with(|n, e| (n, e.span())),
+                    .map_with(|n, e| (n, e.span()))
+                    .then_ignore(just(Token::Dot))
+                    .then(
+                        select! { Token::Ident(name) => name }
+                            .map_with(|n, e| (n, e.span()))
+                    )
+                    .map(|(qualifier, name)| (Some(qualifier), name))
+                    .or(
+                        // Fallback: simple name
+                        select! { Token::Ident(name) => name }
+                            .map_with(|n, e| (n, e.span()))
+                            .map(|name| (None, name))
+                    )
             )
             .then(generic_params().or_not())
-            .then(fn_param_list.clone())
+            .then(fn_param_list_with_self.clone())
             .then(just(Token::Arrow).ignore_then(type_expr()).or_not())
             .then_ignore(just(Token::Semi))
-            .map_with(|(((name, generics), params), return_type), e| {
-                cst::ExternDecl::Fn((
+            .map_with(|((((qualifier, name), generics), params), return_type), e| {
+                cst::ExternDecl::Fn(None, (
                     cst::FnSig {
                         attrs: Vec::new(),
                         vis: None,
+                        qualifier,
                         name,
                         generics,
                         params,
@@ -2685,20 +2945,20 @@ where
             )
             .then(generic_params().or_not())
             .then(
-                struct_field.clone()
+                struct_member.clone()
                     .separated_by(just(Token::Comma))
                     .allow_trailing()
                     .collect::<Vec<_>>()
                     .delimited_by(just(Token::LBrace), just(Token::RBrace)),
             )
-            .map_with(|((name, generics), fields), e| {
-                cst::ExternDecl::Struct((
+            .map_with(|((name, generics), members), e| {
+                cst::ExternDecl::Struct(None, (
                     cst::StructDecl {
                         attrs: Vec::new(),
                         vis: None,
                         name,
                         generics,
-                        fields,
+                        members,
                     },
                     e.span(),
                 ))
@@ -2716,7 +2976,7 @@ where
                     .delimited_by(just(Token::LBrace), just(Token::RBrace)),
             )
             .map_with(|(name, members), e| {
-                cst::ExternDecl::Component((
+                cst::ExternDecl::Component(None, (
                     cst::ComponentDecl {
                         attrs: Vec::new(),
                         vis: None,
@@ -2770,9 +3030,14 @@ where
                 entity_decl.map_with(|ed, e| {
                     (cst::Item::Entity((ed, e.span())), e.span())
                 }),
-                // component -> Item::Component
-                component_decl.map_with(|cd, e| {
-                    (cst::Item::Component((cd, e.span())), e.span())
+                // component -> error: must be extern
+                component_decl.validate(|_cd, e, emitter| {
+                    emitter.emit(Rich::custom(
+                        e.span(),
+                        "components must be extern — use `extern component` instead of `component`",
+                    ));
+                    // Return error item for recovery
+                    (cst::Item::Stmt((cst::Stmt::Expr((cst::Expr::Error, e.span())), e.span())), e.span())
                 }),
                 // dlg -> Item::Dlg
                 dlg_decl.map_with(|dd, e| {
@@ -2814,9 +3079,9 @@ where
                         cd.attrs = attr_list;
                         cd.vis = vis;
                     }
-                    cst::Item::Dlg(_) => {
-                        // DlgDecl doesn't have attrs/vis fields
-                        // (vis was already consumed above)
+                    cst::Item::Dlg((dd, _)) => {
+                        dd.attrs = attr_list;
+                        dd.vis = vis;
                     }
                     _ => {}
                 }
@@ -2833,20 +3098,24 @@ where
             (cst::Item::Impl((id, e.span())), e.span())
         });
 
-        // extern_decl -> Item::Extern (with optional attrs prefix)
+        // extern_decl -> Item::Extern (with optional attrs and visibility prefix)
         let extern_item = attrs.clone()
+            .then(visibility.clone().or_not())
             .then(extern_decl)
-            .map_with(|(attr_list, mut ed), e| {
-                // Attach attrs to the inner declaration if it's an Fn
+            .map_with(|((attr_list, vis), mut ed), e| {
+                // Attach attrs and visibility to the ExternDecl
                 match &mut ed {
-                    cst::ExternDecl::Fn((sig, _)) => {
+                    cst::ExternDecl::Fn(v, (sig, _)) => {
                         sig.attrs = attr_list;
+                        *v = vis;
                     }
-                    cst::ExternDecl::Struct((sd, _)) => {
+                    cst::ExternDecl::Struct(v, (sd, _)) => {
                         sd.attrs = attr_list;
+                        *v = vis;
                     }
-                    cst::ExternDecl::Component((cd, _)) => {
+                    cst::ExternDecl::Component(v, (cd, _)) => {
                         cd.attrs = attr_list;
+                        *v = vis;
                     }
                 }
                 (cst::Item::Extern((ed, e.span())), e.span())

@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>.writil Module Hex Viewer</title>
+<style>
+:root {
+  --bg: #0d1117;
+  --surface: #161b22;
+  --surface2: #1c2129;
+  --border: #30363d;
+  --text: #c9d1d9;
+  --text-dim: #8b949e;
+  --accent: #58a6ff;
+  --header: #da3633;
+  --table-dir: #f0883e;
+  --string-heap: #3fb950;
+  --blob-heap: #d2a8ff;
+  --method-body: #79c0ff;
+  --padding: #484f58;
+  --mono: 'Cascadia Code', 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: var(--mono);
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+#toolbar {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-shrink: 0;
+}
+#toolbar h1 { font-size: 14px; font-weight: 600; color: var(--accent); }
+#toolbar .info { font-size: 11px; color: var(--text-dim); }
+#toolbar button {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+#toolbar button:hover { background: var(--border); }
+
+#main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* Hex view */
+#hex-panel {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.hex-row {
+  display: flex;
+  padding: 0 12px;
+  white-space: pre;
+}
+.hex-row:hover { background: var(--surface2); }
+.hex-offset {
+  color: var(--text-dim);
+  width: 80px;
+  flex-shrink: 0;
+  user-select: none;
+}
+.hex-bytes {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+}
+.hex-byte {
+  width: 26px;
+  text-align: center;
+  cursor: pointer;
+  border-radius: 2px;
+  transition: background 0.1s;
+}
+.hex-byte:hover { filter: brightness(1.4); }
+.hex-byte.selected { outline: 2px solid #fff; outline-offset: -2px; }
+.hex-gap { width: 8px; }
+.hex-ascii {
+  width: 140px;
+  flex-shrink: 0;
+  color: var(--text-dim);
+  padding-left: 12px;
+  border-left: 1px solid var(--border);
+  margin-left: 8px;
+}
+.hex-ascii .printable { color: var(--text); }
+
+/* Section colors */
+.s-header { color: var(--header); background: rgba(218,54,51,0.12); }
+.s-tabledir { color: var(--table-dir); background: rgba(240,136,62,0.12); }
+.s-table-0 { color: #ff7b72; background: rgba(255,123,114,0.1); }
+.s-table-1 { color: #ffa657; background: rgba(255,166,87,0.1); }
+.s-table-2 { color: #d2a8ff; background: rgba(210,168,255,0.1); }
+.s-table-3 { color: #79c0ff; background: rgba(121,192,255,0.1); }
+.s-table-4 { color: #7ee787; background: rgba(126,231,135,0.1); }
+.s-table-5 { color: #ff7b72; background: rgba(255,123,114,0.08); }
+.s-table-6 { color: #ffa657; background: rgba(255,166,87,0.08); }
+.s-table-7 { color: #d2a8ff; background: rgba(210,168,255,0.08); }
+.s-table-8 { color: #79c0ff; background: rgba(121,192,255,0.08); }
+.s-table-9 { color: #7ee787; background: rgba(126,231,135,0.08); }
+.s-stringheap { color: var(--string-heap); background: rgba(63,185,80,0.12); }
+.s-blobheap { color: var(--blob-heap); background: rgba(210,168,255,0.12); }
+.s-methodbody { color: var(--method-body); background: rgba(121,192,255,0.12); }
+.s-padding { color: var(--padding); background: rgba(72,79,88,0.2); }
+
+/* Detail panel */
+#detail-panel {
+  width: 420px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#section-map {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  max-height: 200px;
+  overflow-y: auto;
+}
+#section-map h3 { font-size: 11px; color: var(--text-dim); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 1px; }
+.map-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  font-size: 11px;
+  cursor: pointer;
+}
+.map-entry:hover { background: var(--surface2); }
+.map-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.map-label { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.map-range { color: var(--text-dim); font-size: 10px; flex-shrink: 0; }
+
+#detail-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  font-size: 11px;
+}
+#detail-content h3 {
+  font-size: 12px;
+  color: var(--accent);
+  margin: 12px 0 6px 0;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+#detail-content h3:first-child { margin-top: 0; }
+#detail-content table { width: 100%; border-collapse: collapse; margin: 4px 0 8px 0; }
+#detail-content th { text-align: left; color: var(--text-dim); font-weight: 400; padding: 2px 6px; }
+#detail-content td { padding: 2px 6px; }
+#detail-content tr:hover { background: var(--surface2); }
+.token { color: #d2a8ff; }
+.strref { color: var(--string-heap); cursor: pointer; text-decoration: underline; text-decoration-style: dotted; }
+.strref:hover { color: #7ee787; }
+.num { color: #79c0ff; }
+.opcode { color: #ffa657; font-weight: 600; }
+
+/* Drop zone */
+#drop-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 16px;
+}
+#drop-zone.dragover { background: rgba(88,166,255,0.08); }
+#drop-zone .icon { font-size: 48px; opacity: 0.3; }
+#drop-zone .label { font-size: 14px; color: var(--text-dim); }
+#drop-zone .sublabel { font-size: 11px; color: var(--text-dim); opacity: 0.6; }
+
+input[type="file"] { display: none; }
+</style>
+</head>
+<body>
+<div id="toolbar">
+  <h1>.writil Hex Viewer</h1>
+  <button onclick="document.getElementById('file-input').click()">Open File</button>
+  <input type="file" id="file-input" accept=".writil">
+  <span class="info" id="file-info"></span>
+</div>
+<div id="main">
+  <div id="hex-panel">
+    <div id="drop-zone">
+      <div class="icon">&#x2B22;</div>
+      <div class="label">Drop a .writil file here</div>
+      <div class="sublabel">or click Open File above</div>
+    </div>
+  </div>
+  <div id="detail-panel">
+    <div id="section-map"><h3>Sections</h3></div>
+    <div id="detail-content"></div>
+  </div>
+</div>
+
+<script>
+const TABLE_NAMES = [
+  'ModuleDef','ModuleRef','TypeDef','TypeRef','TypeSpec',
+  'FieldDef','FieldRef','MethodDef','MethodRef','ParamDef',
+  'ContractDef','ContractMethod','ImplDef','GenericParam','GenericConstraint',
+  'GlobalDef','ExternDef','ComponentSlot','LocaleDef','ExportDef','AttributeDef'
+];
+const ROW_SIZES = [12,8,20,12,4,12,12,20,12,12,16,12,12,12,8,16,16,8,12,12,16];
+
+const OPCODE_NAMES = {
+  0x0000:'NOP',0x0001:'CRASH',
+  0x0100:'MOV',0x0101:'LOAD_INT',0x0102:'LOAD_FLOAT',0x0103:'LOAD_TRUE',
+  0x0104:'LOAD_FALSE',0x0105:'LOAD_STRING',0x0106:'LOAD_NULL',
+  0x0200:'ADD_I',0x0201:'SUB_I',0x0202:'MUL_I',0x0203:'DIV_I',0x0204:'MOD_I',0x0205:'NEG_I',
+  0x0300:'ADD_F',0x0301:'SUB_F',0x0302:'MUL_F',0x0303:'DIV_F',0x0304:'MOD_F',0x0305:'NEG_F',
+  0x0400:'BIT_AND',0x0401:'BIT_OR',0x0402:'SHL',0x0403:'SHR',0x0404:'NOT',
+  0x0500:'CMP_EQ_I',0x0501:'CMP_EQ_F',0x0502:'CMP_EQ_B',0x0503:'CMP_EQ_S',
+  0x0504:'CMP_LT_I',0x0505:'CMP_LT_F',
+  0x0600:'BR',0x0601:'BR_TRUE',0x0602:'BR_FALSE',0x0603:'SWITCH',0x0604:'RET',0x0605:'RET_VOID',
+  0x0700:'CALL',0x0701:'CALL_VIRT',0x0702:'CALL_EXTERN',0x0703:'NEW_DELEGATE',
+  0x0704:'CALL_INDIRECT',0x0705:'TAIL_CALL',
+  0x0800:'NEW',0x0801:'GET_FIELD',0x0802:'SET_FIELD',0x0803:'SPAWN_ENTITY',
+  0x0804:'INIT_ENTITY',0x0805:'GET_COMPONENT',0x0806:'GET_OR_CREATE',0x0807:'FIND_ALL',
+  0x0808:'DESTROY_ENTITY',0x0809:'ENTITY_IS_ALIVE',
+  0x0900:'NEW_ARRAY',0x0901:'ARRAY_INIT',0x0902:'ARRAY_LOAD',0x0903:'ARRAY_STORE',
+  0x0904:'ARRAY_LEN',0x0905:'ARRAY_ADD',0x0906:'ARRAY_REMOVE',0x0907:'ARRAY_INSERT',
+  0x0908:'ARRAY_SLICE',
+  0x0A00:'WRAP_SOME',0x0A01:'UNWRAP',0x0A02:'IS_SOME',0x0A03:'IS_NONE',
+  0x0A10:'WRAP_OK',0x0A11:'WRAP_ERR',0x0A12:'UNWRAP_OK',0x0A13:'IS_OK',
+  0x0A14:'IS_ERR',0x0A15:'EXTRACT_ERR',
+  0x0A20:'NEW_ENUM',0x0A21:'GET_TAG',0x0A22:'EXTRACT_FIELD',
+  0x0B00:'SPAWN_TASK',0x0B01:'SPAWN_DETACHED',0x0B02:'JOIN',0x0B03:'CANCEL',
+  0x0B04:'DEFER_PUSH',0x0B05:'DEFER_POP',0x0B06:'DEFER_END',
+  0x0C00:'LOAD_GLOBAL',0x0C01:'STORE_GLOBAL',0x0C02:'ATOMIC_BEGIN',0x0C03:'ATOMIC_END',
+  0x0D00:'I2F',0x0D01:'F2I',0x0D02:'I2S',0x0D03:'F2S',0x0D04:'B2S',0x0D05:'CONVERT',
+  0x0E00:'STR_CONCAT',0x0E01:'STR_BUILD',0x0E02:'STR_LEN',
+  0x0F00:'BOX',0x0F01:'UNBOX',
+};
+
+let bytes = null;
+let sections = [];
+let parsed = null;
+
+// ── Parsing ──────────────────────────────────────────────────────
+
+function u16(buf, off) { return buf[off] | (buf[off+1] << 8); }
+function u32(buf, off) { return (buf[off] | (buf[off+1] << 8) | (buf[off+2] << 16) | (buf[off+3] << 24)) >>> 0; }
+function i32(buf, off) { return buf[off] | (buf[off+1] << 8) | (buf[off+2] << 16) | (buf[off+3] << 24); }
+function u64(buf, off) {
+  const lo = u32(buf, off), hi = u32(buf, off + 4);
+  return BigInt(lo) | (BigInt(hi) << 32n);
+}
+function f64FromBits(buf, off) {
+  const ab = new ArrayBuffer(8);
+  const view = new DataView(ab);
+  for (let i = 0; i < 8; i++) view.setUint8(i, buf[off + i]);
+  return view.getFloat64(0, true);
+}
+
+function readString(heap, offset) {
+  if (!heap || offset >= heap.length || offset === 0) return '';
+  const len = u32(heap, offset);
+  if (offset + 4 + len > heap.length) return '<invalid>';
+  const decoder = new TextDecoder();
+  return decoder.decode(heap.slice(offset + 4, offset + 4 + len));
+}
+
+function tokenStr(tok) {
+  const tableId = (tok >>> 24) & 0xFF;
+  const row = tok & 0x00FFFFFF;
+  if (tok === 0) return '(null)';
+  return `${TABLE_NAMES[tableId] || `T${tableId}`}#${row}`;
+}
+
+function parseModule(buf) {
+  sections = [];
+  if (buf.length < 200) return null;
+  const magic = String.fromCharCode(buf[0], buf[1], buf[2], buf[3]);
+  if (magic !== 'WRIT') return null;
+
+  sections.push({ name: 'Magic', start: 0, end: 4, cls: 's-header' });
+  sections.push({ name: 'Version+Flags', start: 4, end: 8, cls: 's-header' });
+  sections.push({ name: 'Module Name/Ver', start: 8, end: 16, cls: 's-header' });
+  sections.push({ name: 'Heap Pointers', start: 16, end: 32, cls: 's-header' });
+  sections.push({ name: 'Table Directory', start: 32, end: 200, cls: 's-tabledir' });
+
+  const header = {
+    format_version: u16(buf, 4),
+    flags: u16(buf, 6),
+    module_name: u32(buf, 8),
+    module_version: u32(buf, 12),
+    string_heap_offset: u32(buf, 16),
+    string_heap_size: u32(buf, 20),
+    blob_heap_offset: u32(buf, 24),
+    blob_heap_size: u32(buf, 28),
+    table_directory: []
+  };
+  for (let i = 0; i < 21; i++) {
+    const off = 32 + i * 8;
+    header.table_directory.push({ offset: u32(buf, off), row_count: u32(buf, off + 4) });
+  }
+
+  const strHeap = buf.slice(header.string_heap_offset, header.string_heap_offset + header.string_heap_size);
+  const blobHeap = buf.slice(header.blob_heap_offset, header.blob_heap_offset + header.blob_heap_size);
+
+  // Parse tables
+  const tables = {};
+  for (let tid = 0; tid < 21; tid++) {
+    const { offset, row_count } = header.table_directory[tid];
+    if (row_count === 0) continue;
+    const rs = ROW_SIZES[tid];
+    const end = offset + row_count * rs;
+    sections.push({ name: `${TABLE_NAMES[tid]} (${row_count})`, start: offset, end, cls: `s-table-${tid % 10}` });
+    const rows = [];
+    for (let r = 0; r < row_count; r++) {
+      const roff = offset + r * rs;
+      rows.push(parseTableRow(buf, tid, roff, strHeap));
+    }
+    tables[tid] = rows;
+  }
+
+  // Heaps
+  if (header.string_heap_size > 0) {
+    sections.push({ name: 'String Heap', start: header.string_heap_offset, end: header.string_heap_offset + header.string_heap_size, cls: 's-stringheap' });
+  }
+  if (header.blob_heap_size > 0) {
+    sections.push({ name: 'Blob Heap', start: header.blob_heap_offset, end: header.blob_heap_offset + header.blob_heap_size, cls: 's-blobheap' });
+  }
+
+  // Method bodies
+  const methodDefs = tables[7] || [];
+  const bodies = [];
+  for (const m of methodDefs) {
+    if (m.body_size > 0) {
+      sections.push({ name: `Body: ${m._name}`, start: m.body_offset, end: m.body_offset + m.body_size, cls: 's-methodbody' });
+      bodies.push({ name: m._name, offset: m.body_offset, size: m.body_size, reg_count: m.reg_count });
+    }
+  }
+
+  // Detect alignment padding
+  sections.sort((a, b) => a.start - b.start);
+  const gaps = [];
+  for (let i = 0; i < sections.length - 1; i++) {
+    if (sections[i].end < sections[i + 1].start) {
+      gaps.push({ name: 'padding', start: sections[i].end, end: sections[i + 1].start, cls: 's-padding' });
+    }
+  }
+  sections.push(...gaps);
+  sections.sort((a, b) => a.start - b.start);
+
+  return { header, tables, strHeap, blobHeap, bodies, methodDefs };
+}
+
+function parseTableRow(buf, tid, off, strHeap) {
+  const s = (o) => readString(strHeap, u32(buf, o));
+  switch (tid) {
+    case 0: return { name: s(off), version: s(off+4), flags: u32(buf, off+8), _name: s(off) };
+    case 1: return { name: s(off), min_version: s(off+4), _name: s(off) };
+    case 2: return { name: s(off), namespace: s(off+4), kind: buf[off+8], flags: u16(buf, off+9), field_list: u32(buf, off+11), method_list: u32(buf, off+15), _name: s(off) };
+    case 3: return { scope: tokenStr(u32(buf, off)), name: s(off+4), namespace: s(off+8), _name: s(off+4) };
+    case 4: return { signature: u32(buf, off), _name: `sig@${u32(buf,off)}` };
+    case 5: return { name: s(off), type_sig: u32(buf, off+4), flags: u16(buf, off+8), _name: s(off) };
+    case 6: return { parent: tokenStr(u32(buf, off)), name: s(off+4), type_sig: u32(buf, off+8), _name: s(off+4) };
+    case 7: return { name: s(off), signature: u32(buf, off+4), flags: u16(buf, off+8), body_offset: u32(buf, off+10), body_size: u32(buf, off+14), reg_count: u16(buf, off+18), _name: s(off) };
+    case 8: return { parent: tokenStr(u32(buf, off)), name: s(off+4), signature: u32(buf, off+8), _name: s(off+4) };
+    case 9: return { name: s(off), type_sig: u32(buf, off+4), sequence: u16(buf, off+8), _name: s(off) };
+    case 10: return { name: s(off), namespace: s(off+4), method_list: u32(buf, off+8), generic_param_list: u32(buf, off+12), _name: s(off) };
+    case 11: return { name: s(off), signature: u32(buf, off+4), slot: u16(buf, off+8), _name: s(off) };
+    case 12: return { type_token: tokenStr(u32(buf, off)), contract: tokenStr(u32(buf, off+4)), method_list: u32(buf, off+8), _name: `impl` };
+    case 13: return { owner: tokenStr(u32(buf, off)), owner_kind: buf[off+4], ordinal: u16(buf, off+5), name: s(off+7), _name: s(off+7) };
+    case 14: return { param: u32(buf, off), constraint: tokenStr(u32(buf, off+4)), _name: `constraint` };
+    case 15: return { name: s(off), type_sig: u32(buf, off+4), flags: u16(buf, off+8), init_value: u32(buf, off+10), _name: s(off) };
+    case 16: return { name: s(off), signature: u32(buf, off+4), import_name: s(off+8), flags: u16(buf, off+12), _name: s(off) };
+    case 17: return { owner_entity: tokenStr(u32(buf, off)), component_type: tokenStr(u32(buf, off+4)), _name: `slot` };
+    case 18: return { dlg_method: tokenStr(u32(buf, off)), locale: s(off+4), loc_method: tokenStr(u32(buf, off+8)), _name: `locale` };
+    case 19: return { name: s(off), item_kind: buf[off+4], item: tokenStr(u32(buf, off+5)), _name: s(off) };
+    case 20: return { owner: tokenStr(u32(buf, off)), owner_kind: buf[off+4], name: s(off+5), value: u32(buf, off+9), _name: s(off+5) };
+    default: return { _name: '?' };
+  }
+}
+
+function disassembleBody(buf, bodyOffset, bodySize, regCount) {
+  const instrs = [];
+  let pos = bodyOffset;
+  // Skip register types
+  pos += regCount * 4;
+  if (pos >= bodyOffset + bodySize) return instrs;
+  const codeSize = u32(buf, pos);
+  pos += 4;
+  const codeEnd = pos + codeSize;
+  while (pos < codeEnd && pos + 1 < buf.length) {
+    const instrStart = pos;
+    const opcode = u16(buf, pos);
+    pos += 2;
+    const name = OPCODE_NAMES[opcode] || `UNK_${opcode.toString(16)}`;
+    let operands = '';
+    try { ({ pos, operands } = decodeOperands(buf, pos, opcode, codeEnd)); }
+    catch(e) { operands = '<decode error>'; pos = codeEnd; }
+    instrs.push({ offset: instrStart, opcode, name, operands });
+  }
+  return instrs;
+}
+
+function decodeOperands(buf, pos, opcode, end) {
+  const r = () => { const v = u16(buf, pos); pos += 2; return `r${v}`; };
+  const u32v = () => { const v = u32(buf, pos); pos += 4; return v; };
+  const i32v = () => { const v = i32(buf, pos); pos += 4; return v; };
+  const u16v = () => { const v = u16(buf, pos); pos += 2; return v; };
+
+  const hi = (opcode >> 8) & 0xFF;
+  const lo = opcode & 0xFF;
+
+  // Shape N
+  if ([0x0000,0x0605,0x0B05,0x0B06,0x0C02,0x0C03].includes(opcode))
+    return { pos, operands: '' };
+  // Shape R
+  if ([0x0001,0x0103,0x0104,0x0106,0x0604,0x0804,0x0808,0x0B03].includes(opcode))
+    return { pos, operands: r() };
+  // Shape RR
+  if (hi === 0x02 && lo === 0x05) return { pos, operands: `${r()}, ${r()}` };
+  if (hi === 0x03 && lo === 0x05) return { pos, operands: `${r()}, ${r()}` };
+  if (hi === 0x04 && lo === 0x04) return { pos, operands: `${r()}, ${r()}` };
+  if ([0x0100,0x0809,0x0904,0x0905,0x0906,0x0A00,0x0A01,0x0A02,0x0A03,
+       0x0A10,0x0A11,0x0A12,0x0A13,0x0A14,0x0A15,0x0A21,0x0B02,
+       0x0D00,0x0D01,0x0D02,0x0D03,0x0D04,0x0E02,0x0F00,0x0F01].includes(opcode))
+    return { pos, operands: `${r()}, ${r()}` };
+  // Shape RRR
+  if ((hi >= 0x02 && hi <= 0x05 && lo <= 0x04 && ![0x0205,0x0305,0x0404].includes(opcode)) || opcode === 0x0E00)
+    return { pos, operands: `${r()}, ${r()}, ${r()}` };
+  if ([0x0902,0x0903,0x0907].includes(opcode))
+    return { pos, operands: `${r()}, ${r()}, ${r()}` };
+  // Shape RI64
+  if (opcode === 0x0101) {
+    const rd = r();
+    const val = u64(buf, pos); pos += 8;
+    return { pos, operands: `${rd}, ${Number(BigInt.asIntN(64, val))}` };
+  }
+  if (opcode === 0x0102) {
+    const rd = r();
+    const val = f64FromBits(buf, pos); pos += 8;
+    return { pos, operands: `${rd}, ${val}` };
+  }
+  // Shape RI32
+  if ([0x0105,0x0800,0x0803,0x0806,0x0807,0x0900,0x0B04,0x0C00].includes(opcode))
+    return { pos, operands: `${r()}, 0x${u32v().toString(16)}` };
+  // BR
+  if (opcode === 0x0600) { pos += 2; return { pos, operands: `${i32v()}` }; }
+  // BR_TRUE / BR_FALSE
+  if (opcode === 0x0601 || opcode === 0x0602)
+    return { pos, operands: `${r()}, ${i32v()}` };
+  // SWITCH
+  if (opcode === 0x0603) {
+    const rt = r(); const n = u16v();
+    const offs = [];
+    for (let i = 0; i < n; i++) offs.push(i32v());
+    return { pos, operands: `${rt}, [${offs.join(', ')}]` };
+  }
+  // CALL shape
+  if ([0x0700,0x0702,0x0B00,0x0B01].includes(opcode))
+    return { pos, operands: `${r()}, 0x${u32v().toString(16)}, ${r()}, ${u16v()}` };
+  // CALL_VIRT
+  if (opcode === 0x0701) {
+    return { pos, operands: `${r()}, ${r()}, 0x${u32v().toString(16)}, ${u16v()}, ${r()}, ${u16v()}` };
+  }
+  // NEW_DELEGATE
+  if (opcode === 0x0703) return { pos, operands: `${r()}, 0x${u32v().toString(16)}, ${r()}` };
+  // CALL_INDIRECT
+  if (opcode === 0x0704) return { pos, operands: `${r()}, ${r()}, ${r()}, ${u16v()}` };
+  // TAIL_CALL
+  if (opcode === 0x0705) return { pos, operands: `0x${u32v().toString(16)}, ${r()}, ${u16v()}` };
+  // GET_FIELD
+  if (opcode === 0x0801) return { pos, operands: `${r()}, ${r()}, 0x${u32v().toString(16)}` };
+  // SET_FIELD
+  if (opcode === 0x0802) return { pos, operands: `${r()}, 0x${u32v().toString(16)}, ${r()}` };
+  // GET_COMPONENT
+  if (opcode === 0x0805) return { pos, operands: `${r()}, ${r()}, 0x${u32v().toString(16)}` };
+  // ARRAY_INIT
+  if (opcode === 0x0901) return { pos, operands: `${r()}, 0x${u32v().toString(16)}, ${u16v()}, ${r()}` };
+  // ARRAY_SLICE
+  if (opcode === 0x0908) return { pos, operands: `${r()}, ${r()}, ${r()}, ${r()}` };
+  // NEW_ENUM
+  if (opcode === 0x0A20) return { pos, operands: `${r()}, 0x${u32v().toString(16)}, ${u16v()}, ${u16v()}, ${r()}` };
+  // EXTRACT_FIELD
+  if (opcode === 0x0A22) return { pos, operands: `${r()}, ${r()}, ${u16v()}` };
+  // STORE_GLOBAL
+  if (opcode === 0x0C01) return { pos, operands: `0x${u32v().toString(16)}, ${r()}` };
+  // CONVERT
+  if (opcode === 0x0D05) return { pos, operands: `${r()}, ${r()}, 0x${u32v().toString(16)}` };
+  // STR_BUILD
+  if (opcode === 0x0E01) return { pos, operands: `${r()}, ${u16v()}, ${r()}` };
+
+  return { pos, operands: '<?>' };
+}
+
+// ── Rendering ────────────────────────────────────────────────────
+
+function sectionAt(offset) {
+  for (const s of sections) {
+    if (offset >= s.start && offset < s.end) return s;
+  }
+  return null;
+}
+
+function renderHex(buf) {
+  const panel = document.getElementById('hex-panel');
+  panel.innerHTML = '';
+  const frag = document.createDocumentFragment();
+  const rowCount = Math.ceil(buf.length / 16);
+
+  for (let row = 0; row < rowCount; row++) {
+    const base = row * 16;
+    const div = document.createElement('div');
+    div.className = 'hex-row';
+
+    const offSpan = document.createElement('span');
+    offSpan.className = 'hex-offset';
+    offSpan.textContent = base.toString(16).padStart(8, '0');
+    div.appendChild(offSpan);
+
+    const bytesDiv = document.createElement('span');
+    bytesDiv.className = 'hex-bytes';
+
+    let asciiStr = '';
+    for (let col = 0; col < 16; col++) {
+      if (col === 8) {
+        const gap = document.createElement('span');
+        gap.className = 'hex-gap';
+        bytesDiv.appendChild(gap);
+      }
+      const idx = base + col;
+      const byteSpan = document.createElement('span');
+      byteSpan.className = 'hex-byte';
+      if (idx < buf.length) {
+        const b = buf[idx];
+        byteSpan.textContent = b.toString(16).padStart(2, '0');
+        const sec = sectionAt(idx);
+        if (sec) byteSpan.classList.add(sec.cls);
+        byteSpan.dataset.offset = idx;
+        byteSpan.onclick = () => showByteDetail(idx);
+        asciiStr += (b >= 0x20 && b <= 0x7e) ? String.fromCharCode(b) : '.';
+      } else {
+        byteSpan.textContent = '  ';
+        asciiStr += ' ';
+      }
+      bytesDiv.appendChild(byteSpan);
+    }
+
+    div.appendChild(bytesDiv);
+
+    const asciiSpan = document.createElement('span');
+    asciiSpan.className = 'hex-ascii';
+    for (let i = 0; i < asciiStr.length; i++) {
+      const ch = asciiStr[i];
+      const s = document.createElement('span');
+      s.textContent = ch;
+      if (ch !== '.' && ch !== ' ') s.className = 'printable';
+      asciiSpan.appendChild(s);
+    }
+    div.appendChild(asciiSpan);
+    frag.appendChild(div);
+  }
+  panel.appendChild(frag);
+}
+
+function renderSectionMap() {
+  const map = document.getElementById('section-map');
+  map.innerHTML = '<h3>Sections</h3>';
+  for (const s of sections) {
+    const entry = document.createElement('div');
+    entry.className = 'map-entry';
+    const dot = document.createElement('span');
+    dot.className = 'map-dot';
+    const cs = getComputedStyle(document.documentElement);
+    const tmpEl = document.createElement('span');
+    tmpEl.className = `hex-byte ${s.cls}`;
+    document.body.appendChild(tmpEl);
+    dot.style.background = getComputedStyle(tmpEl).color;
+    tmpEl.remove();
+    entry.appendChild(dot);
+    const label = document.createElement('span');
+    label.className = 'map-label';
+    label.textContent = s.name;
+    entry.appendChild(label);
+    const range = document.createElement('span');
+    range.className = 'map-range';
+    range.textContent = `${s.start.toString(16)}-${s.end.toString(16)} (${s.end - s.start}B)`;
+    entry.appendChild(range);
+    entry.onclick = () => {
+      const rowIdx = Math.floor(s.start / 16);
+      const rows = document.querySelectorAll('.hex-row');
+      if (rows[rowIdx]) rows[rowIdx].scrollIntoView({ behavior: 'smooth', block: 'center' });
+      showSectionDetail(s);
+    };
+    map.appendChild(entry);
+  }
+}
+
+function showByteDetail(offset) {
+  document.querySelectorAll('.hex-byte.selected').forEach(el => el.classList.remove('selected'));
+  const el = document.querySelector(`.hex-byte[data-offset="${offset}"]`);
+  if (el) el.classList.add('selected');
+  const sec = sectionAt(offset);
+  if (sec) showSectionDetail(sec, offset);
+}
+
+function showSectionDetail(sec, focusOffset) {
+  const dc = document.getElementById('detail-content');
+  let html = `<h3>${sec.name}</h3>`;
+  html += `<p>Offset: 0x${sec.start.toString(16)} &mdash; 0x${sec.end.toString(16)} (${sec.end - sec.start} bytes)</p>`;
+
+  if (sec.name === 'Magic') {
+    html += `<p>Value: <span class="opcode">WRIT</span> (0x57 0x52 0x49 0x54)</p>`;
+  } else if (sec.name === 'Version+Flags') {
+    html += `<p>Format Version: <span class="num">${parsed.header.format_version}</span></p>`;
+    html += `<p>Flags: <span class="num">0x${parsed.header.flags.toString(16)}</span>`;
+    if (parsed.header.flags & 1) html += ' (debug info present)';
+    html += `</p>`;
+  } else if (sec.name === 'Module Name/Ver') {
+    html += `<p>Name: <span class="strref">${readString(parsed.strHeap, parsed.header.module_name)}</span></p>`;
+    html += `<p>Version: <span class="strref">${readString(parsed.strHeap, parsed.header.module_version)}</span></p>`;
+  } else if (sec.name === 'Heap Pointers') {
+    html += `<p>String Heap: 0x${parsed.header.string_heap_offset.toString(16)} (${parsed.header.string_heap_size}B)</p>`;
+    html += `<p>Blob Heap: 0x${parsed.header.blob_heap_offset.toString(16)} (${parsed.header.blob_heap_size}B)</p>`;
+  } else if (sec.name === 'Table Directory') {
+    html += '<table><tr><th>#</th><th>Table</th><th>Offset</th><th>Rows</th></tr>';
+    for (let i = 0; i < 21; i++) {
+      const e = parsed.header.table_directory[i];
+      const cls = e.row_count > 0 ? '' : ' style="opacity:0.4"';
+      html += `<tr${cls}><td class="num">${i}</td><td>${TABLE_NAMES[i]}</td><td class="num">0x${e.offset.toString(16)}</td><td class="num">${e.row_count}</td></tr>`;
+    }
+    html += '</table>';
+  } else if (sec.name === 'String Heap') {
+    html += renderStringHeap();
+  } else if (sec.name === 'Blob Heap') {
+    html += `<p>Raw blob data (${parsed.header.blob_heap_size} bytes). Contains TypeRef encodings, method signatures, and constant values.</p>`;
+  } else if (sec.name.startsWith('Body:')) {
+    const body = parsed.bodies.find(b => `Body: ${b.name}` === sec.name);
+    if (body) html += renderMethodBody(body);
+  } else if (sec.cls && sec.cls.startsWith('s-table-')) {
+    // Find which table this is
+    for (let tid = 0; tid < 21; tid++) {
+      if (sec.name.startsWith(TABLE_NAMES[tid])) {
+        html += renderTable(tid);
+        break;
+      }
+    }
+  }
+  dc.innerHTML = html;
+}
+
+function renderStringHeap() {
+  let html = '<table><tr><th>Offset</th><th>Len</th><th>Value</th></tr>';
+  let pos = 0;
+  const heap = parsed.strHeap;
+  let count = 0;
+  while (pos < heap.length && count < 200) {
+    if (pos + 4 > heap.length) break;
+    const len = u32(heap, pos);
+    const str = readString(heap, pos);
+    html += `<tr><td class="num">0x${pos.toString(16)}</td><td class="num">${len}</td><td class="strref">${escHtml(str)}</td></tr>`;
+    pos += 4 + len;
+    count++;
+  }
+  html += '</table>';
+  return html;
+}
+
+function renderTable(tid) {
+  const rows = parsed.tables[tid];
+  if (!rows || rows.length === 0) return '<p>Empty table</p>';
+  const keys = Object.keys(rows[0]).filter(k => !k.startsWith('_'));
+  let html = '<table><tr><th>#</th>';
+  for (const k of keys) html += `<th>${k}</th>`;
+  html += '</tr>';
+  for (let i = 0; i < rows.length; i++) {
+    html += `<tr><td class="num">${i + 1}</td>`;
+    for (const k of keys) {
+      let v = rows[i][k];
+      const cls = typeof v === 'number' ? 'num' : (typeof v === 'string' && v.includes('#')) ? 'token' : '';
+      if (typeof v === 'number' && k !== 'kind' && k !== 'flags' && k !== 'sequence' && k !== 'slot' && k !== 'owner_kind' && k !== 'item_kind' && k !== 'ordinal' && k !== 'reg_count') {
+        v = '0x' + v.toString(16);
+      }
+      html += `<td class="${cls}">${escHtml(String(v))}</td>`;
+    }
+    html += '</tr>';
+  }
+  html += '</table>';
+  return html;
+}
+
+function renderMethodBody(body) {
+  let html = `<p>Registers: <span class="num">${body.reg_count}</span> | Size: <span class="num">${body.size}</span> bytes</p>`;
+  const instrs = disassembleBody(bytes, body.offset, body.size, body.reg_count);
+  html += '<table><tr><th>Offset</th><th>Instruction</th><th>Operands</th></tr>';
+  for (const ins of instrs) {
+    html += `<tr><td class="num">+0x${(ins.offset - body.offset).toString(16)}</td><td class="opcode">${ins.name}</td><td>${escHtml(ins.operands)}</td></tr>`;
+  }
+  html += '</table>';
+  return html;
+}
+
+function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── File Loading ─────────────────────────────────────────────────
+
+function loadFile(file) {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    bytes = new Uint8Array(e.target.result);
+    parsed = parseModule(bytes);
+    if (!parsed) {
+      alert('Not a valid .writil file (bad magic)');
+      return;
+    }
+    document.getElementById('file-info').textContent =
+      `${file.name} | ${bytes.length} bytes | v${parsed.header.format_version} | ${readString(parsed.strHeap, parsed.header.module_name)}`;
+    renderHex(bytes);
+    renderSectionMap();
+    // Auto-show header
+    if (sections.length > 0) showSectionDetail(sections[0]);
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// Events
+document.getElementById('file-input').addEventListener('change', (e) => {
+  if (e.target.files[0]) loadFile(e.target.files[0]);
+});
+
+const dropZone = document.getElementById('hex-panel');
+dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.querySelector('#drop-zone')?.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => { dropZone.querySelector('#drop-zone')?.classList.remove('dragover'); });
+dropZone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropZone.querySelector('#drop-zone')?.classList.remove('dragover');
+  if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]);
+});
+</script>
+</body>
+</html>

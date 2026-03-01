@@ -1,0 +1,47 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Fn(
+            AstFnDecl {
+                attrs: [],
+                vis: Some(
+                    Pub,
+                ),
+                name: "test",
+                name_span: 7..11,
+                generics: [],
+                params: [],
+                return_type: None,
+                body: [
+                    Expr {
+                        expr: SpawnDetached {
+                            expr: Call {
+                                callee: Ident {
+                                    name: "playSound",
+                                    span: 31..40,
+                                },
+                                args: [
+                                    AstArg {
+                                        name: None,
+                                        value: StringLit {
+                                            value: "\"beep\"",
+                                            span: 41..47,
+                                        },
+                                        span: 41..47,
+                                    },
+                                ],
+                                span: 31..48,
+                            },
+                            span: 16..48,
+                        },
+                        span: 16..49,
+                    },
+                ],
+                span: 4..51,
+            },
+        ),
+    ],
+}

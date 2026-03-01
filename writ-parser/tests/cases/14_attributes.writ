@@ -25,7 +25,7 @@ pub entity SaveData {
 }
 
 // --- Attribute with named arguments ---
-[Import(lib: "physics", arch: "x64")]
+[Import(lib = "physics", arch = "x64")]
 extern fn applyForce(entity: Entity, force: Vec2);
 
 // --- 16.4 Conditional compilation ---
@@ -67,6 +67,6 @@ pub struct PlayerData {
 }
 
 [Deprecated("Use newComponent")]
-pub component OldComponent {
+pub extern component OldComponent {
     value: int,
 }

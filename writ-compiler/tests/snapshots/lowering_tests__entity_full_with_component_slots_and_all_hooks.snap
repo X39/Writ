@@ -1,0 +1,166 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Entity(
+            AstEntityDecl {
+                attrs: [],
+                vis: None,
+                name: "Guard",
+                name_span: 7..12,
+                properties: [
+                    AstStructField {
+                        vis: None,
+                        name: "name",
+                        name_span: 15..19,
+                        ty: Named {
+                            name: "string",
+                            span: 21..27,
+                        },
+                        default: None,
+                        span: 15..28,
+                    },
+                ],
+                component_slots: [
+                    AstComponentSlot {
+                        component: "Health",
+                        component_span: 33..39,
+                        overrides: [
+                            (
+                                "current",
+                                42..49,
+                                IntLit {
+                                    value: 80,
+                                    span: 51..53,
+                                },
+                            ),
+                        ],
+                        span: 29..56,
+                    },
+                ],
+                hooks: [
+                    AstEntityHook {
+                        contract: "OnCreate",
+                        contract_span: 101..107,
+                        method: AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "on_create",
+                            name_span: 101..107,
+                            generics: [],
+                            params: [
+                                SelfParam {
+                                    mutable: true,
+                                    span: 101..107,
+                                },
+                            ],
+                            return_type: None,
+                            body: [
+                                Let {
+                                    mutable: false,
+                                    name: "ready",
+                                    name_span: 114..119,
+                                    ty: Some(
+                                        Named {
+                                            name: "bool",
+                                            span: 121..125,
+                                        },
+                                    ),
+                                    value: BoolLit {
+                                        value: true,
+                                        span: 128..132,
+                                    },
+                                    span: 110..133,
+                                },
+                            ],
+                            span: 98..135,
+                        },
+                        span: 98..135,
+                    },
+                    AstEntityHook {
+                        contract: "OnFinalize",
+                        contract_span: 139..147,
+                        method: AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "on_finalize",
+                            name_span: 139..147,
+                            generics: [],
+                            params: [
+                                SelfParam {
+                                    mutable: true,
+                                    span: 139..147,
+                                },
+                            ],
+                            return_type: None,
+                            body: [
+                                Let {
+                                    mutable: false,
+                                    name: "done",
+                                    name_span: 154..158,
+                                    ty: Some(
+                                        Named {
+                                            name: "bool",
+                                            span: 160..164,
+                                        },
+                                    ),
+                                    value: BoolLit {
+                                        value: true,
+                                        span: 167..171,
+                                    },
+                                    span: 150..172,
+                                },
+                            ],
+                            span: 136..174,
+                        },
+                        span: 136..174,
+                    },
+                ],
+                inherent_impl: Some(
+                    AstImplDecl {
+                        generics: [],
+                        contract: None,
+                        target: Named {
+                            name: "Guard",
+                            span: 7..12,
+                        },
+                        members: [
+                            Fn(
+                                AstFnDecl {
+                                    attrs: [],
+                                    vis: None,
+                                    name: "greet",
+                                    name_span: 60..65,
+                                    generics: [],
+                                    params: [],
+                                    return_type: Some(
+                                        Named {
+                                            name: "string",
+                                            span: 71..77,
+                                        },
+                                    ),
+                                    body: [
+                                        Return {
+                                            value: Some(
+                                                StringLit {
+                                                    value: "\"hello\"",
+                                                    span: 87..94,
+                                                },
+                                            ),
+                                            span: 80..95,
+                                        },
+                                    ],
+                                    span: 57..97,
+                                },
+                            ),
+                        ],
+                        span: 0..176,
+                    },
+                ),
+                span: 0..176,
+            },
+        ),
+    ],
+}

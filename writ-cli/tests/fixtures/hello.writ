@@ -1,0 +1,13 @@
+pub fn main() {
+    let x: int = 42;
+    ::log(test_string);
+}
+pub fn test_bool() -> bool {
+    let result = false;
+    result
+}
+
+pub fn test_string() -> string {
+    let result = "Panzer of the lake";
+    result
+}

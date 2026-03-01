@@ -12,24 +12,28 @@ Ast {
                 name_span: 3..4,
                 generics: [],
                 params: [
-                    AstParam {
-                        name: "a",
-                        name_span: 5..6,
-                        ty: Named {
-                            name: "int",
-                            span: 8..11,
+                    Regular(
+                        AstParam {
+                            name: "a",
+                            name_span: 5..6,
+                            ty: Named {
+                                name: "int",
+                                span: 8..11,
+                            },
+                            span: 5..11,
                         },
-                        span: 5..11,
-                    },
-                    AstParam {
-                        name: "b",
-                        name_span: 13..14,
-                        ty: Named {
-                            name: "int",
-                            span: 16..19,
+                    ),
+                    Regular(
+                        AstParam {
+                            name: "b",
+                            name_span: 13..14,
+                            ty: Named {
+                                name: "int",
+                                span: 16..19,
+                            },
+                            span: 13..19,
                         },
-                        span: 13..19,
-                    },
+                    ),
                 ],
                 return_type: None,
                 body: [

@@ -1,0 +1,13 @@
+pub fn add(a: int, b: int) -> int {
+    let result: int = a + b;
+    result
+}
+
+pub fn is_positive(n: int) -> bool {
+    n > 0
+}
+
+pub fn main() {
+    let x: int = add(3, 4);
+    let flag: bool = is_positive(x);
+}

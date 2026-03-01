@@ -3,13 +3,29 @@ use writ_parser::cst::{
     PostfixOp as CstPostfixOp, PrefixOp as CstPrefixOp, RangeKind as CstRangeKind, Spanned,
 };
 use crate::ast::expr::{
-    AstArg, AstExpr, AstLambdaParam, AstMatchArm, AstPattern, BinaryOp, PostfixOp, PrefixOp,
-    RangeKind,
+    AstArg, AstExpr, AstLambdaParam, AstMatchArm, AstNewField, AstPattern, BinaryOp, PostfixOp,
+    PrefixOp, RangeKind,
 };
 use crate::lower::context::LoweringContext;
 use crate::lower::fmt_string::lower_fmt_string;
 use crate::lower::optional::lower_type;
 use crate::lower::stmt::lower_stmt;
+
+/// Parses an integer literal string into an `i64`, handling decimal, hex (`0x`/`0X`),
+/// and binary (`0b`/`0B`) prefixes. Underscore separators are stripped before parsing.
+/// Returns `0` on any parse failure (defensive fallback).
+fn parse_int_literal(s: &str) -> i64 {
+    if let Some(rest) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+        let digits: String = rest.chars().filter(|&c| c != '_').collect();
+        i64::from_str_radix(&digits, 16).unwrap_or(0)
+    } else if let Some(rest) = s.strip_prefix("0b").or_else(|| s.strip_prefix("0B")) {
+        let digits: String = rest.chars().filter(|&c| c != '_').collect();
+        i64::from_str_radix(&digits, 2).unwrap_or(0)
+    } else {
+        let digits: String = s.chars().filter(|&c| c != '_').collect();
+        digits.parse::<i64>().unwrap_or(0)
+    }
+}
 
 /// Lowers a CST `Expr` into a lowered `AstExpr`.
 ///
@@ -28,7 +44,7 @@ pub fn lower_expr(spanned: Spanned<Expr<'_>>, ctx: &mut LoweringContext) -> AstE
         // --- Literals ---
 
         Expr::IntLit(s) => AstExpr::IntLit {
-            value: s.parse::<i64>().unwrap_or(0),
+            value: parse_int_literal(s),
             span,
         },
 
@@ -59,8 +75,14 @@ pub fn lower_expr(spanned: Spanned<Expr<'_>>, ctx: &mut LoweringContext) -> AstE
             span,
         },
 
-        Expr::Path(segs) => AstExpr::Path {
-            segments: segs.into_iter().map(|(s, _)| s.to_string()).collect(),
+        Expr::Path { segments, rooted } => AstExpr::Path {
+            segments: {
+                let mut segs: Vec<String> = segments.into_iter().map(|(s, _)| s.to_string()).collect();
+                if rooted && !segs.is_empty() {
+                    segs[0] = format!("::{}", segs[0]);
+                }
+                segs
+            },
             span,
         },
 
@@ -208,7 +230,7 @@ pub fn lower_expr(spanned: Spanned<Expr<'_>>, ctx: &mut LoweringContext) -> AstE
             span,
         },
 
-        Expr::Detached(e) => AstExpr::Detached {
+        Expr::SpawnDetached(e) => AstExpr::SpawnDetached {
             expr: Box::new(lower_expr(*e, ctx)),
             span,
         },
@@ -240,6 +262,22 @@ pub fn lower_expr(spanned: Spanned<Expr<'_>>, ctx: &mut LoweringContext) -> AstE
         // Identical lowering to FormattableString — raw vs. non-raw distinction
         // is resolved by the lexer before the CST is constructed.
         Expr::FormattableRawString(segs) => lower_fmt_string(segs, span, ctx),
+
+        // --- New construction ---
+
+        Expr::New { ty, fields } => AstExpr::New {
+            ty: lower_type(*ty),
+            fields: fields
+                .into_iter()
+                .map(|(nf, nf_span)| AstNewField {
+                    name: nf.name.0.to_string(),
+                    name_span: nf.name.1,
+                    value: lower_expr(nf.value, ctx),
+                    span: nf_span,
+                })
+                .collect(),
+            span,
+        },
 
         // --- Array literal ---
 
@@ -348,6 +386,8 @@ fn lower_binop(op: CstBinaryOp) -> BinaryOp {
         CstBinaryOp::Or => BinaryOp::Or,
         CstBinaryOp::BitAnd => BinaryOp::BitAnd,
         CstBinaryOp::BitOr => BinaryOp::BitOr,
+        CstBinaryOp::Shl => BinaryOp::Shl,
+        CstBinaryOp::Shr => BinaryOp::Shr,
     }
 }
 

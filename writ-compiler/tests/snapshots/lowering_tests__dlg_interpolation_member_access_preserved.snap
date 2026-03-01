@@ -1,0 +1,98 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Fn(
+            AstFnDecl {
+                attrs: [],
+                vis: None,
+                name: "greet",
+                name_span: 4..9,
+                generics: [],
+                params: [
+                    Regular(
+                        AstParam {
+                            name: "player",
+                            name_span: 10..16,
+                            ty: Named {
+                                name: "Entity",
+                                span: 18..24,
+                            },
+                            span: 10..24,
+                        },
+                    ),
+                ],
+                return_type: None,
+                body: [
+                    Expr {
+                        expr: Call {
+                            callee: Ident {
+                                name: "say",
+                                span: 28..57,
+                            },
+                            args: [
+                                AstArg {
+                                    name: None,
+                                    value: Ident {
+                                        name: "player",
+                                        span: 29..35,
+                                    },
+                                    span: 28..57,
+                                },
+                                AstArg {
+                                    name: None,
+                                    value: Binary {
+                                        left: Binary {
+                                            left: StringLit {
+                                                value: "Hello, ",
+                                                span: 36..43,
+                                            },
+                                            op: Add,
+                                            right: GenericCall {
+                                                callee: MemberAccess {
+                                                    object: MemberAccess {
+                                                        object: Ident {
+                                                            name: "player",
+                                                            span: 0..6,
+                                                        },
+                                                        field: "name",
+                                                        field_span: 7..11,
+                                                        span: 44..55,
+                                                    },
+                                                    field: "into",
+                                                    field_span: 43..56,
+                                                    span: 43..56,
+                                                },
+                                                type_args: [
+                                                    Named {
+                                                        name: "string",
+                                                        span: 43..56,
+                                                    },
+                                                ],
+                                                args: [],
+                                                span: 43..56,
+                                            },
+                                            span: 28..57,
+                                        },
+                                        op: Add,
+                                        right: StringLit {
+                                            value: "!",
+                                            span: 56..57,
+                                        },
+                                        span: 28..57,
+                                    },
+                                    span: 28..57,
+                                },
+                            ],
+                            span: 28..57,
+                        },
+                        span: 28..57,
+                    },
+                ],
+                span: 0..59,
+            },
+        ),
+    ],
+}

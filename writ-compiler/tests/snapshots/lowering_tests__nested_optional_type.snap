@@ -12,33 +12,35 @@ Ast {
                 name_span: 3..4,
                 generics: [],
                 params: [
-                    AstParam {
-                        name: "x",
-                        name_span: 5..6,
-                        ty: Generic {
-                            name: "Option",
-                            args: [
-                                Generic {
-                                    name: "List",
-                                    args: [
-                                        Generic {
-                                            name: "Option",
-                                            args: [
-                                                Named {
-                                                    name: "string",
-                                                    span: 13..19,
-                                                },
-                                            ],
-                                            span: 13..20,
-                                        },
-                                    ],
-                                    span: 8..21,
-                                },
-                            ],
-                            span: 8..22,
+                    Regular(
+                        AstParam {
+                            name: "x",
+                            name_span: 5..6,
+                            ty: Generic {
+                                name: "Option",
+                                args: [
+                                    Generic {
+                                        name: "List",
+                                        args: [
+                                            Generic {
+                                                name: "Option",
+                                                args: [
+                                                    Named {
+                                                        name: "string",
+                                                        span: 13..19,
+                                                    },
+                                                ],
+                                                span: 13..20,
+                                            },
+                                        ],
+                                        span: 8..21,
+                                    },
+                                ],
+                                span: 8..22,
+                            },
+                            span: 5..22,
                         },
-                        span: 5..22,
-                    },
+                    ),
                 ],
                 return_type: None,
                 body: [],

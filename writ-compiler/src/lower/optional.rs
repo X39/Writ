@@ -16,12 +16,31 @@ pub fn lower_type(spanned: Spanned<TypeExpr<'_>>) -> AstType {
             span,
         },
 
+        TypeExpr::Qualified { segments, rooted } => AstType::Named {
+            name: {
+                let joined: String = segments.iter().map(|(seg, _)| *seg).collect::<Vec<_>>().join("::");
+                if rooted {
+                    format!("::{}", joined)
+                } else {
+                    joined
+                }
+            },
+            span,
+        },
+
         TypeExpr::Generic(base, args) => {
             let name = match base.0 {
                 TypeExpr::Named(n) => n.to_string(),
-                // Non-Named generic bases do not occur in valid Writ programs.
-                // If the parser ever produces one, it will hit this branch.
-                _ => todo!("non-Named generic base in TypeExpr::Generic"),
+                TypeExpr::Qualified { segments, rooted } => {
+                    let joined: String = segments.iter().map(|(s, _)| *s).collect::<Vec<_>>().join("::");
+                    if rooted {
+                        format!("::{}", joined)
+                    } else {
+                        joined
+                    }
+                }
+                // Non-Named/Qualified generic bases do not occur in valid Writ programs.
+                _ => todo!("non-Named/Qualified generic base in TypeExpr::Generic"),
             };
             AstType::Generic {
                 name,

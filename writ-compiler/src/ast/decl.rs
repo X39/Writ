@@ -7,7 +7,7 @@ use crate::ast::types::AstType;
 ///
 /// Key invariants:
 /// - NO `Dlg` variant — lowered to `Fn` before reaching AST.
-/// - NO `Entity` variant — lowered to `Struct` + `Impl` + lifecycle registrations before reaching AST.
+/// - YES `Entity` variant — entity declarations are preserved with their full structure.
 /// - YES all structural pass-through types.
 /// - All data is owned (`String`, `Box<T>`, `Vec<T>`) — no `'src` lifetime.
 ///
@@ -19,6 +19,7 @@ pub enum AstDecl {
     Using(AstUsingDecl),
     Fn(AstFnDecl),
     Struct(AstStructDecl),
+    Entity(AstEntityDecl),
     Enum(AstEnumDecl),
     Contract(AstContractDecl),
     Impl(AstImplDecl),
@@ -72,6 +73,15 @@ pub struct AstParam {
     pub span: SimpleSpan,
 }
 
+/// A function parameter: regular or self.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AstFnParam {
+    /// Regular parameter: `name: type`
+    Regular(AstParam),
+    /// Self parameter: `self` or `mut self`
+    SelfParam { mutable: bool, span: SimpleSpan },
+}
+
 /// A generic type parameter: `<T: Bound + Other>`.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AstGenericParam {
@@ -94,6 +104,8 @@ pub enum AstOpSymbol {
     Not,
     Index,
     IndexSet,
+    BitAnd,
+    BitOr,
 }
 
 // =========================================================
@@ -131,7 +143,7 @@ pub struct AstFnDecl {
     pub name: String,
     pub name_span: SimpleSpan,
     pub generics: Vec<AstGenericParam>,
-    pub params: Vec<AstParam>,
+    pub params: Vec<AstFnParam>,
     pub return_type: Option<AstType>,
     pub body: Vec<AstStmt>,
     pub span: SimpleSpan,
@@ -142,10 +154,13 @@ pub struct AstFnDecl {
 pub struct AstFnSig {
     pub attrs: Vec<AstAttribute>,
     pub vis: Option<AstVisibility>,
+    /// Optional qualifier for dotted extern names: `Type.method`
+    pub qualifier: Option<String>,
+    pub qualifier_span: Option<SimpleSpan>,
     pub name: String,
     pub name_span: SimpleSpan,
     pub generics: Vec<AstGenericParam>,
-    pub params: Vec<AstParam>,
+    pub params: Vec<AstFnParam>,
     pub return_type: Option<AstType>,
     pub span: SimpleSpan,
 }
@@ -154,7 +169,21 @@ pub struct AstFnSig {
 // Struct and Enum
 // =========================================================
 
-/// Struct declaration: `[attrs] [vis] struct Name [<generics>] { fields }`
+/// A member in a struct body: field or lifecycle hook.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AstStructMember {
+    /// Regular field.
+    Field(AstStructField),
+    /// Lifecycle hook: `on event { body }`
+    OnHook {
+        event: String,
+        event_span: SimpleSpan,
+        body: Vec<AstStmt>,
+        span: SimpleSpan,
+    },
+}
+
+/// Struct declaration: `[attrs] [vis] struct Name [<generics>] { members }`
 #[derive(Debug, Clone, PartialEq)]
 pub struct AstStructDecl {
     pub attrs: Vec<AstAttribute>,
@@ -162,7 +191,7 @@ pub struct AstStructDecl {
     pub name: String,
     pub name_span: SimpleSpan,
     pub generics: Vec<AstGenericParam>,
-    pub fields: Vec<AstStructField>,
+    pub members: Vec<AstStructMember>,
     pub span: SimpleSpan,
 }
 
@@ -174,6 +203,59 @@ pub struct AstStructField {
     pub name_span: SimpleSpan,
     pub ty: AstType,
     pub default: Option<AstExpr>,
+    pub span: SimpleSpan,
+}
+
+// =========================================================
+// Entity
+// =========================================================
+
+/// A component slot descriptor: `use ComponentName { field: value, ... }`
+///
+/// Models components as host-managed slots (not inline struct fields).
+/// Override values are preserved as AstExpr for codegen evaluation.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AstComponentSlot {
+    /// Component type name.
+    pub component: String,
+    pub component_span: SimpleSpan,
+    /// Per-field override values: (field_name, field_name_span, override_value).
+    pub overrides: Vec<(String, SimpleSpan, AstExpr)>,
+    pub span: SimpleSpan,
+}
+
+/// An entity lifecycle hook registration.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AstEntityHook {
+    /// Contract name: OnCreate, OnDestroy, OnInteract, OnFinalize, OnSerialize, OnDeserialize.
+    pub contract: String,
+    pub contract_span: SimpleSpan,
+    /// Hook method with implicit mut self as first param.
+    pub method: AstFnDecl,
+    pub span: SimpleSpan,
+}
+
+/// Entity declaration: `[attrs] [vis] entity Name { properties, component_slots, methods, hooks }`
+///
+/// Unlike AstStructDecl, this preserves the entity-specific structure:
+/// - Properties (regular typed fields)
+/// - Component slots (host-managed, not inline fields)
+/// - Hooks (lifecycle event registrations with implicit mut self)
+/// - Methods (gathered into an inherent impl)
+#[derive(Debug, Clone, PartialEq)]
+pub struct AstEntityDecl {
+    pub attrs: Vec<AstAttribute>,
+    pub vis: Option<AstVisibility>,
+    pub name: String,
+    pub name_span: SimpleSpan,
+    /// Entity properties (regular typed fields).
+    pub properties: Vec<AstStructField>,
+    /// Component slot descriptors (host-managed).
+    pub component_slots: Vec<AstComponentSlot>,
+    /// Lifecycle hook registrations.
+    pub hooks: Vec<AstEntityHook>,
+    /// Inherent impl if methods exist (contract: None).
+    pub inherent_impl: Option<AstImplDecl>,
     pub span: SimpleSpan,
 }
 
@@ -247,9 +329,11 @@ pub struct AstOpDecl {
     pub span: SimpleSpan,
 }
 
-/// Impl block: `impl [Contract for] Type { members }`
+/// Impl block: `impl [<generics>] [Contract for] Type { members }`
 #[derive(Debug, Clone, PartialEq)]
 pub struct AstImplDecl {
+    /// Optional generic parameters.
+    pub generics: Vec<AstGenericParam>,
     /// Optional contract being implemented.
     pub contract: Option<AstType>,
     /// Target type.
@@ -273,8 +357,8 @@ pub enum AstImplMember {
 
 /// Component declaration: `[attrs] [vis] component Name { members }`
 ///
-/// Note: Entity declarations are lowered to Struct + Impl + lifecycle registrations
-/// before reaching the AST. Components survive as-is.
+/// Components are extern-only, host-managed data containers (no script-defined components).
+/// Entity `use` clauses lower to `AstComponentSlot` descriptors, not component decls.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AstComponentDecl {
     pub attrs: Vec<AstAttribute>,
@@ -301,12 +385,12 @@ pub enum AstComponentMember {
 /// Extern declaration: `extern fn|struct|component ...`
 #[derive(Debug, Clone, PartialEq)]
 pub enum AstExternDecl {
-    /// Extern function (signature only): `extern fn name(...) [-> type];`
-    Fn(AstFnSig),
-    /// Extern struct: `extern struct Name { fields }`
-    Struct(AstStructDecl),
-    /// Extern component: `extern component Name { fields }`
-    Component(AstComponentDecl),
+    /// Extern function (signature only): `[vis] extern fn name(...) [-> type];`
+    Fn(Option<AstVisibility>, AstFnSig),
+    /// Extern struct: `[vis] extern struct Name { fields }`
+    Struct(Option<AstVisibility>, AstStructDecl),
+    /// Extern component: `[vis] extern component Name { fields }`
+    Component(Option<AstVisibility>, AstComponentDecl),
 }
 
 // =========================================================

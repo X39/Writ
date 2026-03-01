@@ -1,0 +1,51 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Struct(
+            AstStructDecl {
+                attrs: [],
+                vis: None,
+                name: "Foo",
+                name_span: 7..10,
+                generics: [],
+                members: [
+                    Field(
+                        AstStructField {
+                            vis: None,
+                            name: "x",
+                            name_span: 13..14,
+                            ty: Named {
+                                name: "int",
+                                span: 16..19,
+                            },
+                            default: None,
+                            span: 13..19,
+                        },
+                    ),
+                    OnHook {
+                        event: "create",
+                        event_span: 24..30,
+                        body: [
+                            Let {
+                                mutable: false,
+                                name: "y",
+                                name_span: 37..38,
+                                ty: None,
+                                value: IntLit {
+                                    value: 1,
+                                    span: 41..42,
+                                },
+                                span: 33..43,
+                            },
+                        ],
+                        span: 21..45,
+                    },
+                ],
+                span: 0..47,
+            },
+        ),
+    ],
+}

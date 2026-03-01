@@ -4,7 +4,7 @@ use writ_parser::cst::{
     DlgChoice, DlgDecl, DlgEscape, DlgIf, DlgElse, DlgLine, DlgMatch,
     DlgTextSegment, DlgTransition, Spanned,
 };
-use crate::ast::decl::AstFnDecl;
+use crate::ast::decl::{AstAttributeArg, AstFnDecl, AstFnParam};
 use crate::ast::expr::{AstArg, AstExpr, AstMatchArm, BinaryOp};
 use crate::ast::stmt::AstStmt;
 use crate::ast::types::AstType;
@@ -12,7 +12,7 @@ use crate::lower::context::{LoweringContext, SpeakerScope};
 use crate::lower::error::LoweringError;
 use crate::lower::expr::{lower_expr, lower_pattern};
 use crate::lower::stmt::lower_stmt;
-use super::lower_param;
+use super::{lower_attrs, lower_param, lower_vis};
 
 // =========================================================
 // Private state for a single dlg lowering session
@@ -52,16 +52,46 @@ pub fn lower_dialogue(
 ) -> AstFnDecl {
     let dlg_name = dlg.name.0.to_string();
 
-    // Lower params
+    // Lower attributes from CST to AST.
+    let attrs = lower_attrs(dlg.attrs, ctx);
+
+    // Detect [Locale("tag")] and suffix the function name to avoid resolver
+    // duplicate-name collisions. The $ character is not valid in user-written
+    // Writ identifiers, so greet$ja cannot collide with user-defined names.
+    let locale_tag = attrs.iter().find_map(|a| {
+        if a.name != "Locale" {
+            return None;
+        }
+        a.args.iter().find_map(|arg| {
+            if let AstAttributeArg::Positional(AstExpr::StringLit { value, .. }) = arg {
+                Some(value.clone())
+            } else {
+                None
+            }
+        })
+    });
+    let dlg_name_final = if let Some(ref tag) = locale_tag {
+        format!("{}${}", dlg_name, tag)
+    } else {
+        dlg_name.clone()
+    };
+
+    // Lower params (dialogue params are always regular, not self)
     let params = dlg
         .params
         .unwrap_or_default()
         .into_iter()
-        .map(|(p, ps)| lower_param(p, ps))
+        .map(|(p, ps)| {
+            let lowered = lower_param(p, ps);
+            AstFnParam::Regular(lowered)
+        })
         .collect::<Vec<_>>();
 
     // Collect param names for Tier 1 speaker lookup
-    let param_names: Vec<String> = params.iter().map(|p| p.name.clone()).collect();
+    let param_names: Vec<String> = params.iter().filter_map(|p| match p {
+        AstFnParam::Regular(param) => Some(param.name.clone()),
+        AstFnParam::SelfParam { .. } => None,
+    }).collect();
 
     // Pre-scan for singleton speakers (Tier 2 hoisting)
     let singleton_speakers = collect_singleton_speakers(&dlg.body, &param_names);
@@ -101,7 +131,7 @@ pub fn lower_dialogue(
     // Initialize lowering state
     let mut state = DlgLowerState {
         dlg_name: dlg_name.clone(),
-        namespace: String::new(), // Phase 4: namespace context not yet threaded
+        namespace: ctx.current_namespace(),
         param_names,
         occurrence_tracker: HashMap::new(),
         manual_keys: HashMap::new(),
@@ -123,9 +153,9 @@ pub fn lower_dialogue(
     hoisted_stmts.extend(body_stmts);
 
     AstFnDecl {
-        attrs: vec![],
-        vis: None,
-        name: dlg_name,
+        attrs,
+        vis: lower_vis(dlg.vis),
+        name: dlg_name_final,
         name_span: dlg.name.1,
         generics: vec![],
         params,
@@ -232,17 +262,35 @@ fn lower_dlg_lines(
             DlgLine::SpeakerLine { speaker: (speaker_name, speaker_span), text, loc_key } => {
                 let speaker_ref = resolve_speaker(speaker_name, *speaker_span, state);
                 let raw = raw_text_content(text);
-                let key = compute_or_use_loc_key(
-                    *loc_key,
-                    speaker_name,
-                    &raw,
-                    line_span,
-                    state,
-                    ctx,
-                );
                 let fallback = lower_dlg_text(text.clone(), line_span, ctx);
+
+                let expr = if loc_key.is_some() {
+                    // Manual #key present -> say_localized
+                    let key = compute_or_use_loc_key(
+                        *loc_key,
+                        speaker_name,
+                        &raw,
+                        line_span,
+                        state,
+                        ctx,
+                    );
+                    make_say_localized(speaker_ref, key, fallback, line_span)
+                } else {
+                    // No #key -> say() (auto FNV key is for CSV tooling only)
+                    // Still compute key for occurrence tracking
+                    let _csv_key = compute_or_use_loc_key(
+                        None,
+                        speaker_name,
+                        &raw,
+                        line_span,
+                        state,
+                        ctx,
+                    );
+                    make_say(speaker_ref, fallback, line_span)
+                };
+
                 stmts.push(AstStmt::Expr {
-                    expr: make_say_localized(speaker_ref, key, fallback, line_span),
+                    expr,
                     span: line_span,
                 });
             }
@@ -270,17 +318,34 @@ fn lower_dlg_lines(
                         (AstExpr::Error { span: line_span }, String::new())
                     };
                 let raw = raw_text_content(text);
-                let key = compute_or_use_loc_key(
-                    *loc_key,
-                    &speaker_name_str,
-                    &raw,
-                    line_span,
-                    state,
-                    ctx,
-                );
                 let fallback = lower_dlg_text(text.clone(), line_span, ctx);
+
+                let expr = if loc_key.is_some() {
+                    // Manual #key present -> say_localized
+                    let key = compute_or_use_loc_key(
+                        *loc_key,
+                        &speaker_name_str,
+                        &raw,
+                        line_span,
+                        state,
+                        ctx,
+                    );
+                    make_say_localized(speaker_ref, key, fallback, line_span)
+                } else {
+                    // No #key -> say() (auto FNV key is for CSV tooling only)
+                    let _csv_key = compute_or_use_loc_key(
+                        None,
+                        &speaker_name_str,
+                        &raw,
+                        line_span,
+                        state,
+                        ctx,
+                    );
+                    make_say(speaker_ref, fallback, line_span)
+                };
+
                 stmts.push(AstStmt::Expr {
-                    expr: make_say_localized(speaker_ref, key, fallback, line_span),
+                    expr,
                     span: line_span,
                 });
             }
@@ -412,17 +477,39 @@ fn fnv1a_32(input: &str) -> String {
 // Private: raw_text_content
 // =========================================================
 
-/// Concatenates text segments with `{expr}` interpolation slots as literal placeholders.
-/// Used for FNV-1a key computation (not for display).
+/// Concatenates text segments with interpolation slot identities preserved.
+/// E.g., `{name}` stays `{name}`, `{player.name}` stays `{player.name}`.
+/// Used for FNV-1a key computation and localization content strings.
 fn raw_text_content(segments: &[Spanned<DlgTextSegment<'_>>]) -> String {
     let mut out = String::new();
     for (seg, _) in segments {
         match seg {
             DlgTextSegment::Text(s) => out.push_str(s),
-            DlgTextSegment::Expr(_) => out.push_str("{expr}"),
+            DlgTextSegment::Expr(inner) => {
+                out.push('{');
+                out.push_str(&expr_to_slot_text(inner));
+                out.push('}');
+            }
         }
     }
     out
+}
+
+/// Reconstruct a textual representation of a CST expression for localization slot content.
+/// Preserves interpolation slot identities: `{name}` -> "name", `{player.name}` -> "player.name".
+fn expr_to_slot_text(expr: &Spanned<writ_parser::cst::Expr<'_>>) -> String {
+    use writ_parser::cst::Expr;
+    match &expr.0 {
+        Expr::Ident(name) => name.to_string(),
+        Expr::MemberAccess(object, (field, _field_span)) => {
+            format!("{}.{}", expr_to_slot_text(object), field)
+        }
+        Expr::Call(callee, _args) => {
+            format!("{}(..)", expr_to_slot_text(callee))
+        }
+        // For other expression types, use a span-based representation for uniqueness
+        _ => format!("expr@{}..{}", expr.1.start, expr.1.end),
+    }
 }
 
 // =========================================================
@@ -481,9 +568,29 @@ fn lower_dlg_text(
 }
 
 // =========================================================
-// Private: make_say_localized
+// Private: make_say / make_say_localized
 // =========================================================
 
+/// Emits `say(speaker, text)` — used when no manual #key is present.
+fn make_say(
+    speaker_ref: AstExpr,
+    text: AstExpr,
+    span: SimpleSpan,
+) -> AstExpr {
+    AstExpr::Call {
+        callee: Box::new(AstExpr::Ident {
+            name: "say".to_string(),
+            span,
+        }),
+        args: vec![
+            AstArg { name: None, value: speaker_ref, span },
+            AstArg { name: None, value: text, span },
+        ],
+        span,
+    }
+}
+
+/// Emits `say_localized(speaker, key, fallback)` — used when manual #key is present.
 fn make_say_localized(
     speaker_ref: AstExpr,
     loc_key: String,
@@ -536,8 +643,6 @@ fn lower_choice(
                 state,
                 ctx,
             );
-            let _ = key; // Key computed for collision detection; label uses raw text as display
-
             // Lower arm body
             let body = lower_dlg_lines(&arm.body, state, ctx);
 
@@ -546,7 +651,7 @@ fn lower_choice(
                 ctx.pop_speaker();
             }
 
-            // Build: Option(label_text, fn() { body })
+            // Build: Option(label_text, loc_key, fn() { body })
             AstExpr::Call {
                 callee: Box::new(AstExpr::Ident {
                     name: "Option".to_string(),
@@ -558,6 +663,14 @@ fn lower_choice(
                         value: AstExpr::StringLit {
                             value: label_text,
                             span: label_span,
+                        },
+                        span: arm_span,
+                    },
+                    AstArg {
+                        name: None,
+                        value: AstExpr::StringLit {
+                            value: key,
+                            span: arm_span,
                         },
                         span: arm_span,
                     },
@@ -608,7 +721,15 @@ fn lower_dlg_if(
     ctx: &mut LoweringContext,
 ) -> AstStmt {
     let condition = lower_expr(*dlg_if.condition, ctx);
+
+    // Save speaker scope before then-block (DLG-05)
+    let depth = ctx.speaker_stack_depth();
     let then_block = lower_dlg_lines(&dlg_if.then_block, state, ctx);
+    // Restore speaker scope after then-block
+    while ctx.speaker_stack_depth() > depth {
+        ctx.pop_speaker();
+    }
+
     let else_block = lower_dlg_else(dlg_if.else_block, state, ctx);
 
     AstStmt::Expr {
@@ -633,6 +754,7 @@ fn lower_dlg_else<'src>(
             let (dlg_else, else_span) = *boxed;
             match dlg_else {
                 DlgElse::ElseIf(elif) => {
+                    // ElseIf recurses into lower_dlg_if which handles its own scope isolation
                     let elif_stmt = lower_dlg_if(elif, else_span, state, ctx);
                     Some(Box::new(AstExpr::Block {
                         stmts: vec![elif_stmt],
@@ -640,7 +762,12 @@ fn lower_dlg_else<'src>(
                     }))
                 }
                 DlgElse::Else(lines) => {
+                    // Save/restore speaker scope for else block (DLG-05)
+                    let depth = ctx.speaker_stack_depth();
                     let stmts = lower_dlg_lines(&lines, state, ctx);
+                    while ctx.speaker_stack_depth() > depth {
+                        ctx.pop_speaker();
+                    }
                     Some(Box::new(AstExpr::Block {
                         stmts,
                         span: else_span,
@@ -665,10 +792,19 @@ fn lower_dlg_match(
     let arms = dlg_match
         .arms
         .into_iter()
-        .map(|(arm, arm_span)| AstMatchArm {
-            pattern: lower_pattern(arm.pattern, ctx),
-            body: lower_dlg_lines(&arm.body, state, ctx),
-            span: arm_span,
+        .map(|(arm, arm_span)| {
+            // Save speaker scope before each arm (DLG-05)
+            let depth = ctx.speaker_stack_depth();
+            let body = lower_dlg_lines(&arm.body, state, ctx);
+            // Restore speaker scope after each arm
+            while ctx.speaker_stack_depth() > depth {
+                ctx.pop_speaker();
+            }
+            AstMatchArm {
+                pattern: lower_pattern(arm.pattern, ctx),
+                body,
+                span: arm_span,
+            }
         })
         .collect();
 

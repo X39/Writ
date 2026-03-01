@@ -6,6 +6,7 @@ Ast {
     items: [
         Impl(
             AstImplDecl {
+                generics: [],
                 contract: Some(
                     Generic {
                         name: "Index",
@@ -35,15 +36,21 @@ Ast {
                             name_span: 23..25,
                             generics: [],
                             params: [
-                                AstParam {
-                                    name: "idx",
-                                    name_span: 26..29,
-                                    ty: Named {
-                                        name: "int",
-                                        span: 31..34,
-                                    },
-                                    span: 26..34,
+                                SelfParam {
+                                    mutable: false,
+                                    span: 14..58,
                                 },
+                                Regular(
+                                    AstParam {
+                                        name: "idx",
+                                        name_span: 26..29,
+                                        ty: Named {
+                                            name: "int",
+                                            span: 31..34,
+                                        },
+                                        span: 26..34,
+                                    },
+                                ),
                             ],
                             return_type: Some(
                                 Named {

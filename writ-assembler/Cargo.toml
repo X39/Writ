@@ -1,0 +1,10 @@
+[package]
+name = "writ-assembler"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+writ-module = { path = "../writ-module" }
+thiserror = "2.0"
+
+[dev-dependencies]

@@ -31,16 +31,16 @@ extern component RigidBody {
 }
 
 // --- 24.2 Library imports ---
-[Import(lib: "physics")]
+[Import(lib = "physics")]
 extern fn applyForce(entity: Entity, force: Vec2);
 
-[Import(lib: "physics")]
+[Import(lib = "physics")]
 extern fn raycast(origin: Vec2, direction: Vec2, distance: float) -> Entity?;
 
-[Import(lib: "audio", arch: "x64")]
+[Import(lib = "audio", arch = "x64")]
 extern fn playSoundNative(path: string, volume: float);
 
-[Import(lib: "render")]
+[Import(lib = "render")]
 extern struct Texture {
     width: int,
     height: int,

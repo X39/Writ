@@ -11,29 +11,33 @@ Ast {
                 name: "Point",
                 name_span: 7..12,
                 generics: [],
-                fields: [
-                    AstStructField {
-                        vis: None,
-                        name: "x",
-                        name_span: 15..16,
-                        ty: Named {
-                            name: "float",
-                            span: 18..23,
+                members: [
+                    Field(
+                        AstStructField {
+                            vis: None,
+                            name: "x",
+                            name_span: 15..16,
+                            ty: Named {
+                                name: "float",
+                                span: 18..23,
+                            },
+                            default: None,
+                            span: 15..23,
                         },
-                        default: None,
-                        span: 15..23,
-                    },
-                    AstStructField {
-                        vis: None,
-                        name: "y",
-                        name_span: 25..26,
-                        ty: Named {
-                            name: "float",
-                            span: 28..33,
+                    ),
+                    Field(
+                        AstStructField {
+                            vis: None,
+                            name: "y",
+                            name_span: 25..26,
+                            ty: Named {
+                                name: "float",
+                                span: 28..33,
+                            },
+                            default: None,
+                            span: 25..33,
                         },
-                        default: None,
-                        span: 25..33,
-                    },
+                    ),
                 ],
                 span: 0..35,
             },

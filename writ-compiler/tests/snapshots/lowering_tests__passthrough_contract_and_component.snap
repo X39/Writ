@@ -16,28 +16,34 @@ Ast {
                         AstFnSig {
                             attrs: [],
                             vis: None,
+                            qualifier: None,
+                            qualifier_span: None,
                             name: "draw",
                             name_span: 27..31,
                             generics: [],
                             params: [
-                                AstParam {
-                                    name: "x",
-                                    name_span: 32..33,
-                                    ty: Named {
-                                        name: "int",
-                                        span: 35..38,
+                                Regular(
+                                    AstParam {
+                                        name: "x",
+                                        name_span: 32..33,
+                                        ty: Named {
+                                            name: "int",
+                                            span: 35..38,
+                                        },
+                                        span: 32..38,
                                     },
-                                    span: 32..38,
-                                },
-                                AstParam {
-                                    name: "y",
-                                    name_span: 40..41,
-                                    ty: Named {
-                                        name: "int",
-                                        span: 43..46,
+                                ),
+                                Regular(
+                                    AstParam {
+                                        name: "y",
+                                        name_span: 40..41,
+                                        ty: Named {
+                                            name: "int",
+                                            span: 43..46,
+                                        },
+                                        span: 40..46,
                                     },
-                                    span: 40..46,
-                                },
+                                ),
                             ],
                             return_type: Some(
                                 Named {
@@ -52,92 +58,45 @@ Ast {
                 span: 0..58,
             },
         ),
-        Component(
-            AstComponentDecl {
-                attrs: [],
-                vis: None,
-                name: "Health",
-                name_span: 69..75,
-                members: [
-                    Field(
-                        AstStructField {
-                            vis: None,
-                            name: "current",
-                            name_span: 82..89,
-                            ty: Named {
-                                name: "int",
-                                span: 91..94,
+        Extern(
+            Component(
+                None,
+                AstComponentDecl {
+                    attrs: [],
+                    vis: None,
+                    name: "Health",
+                    name_span: 76..82,
+                    members: [
+                        Field(
+                            AstStructField {
+                                vis: None,
+                                name: "current",
+                                name_span: 89..96,
+                                ty: Named {
+                                    name: "int",
+                                    span: 98..101,
+                                },
+                                default: None,
+                                span: 89..101,
                             },
-                            default: Some(
-                                IntLit {
-                                    value: 100,
-                                    span: 97..100,
+                        ),
+                        Field(
+                            AstStructField {
+                                vis: None,
+                                name: "max",
+                                name_span: 107..110,
+                                ty: Named {
+                                    name: "int",
+                                    span: 112..115,
                                 },
-                            ),
-                            span: 82..100,
-                        },
-                    ),
-                    Field(
-                        AstStructField {
-                            vis: None,
-                            name: "max",
-                            name_span: 106..109,
-                            ty: Named {
-                                name: "int",
-                                span: 111..114,
+                                default: None,
+                                span: 107..115,
                             },
-                            default: Some(
-                                IntLit {
-                                    value: 100,
-                                    span: 117..120,
-                                },
-                            ),
-                            span: 106..120,
-                        },
-                    ),
-                    Fn(
-                        AstFnDecl {
-                            attrs: [],
-                            vis: None,
-                            name: "damage",
-                            name_span: 129..135,
-                            generics: [],
-                            params: [
-                                AstParam {
-                                    name: "amount",
-                                    name_span: 136..142,
-                                    ty: Named {
-                                        name: "int",
-                                        span: 144..147,
-                                    },
-                                    span: 136..147,
-                                },
-                            ],
-                            return_type: None,
-                            body: [
-                                Let {
-                                    mutable: false,
-                                    name: "x",
-                                    name_span: 155..156,
-                                    ty: Some(
-                                        Named {
-                                            name: "int",
-                                            span: 158..161,
-                                        },
-                                    ),
-                                    value: Ident {
-                                        name: "amount",
-                                        span: 164..170,
-                                    },
-                                    span: 151..171,
-                                },
-                            ],
-                            span: 126..173,
-                        },
-                    ),
-                ],
-                span: 59..175,
-            },
+                        ),
+                    ],
+                    span: 66..118,
+                },
+            ),
         ),
     ],
 }

@@ -1,0 +1,132 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Impl(
+            AstImplDecl {
+                generics: [],
+                contract: Some(
+                    Generic {
+                        name: "BitAnd",
+                        args: [
+                            Named {
+                                name: "Flags",
+                                span: 31..36,
+                            },
+                            Named {
+                                name: "Flags",
+                                span: 41..46,
+                            },
+                        ],
+                        span: 13..50,
+                    },
+                ),
+                target: Named {
+                    name: "Flags",
+                    span: 5..10,
+                },
+                members: [
+                    Fn(
+                        AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "bitand",
+                            name_span: 22..23,
+                            generics: [],
+                            params: [
+                                SelfParam {
+                                    mutable: false,
+                                    span: 13..50,
+                                },
+                                Regular(
+                                    AstParam {
+                                        name: "other",
+                                        name_span: 24..29,
+                                        ty: Named {
+                                            name: "Flags",
+                                            span: 31..36,
+                                        },
+                                        span: 24..36,
+                                    },
+                                ),
+                            ],
+                            return_type: Some(
+                                Named {
+                                    name: "Flags",
+                                    span: 41..46,
+                                },
+                            ),
+                            body: [],
+                            span: 13..50,
+                        },
+                    ),
+                ],
+                span: 13..50,
+            },
+        ),
+        Impl(
+            AstImplDecl {
+                generics: [],
+                contract: Some(
+                    Generic {
+                        name: "BitOr",
+                        args: [
+                            Named {
+                                name: "Flags",
+                                span: 69..74,
+                            },
+                            Named {
+                                name: "Flags",
+                                span: 79..84,
+                            },
+                        ],
+                        span: 51..88,
+                    },
+                ),
+                target: Named {
+                    name: "Flags",
+                    span: 5..10,
+                },
+                members: [
+                    Fn(
+                        AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "bitor",
+                            name_span: 60..61,
+                            generics: [],
+                            params: [
+                                SelfParam {
+                                    mutable: false,
+                                    span: 51..88,
+                                },
+                                Regular(
+                                    AstParam {
+                                        name: "other",
+                                        name_span: 62..67,
+                                        ty: Named {
+                                            name: "Flags",
+                                            span: 69..74,
+                                        },
+                                        span: 62..74,
+                                    },
+                                ),
+                            ],
+                            return_type: Some(
+                                Named {
+                                    name: "Flags",
+                                    span: 79..84,
+                                },
+                            ),
+                            body: [],
+                            span: 51..88,
+                        },
+                    ),
+                ],
+                span: 51..88,
+            },
+        ),
+    ],
+}

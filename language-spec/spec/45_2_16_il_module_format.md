@@ -11,9 +11,11 @@ cross-module references by name.
 
 ```
 Bytes 0–3:   0x57 0x52 0x49 0x54  ("WRIT")
-Bytes 4–5:   u16 format_version    (starts at 1, bumps on incompatible layout changes)
+Bytes 4–5:   u16 format_version    (starts at 1, bumps on incompatible layout changes; see version history below)
 Bytes 6–7:   u16 flags             (bit 0 = debug info present, rest reserved)
 ```
+
+**Format version history:** Version 1 — initial format (MethodDef row: 20 bytes). Version 2 — added `param_count(u16)` to MethodDef (row: 24 bytes, padded from 22).
 
 **Module header** (fixed layout, immediately after the magic):
 
@@ -123,7 +125,7 @@ row, and the range extends to the next parent's `xxx_list` value (or end of tabl
 | 4  | **TypeSpec**          | signature(blob)                                                                          | Instantiated generic types (TypeDef + type arguments) |
 | 5  | **FieldDef**          | name(str), type_sig(blob), flags(u16)                                                    | Fields on types defined here                          |
 | 6  | **FieldRef**          | parent(token), name(str), type_sig(blob)                                                 | Fields in other modules (resolved at load time)       |
-| 7  | **MethodDef**         | name(str), signature(blob), flags(u16), body_offset(u32), body_size(u32), reg_count(u16) | Methods/functions defined here                        |
+| 7  | **MethodDef**         | name(str), signature(blob), flags(u16), body_offset(u32), body_size(u32), reg_count(u16), param_count(u16) | Methods/functions defined here                        |
 | 8  | **MethodRef**         | parent(token), name(str), signature(blob)                                                | Methods in other modules (resolved at load time)      |
 | 9  | **ParamDef**          | name(str), type_sig(blob), sequence(u16)                                                 | Method parameters                                     |
 | 10 | **ContractDef**       | name(str), namespace(str), method_list, generic_param_list                               | Contract declarations                                 |
@@ -146,6 +148,8 @@ implementations (§2.16.8).
 
 **FieldDef.flags** includes: visibility (pub/private), has_default, is_component_field.
 
+**MethodDef.param_count:** The number of parameter registers at method entry — registers `r0` through `r(param_count-1)` hold argument values as described in §2.16.6. For methods with an explicit `self`, `r0` is `self` and counts toward `param_count`. For free functions, `r0` is the first regular parameter. This field allows tooling to determine the register layout without parsing the method body or counting entries in the ParamDef table.
+
 ### 2.16.6 Method Body Layout
 
 Each method body starts at the MethodDef's `body_offset` and occupies `body_size` bytes:
@@ -164,16 +168,68 @@ MethodBody {
 }
 ```
 
-**Register type table:** `reg_count` (from MethodDef) entries, each a u32 blob heap offset pointing to a TypeRef
-encoding (§2.15.3). The runtime reads these at method load to determine per-register storage requirements. Common
-TypeRefs are naturally deduplicated in the blob heap.
+#### Register layout
 
-**Debug info** (optional):
+Registers are numbered `r0` through `r(reg_count-1)`. Their layout within a method's register file follows a fixed
+convention:
+
+| Range                              | Purpose                                                                 |
+|------------------------------------|-------------------------------------------------------------------------|
+| `r0 .. r(param_count - 1)`         | Parameters — `r0` is `self` for methods, first param for free functions |
+| `r(param_count) .. r(reg_count-1)` | Locals and temporaries allocated by the compiler                        |
+
+The `param_count` value is stored explicitly in the `MethodDef` row (§2.16.5) and equals the number of runtime register slots allocated for arguments. Generic type parameters do not occupy registers and are not counted.
+
+At call sites, the caller places argument values into consecutive registers starting at `r_base` before issuing a
+`CALL`/`CALL_VIRT`/`CALL_INDIRECT`. The callee sees those values in its own `r0..r(argc-1)` — the runtime maps the
+caller's `r_base..r_base+argc-1` onto the callee's `r0..r(argc-1)` as part of frame setup. See §2.6 for the full
+calling convention.
+
+**There is no reserved return register in the callee's frame.** The callee returns a value via `RET r_src`, where
+`r_src` is any register in its own frame. The runtime copies that value into `r_dst` in the *caller's* frame (§2.6).
+`RET_VOID` returns nothing and requires no source register.
+
+Consequently, a void method with no parameters may have `reg_count = 0` — no register file is needed at all.
+
+#### Register type table
+
+`reg_count` (from MethodDef) entries, each a `u32` blob heap offset pointing to a TypeRef encoding (§2.15.3). The
+runtime reads these at method load to determine per-register storage requirements (primitive storage width, reference
+vs. value semantics, etc.). Common TypeRefs are naturally deduplicated in the blob heap.
+
+The register type table covers every register in the frame. The disassembler uses it to emit `.reg rN <type>`
+declarations; the verifier uses it to type-check instructions; the GC uses it to identify reference-typed slots for
+scanning.
+
+#### Debug info (optional)
+
+Present only when the module's debug flag (bit 0 of the container flags, §2.16.1) is set. Stripped in release builds.
 
 ```
 DebugLocal  { register: u16, name: u32(str_offset), start_pc: u32, end_pc: u32 }
 SourceSpan  { pc: u32, line: u32, column: u16 }
 ```
+
+**DebugLocal** maps a register to its source-level variable name and live range:
+
+- `register` — the register index this entry describes.
+- `name` — string heap offset of the variable's source name.
+- `start_pc` / `end_pc` — byte offsets within `code` (inclusive start, exclusive end) over which the variable is
+  in scope. A register may have multiple DebugLocal entries if the compiler reuses it for different variables in
+  non-overlapping ranges.
+
+A register with no DebugLocal entry is a compiler-generated temporary with no source-level name.
+
+**SourceSpan** maps an instruction's byte offset to its source location:
+
+- `pc` — byte offset within `code` of the first byte of the instruction.
+- `line` / `column` — 1-based source coordinates. Column is a UTF-16 code unit offset (matching common debugger
+  conventions).
+
+SourceSpan entries are sorted by `pc`. An instruction with no entry inherits the nearest preceding entry's location.
+Debuggers and disassemblers use SourceSpan to display source context alongside instructions.
+
+#### No exception or defer tables
 
 No defer table or exception table is needed in the method body. The defer stack is runtime state managed by
 `DEFER_PUSH`/`DEFER_POP` instructions. Writ has no try/catch, so no exception handler table.

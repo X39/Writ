@@ -2,7 +2,7 @@ use chumsky::span::SimpleSpan;
 use writ_parser::cst::{ImplDecl, ImplMember, OpDecl, OpSymbol};
 use crate::ast::AstDecl;
 use crate::ast::decl::{
-    AstFnDecl, AstImplDecl, AstImplMember, AstParam,
+    AstFnDecl, AstFnParam, AstImplDecl, AstImplMember, AstParam,
 };
 use crate::ast::expr::{AstExpr, BinaryOp, PrefixOp};
 use crate::ast::stmt::AstStmt;
@@ -26,6 +26,12 @@ pub fn lower_operator_impls(
 ) -> Vec<AstDecl> {
     let target_type = lower_type(i.target);
     let contract_type = i.contract.map(lower_type);
+    let generics: Vec<_> = i
+        .generics
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(gp, gp_span)| super::lower_generic_param(gp, gp_span))
+        .collect();
 
     let mut fn_members: Vec<AstImplMember> = Vec::new();
     let mut operator_decls: Vec<AstDecl> = Vec::new();
@@ -74,6 +80,7 @@ pub fn lower_operator_impls(
     // Do NOT emit an empty base impl for operator-only impls without a contract.
     if !fn_members.is_empty() || contract_type.is_some() {
         result.push(AstDecl::Impl(AstImplDecl {
+            generics: generics.clone(),
             contract: contract_type,
             target: target_type.clone(),
             members: fn_members,
@@ -117,12 +124,15 @@ fn op_to_contract_impl(
         span: op_span,
     };
 
-    // Lower parameters
-    let params: Vec<AstParam> = op_decl
-        .params
-        .iter()
-        .map(|(param, param_span)| lower_param(param.clone(), *param_span))
-        .collect();
+    // Build params with implicit self injection (ENT-03)
+    // IndexSet gets mut self; all other operators get immutable self
+    let self_mutable = matches!(op_decl.symbol.0, OpSymbol::IndexSet);
+    let mut params: Vec<AstFnParam> = Vec::new();
+    params.push(AstFnParam::SelfParam { mutable: self_mutable, span: op_span });
+    params.extend(
+        op_decl.params.iter()
+            .map(|(param, param_span)| AstFnParam::Regular(lower_param(param.clone(), *param_span)))
+    );
 
     // Lower return type
     let return_type = op_decl.return_type.clone().map(lower_type);
@@ -147,6 +157,7 @@ fn op_to_contract_impl(
     };
 
     AstDecl::Impl(AstImplDecl {
+        generics: vec![],
         contract: Some(contract_type),
         target: target_type.clone(),
         members: vec![AstImplMember::Fn(op_fn)],
@@ -240,9 +251,19 @@ fn op_symbol_to_contract(
         ),
         OpSymbol::IndexSet => (
             // Two type args: [index_param_type, value_param_type]
-            "IndexMut".to_string(),
+            "IndexSet".to_string(),
             "index_set".to_string(),
             vec![param_type(0), param_type(1)],
+        ),
+        OpSymbol::BitAnd => (
+            "BitAnd".to_string(),
+            "bitand".to_string(),
+            vec![param_type(0), return_type()],
+        ),
+        OpSymbol::BitOr => (
+            "BitOr".to_string(),
+            "bitor".to_string(),
+            vec![param_type(0), return_type()],
         ),
     }
 }
@@ -290,7 +311,7 @@ fn generate_derived_operators(
         name: name.to_string(),
         name_span: impl_span,
         generics: vec![],
-        params: vec![param],
+        params: vec![AstFnParam::Regular(param)],
         return_type: Some(bool_type()),
         body,
         span: impl_span,
@@ -298,6 +319,7 @@ fn generate_derived_operators(
 
     let make_impl = |contract_name: &str, contract_arg: AstType, fn_decl: AstFnDecl| {
         AstDecl::Impl(AstImplDecl {
+            generics: vec![],
             contract: Some(AstType::Generic {
                 name: contract_name.to_string(),
                 args: vec![contract_arg],

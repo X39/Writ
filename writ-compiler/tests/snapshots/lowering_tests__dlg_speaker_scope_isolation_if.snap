@@ -1,0 +1,129 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Fn(
+            AstFnDecl {
+                attrs: [],
+                vis: None,
+                name: "scene",
+                name_span: 4..9,
+                generics: [],
+                params: [
+                    Regular(
+                        AstParam {
+                            name: "player",
+                            name_span: 10..16,
+                            ty: Named {
+                                name: "Entity",
+                                span: 18..24,
+                            },
+                            span: 10..24,
+                        },
+                    ),
+                ],
+                return_type: None,
+                body: [
+                    Let {
+                        mutable: false,
+                        name: "_narrator",
+                        name_span: 49..57,
+                        ty: None,
+                        value: GenericCall {
+                            callee: MemberAccess {
+                                object: Ident {
+                                    name: "Entity",
+                                    span: 49..57,
+                                },
+                                field: "getOrCreate",
+                                field_span: 49..57,
+                                span: 49..57,
+                            },
+                            type_args: [
+                                Named {
+                                    name: "Narrator",
+                                    span: 49..57,
+                                },
+                            ],
+                            args: [],
+                            span: 49..57,
+                        },
+                        span: 49..57,
+                    },
+                    Expr {
+                        expr: If {
+                            condition: BoolLit {
+                                value: true,
+                                span: 41..45,
+                            },
+                            then_block: [
+                                Expr {
+                                    expr: Call {
+                                        callee: Ident {
+                                            name: "say",
+                                            span: 48..77,
+                                        },
+                                        args: [
+                                            AstArg {
+                                                name: None,
+                                                value: Ident {
+                                                    name: "_narrator",
+                                                    span: 49..57,
+                                                },
+                                                span: 48..77,
+                                            },
+                                            AstArg {
+                                                name: None,
+                                                value: StringLit {
+                                                    value: "A narrator appears.",
+                                                    span: 58..77,
+                                                },
+                                                span: 48..77,
+                                            },
+                                        ],
+                                        span: 48..77,
+                                    },
+                                    span: 48..77,
+                                },
+                            ],
+                            else_block: None,
+                            span: 41..79,
+                        },
+                        span: 41..79,
+                    },
+                    Expr {
+                        expr: Call {
+                            callee: Ident {
+                                name: "say",
+                                span: 80..93,
+                            },
+                            args: [
+                                AstArg {
+                                    name: None,
+                                    value: Ident {
+                                        name: "player",
+                                        span: 29..35,
+                                    },
+                                    span: 80..93,
+                                },
+                                AstArg {
+                                    name: None,
+                                    value: StringLit {
+                                        value: "After branch.",
+                                        span: 80..93,
+                                    },
+                                    span: 80..93,
+                                },
+                            ],
+                            span: 80..93,
+                        },
+                        span: 80..93,
+                    },
+                ],
+                span: 0..95,
+            },
+        ),
+    ],
+}

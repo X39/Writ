@@ -4,14 +4,13 @@ expression: ast
 ---
 Ast {
     items: [
-        Struct(
-            AstStructDecl {
+        Entity(
+            AstEntityDecl {
                 attrs: [],
                 vis: None,
                 name: "Guard",
                 name_span: 7..12,
-                generics: [],
-                fields: [
+                properties: [
                     AstStructField {
                         vis: None,
                         name: "name",
@@ -40,6 +39,9 @@ Ast {
                         span: 29..43,
                     },
                 ],
+                component_slots: [],
+                hooks: [],
+                inherent_impl: None,
                 span: 0..45,
             },
         ),

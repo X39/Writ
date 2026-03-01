@@ -15,11 +15,14 @@ pub struct SpeakerScope {
 /// Passes receive `&mut LoweringContext` and:
 /// - Append errors via `emit_error()` (pipeline never halts)
 /// - Push/pop speaker scopes (dialogue lowering)
+/// - Track current namespace (for localization key generation)
 pub struct LoweringContext {
     /// Accumulated errors — all passes append here; pipeline never halts.
     errors: Vec<LoweringError>,
     /// Stack of currently-active speakers (push on dlg entry / branch entry, pop on exit).
     speaker_stack: Vec<SpeakerScope>,
+    /// Stack of namespace segments. Join with "::" to get the current namespace.
+    namespace_stack: Vec<String>,
 }
 
 impl LoweringContext {
@@ -27,6 +30,7 @@ impl LoweringContext {
         Self {
             errors: Vec::new(),
             speaker_stack: Vec::new(),
+            namespace_stack: Vec::new(),
         }
     }
 
@@ -63,5 +67,26 @@ impl LoweringContext {
     /// Returns the current depth of the speaker stack (for save/restore at scope boundaries).
     pub fn speaker_stack_depth(&self) -> usize {
         self.speaker_stack.len()
+    }
+
+    /// Push namespace segments onto the stack (for block namespaces).
+    pub fn push_namespace(&mut self, segments: &[String]) {
+        self.namespace_stack.extend(segments.iter().cloned());
+    }
+
+    /// Pop `count` segments from the namespace stack.
+    pub fn pop_namespace(&mut self, count: usize) {
+        let new_len = self.namespace_stack.len().saturating_sub(count);
+        self.namespace_stack.truncate(new_len);
+    }
+
+    /// Set the namespace stack to the given segments (for declarative namespaces).
+    pub fn set_namespace(&mut self, segments: Vec<String>) {
+        self.namespace_stack = segments;
+    }
+
+    /// Get the current namespace as a "::" joined string. Returns empty string if no namespace.
+    pub fn current_namespace(&self) -> String {
+        self.namespace_stack.join("::")
     }
 }

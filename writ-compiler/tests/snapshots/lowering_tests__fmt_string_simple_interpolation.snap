@@ -12,15 +12,17 @@ Ast {
                 name_span: 3..4,
                 generics: [],
                 params: [
-                    AstParam {
-                        name: "name",
-                        name_span: 5..9,
-                        ty: Named {
-                            name: "string",
-                            span: 11..17,
+                    Regular(
+                        AstParam {
+                            name: "name",
+                            name_span: 5..9,
+                            ty: Named {
+                                name: "string",
+                                span: 11..17,
+                            },
+                            span: 5..17,
                         },
-                        span: 5..17,
-                    },
+                    ),
                 ],
                 return_type: None,
                 body: [

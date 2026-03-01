@@ -1,0 +1,13 @@
+.module "main" "0.1.0" {
+    .extern "writ-runtime" "1.0.0"
+    .method "greet" () -> void pub mut {
+        RET_VOID
+    }
+    .method "main" () -> void pub mut {
+        .reg r0 void
+        CALL r0, 117440513, r1, 0
+        RET_VOID
+    }
+    // .export "main" method 117440514
+    // .export "greet" method 117440513
+}

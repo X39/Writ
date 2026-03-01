@@ -1,17 +1,19 @@
 # Project Research Summary
 
-**Project:** Writ Compiler — CST-to-AST Lowering Pipeline
-**Domain:** Compiler IR lowering pipeline (Rust, game scripting language)
-**Researched:** 2026-02-26
+**Project:** Writ Compiler v3.0 — Middle-End Pipeline
+**Domain:** Compiler middle-end — name resolution, type checking, and IL codegen for the Writ game scripting language
+**Researched:** 2026-03-02
 **Confidence:** HIGH
 
 ## Executive Summary
 
-The Writ compiler's next milestone is building a CST-to-AST lowering pipeline in a new `writ-compiler` crate. The existing `writ-parser` crate produces a full-fidelity CST using chumsky 0.12 + logos 0.16, with `Spanned<T> = (T, SimpleSpan)` throughout. The lowering pipeline must desugar six major constructs — dialogue blocks (`dlg`), entities, operator overloads, optional/nullable sugar, formattable strings, and compound assignments — into a simplified AST of primitives that the downstream type checker can consume. All lowering rules are fully specified in Section 28 of the Writ language spec, making this a well-bounded, spec-driven implementation task rather than an exploratory design problem.
+Writ v3.0 is a compiler middle-end milestone: connecting the existing lowered AST output (produced by the v1.x lowering passes in `writ-compiler`) to the existing binary IL runtime (shipped in v2.0 as `writ-runtime` + `writ-module`). The pipeline is well-scoped — three sequential phases (name resolution, type checking, IL codegen) that transform `Vec<AstDecl>` into a `writ_module::Module`. The target format is fully specified (90 instructions, 21 metadata tables, complete IL spec), and the output consumer (the VM) is already working. This is a correctness-first milestone, not a performance or incremental-compilation milestone.
 
-The recommended approach is a pass-based pipeline following the `rustc_ast_lowering` pattern: a shared `LoweringContext` struct carries mutable state (errors, speaker scope stack, localization key counter) through independent fold functions, one per desugaring construct. The AST must use owned types (`String`, `Box<T>`, `Vec<T>`) with no `'src` lifetime inherited from the CST — carrying the source buffer lifetime into the AST is the single most damaging architectural mistake possible at this stage, as it cascades into every downstream phase. Every AST node must carry a `SimpleSpan` field from day one; retrofitting span preservation after passes are written is a full-day rewrite.
+The recommended approach is to implement all three phases as new modules inside `writ-compiler` (not new crates), following the existing `lower/` module as a precedent. The dependency graph is `Ast → NameResolved → Typed → Module`, with each phase producing a distinct IR and accumulating errors rather than halting immediately. Four new production dependencies are needed: `id-arena` (type storage without lifetime pollution), `rustc-hash` (fast HashMaps for symbol tables), `ena` (union-find for type variable unification), and a promotion of `ariadne` from dev-dep to production dep at the CLI boundary. All phases must be built sequentially — name resolution is the hard prerequisite for type checking, and type checking must be complete before codegen begins, because IL instruction selection depends on fully-resolved types at every expression node.
 
-The two highest risks are span tombstoning (generating synthetic AST nodes without source spans, causing downstream errors to point at byte 0) and speaker resolution incompleteness (implementing only the singleton entity tier of the three-tier speaker lookup, silently producing incorrect code for dialogue blocks that receive entity parameters). Both risks must be addressed in the AST type definitions and dialogue lowering phases respectively, and both require test cases on day one — not after the core pipeline ships.
+The primary risk category is correctness-before-completion: 15 specific pitfalls are documented, all of which produce either silent wrong behavior or deferred runtime crashes rather than immediate compile-time errors. The mitigation strategy is consistent: establish correct architectural shapes before writing any logic (two-pass collection in name resolution, a separate `TypedExpr` IR, contract-canonical slot ordering in codegen), write adversarial tests for each pitfall immediately after implementing the relevant feature, and defer nothing that is currently listed as deferred in PROJECT.md tech debt — specifically `?`/`!` desugaring, singleton speaker validation, and lifecycle hook TypeDef registration.
+
+---
 
 ## Key Findings
 
@@ -19,193 +21,230 @@ The two highest risks are span tombstoning (generating synthetic AST nodes witho
 
 See `.planning/research/STACK.md` for full details.
 
-The stack is minimal by design. The implementation language is Rust 2024 edition (already established in the workspace). The lowering pipeline depends directly on `writ-parser` for CST types and adds three production dependencies: `thiserror 2.0` for structured `LoweringError` types, `const-fnv1a-hash 1.1` for compile-time FNV-1a localization key generation, and nothing else. Diagnostic rendering (`ariadne 0.6`) belongs in `writ-cli`, not `writ-compiler`, to keep the compiler crate CLI-agnostic. `insta 1.x` with the `ron` feature is the dev-dependency for snapshot testing lowered AST output.
+The existing workspace (Rust 2024 edition, `chumsky 0.12`, `logos 0.16`, `thiserror 2.0`, `insta 1`, `slotmap 1.1.1`, `indexmap 2.13`) requires no changes. The middle-end adds exactly four new crates and one new cross-crate dependency link. `writ-compiler` gains `writ-module` as a dependency for the codegen phase — this is safe, as the direction is compiler → module with no cycle.
 
-No arenas, no proc-macro visitor frameworks, no Salsa query system. These add complexity with no payoff at this scale. The pattern is manual fold functions per CST node variant — zero dependencies, directly testable, and exhaustiveness-checked by the Rust compiler.
+**Core technologies (new additions for v3.0):**
+- `id-arena 2.3.0`: Type node storage — `Arena<T>` + `Id<T>` eliminates `'tcx` lifetime pollution from all type-checker function signatures; type equality becomes `id_a == id_b`; interning via a `FxHashMap<TyKind, Id<TyKind>>` deduplicates type nodes
+- `rustc-hash 2.1.1`: Symbol table performance — `FxHashMap`/`FxHashSet` for the hundreds of small scope frames created during name resolution; the same hasher used inside `rustc`, tuned for short-string and integer keys
+- `ena 0.14.4`: Type variable unification — `UnificationTable` with snapshot/rollback for `let` inference and generic call site unification; extracted from `rustc`, maintained by the Rust compiler team
+- `ariadne 0.6.0`: Diagnostic rendering — already in `writ-parser` dev-deps; promote to production dep in `writ-cli` for multi-span, multi-file error display; designed explicitly to pair with `chumsky`
 
-**Core technologies:**
-- `Rust 2024 edition`: Implementation language — already in workspace, no change required
-- `writ-parser` (internal): CST source types — lowering consumes `writ_parser::cst` directly
-- `thiserror 2.0`: Error type definition — structured `LoweringError` with source spans, no terminal dependency
-- `const-fnv1a-hash 1.1`: Localization key generation — `no_std`, stable Rust, computes FNV1A-32 at compile time per spec §28.4
-- `insta 1.x` (dev): Snapshot testing — standard approach for compiler IR testing; already in `writ-parser` dev-deps
+Two conditional additions: `petgraph 0.8.3` only if declaration-ordering cycles require graph toposort; `bitflags 2.11.0` only if type modifier flags exceed 3-4 boolean fields. Do not add `salsa` (incremental compilation is out of scope), `rayon` (parallel type checking is premature), or any native-code backend.
 
 ### Expected Features
 
-See `.planning/research/FEATURES.md` for full details and dependency graph.
+See `.planning/research/FEATURES.md` for full details, feature dependency graph, and prioritization matrix.
 
-**Must have (P1 — pipeline incomplete without these):**
-- AST type hierarchy — the output type; everything else depends on it
-- Source span preservation — design constraint on AST types; cannot be retrofitted
-- Error accumulation with pass continuation — design constraint on pipeline runner; cannot be retrofitted
-- Multi-pass pipeline structure — defines extensibility; determines how future constructs are added
-- Dialogue lowering (`dlg` → `fn` with `say()`, `choice()`, `->` → `return`) — primary language construct
-- Speaker context tracking — required for correct multi-line speaker attribution
-- Localization key generation (FNV-1a auto-keys + manual `#key` override) — runtime L10N requires keys
-- Entity lowering (`entity` → struct + component fields + lifecycle hooks) — second primary construct
-- Operator lowering (`operator +` → contract method call) — required for operator-overloaded code
-- Optional sugar lowering (`T?` → `Option<T>`, `null` → `Option::None`) — foundational; affects all type-annotated nodes
-- Compound assignment desugaring (`+=` → `= + `) — required before operator lowering is complete
-- Formattable string lowering (`$"..."` → concat chain) — required by dialogue lowering
-- Concurrency pass-through (`spawn`/`join`/`cancel`/`defer` → AST primitives) — must survive lowering intact
+This is a spec-driven milestone: the Writ language spec fully defines what must be compiled, and the IL spec fully defines what must be emitted. The feature landscape is divided across three phases with clear dependency ordering.
 
-**Should have (P2 — add once core pipeline tests pass):**
-- Localization key collision detection — spec §13.7 requires duplicate `#key` to be a compile error
-- Transition tail-call validation — `->` must be terminal; enforce at lowering time
-- Singleton entity auto-detection in dialogue — spec §13.2 requires `[Singleton]` speaker resolution
-- Component field flattening with defaults — entity `use` clause field defaults
-- Derived operator auto-generation (`!=`, `>`, `<=`, `>=` from `Eq`/`Ord`) — spec §17.4
+**Must have — Phase 1 (Name Resolution):**
+- Two-pass symbol collection: all declaration kinds collected across all files before any body resolution
+- `using` resolution (plain and alias), qualified path `::` resolution, visibility enforcement, same-namespace cross-file visibility per §23
+- Type name resolution: every `AstType` mapped to a `TypeRef` blob or primitive tag, including cross-module lookup of `writ-runtime` virtual module types
+- Impl-type association, generic parameter scoping, forward reference handling
+- Singleton speaker validation and `[Singleton]`/`[Conditional]` attribute validation (explicitly deferred from lowering; must not be deferred again)
 
-**Defer (v2+):**
-- Diagnostic span enrichment (`LoweringOrigin` on spans) — requires IDE consumer infrastructure
-- Incremental/query-based lowering — defer until build performance is a demonstrated bottleneck
+**Must have — Phase 2 (Type Checking):**
+- Primitive type propagation, `let` inference via bidirectional propagation, function call checking, field access and component field distinction
+- Contract bounds checking at generic call sites, strict mutability enforcement (`let` blocks both reassignment AND mutation through `mut self` methods — two separate checks)
+- Return type checking, `Option`/`?`/`!` rules, `Result`/`try` rules, pattern match exhaustiveness for enums
+- Closure capture inference (classify `let` as by-value, `let mut` as by-reference), generic type argument inference via unification
+- `spawn`/`join`/`cancel` type rules: `spawn expr` always produces `TaskHandle`, never the callee's return type
+- `?` and `!` desugaring to typed match nodes in the typed IR (deferred from lowering; must not be deferred again)
+
+**Must have — Phase 3 (IL Codegen):**
+- All 21 metadata tables populated with correct token assignment
+- Linear register allocation with LIFO high-watermark tracking (not per-expression reset)
+- All 90 IL instructions emitted with correct selection driven by type annotations
+- Entity construction sequence exactly as spec §14.7.5: `SPAWN_ENTITY → SET_FIELD for overrides only → INIT_ENTITY`
+- Lifecycle hook TypeDef registration (emit MethodDef AND register token in TypeDef hook slot)
+- Closure/delegate emission: compiler-generated capture struct TypeDef + method + `NEW_DELEGATE`
+- `TAIL_CALL` for dialogue transitions (`return dialogueFn(args)` in dlg-lowered functions)
+- Debug info emission (SourceSpan + DebugLocal) for all method bodies
+- CALL_VIRT slot numbers derived from contract declaration order, never from impl block traversal order
+
+**Should have (P2, after pipeline validated end-to-end):**
+- Diagnostic-quality ambiguity errors with multiple candidates and definition spans
+- Unresolved name fuzzy suggestions ("did you mean `survival::HealthPotion`?")
+- Contract satisfaction suggestion in type errors
+- `CALL_VIRT` → `CALL` specialization when receiver's static type is known concrete
+- Constant folding for `const` expressions
+
+**Defer to v4+:**
+- `writ-std` module (requires v3.0 to be validated first)
+- Incremental compilation (requires stable module identity scheme)
+- Language server / LSP (requires stable type-checking API)
+- JIT compilation (requires validated reference interpreter + type-annotated IR)
 
 ### Architecture Approach
 
-See `.planning/research/ARCHITECTURE.md` for full details, data flow diagrams, and code examples.
+See `.planning/research/ARCHITECTURE.md` for full details, data flow diagrams, build order, and anti-patterns.
 
-The `writ-compiler` crate is structured as two top-level modules: `ast/` (AST type definitions — the interface contract for all downstream phases) and `lower/` (the pipeline, one file per pass). A `LoweringContext` struct in `lower/context.rs` carries all cross-cutting mutable state through every pass. The public API is a single function: `lower(items: Vec<Spanned<Item<'_>>>) -> (Ast, Vec<LoweringError>)`. Passes are composed by `lower/mod.rs` (the orchestrator) using `match` dispatch — no dynamic pass registry. Localization key generation runs as a sub-pass inside dialogue lowering, not as a separate top-level pass.
+All three new phases live inside `writ-compiler` as additional Rust modules (`resolve/`, `typecheck/`, `codegen/`), not as new crates. This matches the `lower/` module precedent, avoids circular dependency risk, and keeps intra-phase imports as natural `mod` imports rather than cross-crate public APIs. The pipeline is strictly linear: each phase produces a distinct IR type (no in-place AST mutation) and accumulates errors before the next phase boundary. Phase boundaries are hard stops: errors in name resolution prevent type checking from running; errors in type checking prevent codegen from running.
 
 **Major components:**
-1. `ast/` module — Simplified AST node type hierarchy: `AstExpr`, `AstStmt`, `AstDecl`, `AstType`. No CST sugar, no lifetime parameters, every node carries `span: SimpleSpan`. This is the sole interface to downstream phases.
-2. `LoweringContext` — Shared mutable state: `errors: Vec<LoweringError>`, `speaker_stack: Vec<SpeakerScope>`, `loc_key_counter: u32`. Threaded through every pass as `&mut LoweringContext`.
-3. `lower/mod.rs` (pipeline orchestrator) — Sequences all passes in dependency order; assembles `(Ast, Vec<LoweringError>)` from pass outputs.
-4. Individual pass files — `optional.rs`, `fmt_string.rs`, `operator.rs`, `dialogue.rs`, `entity.rs`, `localization.rs`, `concurrency.rs`. Each is independently testable with a fresh `LoweringContext`.
-5. `lower/error.rs` — `LoweringError` type with span references, powered by `thiserror`.
+1. `resolve/` — Two-pass name resolution: pass 1 collects all top-level declarations into `DefMap + NamespaceMap`; pass 2 resolves all references in bodies using the fully-populated map; produces `NameResolved` IR where every `Ident`/`Path` is replaced by a `DefId`
+2. `typecheck/` — Constraint-based type checking: assigns explicit types from annotations, infers `let` bindings via `ena` union-find, validates contract impls (signature match AND completeness), produces `Typed` IR where every expression node carries a non-optional `Ty`; includes `?`/`!` desugaring and closure capture classification
+3. `codegen/` — Two-sub-pass IL emission: skeleton pass emits all `TypeDef`/`FieldDef`/`MethodDef` rows and assigns `MetadataToken`s; body pass emits instruction sequences using the token map; drives `writ_module::ModuleBuilder`; produces `writ_module::Module`
 
-**Pass ordering (dependency-constrained):**
-1. `lower_fn` — processes `Fn` items; internally invokes `lower_type` (optional), `lower_expr` (fmt_string, operator, concurrency)
-2. `lower_dialogue` — processes `Dlg` items; internally calls `lower_expr` sub-passes, then `lower_localization` on produced `say()` calls
-3. `lower_entity` — processes `Entity` items; internally calls `lower_type` for component fields
+Key cross-cutting patterns: `DefId` as the resolution currency (no string lookups after pass 1), `FxHashMap` rib stack for O(1) scope lookup, `LinearRegisterAllocator` with LIFO high-watermark for correct temporary management, `CodegenCtx` as the stateful thread through all emission functions.
 
 ### Critical Pitfalls
 
-See `.planning/research/PITFALLS.md` for all 8 pitfalls with full prevention strategies, warning signs, and recovery costs.
+See `.planning/research/PITFALLS.md` for all 15 pitfalls with full prevention strategies, warning signs, and recovery costs.
 
-1. **Span tombstoning on generated nodes** — Every synthetic AST node (the `say()` calls, `Entity.getOrCreate<T>()` calls generated from dialogue lowering) must carry a `lowered_from: SimpleSpan` pointing to its CST origin. Establish this as a hard constraint in AST type definitions before writing any pass. Dummy spans (`SimpleSpan::new(0, 0)`) are never acceptable on nodes that can produce errors. Recovery cost if discovered late: HIGH (full-day audit and rewrite of all AST constructors and lowering passes).
+1. **Single-pass name resolution** — forward references between top-level declarations fail. Prevention: implement two-phase collection before writing any lookup logic; this is the first architectural decision in Phase 1. Recovery cost if discovered late: MEDIUM.
 
-2. **Speaker resolution missing tier-1 (parameter) lookup** — The `@Speaker` lookup has three tiers: (1) local parameters/variables, (2) `[Singleton]` entity via `Entity.getOrCreate<T>()`, (3) compile error. Implementing only tier 2 silently produces incorrect code when a `dlg` block receives an entity as a parameter. Write `dlg scene(guard: Guard) { @guard Halt! }` as a test on day one of dialogue lowering.
+2. **`let` mutation vs. reassignment — two distinct checks** — only checking `x = y` but missing `x.mutMethod()` through an immutable binding. Prevention: separate mutability analysis pass that runs after method resolution; store `is_mut_self` flag in method metadata. Recovery cost if discovered late: MEDIUM.
 
-3. **Pass ordering inversion** — Optional sugar and formattable string lowering are invoked from inside structural passes (`lower_fn`, `lower_dialogue`, `lower_entity`) as those passes encounter type and expression positions — not as separate top-level passes. If a pass that expects "clean" sub-expressions runs before the sub-expression lowering, it encounters unexpected CST node types and panics. Document pass order explicitly in `lower/mod.rs` rustdoc.
+3. **CALL_VIRT slot ordering: impl-order vs. contract-order** — methods in the `impl` block listed in a different order than the contract declaration produce incorrect runtime dispatch (silent wrong behavior). Prevention: always look up canonical slot from the contract declaration during impl codegen, never from the impl block's traversal order. Recovery cost if discovered late: MEDIUM.
 
-4. **Active speaker state not scoped across `$ choice` branches** — Using a single mutable `current_speaker` variable causes speaker changes inside a `$ choice` branch to leak into sibling branches and post-branch continuation lines. The speaker state must be a stack: push on branch entry, pop on exit. This is straightforward but must be the first implementation, not a retrofit.
+4. **Type-annotated AST: in-place mutation vs. separate typed IR** — `Option<ResolvedType>` fields on `AstExpr` create `None` traps throughout codegen. Prevention: define `TypedExpr`/`TypedStmt` IR before writing any type-checking logic; all type fields are non-optional. Recovery cost if discovered late: HIGH.
 
-5. **Localization key collision from text-only hash input** — Computing FNV-1a keys from dialogue text content alone produces collisions for identical text in different `dlg` blocks. Keys must hash `blockName + lineIndex + text`. Keys must be deterministic across compiler runs (no pointer addresses, timestamps, or allocation-order-derived values). A CI test compiling the same source twice and diffing key output is the verification.
+5. **`?` and `!` desugaring deferred again** — `UnaryPostfix` nodes left in the typed IR have no corresponding IL instruction. Prevention: desugar in the type checker's expression lowering pass; verify the typed IR contains no raw `UnaryPostfix` nodes. Recovery cost if discovered late: MEDIUM.
+
+---
 
 ## Implications for Roadmap
 
-Based on combined research findings, the natural phase structure follows the build-order dependency chain from ARCHITECTURE.md. The key constraint is: **AST types must be the first deliverable** because they are the interface contract that all passes emit into. The second constraint is that span preservation and error accumulation are design-time decisions that cannot be retrofitted — they must be decided before the first pass is written.
+The strict dependency ordering established in research dictates the phase structure. Name resolution must be fully working and tested before type checking begins; type checking must be fully working before codegen begins. Within codegen, the metadata skeleton pass must be complete before any method body can reference tokens.
 
-### Phase 1: AST Type Hierarchy and Pipeline Infrastructure
+### Phase 1: Name Resolution
 
-**Rationale:** The AST type hierarchy is the prerequisite for everything else. Without it, passes have no target type to emit. Span preservation and error accumulation are structural decisions baked into the AST types and pipeline runner — retrofitting them costs more than getting them right first. This phase has no dependencies and unblocks all subsequent phases.
-**Delivers:** `ast/` module with complete `AstExpr`/`AstStmt`/`AstDecl`/`AstType` definitions; `LoweringContext`; `LoweringError`; public `lower()` stub that compiles; `writ-compiler/Cargo.toml` with `thiserror` and `const-fnv1a-hash`.
-**Addresses:** AST type hierarchy, source span preservation (as design constraint), error accumulation (as pipeline constraint), multi-pass pipeline structure.
-**Avoids:** Span tombstoning pitfall — every AST node constructor requires a `span` argument from the start.
-**Research flag:** Standard patterns (rustc HIR, Kotlin FIR). Skip research-phase; use `rustc_ast_lowering` as direct reference.
+**Rationale:** Name resolution is the absolute prerequisite for all downstream work. Neither the type checker nor codegen can proceed without knowing what each identifier refers to. The two-pass architecture (collection before body resolution) must be the first design decision — retrofitting it is expensive.
 
-### Phase 2: Foundational Expression Lowering (Optional Sugar, Formattable Strings, Compound Assignments)
+**Delivers:** `NameResolved` IR with every identifier bound to a `DefId`; `DefMap` mapping every `DefId` to its declaration location; `NamespaceMap` resolving `using` imports and cross-namespace visibility; type name resolution to TypeRef blobs including `writ-runtime` virtual module types; singleton speaker validation; attribute validation.
 
-**Rationale:** These three desugarings are foundational: optional sugar affects type positions throughout the AST (entity fields, function signatures), formattable string lowering is required by dialogue lowering, and compound assignment is mechanical. All three are low-complexity but high-dependency. Completing them before the stateful passes (dialogue, entity) ensures those passes work on clean sub-expressions.
-**Delivers:** `lower/optional.rs` (`T?` → `Option<T>`, `null` → `Option::None`); `lower/fmt_string.rs` (`$"..."` → concat chain); compound assignment desugaring in `lower_expr`.
-**Uses:** `insta` snapshots for each pass; `LoweringContext` from Phase 1.
-**Implements:** `lower_type()` and `lower_expr()` shared helpers called from all structural passes.
-**Avoids:** Pass ordering inversion pitfall — these are implemented as helpers before structural passes are written.
-**Research flag:** Well-documented patterns. Skip research-phase.
+**Addresses:** All Phase 1 table-stakes features from FEATURES.md — symbol collection, `using` + `::` resolution, visibility enforcement, type name resolution, impl-type association, generic parameter scoping, singleton speaker validation, `[Singleton]`/`[Conditional]` attribute validation.
 
-### Phase 3: Operator Lowering and Concurrency Pass-Through
+**Avoids:** Pitfall 1 (single-pass resolution), Pitfall 6 (speaker validation ordering — post-collection check), Pitfall 3 (namespace-as-string-table anti-pattern).
 
-**Rationale:** Operator lowering (`operator +` → contract method call) is a moderately complex but self-contained pass with no dialogue or entity dependencies. Concurrency pass-through is trivial (CST node → equivalent AST node, no transformation). Both are required for complete expression lowering coverage before the complex passes.
-**Delivers:** `lower/operator.rs` (symbol → `Add`/`Sub`/`Mul`/etc. contract impl method calls); `lower/concurrency.rs` (`spawn`/`join`/`cancel`/`defer` → AST primitives).
-**Uses:** `writ-parser::cst` operator variants; `LoweringContext`.
-**Avoids:** `spawn` keyword ambiguity — verify CST distinguishes `SpawnEntity` from `SpawnTask`; file parser issue if not.
-**Research flag:** Standard patterns for operator desugaring. Skip research-phase; verify CST spawn disambiguation with parser team.
+**Research flag:** Standard patterns — two-pass collection + rib stack is well-documented (rustc dev guide). No phase research needed.
 
-### Phase 4: Dialogue Lowering and Localization
+### Phase 2: Type Checking
 
-**Rationale:** Dialogue lowering is the most complex pass and depends on Phase 2 (formattable string lowering for `{expr}` interpolation in dialogue text) and implicitly on entity scan results for singleton speaker resolution. It is isolated in its own phase because it introduces stateful context (speaker scope stack) and a sub-pass (localization key generation). This is where the highest-risk pitfalls live.
-**Delivers:** `lower/dialogue.rs` (complete `dlg` → `fn` with `say()`, `choice()`, `->` → `return`, three-tier speaker resolution); `lower/localization.rs` (FNV-1a key auto-generation + `#key` override); speaker scope stack in `LoweringContext`.
-**Uses:** `const-fnv1a-hash` for key generation; `lower_fmt_string` helper from Phase 2.
-**Avoids:** Speaker resolution tier-1 pitfall (parameter lookup before singleton lookup); active speaker scope leak across `$ choice` branches; `->` emitted without `return` wrapper; localization key collision from text-only hash.
-**Research flag:** Needs careful spec-checking against §13, §28.1–28.4. Consider a brief research-phase focused on the three-tier speaker resolution rule and the `$ choice` scoping semantics.
+**Rationale:** Requires complete `DefMap` from Phase 1. Cannot be started until Phase 1 is validated. The typed IR structure produced here determines whether codegen can be implemented cleanly — defining the IR correctly up front is more important than any individual type rule.
 
-### Phase 5: Entity Lowering
+**Delivers:** `Typed` IR where every expression node carries a non-optional `Ty`; closure capture classifications (`CaptureByValue` / `CaptureByRef`); boxing annotations at generic call sites; `?`/`!` desugaring to typed match nodes; fully validated contract impls (signature match AND completeness); mutability violations as compile errors; `spawn` expressions typed as `TaskHandle`.
 
-**Rationale:** Entity lowering (`entity` → struct + component impls + lifecycle hooks) is architecturally independent of dialogue lowering but depends on optional sugar lowering (Phase 2) for `T?` field types. It is the second-most complex pass, involving partitioning entity members into properties, components, hooks, and methods before generating multiple AST items from one CST item.
-**Delivers:** `lower/entity.rs` (entity → `AstStructDecl` + N `AstImplDecl` for `ComponentAccess<T>` + lifecycle hook registrations); correct handling of `[Singleton]` attribute.
-**Avoids:** Entity component/property conflation pitfall — member partitioning is an explicit pre-lowering step, not inline branching during code generation.
-**Research flag:** Standard struct-lowering patterns. Skip research-phase; focus on spec §14.3 for component field conflict rules.
+**Addresses:** All Phase 2 table-stakes features from FEATURES.md — primitive type propagation, `let` inference, function call checking, field access + component field distinction, contract bounds, mutability enforcement, return type checking, Option/Result/`?`/`!`/`try` rules, pattern exhaustiveness, closure capture inference, generic type argument inference, `spawn`/`join`/`cancel` type rules, `new` construction type checking, `for` loop element type binding.
 
-### Phase 6: Pipeline Integration and P2 Quality Features
+**Uses:** `ena 0.14.4` (union-find), `id-arena 2.3.0` (type interner), `rustc-hash 2.1.1` (TypeEnv scope maps).
 
-**Rationale:** With all core passes complete, the pipeline orchestrator wires them in correct order and the full test suite validates the integrated output. P2 quality features (collision detection, transition validation, singleton auto-detection, derived operators) are added here once the core pipeline is stable.
-**Delivers:** Complete `lower/mod.rs` orchestrator; integration tests using `insta` snapshots; localization key collision detection; transition tail-call validation; `[Singleton]` speaker auto-detection; derived operator auto-generation (`!=`, `>`, `<=`, `>=` from `Eq`/`Ord`); component field default flattening.
-**Avoids:** Hash instability pitfall — CI test compares key output across two identical compilations.
-**Research flag:** Standard integration work. Skip research-phase.
+**Implements:** `typecheck/` component — `InferCtx`, `TypeEnv`, `check.rs`, `contract.rs`, separate `TypedExpr`/`TypedStmt` IR defined before any logic is written.
+
+**Avoids:** Pitfall 2 (`let` mutation — separate mutability pass after method resolution), Pitfall 4 (boxing annotations on call nodes), Pitfall 5 (closure capture classification in type checker, not codegen), Pitfall 7 (contract completeness check), Pitfall 8 (component access type ambiguity — concrete entity vs. generic Entity), Pitfall 11 (in-place AST mutation), Pitfall 12 (`?`/`!` desugaring), Pitfall 13 (`spawn` task handle type).
+
+**Research flag:** Standard patterns — bidirectional type checking with constraint unification is well-documented. Component access type distinction and closure capture classification are Writ-specific but fully specified. No phase research needed.
+
+### Phase 3: IL Codegen — Metadata Skeleton
+
+**Rationale:** Codegen has a mandatory internal sub-ordering: all TypeDef/FieldDef/MethodDef/ContractDef rows must be emitted and assigned `MetadataToken`s before any method body can reference them (forward references require the token to exist first). The skeleton pass also establishes the CALL_VIRT slot ordering from the contract declaration — this decision cannot be changed after method bodies start emitting.
+
+**Delivers:** All 21 metadata tables populated in the `ModuleBuilder`; `DefId → MetadataToken` mapping complete; `Ty → TypeRef blob` encoding working; lifecycle hook TypeDef registration (each hook's method token registered in the entity's TypeDef hook slot); CALL_VIRT slot numbers assigned from contract declaration order.
+
+**Addresses:** Module metadata emission (ModuleDef, ModuleRef, ExportDef), TypeDef + FieldDef + MethodDef + ParamDef, ContractDef + ContractMethod + ImplDef, GenericParam + GenericConstraint, GlobalDef + ExternDef, ComponentSlot, lifecycle hook registration, localization key registry initialization.
+
+**Uses:** `writ-module::ModuleBuilder` (new dependency on `writ-compiler`), `indexmap 2.13` (declaration-order iteration for field slots).
+
+**Avoids:** Pitfall 3 (CALL_VIRT slot ordering established here from contract declaration), Pitfall 14 (lifecycle hooks registered in TypeDef metadata in this pass, before method bodies are emitted).
+
+**Research flag:** Standard patterns — the skeleton-pass-then-body-pass approach matches the assembler's existing two-pass design. No phase research needed.
+
+### Phase 4: IL Codegen — Method Bodies
+
+**Rationale:** Requires all metadata tokens from Phase 3. This is the highest-complexity implementation phase — 90 instructions across 16 categories, entity construction sequences, closure emit, concurrency, dialogue tail calls, pattern match, boxing, `?`/`try` desugaring in instruction sequences. The register allocator design must be established first; retrofitting it requires rewriting all expression codegen.
+
+**Delivers:** Complete instruction sequences for all method bodies; correct LIFO high-watermark register allocation with no register clobber on simultaneous live values; entity construction sequences exactly per spec §14.7.5 (`SPAWN_ENTITY → overrides only → INIT_ENTITY`); closure/delegate emission with compiler-generated capture struct TypeDef; `SPAWN_TASK`/`JOIN`/`CANCEL`/`DEFER_*` emission; `TAIL_CALL` for dialogue transitions; `BOX`/`UNBOX` from type-checker boxing annotations; debug info (SourceSpan + DebugLocal); cross-file localization key collision detection.
+
+**Addresses:** All Phase 3 table-stakes features from FEATURES.md — all basic instruction emission, CALL/CALL_VIRT/CALL_EXTERN/CALL_INDIRECT, object model, entity instructions, array instructions, Option/Result instructions, closure/delegate emission, concurrency, pattern match, enum construction, conversion, string, boxing, `?`/`try` desugaring in codegen, tail call, localization, debug info.
+
+**Avoids:** Pitfall 4 (boxing emission from type-checker annotations), Pitfall 5 (closure emit from capture classifications), Pitfall 9 (register clobber — LIFO allocator with high-watermark), Pitfall 10 (entity construction SET_FIELD only for explicit overrides, not defaults), Pitfall 15 (localization key cross-file collision — module-level registry).
+
+**Research flag:** The entity construction sequence, closure delegate emission, and CALL_VIRT slot resolution are Writ-specific; the IL spec is authoritative and complete. The register allocator design is the highest-risk decision — establish it before writing any expression codegen. No external research needed.
+
+### Phase 5: CLI Integration and End-to-End Validation
+
+**Rationale:** Wire all phases into the `writ-cli compile` subcommand; validate the full source → .writil → VM execution pipeline with representative Writ programs covering all language features.
+
+**Delivers:** `writ-cli compile` subcommand; end-to-end test suite covering entities, dialogue, closures, generics, concurrency, Option/Result, pattern match; the "looks done but isn't" checklist from PITFALLS.md fully green.
+
+**Avoids:** All 15 pitfalls — final integration tests catch anything missed in earlier phases.
+
+**Research flag:** Standard CLI wiring (clap subcommand). No phase research needed.
 
 ### Phase Ordering Rationale
 
-- Phases 1–2 are prerequisites for everything: without AST types and core expression lowering, structural passes cannot be written or tested.
-- Phase 3 (operators, concurrency) is ordered before the stateful passes because `lower_expr` is called from inside `lower_dialogue` and `lower_entity` — the sub-expression helpers must exist first.
-- Phase 4 (dialogue) comes before Phase 5 (entity) because dialogue lowering is the harder implementation with the most pitfall risk; completing it first de-risks the milestone before entity work begins.
-- Phase 6 is explicitly last: P2 features require a stable, tested core pipeline as their foundation. Adding them before integration testing would obscure which failures are from core lowering vs. quality features.
+- **Strict sequential ordering** is imposed by data dependencies: type checking cannot begin without `DefMap`; codegen cannot begin without `Typed` IR; method bodies cannot be emitted without metadata tokens.
+- **Sub-phase ordering within codegen** (metadata before bodies) mirrors the two-pass pattern used successfully in name resolution and is required by forward-reference structure in the IL module format.
+- **Deferred P2 features** (fuzzy name suggestions, diagnostic polish, `CALL_VIRT` specialization, constant folding) are intentionally placed after Phase 5 validation — they add user experience value but cannot be correctly implemented until the pipeline is proven correct.
+- **The 15 pitfalls from research directly informed phase sequencing.** Pitfalls 1 and 6 (name resolution architecture), pitfalls 2, 4, 5, 7, 8, 11, 12, and 13 (type checking), and pitfalls 3, 9, 10, 14, and 15 (codegen) are each addressed in the phase where they are introduced, not deferred.
 
 ### Research Flags
 
-Phases likely needing deeper research during planning:
-- **Phase 4 (Dialogue Lowering):** The three-tier speaker resolution rule (spec §13.2) and the `$ choice` branch scoping semantics (spec §13.4) should be re-read carefully before implementation. A brief research-phase is warranted to clarify ambiguities in the spec before writing the most complex pass.
+Phases needing deeper research during planning:
+- None identified. The Writ language spec and IL spec are both complete and authoritative. All compiler patterns (two-pass resolution, HM unification, linear register allocation, metadata-before-bodies codegen) are standard and well-documented.
 
-Phases with standard patterns (skip research-phase):
-- **Phase 1:** Direct analogue to `rustc_ast_lowering` infrastructure. rustc dev guide is the reference.
-- **Phase 2:** Optional/nullable lowering and string interpolation lowering are textbook desugarings.
-- **Phase 3:** Operator-to-contract mapping is fully specified in §17.2; concurrency is pass-through.
-- **Phase 5:** Entity-to-struct lowering follows standard struct generation patterns; spec §14 is authoritative.
-- **Phase 6:** Integration and quality features; no novel patterns.
+Phases with standard patterns (no research-phase needed):
+- **Phase 1:** Two-pass name resolution with rib stack — established pattern (rustc, Go)
+- **Phase 2:** Bidirectional type checking with constraint unification — established pattern (Swift, Kotlin, rustc)
+- **Phase 3:** Metadata skeleton pass — mirrors the assembler's existing two-pass approach
+- **Phase 4:** Register-based codegen — matches the IL spec's design intent; existing assembler tests serve as reference
+- **Phase 5:** CLI wiring — straightforward `clap` subcommand addition
+
+---
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | Core dependencies (thiserror, const-fnv1a-hash, insta) verified on docs.rs. Fold-over-visitor recommendation backed by rustc, swc, and Rust Design Patterns book. Version compatibility confirmed. |
-| Features | HIGH | Writ spec (§13–§20, §28) is authoritative and fully defines all lowering rules. rustc AST→HIR is a direct reference implementation. Feature dependency graph is derived from spec dependencies, not speculation. |
-| Architecture | HIGH | `LoweringContext` + fold pattern is documented by rustc dev guide, Swift SIL generation, and Kotlin K2. Pass ordering constraints are derived from spec-defined lowering dependencies. File structure follows established Rust compiler conventions. |
-| Pitfalls | MEDIUM | Core pitfalls (span tombstoning, pass ordering, error accumulation) are well-documented in compiler literature. Writ-specific pitfalls (speaker resolution tiers, speaker scope leakage, localization key stability) are inferred from spec rules — no external validation possible since Writ is a novel language. |
+| Stack | HIGH | All crates verified against docs.rs with confirmed versions; version compatibility confirmed for Rust 2024 edition; `ena` and `id-arena` are rustc-extracted libraries with authoritative lineage |
+| Features | HIGH | The Writ language spec and IL spec are the authoritative and complete source; feature set is determined by the spec, not market research; dependency ordering is unambiguous |
+| Architecture | HIGH | All patterns (two-pass resolver, typed IR, skeleton+body codegen) are verified against rustc dev guide and the existing `writ-compiler` pipeline structure; anti-patterns are documented with concrete examples |
+| Pitfalls | HIGH | 15 pitfalls documented with specific warning signs, verification tests, and recovery costs; majority are corroborated by rustc dev guide, compiler literature, and Writ's own PROJECT.md tech debt log |
 
 **Overall confidence:** HIGH
 
 ### Gaps to Address
 
-- **`spawn` keyword disambiguation:** The CST representation of `spawn` (entity instantiation vs. task creation) must be verified before Phase 3. If the parser does not distinguish them, a pre-pass or parser fix is needed. This is a dependency on `writ-parser` that the lowering pipeline cannot resolve unilaterally.
-- **Spec §29 open questions:** The spec's open questions section (§29) notes several TBD semantics. Any TBD features that appear in the CST (tuples, destructuring) must not be lowered in this milestone. Passes must explicitly handle `todo!()` or `unreachable!()` for those constructs rather than silently dropping them.
-- **`writ-runtime` API contract:** The lowered AST references `say()`, `choice()`, `Entity.getOrCreate<T>()` as named function calls. These must agree with the runtime crate's exported API. If the runtime API is not finalized, lowering must emit calls by a convention that the runtime will match — this should be confirmed before Phase 4 begins.
+- **`ena` snapshot/rollback necessity:** Research recommends `ena` for union-find with snapshot/rollback for type-checking `if` branches independently. If type checking proves to be fully forward-only (no speculative paths), a hand-rolled union-find without rollback would suffice, saving a dependency. Validate after implementing basic type checking — starting with `ena` is safe and can be simplified if rollback is never triggered.
+
+- **`petgraph` necessity:** Only needed if declaration ordering requires cycle detection (e.g., mutually recursive type aliases). The current spec does not have type aliases. Skip `petgraph` initially; add only if declaration ordering proves non-trivial in practice.
+
+- **Multi-file compilation scope:** The architecture research notes that Phases 1-4 assume a pre-merged AST or single-file compilation. A module driver that parses all `.writ` files and merges `DefMap`s across files is needed for real projects. The exact mechanism (merge before resolve, or per-file resolve with cross-file DefMap joining) should be decided before Phase 1 implementation begins to avoid redesigning the `DefMap` structure mid-phase.
+
+- **`ariadne` placement:** Should stay in `writ-cli` dev-deps if diagnostic rendering lives only at the CLI boundary, or move to `writ-compiler` production dep if the compiler exposes a `render_diagnostics` API. Decide at the start of Phase 5 CLI integration.
+
+---
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- Writ language spec §13–§20, §28 — authoritative lowering rules for all constructs
-- `writ-parser/src/cst.rs` — definitive CST node inventory
-- [rustc-dev-guide: HIR](https://rustc-dev-guide.rust-lang.org/hir.html) — LoweringContext pattern, span preservation, fold pattern
-- [rustc-dev-guide: Overview](https://rustc-dev-guide.rust-lang.org/overview.html) — multi-pass pipeline rationale
-- [rustc_ast_lowering crate docs](https://doc.rust-lang.org/stable/nightly-rustc/rustc_ast_lowering/struct.LoweringContext.html) — direct implementation reference
-- [thiserror docs.rs](https://docs.rs/thiserror/latest/thiserror/) — version 2.0.18 confirmed
-- [const-fnv1a-hash docs.rs](https://docs.rs/const-fnv1a-hash/latest/const_fnv1a_hash/) — version 1.1.0, `fnv1a_hash_str_32` confirmed
-- [insta docs.rs](https://docs.rs/insta/latest/insta/) — version 1.46.3 confirmed
-- [ariadne docs.rs](https://docs.rs/ariadne/latest/ariadne/) — version 0.6.0, chumsky compatibility confirmed
-- [Swift Compiler Architecture](https://www.swift.org/documentation/swift-compiler/) — SILGen pattern reference
-- [Kotlin K2 Migration Guide](https://kotlinlang.org/docs/k2-compiler-migration-guide.html) — FIR desugaring reference
-- [Rust Design Patterns: Fold](https://rust-unofficial.github.io/patterns/patterns/creational/fold.html) — fold vs. visitor distinction
+- Writ Language Specification §5, §7, §11, §13, §14, §21, §23 — type system, variables, generics, dialogue, entities, scoping, modules (authoritative)
+- Writ IL Specification §2.1–§2.16 — typed IL, calling convention, boxing, entity construction protocol, register model (authoritative)
+- Writ PROJECT.md — known tech debt: lifecycle hook dispatch, singleton speaker assumption, `?`/`!` desugaring deferred (authoritative)
+- Existing `writ-compiler` source (`ast/`, `lower/`, `lower/context.rs`) — pipeline shape and conventions (codebase)
+- Existing `writ-module` source (`builder.rs`, `tables.rs`, `instruction.rs`) — codegen output API (codebase)
+- [rustc Dev Guide: Name Resolution](https://rustc-dev-guide.rust-lang.org/name-resolution.html) — two-phase collection, rib stack, forward references
+- [rustc Dev Guide: ty module](https://rustc-dev-guide.rust-lang.org/ty.html) — TyKind interning, arena allocation, type equality via IDs
+- [rustc Dev Guide: Type Inference](https://rustc-dev-guide.rust-lang.org/type-inference.html) — constraint-based inference with union-find
+- [rustc Dev Guide: Two-Phase Borrows](https://rustc-dev-guide.rust-lang.org/borrow_check/two_phase_borrows.html) — mutability analysis phases
+- [id-arena docs.rs 2.3.0](https://docs.rs/id-arena/2.3.0/id_arena/) — Arena<T> + Id<T> API, no-lifetime-in-callers pattern
+- [rustc-hash docs.rs 2.1.1](https://docs.rs/rustc-hash/latest/rustc_hash/) — FxHashMap/FxHashSet design rationale for compiler use
+- [ena docs.rs 0.14.4](https://docs.rs/ena/latest/ena/) — UnificationTable, snapshot/rollback, union-find for type inference
+- [ariadne docs.rs 0.6.0](https://docs.rs/ariadne/latest/ariadne/) — multi-span, multi-file diagnostic rendering
 
 ### Secondary (MEDIUM confidence)
-- [Thunderseethe: Lowering AST to IR](https://thunderseethe.dev/posts/lowering-base-ir/) — consuming fold pattern, span preservation
-- [Thunderseethe: Desugaring Concrete/Abstract Syntax](https://thunderseethe.dev/posts/desugar-base/) — CST-to-AST specifics
-- [Post-Modern Compiler Design Vol 1 — Lowering](https://www.cs.purdue.edu/homes/rompf/pmca/vol1/lowering.html) — pass ordering, elaboration
-- [Braid Compiler Architecture](https://capra.cs.cornell.edu/braid/docs/hacking.html) — game-adjacent compiler reference
-- [Rust Performance Book: Hashing](https://nnethercote.github.io/perf-book/hashing.html) — FNV vs. alternatives
+- [The AST Typing Problem — Edward Z. Yang (2013)](https://blog.ezyang.com/2013/05/the-ast-typing-problem/) — explicitly-typed IR advantages vs. optional-field decoration on existing AST nodes
+- [Lowering AST to Escape the Typechecker — Thunderseethe's Devlog](https://thunderseethe.dev/posts/lowering-base-ir/) — typed IR practical tradeoffs and postmortem
+- [Luau Bytecode Generation — DeepWiki](https://deepwiki.com/luau-lang/luau/4.1-bytecode-generation) — LIFO register allocation (RegScope), three-way closure capture classification
+- [Interface Dispatch — Lukas Atkinson (2018)](https://lukasatkinson.de/2018/interface-dispatch/) — slot-based dispatch table ordering, contract-canonical slot assignment
+- [Lowering Rust Traits to Logic — Nicholas Matsakis (2017)](https://smallcultfollowing.com/babysteps/blog/2017/01/26/lowering-rust-traits-to-logic/) — contract completeness checking, solver design
+- [Implementing a typechecker in Rust (RCL)](https://ruudvanasseldonk.com/2024/implementing-a-typechecker-for-rcl-in-rust) — practical single-pass typechecking, Env struct pattern
 
 ### Tertiary (LOW confidence)
-- [Writing my own dialogue scripting language — dansalva.to](https://dansalva.to/writing-my-own-dialogue-scripting-language/) — dialogue-specific lowering patterns
-- [HN: The difference between compiling and lowering](https://news.ycombinator.com/item?id=14425039) — pass ordering, idempotency
+- [How the CLR Dispatches Virtual Method Calls](https://www.codestudy.net/blog/clr-implementation-of-virtual-method-calls-to-interface-members/) — method slot ordering in vtables; Writ's dispatch model differs from CLR but the slot-canonical-ordering principle is directly applicable
 
 ---
-*Research completed: 2026-02-26*
+*Research completed: 2026-03-02*
 *Ready for roadmap: yes*

@@ -1,0 +1,211 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Fn(
+            AstFnDecl {
+                attrs: [],
+                vis: None,
+                name: "convo",
+                name_span: 4..9,
+                generics: [],
+                params: [
+                    Regular(
+                        AstParam {
+                            name: "player",
+                            name_span: 10..16,
+                            ty: Named {
+                                name: "Entity",
+                                span: 18..24,
+                            },
+                            span: 10..24,
+                        },
+                    ),
+                ],
+                return_type: None,
+                body: [
+                    Expr {
+                        expr: Call {
+                            callee: Ident {
+                                name: "say",
+                                span: 28..39,
+                            },
+                            args: [
+                                AstArg {
+                                    name: None,
+                                    value: Ident {
+                                        name: "player",
+                                        span: 29..35,
+                                    },
+                                    span: 28..39,
+                                },
+                                AstArg {
+                                    name: None,
+                                    value: StringLit {
+                                        value: "Hi.",
+                                        span: 36..39,
+                                    },
+                                    span: 28..39,
+                                },
+                            ],
+                            span: 28..39,
+                        },
+                        span: 28..39,
+                    },
+                    Expr {
+                        expr: Call {
+                            callee: Ident {
+                                name: "choice",
+                                span: 49..133,
+                            },
+                            args: [
+                                AstArg {
+                                    name: None,
+                                    value: ArrayLit {
+                                        elements: [
+                                            Call {
+                                                callee: Ident {
+                                                    name: "Option",
+                                                    span: 51..102,
+                                                },
+                                                args: [
+                                                    AstArg {
+                                                        name: None,
+                                                        value: StringLit {
+                                                            value: "\"Ask about weather\"",
+                                                            span: 51..70,
+                                                        },
+                                                        span: 51..102,
+                                                    },
+                                                    AstArg {
+                                                        name: None,
+                                                        value: StringLit {
+                                                            value: "e2261412",
+                                                            span: 51..102,
+                                                        },
+                                                        span: 51..102,
+                                                    },
+                                                    AstArg {
+                                                        name: None,
+                                                        value: Lambda {
+                                                            params: [],
+                                                            return_type: None,
+                                                            body: [
+                                                                Expr {
+                                                                    expr: Call {
+                                                                        callee: Ident {
+                                                                            name: "say",
+                                                                            span: 73..100,
+                                                                        },
+                                                                        args: [
+                                                                            AstArg {
+                                                                                name: None,
+                                                                                value: Ident {
+                                                                                    name: "player",
+                                                                                    span: 74..80,
+                                                                                },
+                                                                                span: 73..100,
+                                                                            },
+                                                                            AstArg {
+                                                                                name: None,
+                                                                                value: StringLit {
+                                                                                    value: "How is the weather?",
+                                                                                    span: 81..100,
+                                                                                },
+                                                                                span: 73..100,
+                                                                            },
+                                                                        ],
+                                                                        span: 73..100,
+                                                                    },
+                                                                    span: 73..100,
+                                                                },
+                                                            ],
+                                                            span: 51..102,
+                                                        },
+                                                        span: 51..102,
+                                                    },
+                                                ],
+                                                span: 51..102,
+                                            },
+                                            Call {
+                                                callee: Ident {
+                                                    name: "Option",
+                                                    span: 103..131,
+                                                },
+                                                args: [
+                                                    AstArg {
+                                                        name: None,
+                                                        value: StringLit {
+                                                            value: "\"Leave\"",
+                                                            span: 103..110,
+                                                        },
+                                                        span: 103..131,
+                                                    },
+                                                    AstArg {
+                                                        name: None,
+                                                        value: StringLit {
+                                                            value: "b98aac97",
+                                                            span: 103..131,
+                                                        },
+                                                        span: 103..131,
+                                                    },
+                                                    AstArg {
+                                                        name: None,
+                                                        value: Lambda {
+                                                            params: [],
+                                                            return_type: None,
+                                                            body: [
+                                                                Expr {
+                                                                    expr: Call {
+                                                                        callee: Ident {
+                                                                            name: "say",
+                                                                            span: 113..129,
+                                                                        },
+                                                                        args: [
+                                                                            AstArg {
+                                                                                name: None,
+                                                                                value: Ident {
+                                                                                    name: "player",
+                                                                                    span: 114..120,
+                                                                                },
+                                                                                span: 113..129,
+                                                                            },
+                                                                            AstArg {
+                                                                                name: None,
+                                                                                value: StringLit {
+                                                                                    value: "Goodbye.",
+                                                                                    span: 121..129,
+                                                                                },
+                                                                                span: 113..129,
+                                                                            },
+                                                                        ],
+                                                                        span: 113..129,
+                                                                    },
+                                                                    span: 113..129,
+                                                                },
+                                                            ],
+                                                            span: 103..131,
+                                                        },
+                                                        span: 103..131,
+                                                    },
+                                                ],
+                                                span: 103..131,
+                                            },
+                                        ],
+                                        span: 49..133,
+                                    },
+                                    span: 49..133,
+                                },
+                            ],
+                            span: 49..133,
+                        },
+                        span: 49..133,
+                    },
+                ],
+                span: 0..135,
+            },
+        ),
+    ],
+}

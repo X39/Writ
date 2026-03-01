@@ -1,0 +1,41 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Extern(
+            Fn(
+                None,
+                AstFnSig {
+                    attrs: [],
+                    vis: None,
+                    qualifier: Some(
+                        "Entity",
+                    ),
+                    qualifier_span: Some(
+                        10..16,
+                    ),
+                    name: "getOrCreate",
+                    name_span: 17..28,
+                    generics: [
+                        AstGenericParam {
+                            name: "T",
+                            name_span: 29..30,
+                            bounds: [],
+                            span: 29..30,
+                        },
+                    ],
+                    params: [],
+                    return_type: Some(
+                        Named {
+                            name: "T",
+                            span: 37..38,
+                        },
+                    ),
+                    span: 7..39,
+                },
+            ),
+        ),
+    ],
+}

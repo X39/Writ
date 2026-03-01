@@ -1,3 +1,3 @@
 [workspace]
 resolver = "3"
-members = ["writ-cli", "writ-compiler", "writ-parser", "writ-runtime"]
+members = ["writ-assembler", "writ-cli", "writ-compiler", "writ-diagnostics", "writ-golden", "writ-module", "writ-parser", "writ-runtime"]

@@ -1,0 +1,60 @@
+---
+source: writ-compiler/tests/lowering_tests.rs
+expression: ast
+---
+Ast {
+    items: [
+        Entity(
+            AstEntityDecl {
+                attrs: [],
+                vis: None,
+                name: "Guard",
+                name_span: 7..12,
+                properties: [],
+                component_slots: [],
+                hooks: [
+                    AstEntityHook {
+                        contract: "OnDeserialize",
+                        contract_span: 18..29,
+                        method: AstFnDecl {
+                            attrs: [],
+                            vis: None,
+                            name: "on_deserialize",
+                            name_span: 18..29,
+                            generics: [],
+                            params: [
+                                SelfParam {
+                                    mutable: true,
+                                    span: 18..29,
+                                },
+                            ],
+                            return_type: None,
+                            body: [
+                                Let {
+                                    mutable: false,
+                                    name: "loaded",
+                                    name_span: 36..42,
+                                    ty: Some(
+                                        Named {
+                                            name: "bool",
+                                            span: 44..48,
+                                        },
+                                    ),
+                                    value: BoolLit {
+                                        value: false,
+                                        span: 51..56,
+                                    },
+                                    span: 32..57,
+                                },
+                            ],
+                            span: 15..59,
+                        },
+                        span: 15..59,
+                    },
+                ],
+                inherent_impl: None,
+                span: 0..61,
+            },
+        ),
+    ],
+}

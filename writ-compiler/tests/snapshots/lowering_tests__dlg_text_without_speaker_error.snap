@@ -18,21 +18,13 @@ expression: "(ast, errors)"
                         Expr {
                             expr: Call {
                                 callee: Ident {
-                                    name: "say_localized",
+                                    name: "say",
                                     span: 15..27,
                                 },
                                 args: [
                                     AstArg {
                                         name: None,
                                         value: Error {
-                                            span: 15..27,
-                                        },
-                                        span: 15..27,
-                                    },
-                                    AstArg {
-                                        name: None,
-                                        value: StringLit {
-                                            value: "5836d297",
                                             span: 15..27,
                                         },
                                         span: 15..27,

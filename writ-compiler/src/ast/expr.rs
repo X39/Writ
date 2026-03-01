@@ -8,7 +8,7 @@ use crate::ast::types::AstType;
 /// - NO `FormattableString` — lowered to string concatenation chains before reaching AST.
 /// - NO compound `Assign` variants — `+=` lowered to `a = a + b` before reaching AST.
 /// - NO `NullLit` — lowered to `Option::None` (a path expression) before reaching AST.
-/// - YES `Spawn`, `Join`, `Cancel`, `Defer`, `Detached` — concurrency pass-through (R1).
+/// - YES `Spawn`, `SpawnDetached`, `Join`, `Cancel`, `Defer` — concurrency pass-through (R1).
 /// - YES `Error` — error recovery sentinel (R1).
 /// - `Assign` is plain assignment only (`=`), no compound operators.
 /// - All data is owned (`String`, `Box<T>`, `Vec<T>`) — no `'src` lifetime.
@@ -107,8 +107,8 @@ pub enum AstExpr {
 
     /// Spawn expression: `spawn expr`
     Spawn { expr: Box<AstExpr>, span: SimpleSpan },
-    /// Detached spawn: `detached expr`
-    Detached { expr: Box<AstExpr>, span: SimpleSpan },
+    /// Spawn detached expression: `spawn detached expr` (fused)
+    SpawnDetached { expr: Box<AstExpr>, span: SimpleSpan },
     /// Join expression: `join expr`
     Join { expr: Box<AstExpr>, span: SimpleSpan },
     /// Cancel expression: `cancel expr`
@@ -123,14 +123,12 @@ pub enum AstExpr {
     /// Array literal: `[1, 2, 3]`
     ArrayLit { elements: Vec<AstExpr>, span: SimpleSpan },
 
-    // --- Struct literal ---
+    // --- New construction ---
 
-    /// Struct literal: `Health { current: 80, max: 80 }`
-    /// Used for component field initializers in entity lowering.
-    StructLit {
-        name: String,
-        name_span: SimpleSpan,
-        fields: Vec<(String, SimpleSpan, AstExpr)>,  // (field_name, name_span, value)
+    /// New construction expression: `new Type { field: value }`
+    New {
+        ty: AstType,
+        fields: Vec<AstNewField>,
         span: SimpleSpan,
     },
 
@@ -169,6 +167,8 @@ pub enum BinaryOp {
     Or,
     BitAnd,
     BitOr,
+    Shl,
+    Shr,
 }
 
 /// Prefix (unary) operators.
@@ -206,6 +206,15 @@ pub struct AstArg {
     /// Named argument label, or None for positional.
     pub name: Option<String>,
     /// The argument value expression.
+    pub value: AstExpr,
+    pub span: SimpleSpan,
+}
+
+/// A field initializer in a `new` expression.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AstNewField {
+    pub name: String,
+    pub name_span: SimpleSpan,
     pub value: AstExpr,
     pub span: SimpleSpan,
 }

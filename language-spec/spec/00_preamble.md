@@ -1,6 +1,6 @@
 # 1. Writ Language Specification
 
-**Draft v0.3** — February 2026
+**Draft v0.5** — March 2026
 
 ---
 

@@ -1,0 +1,15 @@
+[package]
+name = "writ-golden"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+writ-compiler = { path = "../writ-compiler" }
+writ-assembler = { path = "../writ-assembler" }
+writ-module = { path = "../writ-module" }
+writ-diagnostics = { path = "../writ-diagnostics" }
+writ-parser = { path = "../writ-parser" }
+similar = "2"
+
+[dev-dependencies]
+tempfile = "3"

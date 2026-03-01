@@ -43,7 +43,7 @@ Ast {
                     Expr {
                         expr: Call {
                             callee: Ident {
-                                name: "say_localized",
+                                name: "say",
                                 span: 16..32,
                             },
                             args: [
@@ -52,14 +52,6 @@ Ast {
                                     value: Ident {
                                         name: "_narrator",
                                         span: 17..25,
-                                    },
-                                    span: 16..32,
-                                },
-                                AstArg {
-                                    name: None,
-                                    value: StringLit {
-                                        value: "b7d37fa2",
-                                        span: 16..32,
                                     },
                                     span: 16..32,
                                 },

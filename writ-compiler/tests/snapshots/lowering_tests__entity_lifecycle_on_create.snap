@@ -4,38 +4,30 @@ expression: ast
 ---
 Ast {
     items: [
-        Struct(
-            AstStructDecl {
+        Entity(
+            AstEntityDecl {
                 attrs: [],
                 vis: None,
                 name: "Guard",
                 name_span: 7..12,
-                generics: [],
-                fields: [],
-                span: 0..47,
-            },
-        ),
-        Impl(
-            AstImplDecl {
-                contract: Some(
-                    Named {
-                        name: "OnCreate",
-                        span: 18..24,
-                    },
-                ),
-                target: Named {
-                    name: "Guard",
-                    span: 7..12,
-                },
-                members: [
-                    Fn(
-                        AstFnDecl {
+                properties: [],
+                component_slots: [],
+                hooks: [
+                    AstEntityHook {
+                        contract: "OnCreate",
+                        contract_span: 18..24,
+                        method: AstFnDecl {
                             attrs: [],
                             vis: None,
                             name: "on_create",
                             name_span: 18..24,
                             generics: [],
-                            params: [],
+                            params: [
+                                SelfParam {
+                                    mutable: true,
+                                    span: 18..24,
+                                },
+                            ],
                             return_type: None,
                             body: [
                                 Let {
@@ -57,9 +49,11 @@ Ast {
                             ],
                             span: 15..45,
                         },
-                    ),
+                        span: 15..45,
+                    },
                 ],
-                span: 15..45,
+                inherent_impl: None,
+                span: 0..47,
             },
         ),
     ],

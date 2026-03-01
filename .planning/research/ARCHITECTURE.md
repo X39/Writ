@@ -1,7 +1,7 @@
 # Architecture Research
 
-**Domain:** Compiler CST-to-AST lowering pipeline (Rust, game scripting language)
-**Researched:** 2026-02-26
+**Domain:** Compiler frontend — name resolution, type checking, IL codegen for the Writ language
+**Researched:** 2026-03-02
 **Confidence:** HIGH
 
 ## Standard Architecture
@@ -9,395 +9,465 @@
 ### System Overview
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         writ-parser (existing)                           │
-│                                                                          │
-│  Source String → lex() → Vec<(Token, Span)> → parse() → CST + Errors   │
-│                                                                          │
-│  Output: (Option<Vec<Spanned<Item<'src>>>>, Vec<RichError>)              │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    │ CST (Item<'src>, Expr<'src>, ...)
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                        writ-compiler (new)                               │
-│                                                                          │
-│  ┌──────────────────────────────────────────────────────────────────┐   │
-│  │                       Lowering Pipeline                           │   │
-│  │                                                                   │   │
-│  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐        │   │
-│  │  │  Pass 1  │→ │  Pass 2  │→ │  Pass 3  │→ │  Pass N  │        │   │
-│  │  │ Optional │  │Fmt String│  │ Operator │  │ Dialogue │        │   │
-│  │  │ Lowering │  │ Lowering │  │ Lowering │  │ Lowering │        │   │
-│  │  └──────────┘  └──────────┘  └──────────┘  └────┬─────┘        │   │
-│  │                                                   │              │   │
-│  │  ┌──────────────────────────────────────────┐    │              │   │
-│  │  │         Entity Lowering                   │    │              │   │
-│  │  └──────────────────────────────────────────┘    │              │   │
-│  │                                                   │              │   │
-│  │  ┌──────────────────────────────────────────┐    │              │   │
-│  │  │         Concurrency Pass-Through          │    │              │   │
-│  │  └──────────────────────────────────────────┘    │              │   │
-│  │                                                   │              │   │
-│  │  ┌────────────────────────────────────────── ┐   │              │   │
-│  │  │    LoweringContext (shared state carrier)  │   │              │   │
-│  │  │  - span map: CST span → AST node          │   │              │   │
-│  │  │  - errors: Vec<LoweringError>             │   │              │   │
-│  │  │  - speaker scope stack                    │   │              │   │
-│  │  │  - localization key counter               │   │              │   │
-│  │  └────────────────────────────────────────── ┘   │              │   │
-│  └──────────────────────────────────────────────────┘              │   │
-│                                                                          │
-│  Output: (Ast, Vec<LoweringError>)                                       │
-└─────────────────────────────────────────────────────────────────────────┘
-                                    │
-                                    │ AST (simplified, span-carrying)
-                                    ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│              Downstream (future phases — type checking, codegen)          │
-└─────────────────────────────────────────────────────────────────────────┘
++============================================================================+
+|  Existing Crates (mostly unchanged)                                        |
+|                                                                            |
+|  writ-parser           writ-compiler                                       |
+|  logos lexer           LoweringContext, lower()                            |
+|  chumsky CST           multi-pass CST → AST                                |
++====================================+=======================================+
+                                     |
+                              Ast { items: Vec<AstDecl> }
+                                     |
+                                     v
++====================================+=======================================+
+|  NEW phases inside writ-compiler   (same crate, new modules)              |
+|                                                                            |
+|  +--------------------+   +--------------------+   +------------------+  |
+|  |  resolve/          |   |  typecheck/         |   |  codegen/        |  |
+|  |  name resolution   | → |  type inference +   | → |  IL codegen      |  |
+|  |  NameResolved (IR) |   |  checking           |   |  → ModuleBuilder |  |
+|  |                    |   |  Typed (IR)         |   |                  |  |
+|  +--------------------+   +--------------------+   +--------+---------+  |
++================================================================|===========+
+                                                                 |
+                                                          writ_module::Module
+                                                                 |
++================================================================|===========+
+|  Existing Crates (unchanged)                                   |           |
+|                                                                v           |
+|  writ-module                    writ-runtime                              |
+|  Module / ModuleBuilder         VM + scheduler + entities + GC            |
+|                                                                            |
+|  writ-assembler                 writ-cli                                   |
+|  text IL → Module               `writ` binary (gains `compile` subcommand)|
++============================================================================+
 ```
+
+**Decision: All new phases live inside `writ-compiler` as additional modules.**
+
+Rationale: Name resolution and type checking have a tight feedback loop with each other and with the AST types that already live in `writ-compiler`. Introducing a new crate (`writ-resolver` or `writ-typeck`) creates a circular dependency risk: the resolver needs AST types from `writ-compiler`, but `writ-compiler` could also want resolver output. Keeping all three phases inside `writ-compiler` keeps the dependency graph acyclic and the `Ast` → `NameResolved` → `Typed` → `Module` pipeline linear. This matches how Rust's own `rustc_resolve` lives in the same logical compilation unit as the AST lowering passes. The assembler precedent (all assembler phases in one crate) also validates this approach.
+
+`writ-module` gains no new code — it is already the correct interface for codegen output.
+`writ-cli` gains a `compile` subcommand that calls `writ-compiler`'s new public `compile()` function.
 
 ### Component Responsibilities
 
 | Component | Responsibility | Communicates With |
 |-----------|----------------|-------------------|
-| `writ-parser` (existing) | Produces full-fidelity CST from source strings | Provides `Item<'src>`, `Expr<'src>`, spans to lowering pipeline |
-| `ast` module (new) | Defines the simplified AST node type hierarchy (no trivia, no CST sugar) | Consumed by all passes and by downstream type checker |
-| `LoweringContext` (new) | Carries shared mutable state during lowering: errors, span map, speaker scope, loc key generator | Threaded through every pass |
-| `lower_optional` pass | Rewrites `T?` → `AstType::Option(T)` and `null` → `AstExpr::OptionNone` | Consumes CST `TypeExpr` and `Expr::Null`; produces AST nodes |
-| `lower_fmt_string` pass | Rewrites `FormattableString` interpolation segments → `AstExpr::BinOp(Concat, ...)` with `.into<string>()` calls | Consumes `Expr::FormattableString`; produces AST `Call` + concat chain |
-| `lower_operator` pass | Rewrites operator expressions → contract impl method calls (Add, Sub, etc.) | Consumes `Expr::Binary` with operator token; produces `AstExpr::MethodCall` |
-| `lower_dialogue` pass | Rewrites `DlgDecl` → `AstFnDecl` with `say()`, `choice()`, speaker resolution, `-> transition` → `return` | Most complex pass; consumes `Item::Dlg` and all `DlgLine` variants |
-| `lower_entity` pass | Rewrites `EntityDecl` → struct + component fields + `ComponentAccess` impls + lifecycle hook registrations | Consumes `Item::Entity`; produces multiple AST `StructDecl` + `ImplDecl` nodes |
-| `lower_localization` pass | Adds FNV-1a key generation to `say()` calls; handles `#key` overrides | Runs after dialogue lowering; consumes intermediate `AstExpr::Call("say", ...)` |
-| Concurrency pass-through | `spawn`, `join`, `cancel`, `defer` are valid AST primitives — no desugaring, just CST→AST mapping | Consumes `Expr::Spawn`, `Expr::Join`, etc.; produces equivalent AST nodes |
-| Pipeline orchestrator | Sequences passes, threads `LoweringContext`, collects errors, returns final `(Ast, Vec<LoweringError>)` | Entry point for the compiler crate |
+| `writ-compiler::lower` | Existing: CST → `Ast` (desugaring, lowering) | Consumes `writ-parser::cst`; produces `writ-compiler::ast::Ast` |
+| `writ-compiler::resolve` | NEW: `Ast` → `NameResolved` — binds all identifier/path occurrences to their declaring `DefId`, builds per-scope `SymbolTable`, handles `using` imports, detects undefined names and ambiguities | Consumes `Ast`; produces `NameResolved` IR + `DefMap` |
+| `writ-compiler::typecheck` | NEW: `NameResolved` → `Typed` — infers and checks all expression types, validates contract impls, checks mutability, resolves overloaded operators | Consumes `NameResolved` + `DefMap`; produces `Typed` IR |
+| `writ-compiler::codegen` | NEW: `Typed` → `Module` — walks typed IR, emits typed IL instructions via `ModuleBuilder` | Consumes `Typed` IR + `DefMap`; calls `writ_module::ModuleBuilder`; returns `Module` |
+| `writ-module::ModuleBuilder` | Existing: programmatic IL module construction API | Used exclusively by codegen phase |
+| `writ-cli` | Gains `compile` subcommand | Calls `writ_compiler::compile()`; writes output `.writil` |
 
 ## Recommended Project Structure
 
 ```
-writ-compiler/src/
-├── lib.rs                  # Public API: lower(cst: Vec<Spanned<Item>>) -> (Ast, Vec<LoweringError>)
-├── main.rs                 # CLI entry point (thin wrapper around lib)
-├── ast/
-│   ├── mod.rs              # AST type definitions — simplified node set
-│   ├── expr.rs             # AstExpr variants (no FormattableString, no T?, etc.)
-│   ├── stmt.rs             # AstStmt variants
-│   ├── decl.rs             # AstDecl variants (AstFnDecl, AstStructDecl, etc.)
-│   └── types.rs            # AstType variants (Option<T> unwrapped, no ? sugar)
-├── lower/
-│   ├── mod.rs              # Pipeline orchestrator: sequences all passes
-│   ├── context.rs          # LoweringContext: shared state, error collection, span map
-│   ├── error.rs            # LoweringError type with source spans
-│   ├── optional.rs         # Pass: T? → Option<T>, null → Option::None
-│   ├── fmt_string.rs       # Pass: FormattableString → concat + .into<string>()
-│   ├── operator.rs         # Pass: operator overloads → contract method calls
-│   ├── dialogue.rs         # Pass: dlg → fn with say/choice/speaker resolution
-│   ├── entity.rs           # Pass: entity → struct + impls + lifecycle hooks
-│   ├── localization.rs     # Pass: say() → say_localized() with FNV-1a keys
-│   └── concurrency.rs      # Pass-through: spawn/join/cancel/defer → AST primitives
-└── util/
-    ├── fnv.rs              # FNV-1a hash computation for localization keys
-    └── span.rs             # Span utilities: CST span → AST span mapping
+writ-compiler/
+├── Cargo.toml                     (add writ-module dependency)
+└── src/
+    ├── lib.rs                     (add pub mod resolve, typecheck, codegen; pub fn compile())
+    ├── ast/                       (existing — unchanged)
+    │   ├── mod.rs
+    │   ├── decl.rs
+    │   ├── expr.rs
+    │   ├── stmt.rs
+    │   └── types.rs
+    ├── lower/                     (existing — unchanged)
+    │   ├── mod.rs
+    │   ├── context.rs
+    │   ├── error.rs
+    │   └── ...
+    ├── resolve/                   (NEW)
+    │   ├── mod.rs                 (pub fn resolve(ast: Ast) -> (NameResolved, Vec<ResolveError>))
+    │   ├── def.rs                 (DefId, DefKind, DefMap: DefId → AstDecl location)
+    │   ├── scope.rs               (Scope, SymbolTable: name → DefId, rib stack for block scoping)
+    │   ├── namespace.rs           (NamespaceMap: namespace path → Set<DefId>; using resolution)
+    │   ├── ir.rs                  (NameResolved IR: mirrors Ast but Ident/Path replaced by DefId refs)
+    │   └── error.rs               (ResolveError: UndefinedName, AmbiguousName, PrivateName, ...)
+    ├── typecheck/                 (NEW)
+    │   ├── mod.rs                 (pub fn typecheck(ir: NameResolved, defs: &DefMap) -> (Typed, Vec<TypeError>))
+    │   ├── ty.rs                  (Ty enum: Int, Float, Bool, String, Named(DefId), Generic(DefId, Vec<Ty>), ...)
+    │   ├── infer.rs               (InferCtx: type variable unification, constraint solving)
+    │   ├── env.rs                 (TypeEnv: local variable → Ty map, threaded through function bodies)
+    │   ├── check.rs               (check_expr, check_stmt, check_decl — top-level type walk)
+    │   ├── coerce.rs              (implicit coercions: int literal → float, Option wrapping)
+    │   ├── contract.rs            (contract impl validation: all methods present, types match)
+    │   ├── ir.rs                  (Typed IR: mirrors NameResolved but every expr/stmt carries Ty)
+    │   └── error.rs               (TypeError: TypeMismatch, UnresolvedType, MissingImpl, ...)
+    └── codegen/                   (NEW)
+        ├── mod.rs                 (pub fn codegen(ir: Typed, defs: &DefMap) -> Result<Module, CodegenError>)
+        ├── context.rs             (CodegenCtx: ModuleBuilder + token maps + register allocator)
+        ├── type_sig.rs            (Ty → TypeRef blob encoding for ModuleBuilder)
+        ├── decl.rs                (emit_fn, emit_struct, emit_enum, emit_entity, emit_impl, ...)
+        ├── expr.rs                (emit_expr → register allocation + instruction emission)
+        ├── stmt.rs                (emit_stmt: let, for, while, return, atomic, ...)
+        ├── register.rs            (LinearRegisterAllocator: assigns u16 register indices)
+        ├── label.rs               (LabelMap: label name → byte offset; forward ref patching)
+        └── error.rs               (CodegenError: UnsupportedFeature, RegisterOverflow, ...)
 ```
 
 ### Structure Rationale
 
-- **`ast/`:** The AST is a first-class module, not embedded in lowering. Downstream consumers (type checker, codegen) import from `ast` directly without depending on lowering internals.
-- **`lower/`:** Each pass is its own file. Adding a new desugaring = adding one file and registering it in `mod.rs`. No existing file changes.
-- **`lower/context.rs`:** All shared mutable state lives in one struct. Passes receive `&mut LoweringContext` — no hidden global state, fully testable in isolation.
-- **`util/`:** Stateless helpers (FNV hash, span utilities) kept separate from pass logic to keep passes focused.
+- **`resolve/`, `typecheck/`, `codegen/` as modules not crates:** All three need access to the same `ast::*` type hierarchy. Keeping them inside `writ-compiler` avoids exporting AST types as a public API for cross-crate consumption. The existing `lower/` module set the precedent.
+- **`writ-module` as a dependency of `writ-compiler`:** Codegen needs `ModuleBuilder`. This is the only new dependency — it is already the right direction (compiler produces modules, does not depend on the VM).
+- **`DefId` as the resolution currency:** All name-to-declaration bindings pass through an opaque `DefId` (e.g., `u32` index into a flat `DefMap`). This decouples the IR from the raw `String` names in the AST and lets type checking skip all name lookups.
+- **Separate `ir.rs` per phase:** Each phase produces its own IR type rather than mutating the `Ast` in place. The `NameResolved` IR mirrors the `Ast` structure but replaces `Ident { name }` and `Path { segments }` with `DefId`-resolved references. The `Typed` IR adds a `Ty` annotation on every expression node. This makes each phase testable in isolation without needing the subsequent phase.
+- **`InferCtx` inside `typecheck/infer.rs`:** Holds the union-find structure for type variable unification. When type inference resolves all type variables (or reports errors for unresolved ones), the `Typed` IR is emitted with all variables substituted. This is the standard Hindley-Milner constraint + unification approach, appropriate for Writ's "local variables inferred, signatures explicit" model.
+- **`LinearRegisterAllocator` in `codegen/register.rs`:** Assigns a fresh `u16` register per SSA-like value. For the reference implementation, simple linear allocation (no reuse) is correct and sufficient. The IL spec's abstract typed registers match this directly — the VM allocates storage from type metadata, not register indices.
 
 ## Architectural Patterns
 
-### Pattern 1: Pass-Based Pipeline with Shared Context
+### Pattern 1: Two-Pass Name Resolution (Decls Before Bodies)
 
-**What:** Each desugaring is a function with the signature `fn lower_X(ctx: &mut LoweringContext, node: CstNode) -> AstNode`. Passes are composed by the orchestrator in `lower/mod.rs`, which calls them in dependency order. Each pass is independently testable.
+**What:** Name resolution runs in two passes over the AST. Pass 1 collects all top-level declaration names into the `DefMap` and `NamespaceMap` without resolving bodies. Pass 2 resolves all name references (in function bodies, type positions, impl targets) against the fully-populated `DefMap`. This handles forward references between top-level declarations.
 
-**When to use:** When desugarings are semantically independent (optional lowering does not depend on dialogue lowering). This is the pattern used by `rustc_ast_lowering` with its `LoweringContext` struct.
+**When to use:** Mandatory — Writ allows `fn a() { b() }` and `fn b() { ... }` in any order. Single-pass resolution would fail on forward references.
 
-**Trade-offs:** Linear pass ordering means passes cannot see each other's output (no lookahead between passes). This is acceptable here because all Writ desugarings are defined to be independent and sequential (spec Section 28 does not describe any interaction between lowerings).
+**Trade-offs:** Two passes means the AST is traversed twice. For this project size this is negligible. The alternative (building a dependency graph and topological ordering) is far more complex and still needs two conceptual phases.
 
-**Example (Rust):**
+**Example:**
 ```rust
-// lower/mod.rs — pipeline orchestrator
-pub fn lower(items: Vec<Spanned<Item<'_>>>) -> (Ast, Vec<LoweringError>) {
-    let mut ctx = LoweringContext::new();
-    let ast_items: Vec<AstItem> = items
-        .into_iter()
-        .flat_map(|(item, span)| lower_item(&mut ctx, item, span))
-        .collect();
-    (Ast { items: ast_items }, ctx.take_errors())
-}
+// resolve/mod.rs
+pub fn resolve(ast: Ast) -> (NameResolved, Vec<ResolveError>) {
+    let mut ctx = ResolveCtx::new();
 
-fn lower_item(ctx: &mut LoweringContext, item: Item<'_>, span: SimpleSpan) -> Vec<AstItem> {
-    match item {
-        Item::Dlg(decl)    => vec![lower_dialogue(ctx, decl)],
-        Item::Entity(decl) => lower_entity(ctx, decl),   // one entity → multiple AST items
-        Item::Fn(decl)     => vec![lower_fn(ctx, decl)],
-        // ... other variants pass through with structural lowering only
+    // Pass 1: collect all top-level def names
+    for decl in &ast.items {
+        ctx.register_decl(decl);
     }
+
+    // Pass 2: resolve all references in bodies
+    let mut ir_items = Vec::new();
+    for decl in ast.items {
+        ir_items.push(ctx.resolve_decl(decl));
+    }
+
+    (NameResolved { items: ir_items }, ctx.take_errors())
 }
 ```
 
-### Pattern 2: Fold-Based Node Transformation (not Visitor-Based)
+### Pattern 2: Rib Stack for Block-Scoped Name Resolution
 
-**What:** Each pass is a *fold* — it consumes CST nodes and produces new AST nodes. This is distinct from a *visitor* (which traverses in-place). In Rust terms, the function takes ownership or a reference and returns a new owned value.
+**What:** A "rib" is an abstraction of a scope. The resolver maintains a `Vec<Rib>` (a stack). When entering a function body, a new rib is pushed. When entering a `{ }` block, another rib is pushed. Name resolution walks the rib stack from innermost to outermost, returning the first match (shadowing). Leaving a scope pops the rib.
 
-**When to use:** When the output type differs from the input type (CST → AST). Visitor works when mutating in-place; fold works when building a new tree. Since the CST and AST are separate type hierarchies, fold is the correct choice.
+**When to use:** All block-scoped name lookup in Writ: `let` bindings, function parameters, `for` loop bindings, match arm variables. This is the pattern used by `rustc_resolve` and mirrors how `LoweringContext` uses its namespace stack.
 
-**Trade-offs:** Fold requires materializing the entire AST as a new allocation. For a game scripting compiler (not a megaproject like LLVM), this is fine — the allocation cost is negligible. The benefit is type safety: the compiler enforces you cannot accidentally leave CST nodes in the AST output.
+**Trade-offs:** Simple and correct for Writ's lexical scoping rules. The `LoweringContext::push_namespace / pop_namespace` pattern in `lower/context.rs` is structurally identical — the resolver extends the same idea to all name kinds.
 
-**Example (Rust):**
+**Example:**
 ```rust
-// lower/optional.rs — fold pattern: CST TypeExpr → AST AstType
-pub fn lower_type(ctx: &mut LoweringContext, ty: Spanned<TypeExpr<'_>>) -> AstType {
-    let (type_expr, span) = ty;
-    match type_expr {
-        TypeExpr::Optional(inner) => {
-            // T? → Option<T>
-            AstType::Generic {
-                name: "Option",
-                args: vec![lower_type(ctx, *inner)],
-                span: ctx.map_span(span),
+// resolve/scope.rs
+pub struct Rib {
+    pub bindings: HashMap<String, DefId>,
+    pub kind: RibKind,  // FunctionBody | Block | ForLoop | MatchArm
+}
+
+pub struct SymbolTable {
+    ribs: Vec<Rib>,
+}
+
+impl SymbolTable {
+    pub fn push_rib(&mut self, kind: RibKind) { self.ribs.push(Rib::new(kind)); }
+    pub fn pop_rib(&mut self) { self.ribs.pop(); }
+
+    pub fn bind(&mut self, name: String, def: DefId) {
+        self.ribs.last_mut().unwrap().bindings.insert(name, def);
+    }
+
+    pub fn lookup(&self, name: &str) -> Option<DefId> {
+        // Innermost wins (shadowing)
+        for rib in self.ribs.iter().rev() {
+            if let Some(&def) = rib.bindings.get(name) {
+                return Some(def);
             }
         }
-        TypeExpr::Named(name) => AstType::Named { name: name.to_string(), span: ctx.map_span(span) },
-        // ... other variants
+        None
     }
 }
 ```
 
-### Pattern 3: LoweringContext as State Carrier
+### Pattern 3: Hindley-Milner Constraint Unification for Local Type Inference
 
-**What:** A single struct (`LoweringContext`) holds all mutable cross-cutting state: the accumulated error list, the span mapping table (CST offset → AST span), and any pass-local stacks (speaker scope for dialogue, localization key counter). Every pass receives `&mut LoweringContext`.
+**What:** Writ's type system requires explicit annotations on function parameters and return types but infers local variable types. The type checker uses a constraint-based approach: fresh type variables (`TyVar`) are introduced for unannotated locals; equality constraints are generated as expressions are checked; a union-find structure resolves constraints by unification.
 
-**When to use:** Always — this is the pattern used by both `rustc` (`LoweringContext` in `rustc_ast_lowering`) and Swift's SIL generation. It prevents hidden global state and makes passes unit-testable by constructing a fresh `LoweringContext` per test.
+**When to use:** Any `let x = expr;` with no annotation. Also for resolving which concrete type `Option::Some(x)` wraps when the outer context specifies an `Option<int>`. Full Hindley-Milner (polymorphic let) is not required — Writ does not have implicit polymorphism. The inference is local and rank-1.
 
-**Trade-offs:** None meaningful at this scale. At LLVM/rustc scale, a shared context becomes a bottleneck for parallelism; for a scripting language compiler this is not a concern.
+**Trade-offs:** A full union-find implementation is ~50 lines. The alternative (bidirectional propagation without unification) breaks on cases like `let x = f(); let y: int = x;` where x's type is determined by downstream use. Unification handles this correctly.
 
-**Example (Rust):**
+**Example:**
 ```rust
-// lower/context.rs
-pub struct LoweringContext {
-    /// Accumulated errors with source spans.
-    errors: Vec<LoweringError>,
-    /// Stack of currently-in-scope default speakers (for dlg blocks).
-    speaker_stack: Vec<SpeakerScope>,
-    /// Counter for auto-generated localization keys.
-    loc_key_counter: u32,
+// typecheck/infer.rs
+pub struct InferCtx {
+    next_var: u32,
+    subst: Vec<Option<Ty>>,  // union-find: TyVar(i) → Ty or None
 }
 
-impl LoweringContext {
-    pub fn emit_error(&mut self, err: LoweringError) { self.errors.push(err); }
-    pub fn take_errors(self) -> Vec<LoweringError> { self.errors }
-    pub fn push_speaker(&mut self, s: SpeakerScope) { self.speaker_stack.push(s); }
-    pub fn pop_speaker(&mut self) { self.speaker_stack.pop(); }
-    pub fn current_speaker(&self) -> Option<&SpeakerScope> { self.speaker_stack.last() }
-    pub fn next_loc_key(&mut self) -> u32 { let k = self.loc_key_counter; self.loc_key_counter += 1; k }
+impl InferCtx {
+    pub fn fresh_var(&mut self) -> Ty {
+        let v = self.next_var;
+        self.next_var += 1;
+        self.subst.push(None);
+        Ty::Var(v)
+    }
+
+    pub fn unify(&mut self, a: Ty, b: Ty) -> Result<(), TypeError> {
+        let a = self.resolve(a);
+        let b = self.resolve(b);
+        match (a, b) {
+            (Ty::Var(i), t) | (t, Ty::Var(i)) => { self.subst[i as usize] = Some(t); Ok(()) }
+            (Ty::Int, Ty::Int) => Ok(()),
+            (Ty::Named(da), Ty::Named(db)) if da == db => Ok(()),
+            (a, b) => Err(TypeError::TypeMismatch { expected: a, found: b, span: ... }),
+        }
+    }
 }
 ```
 
-### Pattern 4: Pass Registration via `match` Dispatch (not a Registry)
+### Pattern 4: `CodegenCtx` as the Stateful Codegen Thread
 
-**What:** The orchestrator uses a `match` over `Item` variants to dispatch to specific passes. There is no dynamic pass registry, no trait objects, no plugin system. Adding a new pass means adding a new match arm and a new file.
+**What:** The codegen phase threads a `CodegenCtx` through all emission functions. It holds the `ModuleBuilder`, a `DefId → MetadataToken` map (so that references to already-emitted declarations resolve to their token), a per-function `LinearRegisterAllocator`, and a `LabelMap` for forward branch patching.
 
-**When to use:** When the set of passes is known at compile time (which it always is for a language-defined lowering). Dynamic registries add complexity with no benefit here.
+**When to use:** All codegen functions receive `&mut CodegenCtx`. The `ModuleBuilder` is never passed directly — all builder calls go through `CodegenCtx` methods that also update the token maps.
 
-**Trade-offs:** Less flexible than a dynamic registry but safer and simpler. The `match` is exhaustive, so forgetting to handle a new CST variant is a compile error.
+**Trade-offs:** Matches the pattern used by `LoweringContext` in the lowering phase. Centralizing state in a context struct prevents codegen functions from needing 6 parameters. The risk is that `CodegenCtx` grows too large; subdivide into `FnCodegenCtx` (per-function state: register allocator, label map) nested inside `ModuleCodegenCtx` (cross-function state: builder, token maps).
+
+**Example:**
+```rust
+// codegen/context.rs
+pub struct ModuleCodegenCtx {
+    pub builder: ModuleBuilder,
+    pub def_tokens: HashMap<DefId, MetadataToken>,  // resolved def → IL token
+    pub string_pool: HashMap<String, u32>,           // deduplicated string index
+}
+
+pub struct FnCodegenCtx<'m> {
+    pub module: &'m mut ModuleCodegenCtx,
+    pub regs: LinearRegisterAllocator,
+    pub labels: LabelMap,
+    pub instructions: Vec<Instruction>,
+}
+
+impl FnCodegenCtx<'_> {
+    pub fn alloc_reg(&mut self) -> u16 { self.regs.alloc() }
+    pub fn emit(&mut self, instr: Instruction) { self.instructions.push(instr); }
+    pub fn define_label(&mut self, name: &str) { self.labels.define(name, self.instructions.len()); }
+    pub fn finish_method(self, name: &str, sig: &[u8], flags: u16) -> MetadataToken {
+        let body = MethodBody { code: encode_instructions(&self.instructions), ... };
+        self.module.builder.add_method(name, sig, flags, self.regs.count(), body)
+    }
+}
+```
 
 ## Data Flow
 
-### Lowering Pass Flow
+### Full Pipeline Flow
 
 ```
-CST (Vec<Spanned<Item<'src>>>)          [from writ-parser::parse()]
-    │
-    ▼
-lower/mod.rs: lower()
-    │
-    ├─→ lower_item() matches on Item variant
-    │       │
-    │       ├─→ Item::Fn   → lower_fn() → lower types and exprs recursively
-    │       │       └─→ lower_type() [optional.rs]  ← T? / null
-    │       │       └─→ lower_expr() [fmt_string.rs] ← FormattableString
-    │       │       └─→ lower_expr() [operator.rs]   ← Binary ops
-    │       │       └─→ lower_expr() [concurrency.rs] ← spawn/join/cancel/defer
-    │       │
-    │       ├─→ Item::Dlg  → dialogue.rs:lower_dialogue()
-    │       │       └─→ Speaker resolution → Entity.getOrCreate<T>() calls
-    │       │       └─→ SpeakerLine/TextLine → say() calls
-    │       │       └─→ Choice → choice([...]) call
-    │       │       └─→ Transition → return call
-    │       │       └─→ CodeEscape → passthrough to lower_stmt()
-    │       │       └─→ localization.rs: decorate say() → say_localized()
-    │       │
-    │       └─→ Item::Entity → entity.rs:lower_entity()
-    │               └─→ Component fields → struct fields
-    │               └─→ ComponentAccess impls (one per component)
-    │               └─→ Lifecycle hook registrations
-    │
-    ├─→ LoweringContext threaded through all passes (errors, speaker stack, loc keys)
-    │
-    └─→ (Ast { items: Vec<AstItem> }, Vec<LoweringError>)
+Source text (.writ files)
+    |
+    v
+writ-parser::parse()
+    |
+    v
+Vec<Spanned<Item>>  (CST — preserves all syntax, has &str borrows)
+    |
+    v
+writ-compiler::lower()         [existing, unchanged]
+    |-- desugar T? → Option<T>
+    |-- lower dlg → fn
+    |-- lower entity → struct + impl + hooks
+    |-- lower operators → contract impls
+    |
+    v
+writ-compiler::ast::Ast { items: Vec<AstDecl> }   (owned, no lifetimes)
+    |
+    v
+writ-compiler::resolve::resolve()                  [NEW]
+    |-- pass 1: collect top-level def names → DefMap
+    |-- pass 2: bind all Ident/Path refs → DefId
+    |-- resolve using-imports → namespace visibility sets
+    |-- detect undefined names, privacy violations, ambiguities
+    |
+    v
+NameResolved IR + DefMap + Vec<ResolveError>
+    |
+    (if errors: report and stop; otherwise continue)
+    |
+    v
+writ-compiler::typecheck::typecheck()              [NEW]
+    |-- assign explicit types from signatures and field decls
+    |-- infer local variable types (unification)
+    |-- check operand types, return types, contract impls
+    |-- resolve operator overloads via contract dispatch
+    |
+    v
+Typed IR + Vec<TypeError>
+    |
+    (if errors: report and stop; otherwise continue)
+    |
+    v
+writ-compiler::codegen::codegen()                  [NEW]
+    |-- emit TypeDef rows for structs, enums, entities, components
+    |-- emit FieldDef rows for all fields
+    |-- emit MethodDef + bodies for all functions
+    |-- emit ImplDef rows for contract implementations
+    |-- encode TypeRef blobs for all types
+    |-- allocate registers (linear, SSA-style)
+    |-- patch forward branch labels
+    |-- call ModuleBuilder::build() → Module
+    |
+    v
+writ_module::Module
+    |
+    v
+writ-cli `compile` subcommand writes .writil binary
+    |
+    v
+writ-runtime Domain::load(module) → runs in VM
 ```
-
-### Span Preservation Flow
-
-```
-CST node carries SimpleSpan (byte offsets into source string)
-    │
-    ▼ ctx.map_span(cst_span)
-    │
-AST node carries AstSpan (same byte offsets, no re-computation)
-    │
-    ▼
-LoweringError references AstSpan → points back to original source
-    │
-    ▼
-Downstream type checker / diagnostics can display source lines
-```
-
-Spans are carried through as-is. The `LoweringContext` does not remap them — CST spans are byte offsets into the original source string and remain valid in the AST. No span arithmetic required.
 
 ### Key Data Flows
 
-1. **Optional lowering:** `TypeExpr::Optional(Box<TypeExpr>)` in CST → `AstType::Generic { name: "Option", args: [...] }` in AST. Happens inside `lower_type()`, called recursively from every position that lowers a type.
-2. **Formattable string lowering:** `Expr::FormattableString(Vec<FmtSegment>)` → chain of `AstExpr::BinOp(Concat, str_lit, call(".into<string>()"))`. Happens inside `lower_expr()`, called from expression positions.
-3. **Dialogue lowering:** `Item::Dlg(DlgDecl)` → `AstItem::Fn(AstFnDecl)`. The most structurally complex transformation: `DlgDecl.body: Vec<DlgLine>` → `Vec<AstStmt>`. The speaker stack in `LoweringContext` tracks the active `@speaker` across lines.
-4. **Entity lowering:** `Item::Entity(EntityDecl)` → `Vec<AstItem>` (one `AstItem::Struct` + N `AstItem::Impl` for each `use Component` clause). The `lower_entity` function is the only pass that expands one CST item into multiple AST items.
-5. **Concurrency pass-through:** `Expr::Spawn`, `Expr::Join`, `Expr::Cancel`, `Expr::Defer` → equivalent `AstExpr` primitives with no semantic transformation. These are first-class AST nodes; the runtime handles their semantics.
+1. **`DefId` as the cross-phase currency.** After name resolution, all `String` names are replaced by `DefId` indices into the `DefMap`. Type checking and codegen never do string-based lookup — they use `DefId` to retrieve type information and emit `MetadataToken` references.
 
-## Pass Ordering Strategy
+2. **`DefMap → MetadataToken` mapping in codegen.** Before emitting any method bodies, codegen does a first pass over all declarations to emit `TypeDef`, `FieldDef`, `MethodDef`, `ContractDef` rows (skeleton pass). This assigns `MetadataToken`s to every definition. Body emission then cross-references these tokens. This two-sub-pass structure within codegen mirrors the two-pass pattern of name resolution.
 
-The six substantive passes must be ordered by two constraints:
+3. **`Ty → TypeRef blob` encoding.** The `codegen/type_sig.rs` module converts the type checker's `Ty` enum into the binary TypeRef blob format required by `writ-module`. Primitive types become their `0x00`–`0x04` tags; named types emit `0x10` + `TypeDef` index; generic instantiations emit `0x11` + `TypeSpec` index; arrays emit `0x20` + element TypeRef. This is a pure function: `fn encode_ty(ty: &Ty, ctx: &mut ModuleCodegenCtx) -> Vec<u8>`.
 
-**Constraint 1 — Localization runs after dialogue.** `lower_localization` adds FNV-1a keys to `say()` calls produced by `lower_dialogue`. It must see `say()` AST nodes, not raw `DlgLine` CST nodes.
+4. **Error accumulation without halting.** Each phase follows the existing `LoweringContext` error accumulation pattern: errors are collected into a `Vec<PhaseError>` and the phase continues on best-effort. The phase boundary (resolve → typecheck → codegen) does halt if the preceding phase produced errors, since a downstream phase cannot meaningfully operate on an IR with unresolved or ill-typed nodes.
 
-**Constraint 2 — Type and expression lowering runs inside structural passes.** Optional (`T?`) and formattable string lowering are not standalone top-level passes — they are invoked from within `lower_fn`, `lower_dialogue`, and `lower_entity` as those passes encounter type positions and expression positions. This avoids a redundant full-tree traversal.
-
-```
-Recommended pass order:
-
-1. lower_fn        — Processes Fn items; internally calls lower_type, lower_expr
-   lower_expr calls:
-   ├─ lower_optional    (TypeExpr::Optional / Expr::Null → Option variants)
-   ├─ lower_fmt_string  (Expr::FormattableString → concat chain)
-   ├─ lower_operator    (Expr::Binary with overloadable op → method call)
-   └─ lower_concurrency (Expr::Spawn/Join/Cancel/Defer → AstExpr primitives)
-
-2. lower_dialogue   — Processes Dlg items; internally calls lower_expr (same sub-passes)
-   Then calls lower_localization as a sub-pass on the produced say() calls
-
-3. lower_entity     — Processes Entity items; internally calls lower_type for component fields
-
-4. lower_localization — Called from within lower_dialogue, NOT as a top-level pass
-   (this is a detail of implementation; conceptually it is a post-dialogue sub-pass)
-```
-
-Adding a new desugaring (e.g., formattable string format specifiers once they are spec-complete) means:
-1. Add a new file `lower/fmt_specifiers.rs`
-2. Call it from `lower_expr()` at the `Expr::FormattableString` match arm
-3. No other file changes required
-
-## Anti-Patterns
-
-### Anti-Pattern 1: Single-Pass Monolithic Lowering
-
-**What people do:** Write one giant `match` over all CST node types in a single function or file.
-**Why it's wrong:** Dialogue lowering alone has ~10 cases. Entity lowering generates multiple output items. Operator lowering requires knowing which operators are overloadable. Combining these in one function produces an unmaintainable 500+ line match block where all state is local.
-**Do this instead:** One file per logical desugaring. Shared state in `LoweringContext`. Orchestrator in `lower/mod.rs` dispatches at the top level only.
-
-### Anti-Pattern 2: Using the Visitor Pattern for CST→AST Lowering
-
-**What people do:** Implement a `Visitor` trait over CST nodes, mutating a mutable output builder inside the visitor. (This is how TypeScript's binder works for in-place annotation, but not for lowering.)
-**Why it's wrong:** When input and output types differ (CST vs. AST), visitor cannot return the new type from each `visit_*` method without awkward side-channel state. The fold pattern (function returns new AST node) is cleaner.
-**Do this instead:** Write `fn lower_expr(ctx: &mut LoweringContext, expr: Expr<'_>) -> AstExpr`. The return type makes the transformation contract explicit.
-
-### Anti-Pattern 3: Query-Based Architecture (Salsa) at This Stage
-
-**What people do:** Reach for incremental compilation infrastructure (Salsa, rustc's query system) for all compiler phases.
-**Why it's wrong:** Query systems pay for themselves when incremental recompilation matters — rustc uses queries because users recompile the same codebase repeatedly. A game scripting compiler's lowering pipeline runs once per script load. The overhead of a query system (memoization, dependency tracking, cache invalidation) is not justified, and it would make the code significantly harder to understand and test.
-**Do this instead:** Sequential pass pipeline returning `(Ast, Vec<LoweringError>)`. If incremental compilation becomes needed later, the clean pass separation makes introducing queries straightforward.
-
-### Anti-Pattern 4: Discarding Spans During Lowering
-
-**What people do:** Build AST nodes without threading span information through from the CST.
-**Why it's wrong:** Every lowering error (unknown speaker, invalid transition target) must point back to original source. If spans are dropped, errors say "somewhere in this file" instead of "line 42, column 7." `rustc`, Swift, and TypeScript all preserve spans through every IR stage — this is non-negotiable for a usable compiler.
-**Do this instead:** Every `AstExpr`, `AstStmt`, `AstDecl`, and `AstType` carries `span: SimpleSpan`. `lower_expr` always propagates the CST node's span to the produced AST node, even when the shape changes dramatically (e.g., a `DlgLine::SpeakerLine` produces an `AstExpr::Call` whose span points to the original speaker line).
+5. **`using` imports resolved before body passes.** The namespace resolution pass (part of resolve pass 1) builds a `NamespaceMap` that flattens all `using` declarations into a set of visible `pub` `DefId`s per scope. Body resolution (pass 2) queries this map for unqualified names, which is O(1) per lookup after the map is built.
 
 ## Integration Points
 
-### Internal Boundaries
+### Existing Crate Changes
+
+| Crate | Change | Rationale |
+|-------|--------|-----------|
+| `writ-compiler/Cargo.toml` | Add `writ-module = { path = "../writ-module" }` dependency | Codegen phase uses `ModuleBuilder` |
+| `writ-compiler/src/lib.rs` | Add `pub mod resolve`, `pub mod typecheck`, `pub mod codegen`; add `pub fn compile(ast: Ast) -> Result<Module, CompileErrors>` | New phases are new pub modules; `compile()` is the entry point |
+| `writ-cli/Cargo.toml` | Add `writ-compiler = { path = "../writ-compiler" }` dependency | CLI needs to call `writ-compiler::compile()` |
+| `writ-cli/src/main.rs` | Add `compile` subcommand | Drives source → parse → lower → compile pipeline |
+| `writ-parser` | None | No changes needed |
+| `writ-module` | None | Consumed as-is |
+| `writ-runtime` | None | Out of scope for this milestone |
+| `writ-assembler` | None | Out of scope |
+
+### New Module Boundaries
 
 | Boundary | Communication | Notes |
 |----------|---------------|-------|
-| `writ-parser` → `writ-compiler` | `writ-parser::parse()` returns `(Option<Vec<Spanned<Item<'src>>>>, Vec<RichError>)`. The compiler calls `parse()`, handles parse errors, then calls `lower()`. | CST types cross the boundary; the compiler crate takes a direct dependency on `writ-parser`. |
-| `lower/mod.rs` → each pass | Each pass is a free function in its own module; `lower/mod.rs` imports and calls them. No traits, no dynamic dispatch. | Passes do not depend on each other — only on `LoweringContext` and the CST/AST types. |
-| `lower/*` passes → `ast/` | Each pass returns `Ast*` types imported from `ast/`. Passes import from `ast` but do not import from other passes. | This creates a clear dependency graph: passes depend on `ast`, not on each other. |
-| `writ-compiler` → downstream | Downstream phases (type checker, codegen) depend on `ast/` types and receive `(Ast, Vec<LoweringError>)`. | The AST module is the sole interface contract. Downstream never sees CST types. |
+| `lower` → `resolve` | `lower` produces `Ast`; `resolve` consumes it | `Ast` is already the boundary type; no change |
+| `resolve` → `typecheck` | `resolve` produces `NameResolved + DefMap`; `typecheck` consumes both | `NameResolved` and `DefMap` are new types defined in `resolve/` |
+| `typecheck` → `codegen` | `typecheck` produces `Typed + DefMap`; `codegen` consumes both | `Typed` is a new type defined in `typecheck/`; `DefMap` passes through unchanged |
+| `codegen` → `writ-module` | `codegen` calls `writ_module::ModuleBuilder` methods; returns `writ_module::Module` | One-way: codegen depends on `writ-module`, not vice versa |
 
-### External Services
+### Build Order
 
-None. The lowering pipeline is pure computation (no I/O, no network, no file system during lowering). The only external dependency is `writ-parser` (CST types) and the Rust standard library.
-
-## Build Order (Component Dependencies)
+The dependency graph within the milestone forces this implementation order:
 
 ```
-1. ast/              — defines AST types, no dependencies on other compiler modules
-2. lower/context.rs  — defines LoweringContext, depends on ast/ error types
-3. lower/error.rs    — defines LoweringError, depends on ast/ span types
-4. util/fnv.rs       — FNV-1a hash, pure computation, no dependencies
-5. lower/optional.rs — depends on ast/, lower/context.rs
-6. lower/fmt_string.rs — depends on ast/, lower/context.rs
-7. lower/operator.rs — depends on ast/, lower/context.rs
-8. lower/concurrency.rs — depends on ast/, lower/context.rs
-9. lower/dialogue.rs — depends on ast/, lower/context.rs, lower/localization.rs
-10. lower/localization.rs — depends on ast/, lower/context.rs, util/fnv.rs
-11. lower/entity.rs  — depends on ast/, lower/context.rs
-12. lower/mod.rs     — depends on all passes above; is the public entry point
-13. lib.rs           — re-exports lower/mod.rs public API
+Phase 1 — resolve/ (no new crate dependency)
+  resolve/def.rs         (DefId, DefKind, DefMap — no deps other than ast/)
+  resolve/scope.rs       (Rib, SymbolTable — uses def.rs)
+  resolve/namespace.rs   (NamespaceMap — uses def.rs + ast/ namespaces)
+  resolve/ir.rs          (NameResolved IR — uses def.rs + ast/ for structure)
+  resolve/error.rs       (ResolveError — thiserror, SimpleSpan)
+  resolve/mod.rs         (resolve() — orchestrates passes using all above)
+
+Phase 2 — typecheck/ (depends on resolve/)
+  typecheck/ty.rs        (Ty enum — uses DefId from resolve/def.rs)
+  typecheck/infer.rs     (InferCtx, union-find — uses ty.rs)
+  typecheck/ir.rs        (Typed IR — adds Ty to NameResolved nodes)
+  typecheck/env.rs       (TypeEnv — local variable → Ty map)
+  typecheck/error.rs     (TypeError — thiserror, Ty, SimpleSpan)
+  typecheck/contract.rs  (contract impl check — uses DefMap + Ty)
+  typecheck/coerce.rs    (implicit coercions — uses InferCtx)
+  typecheck/check.rs     (check_expr, check_stmt — uses all above)
+  typecheck/mod.rs       (typecheck() — orchestrates using all above)
+
+Phase 3 — codegen/ (depends on typecheck/ and writ-module)
+  codegen/register.rs    (LinearRegisterAllocator — no external deps)
+  codegen/label.rs       (LabelMap — no external deps)
+  codegen/type_sig.rs    (Ty → TypeRef blob — uses ty.rs + writ-module table ids)
+  codegen/error.rs       (CodegenError — thiserror)
+  codegen/context.rs     (ModuleCodegenCtx, FnCodegenCtx — uses ModuleBuilder)
+  codegen/expr.rs        (emit_expr — uses context + type_sig + register)
+  codegen/stmt.rs        (emit_stmt — uses expr + context)
+  codegen/decl.rs        (emit_fn, emit_struct, emit_enum, emit_entity — uses stmt + context)
+  codegen/mod.rs         (codegen() — skeleton pass then body pass)
+
+Phase 4 — wire up writ-cli
+  writ-cli/src/main.rs   (compile subcommand: parse → lower → resolve → typecheck → codegen → write)
 ```
 
-This order maps directly to development phases: AST types first (they are the interface contract), then context/error infrastructure, then simple stateless passes (optional, fmt_string), then the complex stateful passes (dialogue, entity), then the orchestrator.
+**Rationale for keeping in one crate:** The resolver needs to import `ast::AstDecl`, `ast::AstExpr`, etc. The type checker needs to import `resolve::DefId` and `resolve::NameResolved`. The codegen needs to import `typecheck::Typed` and `typecheck::Ty`. These are all natural intra-crate module imports. Splitting into three crates would make `writ-compiler::ast` a public dependency of two downstream crates, which means `ast` itself would need to live in its own crate — creating at minimum a `writ-ast`, `writ-resolver`, `writ-typeck`, `writ-codegen` split that adds complexity with no benefit at this project scale.
 
-## Comparison: Relevant Patterns from Real Compilers
+## Anti-Patterns
 
-| Compiler | Pattern Used | Applicable Lesson for Writ |
-|----------|--------------|---------------------------|
-| rustc `rustc_ast_lowering` | `LoweringContext` struct threaded through fold functions; each desugaring is a method on `LoweringContext` | Use the same pattern: `LoweringContext` as state carrier, fold functions returning owned AST nodes |
-| rustc HIR `intravisit` | Walk functions have exhaustive `match` so adding a field to a CST struct causes a compile error | Use exhaustive `match` in pass functions; adding a new `Item` variant will force all passes to handle it |
-| Swift SILGen | Mandatory passes (correctness) run before optimization passes; they are distinct in code | Separate correctness-preserving lowering (desugar) from optimization (not applicable yet) |
-| Kotlin K2 FIR | Separate desugaring stage before type checking; one unified IR after desugaring | Keep lowering completely separate from type checking; lowering produces AST, type checker consumes AST |
-| TypeScript transformer | Composable visitor passes using `visitNode` / `visitEachChild`; each transform is a separate file | Use separate files per transform; orchestrator composes them — same structure, fold instead of visitor |
+### Anti-Pattern 1: Mutating the Ast In-Place Across Phases
+
+**What people do:** Instead of defining `NameResolved` and `Typed` as separate IR types, annotate `AstExpr` nodes with `Option<DefId>` and `Option<Ty>` fields and fill them in during the respective passes.
+
+**Why it's wrong:** The AST nodes' `Option<DefId>` fields are `None` during lowering, making it impossible to distinguish "not yet resolved" from "genuinely missing." After resolution, `None` could mean either "optional in the language" or "resolution failed." This ambiguity leaks into type checking. It also breaks the error-accumulation model: if resolution stops partway, partially-resolved nodes have `Some` and `None` fields mixed, which confuses downstream passes.
+
+**Do this instead:** Define `NameResolved` and `Typed` as distinct IR types where every identifier slot is a `DefId` (not `Option<DefId>`) and every expression carries a `Ty`. Conversion is explicit and testable in isolation.
+
+### Anti-Pattern 2: Calling `ModuleBuilder` Directly from `typecheck/`
+
+**What people do:** Start emitting IL during type checking to avoid a separate codegen pass. "Why not emit instructions as soon as we know the type of each expression?"
+
+**Why it's wrong:** Type checking is a constraint-solving process. A type variable introduced at expression X may only be resolved after seeing expression Y, which is downstream. If codegen is interleaved, X's instructions must be emitted before X's type is known — requiring placeholder registers or backpatching at the type level, not just the label level. The separate `Typed` IR guarantees all types are known before any instruction is emitted.
+
+**Do this instead:** Type checking produces a fully-annotated `Typed` IR where every expression node carries its resolved `Ty`. Codegen then operates on this IR without needing to perform any type inference.
+
+### Anti-Pattern 3: Namespace Resolution as a String Table
+
+**What people do:** Build a `HashMap<String, DefId>` at the global level and resolve all names by direct string lookup.
+
+**Why it's wrong:** Writ has block namespaces, `using`-scoped imports, file-local visibility, and shadow bindings in local scopes. A flat global map cannot represent any of these. A name `Guard` resolves to different `DefId`s in different scopes depending on `using` declarations and local bindings.
+
+**Do this instead:** The `SymbolTable` rib stack handles local scoping; the `NamespaceMap` handles `pub` cross-namespace visibility; the two are queried in order (rib stack first, then namespace map for unqualified names, then error on not found). The `DefMap` is the flat `DefId → declaration info` table, not a name lookup table.
+
+### Anti-Pattern 4: One Register Per Writ Variable
+
+**What people do:** Assign one register to each `let` binding, allocating a fixed register at the `Let` statement point and reusing it throughout the function.
+
+**Why it's wrong:** The IL spec's registers are abstract — there is no spilling, no register pressure, no calling convention register constraints. SSA-style "one fresh register per value" is simpler and correct. It produces more registers (all within the `u16` range; 65535 max), but the runtime allocates storage from type metadata regardless. The assembler already uses this model implicitly (each `.reg` directive is a flat list).
+
+**Do this instead:** `LinearRegisterAllocator` simply increments a counter on each `alloc()` call. A `let x = expr` allocates a register for `expr`, then that register IS `x`'s register for the rest of the function. No reuse tracking needed for the reference implementation.
+
+### Anti-Pattern 5: Adding `writ-module` as a Dependency of `writ-parser` or `writ-runtime` Dependency on `writ-compiler`
+
+**What people do:** "The CLI needs to parse and compile, so let's put everything in `writ-cli`'s deps." This leads to `writ-cli` → `writ-compiler` → `writ-module` → `writ-runtime` forming a chain where runtime is pulled into the compiler.
+
+**Why it's wrong:** `writ-compiler` must never depend on `writ-runtime`. The compiler backend emits IL; it does not execute it. If `writ-runtime` is in the compiler's dependency tree, a change to the VM forces recompilation of the compiler even when the language semantics haven't changed.
+
+**Do this instead:** `writ-compiler` depends on `writ-module` only (the pure data layer). `writ-runtime` depends on `writ-module` only. `writ-cli` depends on all three: parser, compiler, module, runtime, assembler. The diamond dependency on `writ-module` is fine in Cargo — it is a pure data crate with no global state.
 
 ## Scalability Considerations
 
-This is a scripting language compiler, not a production Rust-scale compiler. Scalability concerns are ordered accordingly:
-
-| Concern | Current Scale (game scripts) | If language grows significantly |
-|---------|------------------------------|--------------------------------|
-| Compile time | Not a concern; scripts are small | Add parallelism per top-level item (Rayon); pass structure already supports it |
-| New desugarings | Add one file, one match arm | No structural change required; pipeline is designed for extension |
-| TBD spec features (tuples, destructuring) | Defer until spec is resolved | Add new pass files; existing passes unchanged |
-| Error quality | Span preservation guarantees this | No change needed; spans flow through already |
+| Concern | Reference Impl (v3.0) | If it becomes a bottleneck |
+|---------|----------------------|---------------------------|
+| Name resolution performance | Two-pass traversal, O(n) in declaration count | Add fingerprinting to skip unchanged files (incremental) |
+| Type inference scope | Local, rank-1, no implicit polymorphism — deliberately limited | Full HM polymorphism if the spec adds it later |
+| Register count | Linear allocation, no reuse — may produce many registers per function | Add liveness-based register coalescing in a future pass |
+| Codegen correctness | No optimization, direct emission | Add a peephole optimizer phase between `Typed` and `Module` |
+| Multi-file compilation | Not scoped for v3.0; single-file or pre-merged AST assumed | Add a module driver that parses all .writ files, merges DefMaps across files |
 
 ## Sources
 
-- [Rust Compiler Development Guide — Overview](https://rustc-dev-guide.rust-lang.org/overview.html) — MEDIUM confidence (official, current)
-- [Rust Compiler Development Guide — HIR](https://rustc-dev-guide.rust-lang.org/hir.html) — MEDIUM confidence (official, current)
-- [rustc_ast_lowering crate docs — LoweringContext](https://doc.rust-lang.org/stable/nightly-rustc/rustc_ast_lowering/struct.LoweringContext.html) — HIGH confidence (official rustc docs)
-- [Swift SIL documentation](https://github.com/swiftlang/swift/blob/main/docs/SIL/SIL.md) — HIGH confidence (official Swift source)
-- [Swift Compiler Architecture](https://www.swift.org/documentation/swift-compiler/) — HIGH confidence (official Swift docs)
-- [Kotlin K2 Compiler Migration Guide](https://kotlinlang.org/docs/k2-compiler-migration-guide.html) — HIGH confidence (official JetBrains docs)
-- [Crash Course on the Kotlin Compiler — K1/K2](https://medium.com/google-developer-experts/crash-course-on-the-kotlin-compiler-k1-k2-frontends-backends-fe2238790bd8) — MEDIUM confidence (Google Developer Expert, technical depth)
-- [TypeScript Deep Dive — Binder](https://basarat.gitbook.io/typescript/overview/binder) — MEDIUM confidence (community reference, widely cited)
-- [Post-Modern Compiler Design Vol 1 — Lowering](https://www.cs.purdue.edu/homes/rompf/pmca/vol1/lowering.html) — MEDIUM confidence (Purdue academic, conceptual)
-- [SWC visitor pattern discussion](https://github.com/swc-project/swc/discussions/3044) — LOW confidence (community discussion, illustrative)
-- [Rust Design Patterns — Visitor](https://rust-unofficial.github.io/patterns/patterns/behavioural/visitor.html) — HIGH confidence (official Rust community patterns book)
-- [MIR RFC 1211](https://rust-lang.github.io/rfcs/1211-mir.html) — HIGH confidence (official Rust RFC)
+- Writ Language Specification §5 (type system), §21 (scoping rules), §23 (modules/namespaces), §28 (lowering reference) — HIGH confidence (authoritative)
+- Writ IL Specification §2.15 (IL type system: TypeRef blob encoding) — HIGH confidence (authoritative)
+- Existing `writ-compiler` source (`ast/`, `lower/`, `lower/context.rs`) — HIGH confidence (codebase)
+- Existing `writ-module` source (`builder.rs`, `tables.rs`, `instruction.rs`) — HIGH confidence (codebase)
+- rustc-dev-guide: Overview, HIR, Name Resolution, Type Inference — MEDIUM confidence (pattern reference; rustc is far larger but the rib-stack and HM patterns are standard)
+- rustc-dev-guide: THIR (Typed HIR) — MEDIUM confidence (confirms the "produce fully-typed IR before codegen" pattern)
+- Standard compiler literature: Hindley-Milner two-phase (constraint gen + unification) — HIGH confidence (textbook)
 
 ---
-*Architecture research for: Writ compiler CST-to-AST lowering pipeline*
-*Researched: 2026-02-26*
+*Architecture research for: Writ v3.0 — name resolution, type checking, IL codegen*
+*Researched: 2026-03-02*
