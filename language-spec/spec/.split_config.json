@@ -222,12 +222,6 @@
       ]
     },
     {
-      "filename": "37_2_8_serialization_critical_sections_removed.md",
-      "prepended": [
-        "# Writ IL Specification"
-      ]
-    },
-    {
       "filename": "38_2_9_memory_model.md",
       "prepended": [
         "# Writ IL Specification"

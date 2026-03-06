@@ -1,4 +1,4 @@
-﻿fn main() {
+fn main() {
     let opt_val_keyword: bool? = null;
     let opt_val_type: Option<bool> = Option::None;
     let opt_implicit = Option::Some(true);

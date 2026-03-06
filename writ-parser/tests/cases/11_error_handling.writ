@@ -60,7 +60,7 @@ pub fn resultHandling() {
 
     match result {
         Result::Ok(data) => { processData(data); }
-        Result::Err(err) => { log(err.message()); }
+        Result::Err(err) => { log::info(err.message()); }
     }
 }
 
@@ -69,7 +69,7 @@ pub fn combinedPatterns(entity: Entity) {
     // ? on component access returning Option
     if let Option::Some(hp) = entity[Health] {
         if hp.isDead() {
-            log("Entity is dead");
+            log::info("Entity is dead");
         }
     }
 

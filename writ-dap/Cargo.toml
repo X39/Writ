@@ -1,0 +1,17 @@
+[package]
+name = "writ-dap"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "writ-dap"
+path = "src/main.rs"
+
+[dependencies]
+dap = "0.4.1-alpha1"
+serde_json = "1"
+writ-compiler = { path = "../writ-compiler" }
+writ-runtime = { path = "../writ-runtime" }
+writ-module = { path = "../writ-module" }
+writ-diagnostics = { path = "../writ-diagnostics" }
+writ-parser = { path = "../writ-parser" }

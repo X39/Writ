@@ -16,6 +16,12 @@ pub struct UnifyCtx {
     table: InPlaceUnificationTable<InferVar>,
 }
 
+impl Default for UnifyCtx {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl UnifyCtx {
     pub fn new() -> Self {
         Self {
@@ -99,6 +105,7 @@ impl UnifyCtx {
 
             // Same named type
             (TyKind::Struct(a_id), TyKind::Struct(b_id)) if a_id == b_id => Ok(()),
+            (TyKind::Class(a_id), TyKind::Class(b_id)) if a_id == b_id => Ok(()),
             (TyKind::Entity(a_id), TyKind::Entity(b_id)) if a_id == b_id => Ok(()),
             (TyKind::Enum(a_id), TyKind::Enum(b_id)) if a_id == b_id => Ok(()),
 

@@ -1,0 +1,23 @@
+.module "main" "0.1.0" {
+    .extern "writ-runtime" "1.0.0"
+    .method "main" () -> void mut {
+        .locals {
+            r0: bool "a" [4, 32)
+            r1: bool "b" [8, 32)
+            r2: bool "c" [16, 32)
+            r3: bool "d" [24, 32)
+            r4: bool "e" [30, 32)
+        }
+        .reg r0 bool
+        .reg r1 bool
+        .reg r2 bool
+        .reg r3 bool
+        .reg r4 bool
+        LOAD_TRUE r0  ; line:1 col:18
+        LOAD_FALSE r1  ; line:1 col:43
+        BIT_AND r2, r0, r1  ; line:1 col:69
+        BIT_OR r3, r0, r1  ; line:1 col:96
+        NOT r4, r0  ; line:1 col:123
+        RET_VOID
+    }
+}

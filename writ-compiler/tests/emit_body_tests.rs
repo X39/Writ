@@ -5,7 +5,9 @@
 //! Task 3 (Plan 02) tests: Call dispatch and argument packing
 //! Task 4 (Plan 02) tests: Object model — struct/entity construction, GET_FIELD, SET_FIELD
 
-use writ_compiler::check::ty::{TyInterner, TyKind};
+use rustc_hash::FxHashMap;
+use std::sync::LazyLock;
+use writ_compiler::check::ty::{Ty, TyInterner, TyKind};
 use writ_compiler::check::ir::{
     TypedAst, TypedDecl, TypedExpr, TypedStmt, TypedLiteral,
 };
@@ -22,6 +24,10 @@ use writ_compiler::ast::expr::BinaryOp;
 use writ_module::instruction::Instruction;
 use chumsky::span::{SimpleSpan, Span as _};
 use writ_diagnostics::FileId;
+
+/// Static empty struct_field_types map for tests that don't exercise struct equality.
+static EMPTY_STRUCT_FIELD_TYPES: LazyLock<FxHashMap<DefId, Vec<(String, Ty)>>> =
+    LazyLock::new(FxHashMap::default);
 
 fn dummy_span() -> SimpleSpan {
     SimpleSpan::new((), 0..0)
@@ -149,8 +155,10 @@ fn make_clean_ast() -> TypedAst {
                 stmts: vec![],
                 tail: None,
             },
+            param_name_spans: vec![],
         }],
         def_map,
+        struct_field_types: FxHashMap::default(),
     }
 }
 
@@ -165,8 +173,10 @@ fn make_ast_with_error_expr() -> TypedAst {
                 ty: ty_error,
                 span: dummy_span(),
             },
+            param_name_spans: vec![],
         }],
         def_map,
+        struct_field_types: FxHashMap::default(),
     }
 }
 
@@ -183,8 +193,10 @@ fn make_ast_with_error_stmt() -> TypedAst {
                 stmts: vec![TypedStmt::Error { span: dummy_span() }],
                 tail: None,
             },
+            param_name_spans: vec![],
         }],
         def_map,
+        struct_field_types: FxHashMap::default(),
     }
 }
 
@@ -209,7 +221,9 @@ fn test_has_error_nodes_with_error_stmt() {
 // ─── Task 2: Core instruction emission ───────────────────────────────────────
 
 fn make_emitter<'a>(builder: &'a ModuleBuilder, interner: &'a TyInterner) -> BodyEmitter<'a> {
-    BodyEmitter::new(builder, interner)
+    static EMPTY_MAP: std::sync::OnceLock<FxHashMap<writ_compiler::resolve::def_map::DefId, Vec<(String, writ_compiler::check::ty::Ty)>>> = std::sync::OnceLock::new();
+    let map = EMPTY_MAP.get_or_init(FxHashMap::default);
+    BodyEmitter::new(builder, interner, map)
 }
 
 #[test]
@@ -437,6 +451,8 @@ fn test_emit_stmt_let() {
             value: TypedLiteral::Int(99),
         },
         span: dummy_span(),
+        type_ann_span: None,
+        type_ann_def_id: None,
     };
     emit_stmt(&mut emitter, &stmt);
 
@@ -2067,6 +2083,216 @@ fn test_tail_call_for_dialogue_return() {
 use writ_compiler::emit::body::emit_all_bodies;
 use writ_compiler::emit::body::closure::LambdaInfo;
 
+// ─── Plan 52-03: Per-function error skip in emit_all_bodies ──────────────────
+
+/// Helper: build a two-function TypedAst where fn_a has an Error body and fn_b has
+/// a valid void block body. Returns (ast, interner, fn_a_id, fn_b_id).
+fn make_two_fn_ast_error_first() -> (TypedAst, TyInterner, DefId, DefId) {
+    let mut interner = make_interner();
+    let ty_error = interner.error();
+    let ty_void = interner.void();
+
+    let mut def_map = DefMap::new();
+    let fn_a_id = def_map.arena.alloc(DefEntry {
+        id: None,
+        kind: DefKind::Fn,
+        vis: DefVis::Pub,
+        file_id: FileId(0),
+        namespace: String::new(),
+        name: "fn_a".to_string(),
+        name_span: dummy_span(),
+        generics: vec![],
+        span: dummy_span(),
+    });
+    let fn_b_id = def_map.arena.alloc(DefEntry {
+        id: None,
+        kind: DefKind::Fn,
+        vis: DefVis::Pub,
+        file_id: FileId(0),
+        namespace: String::new(),
+        name: "fn_b".to_string(),
+        name_span: dummy_span(),
+        generics: vec![],
+        span: dummy_span(),
+    });
+    let ast = TypedAst {
+        decls: vec![
+            TypedDecl::Fn {
+                def_id: fn_a_id,
+                body: TypedExpr::Error { ty: ty_error, span: dummy_span() },
+                param_name_spans: vec![],
+            },
+            TypedDecl::Fn {
+                def_id: fn_b_id,
+                body: TypedExpr::Block {
+                    ty: ty_void,
+                    span: dummy_span(),
+                    stmts: vec![],
+                    tail: None,
+                },
+                param_name_spans: vec![],
+            },
+        ],
+        def_map,
+        struct_field_types: FxHashMap::default(),
+    };
+    (ast, interner, fn_a_id, fn_b_id)
+}
+
+/// Helper: build a two-function TypedAst where both functions have valid void bodies.
+fn make_two_fn_ast_both_valid() -> (TypedAst, TyInterner) {
+    let mut interner = make_interner();
+    let ty_void = interner.void();
+
+    let mut def_map = DefMap::new();
+    let fn_a_id = def_map.arena.alloc(DefEntry {
+        id: None,
+        kind: DefKind::Fn,
+        vis: DefVis::Pub,
+        file_id: FileId(0),
+        namespace: String::new(),
+        name: "fn_a".to_string(),
+        name_span: dummy_span(),
+        generics: vec![],
+        span: dummy_span(),
+    });
+    let fn_b_id = def_map.arena.alloc(DefEntry {
+        id: None,
+        kind: DefKind::Fn,
+        vis: DefVis::Pub,
+        file_id: FileId(0),
+        namespace: String::new(),
+        name: "fn_b".to_string(),
+        name_span: dummy_span(),
+        generics: vec![],
+        span: dummy_span(),
+    });
+    let ast = TypedAst {
+        decls: vec![
+            TypedDecl::Fn {
+                def_id: fn_a_id,
+                body: TypedExpr::Block {
+                    ty: ty_void,
+                    span: dummy_span(),
+                    stmts: vec![],
+                    tail: None,
+                },
+                param_name_spans: vec![],
+            },
+            TypedDecl::Fn {
+                def_id: fn_b_id,
+                body: TypedExpr::Block {
+                    ty: ty_void,
+                    span: dummy_span(),
+                    stmts: vec![],
+                    tail: None,
+                },
+                param_name_spans: vec![],
+            },
+        ],
+        def_map,
+        struct_field_types: FxHashMap::default(),
+    };
+    (ast, interner)
+}
+
+/// Helper: build a two-function TypedAst where both functions have Error bodies.
+fn make_two_fn_ast_both_error() -> (TypedAst, TyInterner) {
+    let mut interner = make_interner();
+    let ty_error = interner.error();
+
+    let mut def_map = DefMap::new();
+    let fn_a_id = def_map.arena.alloc(DefEntry {
+        id: None,
+        kind: DefKind::Fn,
+        vis: DefVis::Pub,
+        file_id: FileId(0),
+        namespace: String::new(),
+        name: "fn_a".to_string(),
+        name_span: dummy_span(),
+        generics: vec![],
+        span: dummy_span(),
+    });
+    let fn_b_id = def_map.arena.alloc(DefEntry {
+        id: None,
+        kind: DefKind::Fn,
+        vis: DefVis::Pub,
+        file_id: FileId(0),
+        namespace: String::new(),
+        name: "fn_b".to_string(),
+        name_span: dummy_span(),
+        generics: vec![],
+        span: dummy_span(),
+    });
+    let ast = TypedAst {
+        decls: vec![
+            TypedDecl::Fn {
+                def_id: fn_a_id,
+                body: TypedExpr::Error { ty: ty_error, span: dummy_span() },
+                param_name_spans: vec![],
+            },
+            TypedDecl::Fn {
+                def_id: fn_b_id,
+                body: TypedExpr::Error { ty: ty_error, span: dummy_span() },
+                param_name_spans: vec![],
+            },
+        ],
+        def_map,
+        struct_field_types: FxHashMap::default(),
+    };
+    (ast, interner)
+}
+
+/// Test 1: One broken function + one valid function — only the valid body is emitted.
+#[test]
+fn test_emit_all_bodies_skips_error_fn_emits_valid_fn() {
+    let (ast, interner, _fn_a_id, fn_b_id) = make_two_fn_ast_error_first();
+    let builder = ModuleBuilder::new();
+    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default());
+
+    // Only fn_b should produce a body
+    assert_eq!(bodies.len(), 1, "expected 1 body for fn_b, got {}", bodies.len());
+    assert_eq!(
+        bodies[0].method_def_id,
+        Some(fn_b_id),
+        "the emitted body should belong to fn_b"
+    );
+
+    // Exactly one diagnostic for the skipped function
+    assert_eq!(diags.len(), 1, "expected 1 diagnostic for the skipped fn_a");
+    assert_eq!(
+        diags[0].code,
+        "E9001",
+        "diagnostic code should be E9001, got {:?}",
+        diags[0].code
+    );
+}
+
+/// Test 2: Both functions valid — both bodies are emitted, no diagnostics.
+#[test]
+fn test_emit_all_bodies_both_valid_emits_both() {
+    let (ast, interner) = make_two_fn_ast_both_valid();
+    let builder = ModuleBuilder::new();
+    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default());
+
+    assert_eq!(bodies.len(), 2, "expected 2 bodies for valid functions, got {}", bodies.len());
+    assert!(diags.is_empty(), "expected no diagnostics for valid functions, got {:?}", diags);
+}
+
+/// Test 3: Both functions have errors — no bodies emitted, two E9001 diagnostics.
+#[test]
+fn test_emit_all_bodies_all_error_fns_skipped() {
+    let (ast, interner) = make_two_fn_ast_both_error();
+    let builder = ModuleBuilder::new();
+    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default());
+
+    assert_eq!(bodies.len(), 0, "expected 0 bodies when all functions have errors");
+    assert_eq!(diags.len(), 2, "expected 2 diagnostics (one per skipped function)");
+    for d in &diags {
+        assert_eq!(d.code, "E9001", "all diagnostics should use code E9001");
+    }
+}
+
 #[test]
 fn test_switch_offsets_are_nonzero_for_enum_match() {
     // Enum match with 2 variant arms: GET_TAG + SWITCH with non-zero offsets.
@@ -2188,10 +2414,11 @@ fn test_const_decl_foldable_emits_load_int() {
     let ast = TypedAst {
         decls: vec![TypedDecl::Const { def_id, value }],
         def_map,
+        struct_field_types: FxHashMap::default(),
     };
 
     let builder = ModuleBuilder::new();
-    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &[]);
+    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default());
     assert!(diags.is_empty(), "Expected no diagnostics, got {:?}", diags);
     assert_eq!(bodies.len(), 1, "Expected 1 emitted body for the const decl");
 
@@ -2219,10 +2446,11 @@ fn test_const_decl_non_foldable_emits_instructions() {
     let ast = TypedAst {
         decls: vec![TypedDecl::Const { def_id, value }],
         def_map,
+        struct_field_types: FxHashMap::default(),
     };
 
     let builder = ModuleBuilder::new();
-    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &[]);
+    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default());
     assert!(diags.is_empty(), "Expected no diagnostics");
     // Body is emitted (non-foldable path still produces a body)
     assert_eq!(bodies.len(), 1, "Expected 1 emitted body for non-foldable const");
@@ -2260,8 +2488,10 @@ fn test_lambda_body_emitted_as_separate_body_entry() {
         decls: vec![TypedDecl::Fn {
             def_id: fn_def_id,
             body: lambda_expr,
+            param_name_spans: vec![],
         }],
         def_map,
+        struct_field_types: FxHashMap::default(),
     };
 
     let mut builder = ModuleBuilder::new();
@@ -2270,7 +2500,7 @@ fn test_lambda_body_emitted_as_separate_body_entry() {
 
     assert_eq!(lambda_infos.len(), 1, "Expected 1 lambda info");
 
-    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &lambda_infos);
+    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &lambda_infos, &FxHashMap::default());
     assert!(diags.is_empty(), "Expected no diagnostics, got {:?}", diags);
     assert_eq!(bodies.len(), 2, "Expected 2 bodies: fn body + lambda body, got {}", bodies.len());
 
@@ -2293,12 +2523,14 @@ fn test_string_literal_interning_via_emit_bodies() {
                 span: dummy_span(),
                 value: TypedLiteral::String("hello".to_string()),
             },
+            param_name_spans: vec![],
         }],
         def_map,
+        struct_field_types: FxHashMap::default(),
     };
 
     // emit_bodies does the full pipeline including string interning fixup
-    let result = emit_bodies(&ast, &interner, &[]);
+    let result = emit_bodies(&ast, &interner, &[], true, &[]);
     assert!(result.is_ok(), "emit_bodies should succeed, got {:?}", result.err());
     // Just check we get bytes back (string interning fixup produced a valid module)
     let bytes = result.unwrap();
@@ -2320,12 +2552,14 @@ fn test_string_literal_pending_strings_populated() {
                 span: dummy_span(),
                 value: TypedLiteral::String("world".to_string()),
             },
+            param_name_spans: vec![],
         }],
         def_map,
+        struct_field_types: FxHashMap::default(),
     };
 
     let builder = ModuleBuilder::new();
-    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &[]);
+    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default());
     assert!(diags.is_empty(), "Expected no diagnostics");
     assert_eq!(bodies.len(), 1, "Expected 1 body");
 
@@ -2361,6 +2595,8 @@ fn test_two_string_literals_produce_different_pending_entries() {
                             value: TypedLiteral::String("foo".to_string()),
                         },
                         span: dummy_span(),
+                        type_ann_span: None,
+                        type_ann_def_id: None,
                     },
                     TypedStmt::Let {
                         name: "b".to_string(),
@@ -2373,6 +2609,8 @@ fn test_two_string_literals_produce_different_pending_entries() {
                             value: TypedLiteral::String("bar".to_string()),
                         },
                         span: dummy_span(),
+                        type_ann_span: None,
+                        type_ann_def_id: None,
                     },
                 ],
                 tail: Some(Box::new(TypedExpr::Literal {
@@ -2381,12 +2619,14 @@ fn test_two_string_literals_produce_different_pending_entries() {
                     value: TypedLiteral::Int(0),
                 })),
             },
+            param_name_spans: vec![],
         }],
         def_map,
+        struct_field_types: FxHashMap::default(),
     };
 
     let builder = ModuleBuilder::new();
-    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &[]);
+    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default());
     assert!(diags.is_empty(), "Expected no diagnostics");
     assert_eq!(bodies.len(), 1, "Expected 1 body");
 
@@ -2947,11 +3187,12 @@ fn test_defer_handler_offset_matches_handler_start() {
     let instrs = &emitter.instructions;
 
     // Expected sequence:
-    // [0] DeferPush { method_idx: 3 }   (points to [3])
+    // [0] DeferPush { method_idx: 3 }   (points to [3], instruction index of handler)
     // [1] DeferPop
-    // [2] Br { offset: N }             (skips past handler)
+    // [2] Br { offset: 0 }             (placeholder — patched by serialize.rs via label fixup)
     // [3] LoadInt { value: 99 }        (handler body)
     // [4] DeferEnd
+    // [5] (after_handler_label target — Br points here after byte-offset conversion)
     assert!(instrs.len() >= 5, "expected at least 5 instructions, got {:?}", instrs.len());
 
     assert!(matches!(instrs[0], Instruction::DeferPush { .. }), "instrs[0] should be DeferPush");
@@ -2964,11 +3205,10 @@ fn test_defer_handler_offset_matches_handler_start() {
     assert!(matches!(instrs[3], Instruction::LoadInt { value: 99, .. }), "instrs[3] should be LoadInt(99)");
     assert!(matches!(instrs[4], Instruction::DeferEnd), "instrs[4] should be DeferEnd");
 
-    // Verify the Br skips the entire handler body
+    // Verify the Br uses the label fixup pipeline (offset=0 placeholder in emitter.instructions).
+    // The actual byte-offset will be patched by serialize.rs Pass 3 via the label allocator.
     let br_offset = if let Instruction::Br { offset } = instrs[2] { offset } else { panic!() };
-    // Br at index 2 with offset targeting index 5 (after DeferEnd)
-    // offset = target_idx - br_idx = 5 - 2 = 3
-    assert_eq!(br_offset, 3, "Br offset should skip handler+DeferEnd (offset=3 means target is index 5)");
+    assert_eq!(br_offset, 0, "Br offset should be 0 (placeholder) — byte offset patched by serialize.rs via label fixup");
 }
 
 // ─── Plan 28-01: MC-01 and BF-01 — callee_def_id propagation ─────────────────

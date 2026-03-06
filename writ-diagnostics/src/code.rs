@@ -33,6 +33,8 @@ pub const E0116: &str = "E0116"; // non-exhaustive match
 pub const E0117: &str = "E0117"; // missing field in construction
 pub const E0118: &str = "E0118"; // not iterable
 pub const E0119: &str = "E0119"; // closure capture error
+pub const E0120: &str = "E0120"; // None used without type annotation
+pub const E0121: &str = "E0121"; // recursive struct has infinite size
 
 // Warning codes
 pub const W0001: &str = "W0001"; // unused import

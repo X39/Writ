@@ -4,28 +4,28 @@ expression: ast
 ---
 Ast {
     items: [
-        Struct(
-            AstStructDecl {
+        Class(
+            AstClassDecl {
                 attrs: [],
                 vis: None,
                 name: "Bar",
-                name_span: 7..10,
+                name_span: 6..9,
                 generics: [],
                 members: [
                     OnHook {
                         event: "create",
-                        event_span: 16..22,
+                        event_span: 15..21,
                         body: [],
-                        span: 13..26,
+                        span: 12..25,
                     },
                     OnHook {
                         event: "finalize",
-                        event_span: 31..39,
+                        event_span: 30..38,
                         body: [],
-                        span: 28..43,
+                        span: 27..42,
                     },
                 ],
-                span: 0..45,
+                span: 0..44,
             },
         ),
     ],

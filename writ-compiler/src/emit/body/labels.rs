@@ -81,7 +81,7 @@ impl LabelAllocator {
     ///   byte 0..2: opcode (u16)
     ///   byte 2..4: r_cond or pad (u16)
     ///   byte 4..8: offset (i32)
-    pub fn apply_fixups(&self, code: &mut Vec<u8>) {
+    pub fn apply_fixups(&self, code: &mut [u8]) {
         for &(branch_start, label) in &self.fixups {
             let target = self.resolved[&label.0];
             let offset = (target as i64 - branch_start as i64) as i32;

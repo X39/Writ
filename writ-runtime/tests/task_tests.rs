@@ -8,6 +8,7 @@
 //! - TASK-07: SPAWN/JOIN/CANCEL task lifecycle
 
 use writ_module::module::MethodBody;
+use writ_module::tables::TypeDefKind;
 use writ_module::Instruction;
 use writ_module::ModuleBuilder;
 use writ_runtime::{
@@ -42,7 +43,7 @@ fn build_runtime_with_globals(
     global_count: usize,
 ) -> Runtime<NullHost> {
     let mut builder = ModuleBuilder::new("test");
-    builder.add_type_def("TestType", "", 0, 0);
+    builder.add_type_def("TestType", "", TypeDefKind::Struct, 0);
     let body = MethodBody {
         register_types: vec![0; reg_count as usize],
         code: encode(instructions),
@@ -63,7 +64,7 @@ fn build_multi_method_runtime_with_globals(
     global_count: usize,
 ) -> Runtime<NullHost> {
     let mut builder = ModuleBuilder::new("test");
-    builder.add_type_def("TestType", "", 0, 0);
+    builder.add_type_def("TestType", "", TypeDefKind::Struct, 0);
     for (name, instrs, reg_count) in &methods {
         let body = MethodBody {
             register_types: vec![0; *reg_count as usize],
@@ -87,7 +88,7 @@ fn build_runtime_with_host<H: RuntimeHost>(
     host: H,
 ) -> Runtime<H> {
     let mut builder = ModuleBuilder::new("test");
-    builder.add_type_def("TestType", "", 0, 0);
+    builder.add_type_def("TestType", "", TypeDefKind::Struct, 0);
     for (name, instrs, reg_count) in &methods {
         let body = MethodBody {
             register_types: vec![0; *reg_count as usize],

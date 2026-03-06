@@ -1,12 +1,12 @@
 # 1. Writ Language Specification
-## 1. Overview & Design Philosophy
+## 1.1 Overview & Design Philosophy
 
 Writ is a statically-typed game scripting language designed around two core constructs: `fn` for general-purpose C-style
 logic, and `dlg` for dialogue authoring. The language also provides `entity` and `component` declarations for defining
 game objects within an entity-component architecture. All higher-level constructs (`dlg`, `entity`) lower to simpler
 primitives at compile time.
 
-### 1.1 Design Goals
+### 1.1.1 Design Goals
 
 - **Trivial tokenization.** The lexer should be able to classify any token with minimal lookahead (ideally one token).
   Sigils and keywords create unambiguous mode switches.
@@ -21,7 +21,7 @@ primitives at compile time.
 - **Runtime agnosticism.** The language compiles to an intermediate representation. Runtimes can interpret it directly
   or JIT-compile hot paths.
 
-### 1.2 Construct Hierarchy
+### 1.1.2 Construct Hierarchy
 
 All higher-level constructs lower to simpler ones at compile time:
 

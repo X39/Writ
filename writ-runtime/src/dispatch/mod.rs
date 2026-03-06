@@ -4,9 +4,9 @@ use writ_module::Instruction;
 
 use crate::entity::EntityRegistry;
 use crate::gc::GcHeap;
-use crate::host::{LogLevel, RuntimeHost};
+use crate::host::{DebugAction, LogLevel, RuntimeHost};
 use crate::loader::LoadedModule;
-use crate::task::{Task, TaskState};
+use crate::task::{SuspendReason, Task, TaskState};
 use crate::value::{TaskId, Value};
 
 mod arith;
@@ -57,8 +57,9 @@ pub enum IntrinsicId {
     FloatEq, FloatOrd, FloatIntoInt, FloatIntoString,
     // Bool (3)
     BoolEq, BoolNot, BoolIntoString,
-    // String (6)
+    // String (9)
     StringAdd, StringEq, StringOrd, StringIndexChar, StringIndexRange, StringIntoString,
+    StringIntoInt, StringIntoFloat, StringIntoBool,
     // Array (4)
     ArrayIndex, ArrayIndexSet, ArraySlice, ArrayIterable,
 }
@@ -140,6 +141,9 @@ pub(crate) enum ExecutionResult {
     JoinTask { r_dst: u16, target: TaskId },
     /// Task wants to cancel another task.
     CancelTask { target: TaskId },
+    /// Task suspended for debug (breakpoint or step). Unlike Suspended(RequestId),
+    /// this does not require a host response to resume — the DAP server controls resume.
+    DebugSuspend,
 }
 
 /// Execution context bundling all parameters for a single instruction dispatch.
@@ -179,10 +183,30 @@ pub(super) fn decode_method_token(token: u32) -> Option<usize> {
     }
 }
 
+/// Look up the source line/col for a given PC in a method's source span table.
+/// Returns (0, 0) if no source span covers this PC.
+fn lookup_source_location(module: &LoadedModule, method_idx: usize, pc: u32) -> (u32, u16) {
+    if method_idx >= module.module.method_bodies.len() {
+        return (0, 0);
+    }
+    let spans = &module.module.method_bodies[method_idx].source_spans;
+    // Find the last span with pc <= target_pc (spans sorted by pc)
+    let mut best = (0u32, 0u16);
+    for span in spans {
+        if span.pc <= pc {
+            best = (span.line, span.column);
+        } else {
+            break;
+        }
+    }
+    best
+}
+
 /// Execute a single instruction for the given task.
 ///
 /// Fetches the instruction at the current frame's PC, increments PC,
 /// then dispatches via exhaustive match.
+#[allow(clippy::too_many_arguments)] // dispatch context requires independent mutable borrows; a struct would conflict with borrow checker
 pub(crate) fn execute_one(
     task: &mut Task,
     modules: &[LoadedModule],
@@ -216,6 +240,49 @@ pub(crate) fn execute_one(
             method_idx,
             body.len()
         ));
+    }
+
+    // Translate instruction index to byte offset for source span and breakpoint lookups.
+    // SourceSpan.pc and BreakpointTable store byte offsets, but frame.pc is an instruction index.
+    let byte_pc = module.byte_offsets
+        .get(method_idx)
+        .and_then(|offsets| offsets.get(pc))
+        .copied()
+        .unwrap_or(0);
+
+    // Debug hook: called before each instruction when debug is active
+    if host.debug_enabled() {
+        let (line, col) = lookup_source_location(module, method_idx, byte_pc);
+        let action = host.before_instruction(task.id, method_idx as u32, byte_pc, line, col);
+        match action {
+            DebugAction::Continue => {}
+            DebugAction::Break => {
+                task.suspend_reason = Some(SuspendReason::Breakpoint {
+                    method_idx: method_idx as u32,
+                    pc: byte_pc,
+                    line,
+                    col,
+                });
+                task.state = TaskState::Suspended;
+                return ExecutionResult::DebugSuspend;
+            }
+            DebugAction::StepOver | DebugAction::StepInto | DebugAction::StepOut => {
+                task.suspend_reason = Some(SuspendReason::DebugStep {
+                    mode: action,
+                    method_idx: method_idx as u32,
+                    pc: byte_pc,
+                    line,
+                    col,
+                });
+                task.state = TaskState::Suspended;
+                return ExecutionResult::DebugSuspend;
+            }
+            DebugAction::Disconnect => {
+                // Host requested disconnect — continue without debug.
+                // The host should set its own internal debug_enabled to false
+                // so subsequent calls to debug_enabled() return false.
+            }
+        }
     }
 
     let instr = body[pc].clone();
@@ -286,7 +353,7 @@ pub(crate) fn execute_one(
         Instruction::Switch { r_tag, offsets } => arith::exec_switch(&mut ctx, r_tag, offsets),
 
         Instruction::Ret { r_src } => {
-            let ret_val = ctx.task.call_stack.last().unwrap().registers[r_src as usize];
+            let ret_val = ctx.task.call_stack.last().unwrap().registers[r_src as usize].clone();
             execute_ret(ctx.task, ret_val, ctx.modules, ctx.current_module_idx,
                         ctx.dispatch_table, ctx.heap, ctx.host, ctx.globals,
                         ctx.next_request_id, ctx.entity_registry)
@@ -405,6 +472,9 @@ pub(crate) fn execute_one(
         Instruction::F2s { r_dst, r_src } => arith::exec_f2s(&mut ctx, r_dst, r_src),
         Instruction::B2s { r_dst, r_src } => arith::exec_b2s(&mut ctx, r_dst, r_src),
         Instruction::Convert { r_dst, r_src, .. } => arith::exec_convert(&mut ctx, r_dst, r_src),
+        Instruction::S2i { r_dst, r_src } => arith::exec_s2i(&mut ctx, r_dst, r_src),
+        Instruction::S2f { r_dst, r_src } => arith::exec_s2f(&mut ctx, r_dst, r_src),
+        Instruction::S2b { r_dst, r_src } => arith::exec_s2b(&mut ctx, r_dst, r_src),
 
         // ── Strings ───────────────────────────────────────────
         Instruction::StrConcat { r_dst, r_a, r_b } => arith::exec_str_concat(&mut ctx, r_dst, r_a, r_b),
@@ -420,6 +490,7 @@ pub(crate) fn execute_one(
 // ── Helper functions ──────────────────────────────────────────────
 
 /// Execute RET: run defer handlers in LIFO order, pop frame, deliver return value.
+#[allow(clippy::too_many_arguments)] // mirrors execute_one parameter set for return with defer handler execution
 fn execute_ret(
     task: &mut Task,
     ret_val: Value,
@@ -444,13 +515,17 @@ fn execute_ret(
         }
     }
 
-    // Step 2: Pop frame
+    // Step 2: Fire on_function_exit hook before popping, then pop frame
+    if host.debug_enabled() {
+        let exiting_method_idx = task.call_stack.last().map(|f| f.method_idx).unwrap_or(0);
+        host.on_function_exit(task.id, exiting_method_idx as u32);
+    }
     let popped = task.call_stack.pop().unwrap();
 
     // Step 3: Deliver result
     if task.call_stack.is_empty() {
         task.state = TaskState::Completed;
-        task.return_value = Some(ret_val);
+        task.return_value = Some(ret_val.clone());
         ExecutionResult::Completed(ret_val)
     } else {
         let caller = task.call_stack.last_mut().unwrap();
@@ -466,6 +541,7 @@ fn execute_ret(
 /// Execute a defer handler starting at `handler_pc` within the current method.
 /// Runs instructions until DeferEnd is encountered.
 /// Returns Ok(()) on success, Err(message) on crash (secondary crash).
+#[allow(clippy::too_many_arguments)] // mirrors execute_one parameter set for defer handler execution
 pub(crate) fn execute_defer_handler(
     task: &mut Task,
     handler_pc: usize,
@@ -512,6 +588,7 @@ pub(crate) fn execute_defer_handler(
 
 /// Execute crash propagation: unwind the entire call stack, running defer handlers
 /// at each frame level in LIFO order. Secondary crashes are logged and swallowed.
+#[allow(clippy::too_many_arguments)] // crash propagation requires full runtime context for defer handlers
 pub(crate) fn execute_crash(
     task: &mut Task,
     msg: String,
@@ -524,17 +601,55 @@ pub(crate) fn execute_crash(
     next_request_id: &mut u32,
     entity_registry: &mut EntityRegistry,
 ) {
-    // Build crash info BEFORE unwinding
+    // Build crash info BEFORE unwinding — preserve register values so the DAP debugger
+    // can inspect local variables at the crash point. Resolve method names and source
+    // locations from the module's debug info so any consumer (LSP, DAP, CLI) gets rich
+    // crash data without needing to repeat the resolution logic.
     let crash_info = crate::error::CrashInfo {
         message: msg.clone(),
         stack_trace: task
             .call_stack
             .iter()
             .rev()
-            .map(|f| crate::error::StackFrame {
-                method_idx: f.method_idx,
-                method_name: String::new(),
-                pc: f.pc,
+            .map(|f| {
+                let loaded = &modules[current_module_idx];
+
+                // Resolve method name from string heap
+                let method_name = loaded.module.method_defs
+                    .get(f.method_idx)
+                    .and_then(|def| writ_module::heap::read_string(
+                        &loaded.module.string_heap, def.name
+                    ).ok())
+                    .map(|s| s.to_string())
+                    .unwrap_or_default();
+
+                // Convert instruction-index PC to byte-offset PC
+                let byte_pc = loaded.byte_offsets
+                    .get(f.method_idx)
+                    .and_then(|offsets| offsets.get(f.pc))
+                    .copied()
+                    .unwrap_or(0);
+
+                // Resolve source location: find largest span.pc <= byte_pc
+                let (line, column) = loaded.module.method_bodies
+                    .get(f.method_idx)
+                    .and_then(|body| {
+                        body.source_spans
+                            .iter()
+                            .filter(|span| span.pc <= byte_pc)
+                            .max_by_key(|span| span.pc)
+                            .map(|span| (span.line, span.column as u32))
+                    })
+                    .unwrap_or((0, 0));
+
+                crate::error::StackFrame {
+                    method_idx: f.method_idx,
+                    method_name,
+                    pc: f.pc,
+                    line,
+                    column,
+                    registers: f.registers.clone(),
+                }
             })
             .collect(),
     };

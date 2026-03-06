@@ -15,7 +15,7 @@ Bytes 4–5:   u16 format_version    (starts at 1, bumps on incompatible layout 
 Bytes 6–7:   u16 flags             (bit 0 = debug info present, rest reserved)
 ```
 
-**Format version history:** Version 1 — initial format (MethodDef row: 20 bytes). Version 2 — added `param_count(u16)` to MethodDef (row: 24 bytes, padded from 22).
+**Format version history:** Version 1 — initial format (MethodDef row: 20 bytes). Version 2 — added `param_count(u16)` to MethodDef (row: 24 bytes, padded from 22). Version 3 — TypeDef.kind=4 (class) added; kind=0 (struct) now means value type.
 
 **Module header** (fixed layout, immediately after the magic):
 
@@ -120,7 +120,7 @@ row, and the range extends to the next parent's `xxx_list` value (or end of tabl
 |----|-----------------------|------------------------------------------------------------------------------------------|-------------------------------------------------------|
 | 0  | **ModuleDef**         | name(str), version(str), flags(u32)                                                      | Module identity (always 1 row)                        |
 | 1  | **ModuleRef**         | name(str), min_version(str)                                                              | Dependencies on other modules                         |
-| 2  | **TypeDef**           | name(str), namespace(str), kind(u8), flags(u16), field_list, method_list                 | Types defined in this module                          |
+| 2  | **TypeDef**           | name(str), namespace(str), kind(u8), flags(u16), field_list, method_list                 | Types defined in this module (kind distinguishes struct/class/enum/entity/component) |
 | 3  | **TypeRef**           | scope(token:ModuleRef), name(str), namespace(str)                                        | Types in other modules (resolved at load time)        |
 | 4  | **TypeSpec**          | signature(blob)                                                                          | Instantiated generic types (TypeDef + type arguments) |
 | 5  | **FieldDef**          | name(str), type_sig(blob), flags(u16)                                                    | Fields on types defined here                          |
@@ -140,7 +140,7 @@ row, and the range extends to the next parent's `xxx_list` value (or end of tabl
 | 19 | **ExportDef**         | name(str), item_kind(u8), item(token)                                                    | Convenience index of pub-visible items                |
 | 20 | **AttributeDef**      | owner(token), owner_kind(u8), name(str), value(blob)                                     | Metadata attributes ([Singleton], etc.)               |
 
-**TypeDef.kind:** `0 = struct`, `1 = enum`, `2 = entity`, `3 = component`.
+**TypeDef.kind:** `0 = struct (value type)`, `1 = enum`, `2 = entity`, `3 = component`, `4 = class (reference type)`.
 
 **MethodDef.flags** includes: visibility (pub/private), is_static, is_mut_self, hook_kind (0=none, 1=create, 2=destroy,
 3=finalize, 4=serialize, 5=deserialize, 6=interact), and an **intrinsic** flag for `writ-runtime` native
@@ -199,7 +199,7 @@ vs. value semantics, etc.). Common TypeRefs are naturally deduplicated in the bl
 
 The register type table covers every register in the frame. The disassembler uses it to emit `.reg rN <type>`
 declarations; the verifier uses it to type-check instructions; the GC uses it to identify reference-typed slots for
-scanning.
+scanning. For value-type struct registers, the runtime uses the TypeRef to locate the struct's TypeDef and FieldDef list, enabling multi-word copy on MOV and precise GC tracing of embedded reference fields.
 
 #### Debug info (optional)
 

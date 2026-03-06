@@ -1,0 +1,13 @@
+pub fn compare(a: int, b: int) -> bool {
+    let eq: bool = a == b;
+    let ne: bool = a != b;
+    let lt: bool = a < b;
+    let gt: bool = a > b;
+    let le: bool = a <= b;
+    let ge: bool = a >= b;
+    eq
+}
+
+fn main() {
+    let r: bool = compare(3, 4);
+}

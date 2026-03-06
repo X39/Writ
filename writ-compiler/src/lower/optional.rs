@@ -8,7 +8,7 @@ use crate::ast::types::AstType;
 ///
 /// This function is stateless — no `LoweringContext` needed, because all type
 /// lowering in Phase 2 is a pure structural rewrite.
-pub fn lower_type(spanned: Spanned<TypeExpr<'_>>) -> AstType {
+pub(crate) fn lower_type(spanned: Spanned<TypeExpr<'_>>) -> AstType {
     let (ty, span) = spanned;
     match ty {
         TypeExpr::Named(name) => AstType::Named {

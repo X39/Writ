@@ -226,6 +226,12 @@ pub enum Instruction {
     B2s { r_dst: u16, r_src: u16 },
     /// 0x0D05 — var (10B): u16(op) u16(r_dst) u16(r_src) u32(target_type)
     Convert { r_dst: u16, r_src: u16, target_type: u32 },
+    /// 0x0D06 — Shape RR (6B): parse string as int
+    S2i { r_dst: u16, r_src: u16 },
+    /// 0x0D07 — Shape RR (6B): parse string as float
+    S2f { r_dst: u16, r_src: u16 },
+    /// 0x0D08 — Shape RR (6B): parse string as bool
+    S2b { r_dst: u16, r_src: u16 },
 
     // ── 0x0E Strings ───────────────────────────────────────────
     /// 0x0E00 — Shape RRR (8B)
@@ -355,6 +361,9 @@ impl Instruction {
             Instruction::F2s { .. } => 0x0D03,
             Instruction::B2s { .. } => 0x0D04,
             Instruction::Convert { .. } => 0x0D05,
+            Instruction::S2i { .. } => 0x0D06,
+            Instruction::S2f { .. } => 0x0D07,
+            Instruction::S2b { .. } => 0x0D08,
             // 0x0E Strings
             Instruction::StrConcat { .. } => 0x0E00,
             Instruction::StrBuild { .. } => 0x0E01,
@@ -397,7 +406,10 @@ impl Instruction {
             | Instruction::F2i { r_dst, r_src }
             | Instruction::I2s { r_dst, r_src }
             | Instruction::F2s { r_dst, r_src }
-            | Instruction::B2s { r_dst, r_src } => {
+            | Instruction::B2s { r_dst, r_src }
+            | Instruction::S2i { r_dst, r_src }
+            | Instruction::S2f { r_dst, r_src }
+            | Instruction::S2b { r_dst, r_src } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u16::<LittleEndian>(*r_src)?;
             }
@@ -979,6 +991,9 @@ impl Instruction {
                 let target_type = r.read_u32::<LittleEndian>()?;
                 Ok(Instruction::Convert { r_dst, r_src, target_type })
             }
+            0x0D06 => read_rr(r).map(|(d, s)| Instruction::S2i { r_dst: d, r_src: s }),
+            0x0D07 => read_rr(r).map(|(d, s)| Instruction::S2f { r_dst: d, r_src: s }),
+            0x0D08 => read_rr(r).map(|(d, s)| Instruction::S2b { r_dst: d, r_src: s }),
 
             // ── 0x0E Strings ───────────────────────────────────
             0x0E00 => read_rrr(r).map(|(d, a, b)| Instruction::StrConcat { r_dst: d, r_a: a, r_b: b }),

@@ -2,18 +2,28 @@
 //!
 //! Walks every declaration body in the AST, resolving all identifier and type
 //! references against the DefMap populated by Pass 1.
+//!
+//! ## SPLIT-11 review (Phase 63)
+//!
+//! Reviewed for split opportunities at 849 lines. Conclusion: no split.
+//! The file contains Pass 2 of name resolution: `resolve_bodies`, `process_usings`,
+//! `resolve_decl_list` (413 lines — a match on all AstDecl variants), `resolve_ast_type`,
+//! and small helpers. `resolve_decl_list` is the core algorithm — extracting individual
+//! variant handlers (30-50 lines each) into separate files would fragment the resolver's
+//! control flow without clarity gain. The file is under 2x the 500-line target.
 
 use std::cell::Cell;
 
 use chumsky::span::SimpleSpan;
 use writ_diagnostics::{Diagnostic, FileId};
 
-use crate::ast::decl::*;
+use crate::ast::decl::{AstDecl, AstExternDecl, AstFnParam, AstNamespaceDecl, AstStructMember, AstContractMember, AstImplMember, AstComponentMember};
 use crate::ast::types::AstType;
 use crate::ast::Ast;
 use crate::resolve::def_map::{DefKind, DefMap};
 use crate::resolve::error::ResolutionError;
-use crate::resolve::ir::*;
+use crate::resolve::ir::{ResolvedDecl, ResolvedType};
+use crate::resolve::prelude;
 use crate::resolve::scope::{LookupResult, ScopeChain, UsingEntry};
 use crate::resolve::suggest;
 
@@ -64,6 +74,93 @@ fn process_usings(items: &[AstDecl], scope: &mut ScopeChain<'_>, diags: &mut Vec
     for item in items {
         if let AstDecl::Using(using) = item {
             let path = &using.path;
+
+            // Glob import: `using Status::*;`
+            // Path ends with "*" when the parser sees ::* suffix.
+            if path.last().map(|s| s.as_str() == "*").unwrap_or(false) {
+                if path.len() < 2 {
+                    continue; // malformed -- parser should have rejected
+                }
+                let enum_path = &path[..path.len() - 1];
+                let enum_fqn = enum_path.join("::");
+
+                // Prelude types (e.g., Option) are valid but vacuous --
+                // None/Some are already injected at sub-prelude priority.
+                if prelude::PRELUDE_TYPE_NAMES.contains(&enum_fqn.as_str()) {
+                    continue;
+                }
+
+                // Verify the name refers to an enum in the DefMap.
+                if let Some(enum_def_id) = scope.def_map.get(&enum_fqn) {
+                    let entry = scope.def_map.get_entry(enum_def_id);
+                    if entry.kind != DefKind::Enum {
+                        let suggestion = get_suggestion(&enum_fqn, scope);
+                        diags.push(
+                            ResolutionError::UnresolvedName {
+                                name: format!("{enum_fqn} (not an enum)"),
+                                file: scope.current_file,
+                                span: using.span,
+                                suggestion,
+                            }
+                            .into(),
+                        );
+                        continue;
+                    }
+
+                    // Enum variants are not stored individually in the DefMap -- they live in
+                    // the AST. Walk `items` to find the matching enum declaration and extract
+                    // variant names. Each variant gets a UsingEntry so that bare `Active` in
+                    // value position resolves through the using-import step in resolve_type
+                    // to `Status::Active`, which resolve_qualified_path handles by returning
+                    // the enum's DefId (variant validation happens in the type checker).
+                    let variant_names = find_enum_variants(items, &enum_fqn, &scope.current_ns);
+                    for variant_name in variant_names {
+                        // Conflict detection: if another glob import already introduced this
+                        // variant name, emit an ambiguity error immediately (the resolver
+                        // doesn't walk function bodies, so we can't rely on use-site detection).
+                        let conflict = scope.active_usings.iter().any(|existing| {
+                            existing.alias == variant_name
+                                && existing.target_fqn.as_deref()
+                                    .map(|fqn| fqn.contains("::"))
+                                    .unwrap_or(false)
+                        });
+                        if conflict {
+                            diags.push(
+                                ResolutionError::AmbiguousName {
+                                    name: variant_name.clone(),
+                                    file: scope.current_file,
+                                    span: using.span,
+                                    candidates: Vec::new(),
+                                }
+                                .into(),
+                            );
+                        }
+                        // The target FQN is `EnumFqn::VariantName` -- used in resolve_type
+                        // step 5. resolve_qualified_path handles `Enum::Variant` paths by
+                        // detecting that the prefix resolves to an Enum DefId.
+                        let target_fqn = format!("{enum_fqn}::{variant_name}");
+                        scope.active_usings.push(UsingEntry {
+                            alias: variant_name,
+                            target_ns: None,
+                            target_fqn: Some(target_fqn),
+                            span: using.span,
+                            used: Cell::new(true),
+                        });
+                    }
+                } else {
+                    let suggestion = get_suggestion(&enum_fqn, scope);
+                    diags.push(
+                        ResolutionError::UnresolvedName {
+                            name: enum_fqn,
+                            file: scope.current_file,
+                            span: using.span,
+                            suggestion,
+                        }
+                        .into(),
+                    );
+                }
+                continue;
+            }
 
             if path.len() == 1 {
                 // Namespace import: `using survival;`
@@ -223,6 +320,35 @@ fn resolve_decl_list(
                     decls.push(ResolvedDecl::Struct { def_id });
 
                     if !s.generics.is_empty() {
+                        scope.pop_layer();
+                    }
+                }
+            }
+
+            AstDecl::Class(c) => {
+                let fqn = make_fqn(&scope.current_ns, &c.name);
+                if let Some(def_id) = scope.def_map.get(&fqn).or_else(|| {
+                    scope.def_map.file_private
+                        .get(&scope.current_file)
+                        .and_then(|m| m.get(&c.name).copied())
+                }) {
+                    let generic_names: Vec<(String, SimpleSpan)> =
+                        c.generics.iter().map(|g| (g.name.clone(), g.name_span)).collect();
+                    if !generic_names.is_empty() {
+                        check_generic_shadows(&generic_names, scope, diags);
+                        scope.push_generics(generic_names);
+                    }
+
+                    // Resolve field types
+                    for member in &c.members {
+                        if let AstStructMember::Field(field) = member {
+                            resolve_ast_type(&field.ty, scope, diags);
+                        }
+                    }
+
+                    decls.push(ResolvedDecl::Class { def_id });
+
+                    if !c.generics.is_empty() {
                         scope.pop_layer();
                     }
                 }
@@ -467,6 +593,16 @@ fn resolve_decl_list(
                         decls.push(ResolvedDecl::ExternStruct { def_id });
                     }
                 }
+                AstExternDecl::Class(_, c) => {
+                    let fqn = make_fqn(&scope.current_ns, &c.name);
+                    if let Some(def_id) = scope.def_map.get(&fqn).or_else(|| {
+                        scope.def_map.file_private
+                            .get(&scope.current_file)
+                            .and_then(|m| m.get(&c.name).copied())
+                    }) {
+                        decls.push(ResolvedDecl::ExternClass { def_id });
+                    }
+                }
                 AstExternDecl::Component(_, c) => {
                     let fqn = make_fqn(&scope.current_ns, &c.name);
                     if let Some(def_id) = scope.def_map.get(&fqn).or_else(|| {
@@ -626,6 +762,45 @@ pub fn resolve_ast_type(
         }
         AstType::Void { .. } => ResolvedType::Void,
     }
+}
+
+/// Find the variant names for an enum identified by `enum_fqn` in the given items list.
+///
+/// Enum variants are NOT stored in the DefMap; they live only in the AST. This helper
+/// walks the top-level items (and block-namespace items) to find the matching enum
+/// declaration and extract variant names.
+///
+/// `enum_fqn` is the fully-qualified enum name (e.g., "Status" or "game::Status").
+/// `current_ns` is the resolver's current namespace context.
+fn find_enum_variants(items: &[AstDecl], enum_fqn: &str, current_ns: &str) -> Vec<String> {
+    for item in items {
+        match item {
+            AstDecl::Enum(e) => {
+                let fqn = if current_ns.is_empty() {
+                    e.name.clone()
+                } else {
+                    format!("{current_ns}::{}", e.name)
+                };
+                if fqn == enum_fqn {
+                    return e.variants.iter().map(|v| v.name.clone()).collect();
+                }
+            }
+            AstDecl::Namespace(AstNamespaceDecl::Block { path, items: block_items, .. }) => {
+                let block_ns = path.join("::");
+                let nested_ns = if current_ns.is_empty() {
+                    block_ns
+                } else {
+                    format!("{current_ns}::{block_ns}")
+                };
+                let result = find_enum_variants(block_items, enum_fqn, &nested_ns);
+                if !result.is_empty() {
+                    return result;
+                }
+            }
+            _ => {}
+        }
+    }
+    Vec::new()
 }
 
 /// Build a fully-qualified name.

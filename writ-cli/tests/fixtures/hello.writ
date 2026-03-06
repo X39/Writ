@@ -1,6 +1,6 @@
 pub fn main() {
     let x: int = 42;
-    ::log(test_string);
+    ::log::info(test_string());
 }
 pub fn test_bool() -> bool {
     let result = false;

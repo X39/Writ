@@ -1,7 +1,7 @@
 use writ_module::error::DecodeError;
 use writ_module::heap;
 use writ_module::instruction::Instruction;
-use writ_module::module::{MethodBody, Module};
+use writ_module::module::{DebugLocal, MethodBody, Module};
 use writ_module::tables::*;
 use writ_module::MetadataToken;
 
@@ -217,5 +217,149 @@ fn test_truncated_header_error() {
         DecodeError::UnexpectedEof => {}
         DecodeError::Io(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {}
         other => panic!("Expected EOF-related error, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_class_typedef_round_trip() {
+    let mut module = Module::new();
+
+    let name_off = heap::intern_string(&mut module.string_heap, "MyClass");
+    let ns_off = heap::intern_string(&mut module.string_heap, "game");
+
+    module.type_defs.push(TypeDefRow {
+        name: name_off,
+        namespace: ns_off,
+        kind: TypeDefKind::Class.as_u8(),
+        flags: 0,
+        field_list: 1,
+        method_list: 1,
+    });
+
+    let field_name = heap::intern_string(&mut module.string_heap, "value");
+    let type_sig = heap::write_blob(&mut module.blob_heap, &[0x00]); // primitive int tag
+
+    module.field_defs.push(FieldDefRow {
+        name: field_name,
+        type_sig,
+        flags: 0,
+    });
+
+    assert_round_trip(&module);
+
+    // After round-trip, verify kind is still 4
+    let bytes = module.to_bytes().unwrap();
+    let module2 = Module::from_bytes(&bytes).unwrap();
+    assert_eq!(module2.type_defs.len(), 1);
+    assert_eq!(module2.type_defs[0].kind, 4, "Class kind must survive round-trip as 4");
+}
+
+#[test]
+fn test_format_version_rejection() {
+    // Build a valid v4 module, then patch the format_version bytes to 3 (should now be rejected)
+    let module = Module::new();
+    let mut bytes = module.to_bytes().expect("to_bytes should succeed");
+
+    // format_version is at bytes 4-5 (little-endian u16)
+    bytes[4] = 0x03;
+    bytes[5] = 0x00;
+
+    let result = Module::from_bytes(&bytes);
+    assert!(result.is_err());
+    match result.unwrap_err() {
+        DecodeError::UnsupportedVersion(v) => {
+            assert_eq!(v, 3, "Expected UnsupportedVersion(3)");
+        }
+        other => panic!("Expected UnsupportedVersion, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_debug_local_v4_roundtrip() {
+    let mut module = Module::new();
+    module.header.flags = 1; // enable debug info
+
+    let name_off = heap::intern_string(&mut module.string_heap, "my_var");
+    let type_blob = heap::write_blob(&mut module.blob_heap, &[0x00]); // int type
+
+    let mut code = Vec::new();
+    Instruction::LoadInt { r_dst: 0, value: 1 }.encode(&mut code).unwrap();
+    Instruction::RetVoid.encode(&mut code).unwrap();
+
+    let sig_off = heap::write_blob(&mut module.blob_heap, &[0x00]);
+    let reg_type = heap::write_blob(&mut module.blob_heap, &[0x00]);
+
+    module.method_defs.push(writ_module::tables::MethodDefRow {
+        name: name_off,
+        signature: sig_off,
+        flags: 0,
+        body_offset: 0,
+        body_size: 1,
+        reg_count: 1,
+        param_count: 0,
+    });
+
+    module.method_bodies.push(MethodBody {
+        register_types: vec![reg_type],
+        code,
+        debug_locals: vec![DebugLocal {
+            register: 0,
+            name: name_off,
+            type_ref: type_blob,  // non-zero type_ref
+            start_pc: 0,
+            end_pc: 100,
+        }],
+        source_spans: Vec::new(),
+    });
+
+    // Round-trip: serialize then deserialize
+    let bytes = module.to_bytes().expect("to_bytes should succeed");
+    let module2 = Module::from_bytes(&bytes).expect("from_bytes should succeed");
+
+    // Verify DebugLocal was preserved correctly (18 bytes per entry)
+    assert_eq!(module2.method_bodies.len(), 1);
+    let body2 = &module2.method_bodies[0];
+    assert_eq!(body2.debug_locals.len(), 1);
+    let dl = &body2.debug_locals[0];
+    assert_eq!(dl.register, 0);
+    assert_eq!(dl.name, name_off);
+    assert_eq!(dl.type_ref, type_blob, "type_ref must survive round-trip");
+    assert_eq!(dl.start_pc, 0);
+    assert_eq!(dl.end_pc, 100);
+}
+
+#[test]
+fn test_invalid_typedef_kind_rejection() {
+    // Build a valid module with one TypeDef, serialize it, then corrupt the kind byte
+    let mut module = Module::new();
+    let name_off = heap::intern_string(&mut module.string_heap, "SomeType");
+    let ns_off = heap::intern_string(&mut module.string_heap, "ns");
+    module.type_defs.push(TypeDefRow {
+        name: name_off,
+        namespace: ns_off,
+        kind: TypeDefKind::Struct.as_u8(),
+        flags: 0,
+        field_list: 1,
+        method_list: 1,
+    });
+
+    let mut bytes = module.to_bytes().expect("to_bytes should succeed");
+
+    // The table directory starts at offset 32 (after magic+version+flags+name+version+heaps)
+    // TypeDef is table 2, so its directory entry is at offset 32 + 2*8 = 48
+    // Entry format: (offset: u32, count: u32)
+    // Read TypeDef table offset from bytes 48..52
+    let typedef_offset = u32::from_le_bytes([bytes[48], bytes[49], bytes[50], bytes[51]]) as usize;
+    // TypeDef row layout: name(u32) + namespace(u32) + kind(u8) = kind byte at row_start + 8
+    let kind_byte_offset = typedef_offset + 8;
+    bytes[kind_byte_offset] = 0xFF;
+
+    let result = Module::from_bytes(&bytes);
+    assert!(result.is_err());
+    match result.unwrap_err() {
+        DecodeError::InvalidTypeDefKind(k) => {
+            assert_eq!(k, 0xFF, "Expected InvalidTypeDefKind(0xFF)");
+        }
+        other => panic!("Expected InvalidTypeDefKind, got {other:?}"),
     }
 }

@@ -1,32 +1,44 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
     .method "add" (a: int, b: int) -> int pub mut {
+        .locals {
+            r0: int "a" [0, 12)
+            r1: int "b" [0, 12)
+            r2: int "result" [8, 12)
+        }
         .reg r0 int
         .reg r1 int
         .reg r2 int
-        ADD_I r2, r0, r1
-        RET r2
+        ADD_I r2, r0, r1  ; line:1 col:42
+        RET r2  ; line:1 col:72
     }
     .method "is_positive" (n: int) -> bool pub mut {
+        .locals {
+            r0: int "n" [0, 24)
+        }
         .reg r0 int
         .reg r1 int
         .reg r2 bool
-        LOAD_INT r1, 0
+        LOAD_INT r1, 0  ; line:1 col:127
         CMP_LT_I r2, r1, r0
         RET r2
     }
     .method "main" () -> void pub mut {
+        .locals {
+            r0: int "x" [36, 50)
+            r3: bool "flag" [48, 50)
+        }
         .reg r0 int
         .reg r1 int
         .reg r2 int
         .reg r3 bool
-        LOAD_INT r1, 3
+        LOAD_INT r1, 3  ; line:1 col:160
         LOAD_INT r2, 4
         CALL r0, 117440513, r1, 2
-        CALL r3, 117440514, r0, 1
+        CALL r3, 117440514, r0, 1  ; line:1 col:189
         RET_VOID
     }
-    // .export "add" method 117440513
     // .export "is_positive" method 117440514
     // .export "main" method 117440515
+    // .export "add" method 117440513
 }

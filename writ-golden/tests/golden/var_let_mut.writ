@@ -1,0 +1,4 @@
+fn main() {
+    let mut x: int = 10;
+    x = 20;
+}

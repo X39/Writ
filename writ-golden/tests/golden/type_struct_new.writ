@@ -1,0 +1,9 @@
+pub struct Point {
+    x: int,
+    y: int
+}
+
+fn main() {
+    let p: Point = new Point { x: 1, y: 2 };
+    let px: int = p.x;
+}

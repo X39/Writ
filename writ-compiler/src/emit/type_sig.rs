@@ -38,7 +38,7 @@ fn encode_type_into(
         TyKind::Bool => buf.push(0x03),
         TyKind::String => buf.push(0x04),
 
-        TyKind::Struct(def_id) | TyKind::Entity(def_id) | TyKind::Enum(def_id) => {
+        TyKind::Struct(def_id) | TyKind::Class(def_id) | TyKind::Entity(def_id) | TyKind::Enum(def_id) => {
             let token = token_for_def(*def_id);
             buf.push(0x10);
             buf.extend_from_slice(&token.row().to_le_bytes());
@@ -51,7 +51,12 @@ fn encode_type_into(
 
         TyKind::Array(elem) => {
             buf.push(0x20);
-            encode_type_into(*elem, interner, token_for_def, blob_heap, buf);
+            // Guard: if elem is Infer or Error (unresolved empty-array literal),
+            // fall back to void to avoid the debug_assert in the recursive call.
+            match interner.kind(*elem) {
+                TyKind::Infer(_) | TyKind::Error => buf.push(0x00),
+                _ => encode_type_into(*elem, interner, token_for_def, blob_heap, buf),
+            }
         }
 
         TyKind::Func { params, ret } => {

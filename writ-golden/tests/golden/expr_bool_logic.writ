@@ -1,0 +1,7 @@
+fn main() {
+    let a: bool = true;
+    let b: bool = false;
+    let c: bool = a && b;
+    let d: bool = a || b;
+    let e: bool = !a;
+}

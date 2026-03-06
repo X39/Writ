@@ -4,17 +4,22 @@
 **Decision:** Construction uses the `new` keyword with brace-syntax for all types. No user-defined constructors.
 `spawn` is reserved for task concurrency only.
 
-**Syntax:** `new Type { field: value, ... }` for both structs and entities. The `new` keyword disambiguates
+**Syntax:** `new Type { field: value, ... }` for structs, classes, and entities. The `new` keyword disambiguates
 construction from block expressions, making the syntax unambiguous for the parser. The compiler determines the IL
 sequence from the type's kind.
 
-**Default field values:** Defaults can be runtime expressions (e.g., `List::new()`). The compiler inlines the default
-expression at every construction site that doesn't override the field. `NEW` allocates zeroed memory — the compiler
-emits explicit code for all field initialization.
+**Default field values:** For classes and entities, `NEW`/`SPAWN_ENTITY` allocates zeroed memory. For structs, `NEW` initializes the value inline — the compiler emits explicit code for all field initialization in both cases.
 
-**Struct construction:**
+**Struct construction (value type):**
 
-1. `NEW type_idx` — allocate zeroed memory.
+1. `NEW type_idx` — initialize value inline (no heap allocation).
+2. `SET_FIELD` / `LOAD_*` for every field (defaults + overrides).
+
+No lifecycle hooks are called for structs. Construction is complete after field initialization.
+
+**Class construction (reference type):**
+
+1. `NEW type_idx` — allocate zeroed memory on the GC heap.
 2. `SET_FIELD` / `LOAD_*` for every field (defaults + overrides).
 3. `CALL __on_create` — run the `on create` hook body, if defined.
 
@@ -31,10 +36,10 @@ buffering avoids per-field round-trips through suspend-and-confirm during constr
 buffering specification and safety invariants.
 
 **No constructors:** Construction is entirely compiler-generated. `new Type { ... }` produces `NEW`/`SPAWN_ENTITY` +
-`SET_FIELD` + `on_create`. Fields without defaults are required at every construction site. For convenience factories,
+`SET_FIELD` + `on_create` for structs, classes, and entities. Fields without defaults are required at every construction site. For convenience factories,
 use static methods: `Merchant::create("Tim")`.
 
-**Lifecycle hooks:** Both structs and entities support lifecycle hooks (`on create`, `on finalize`, `on serialize`,
-`on deserialize`). Entities additionally support `on destroy` and `on interact`. All hooks receive implicit `mut self`.
+**Lifecycle hooks:** Classes and entities support lifecycle hooks (`on create`, `on finalize`, `on serialize`,
+`on deserialize`). Entities additionally support `on destroy` and `on interact`. Structs have no lifecycle hooks. All hooks receive implicit `mut self`.
 Hooks lower to regular methods stored in the TypeDef metadata.
 

@@ -230,13 +230,12 @@ impl EntityRegistry {
         self.free_list.push(entity_id.index);
 
         // Remove from singletons if this entity was registered as one
-        if let Some(&singleton_id) = self.singletons.get(&type_idx) {
-            if singleton_id.index == entity_id.index
+        if let Some(&singleton_id) = self.singletons.get(&type_idx)
+            && singleton_id.index == entity_id.index
                 && singleton_id.generation == entity_id.generation
             {
                 self.singletons.remove(&type_idx);
             }
-        }
 
         Ok(())
     }
@@ -264,13 +263,12 @@ impl EntityRegistry {
         self.free_list.push(entity_id.index);
 
         // Remove from singletons if this entity was registered as one
-        if let Some(&singleton_id) = self.singletons.get(&type_idx) {
-            if singleton_id.index == entity_id.index
+        if let Some(&singleton_id) = self.singletons.get(&type_idx)
+            && singleton_id.index == entity_id.index
                 && singleton_id.generation == entity_id.generation
             {
                 self.singletons.remove(&type_idx);
             }
-        }
 
         Ok(())
     }

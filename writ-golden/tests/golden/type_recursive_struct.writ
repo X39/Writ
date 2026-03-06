@@ -1,0 +1,6 @@
+pub struct Bad {
+    x: int,
+    self_ref: Bad
+}
+
+fn main() {}

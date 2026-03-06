@@ -74,11 +74,13 @@ fn scan_expr_for_lambdas(
             let idx = *counter;
             *counter += 1;
 
-            // Register capture struct TypeDef
+            // Register capture struct TypeDef as Class (kind=4).
+            // Closure capture environments are heap-allocated reference objects,
+            // so TypeDefKind::Class is semantically correct (not Struct/kind=0).
             let type_handle = builder.add_typedef(
                 &format!("__closure_{}", idx),
                 "", // no namespace
-                TypeDefKind::Struct,
+                TypeDefKind::Class,
                 0,
                 None, // synthetic — no source DefId
             );
@@ -189,7 +191,8 @@ fn scan_expr_for_lambdas(
         | TypedExpr::Var { .. }
         | TypedExpr::SelfRef { .. }
         | TypedExpr::Path { .. }
-        | TypedExpr::Error { .. } => {}
+        | TypedExpr::Error { .. }
+        | TypedExpr::Crash { .. } => {}
     }
 }
 

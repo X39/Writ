@@ -11,8 +11,29 @@ use crate::check::ty::TyKind;
 use super::BodyEmitter;
 use super::expr::emit_expr;
 
+/// Extract the source span from any TypedStmt variant.
+fn stmt_span(stmt: &TypedStmt) -> chumsky::span::SimpleSpan {
+    match stmt {
+        TypedStmt::Let { span, .. }
+        | TypedStmt::Expr { span, .. }
+        | TypedStmt::For { span, .. }
+        | TypedStmt::While { span, .. }
+        | TypedStmt::Break { span, .. }
+        | TypedStmt::Continue { span }
+        | TypedStmt::Return { span, .. }
+        | TypedStmt::Atomic { span, .. }
+        | TypedStmt::Error { span } => *span,
+    }
+}
+
 /// Emit code for a TypedStmt.
 pub fn emit_stmt(emitter: &mut BodyEmitter<'_>, stmt: &TypedStmt) {
+    // Push a source span entry at the current instruction index for this statement.
+    // This enables PREP-01 line/col resolution in disassembler output.
+    let span = stmt_span(stmt);
+    let instr_idx = emitter.instructions.len() as u32;
+    emitter.source_spans.push((instr_idx, span));
+
     match stmt {
         // ── Let binding ───────────────────────────────────────────────────────
         TypedStmt::Let { name, ty: _, value, .. } => {

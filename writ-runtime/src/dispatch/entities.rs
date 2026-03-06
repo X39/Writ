@@ -150,13 +150,12 @@ pub(super) fn exec_get_or_create(
     type_idx: u32,
 ) -> ExecutionResult {
     // Check singleton map first
-    if let Some(existing) = ctx.entity_registry.get_singleton(type_idx) {
-        if ctx.entity_registry.is_alive(existing) {
+    if let Some(existing) = ctx.entity_registry.get_singleton(type_idx)
+        && ctx.entity_registry.is_alive(existing) {
             let frame = ctx.task.call_stack.last_mut().unwrap();
             frame.registers[r_dst as usize] = Value::Entity(existing);
             return ExecutionResult::Continue;
         }
-    }
     // Create new entity and register as singleton
     let module = &ctx.modules[ctx.current_module_idx];
     let entity_id = ctx.entity_registry.allocate(type_idx);

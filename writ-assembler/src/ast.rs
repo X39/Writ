@@ -35,6 +35,7 @@ pub enum AsmTypeKind {
     Enum,
     Entity,
     Component,
+    Class,
 }
 
 /// Field definition: `.field "name" type_ref flags`.

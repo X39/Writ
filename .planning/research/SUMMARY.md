@@ -1,17 +1,17 @@
 # Project Research Summary
 
-**Project:** Writ Compiler v3.0 — Middle-End Pipeline
-**Domain:** Compiler middle-end — name resolution, type checking, and IL codegen for the Writ game scripting language
-**Researched:** 2026-03-02
+**Project:** Writ v7.0 — Cross-Language Benchmark Suite
+**Domain:** Docker-containerized benchmark harness comparing Writ against Lua, Squirrel, Python, Node.js, and native Rust
+**Researched:** 2026-03-20
 **Confidence:** HIGH
 
 ## Executive Summary
 
-Writ v3.0 is a compiler middle-end milestone: connecting the existing lowered AST output (produced by the v1.x lowering passes in `writ-compiler`) to the existing binary IL runtime (shipped in v2.0 as `writ-runtime` + `writ-module`). The pipeline is well-scoped — three sequential phases (name resolution, type checking, IL codegen) that transform `Vec<AstDecl>` into a `writ_module::Module`. The target format is fully specified (90 instructions, 21 metadata tables, complete IL spec), and the output consumer (the VM) is already working. This is a correctness-first milestone, not a performance or incremental-compilation milestone.
+This milestone adds a cross-language benchmark suite to an already-mature 9-crate Rust workspace (v6.1, 74,997 LOC). The existing `writ-cli`, `writ-compiler`, and `writ-runtime` crates are subjects under test — nothing in the core toolchain changes. The new infrastructure consists of benchmark source programs in six languages, a Docker-based execution harness, a Python chart generator, and a GitHub Actions CI workflow. The recommended approach follows established prior art (kostya/benchmarks, drujensen/fib, Are-We-Fast-Yet): Docker for reproducibility, hyperfine for timing, JSON as the canonical results format, and SVG charts generated on the host after the container exits. The architecture is a clean one-way pipeline: source files enter the Docker container, `raw.json` exits via a volume mount, and `generate.py` on the host produces SVG and markdown.
 
-The recommended approach is to implement all three phases as new modules inside `writ-compiler` (not new crates), following the existing `lower/` module as a precedent. The dependency graph is `Ast → NameResolved → Typed → Module`, with each phase producing a distinct IR and accumulating errors rather than halting immediately. Four new production dependencies are needed: `id-arena` (type storage without lifetime pollution), `rustc-hash` (fast HashMaps for symbol tables), `ena` (union-find for type variable unification), and a promotion of `ariadne` from dev-dep to production dep at the CLI boundary. All phases must be built sequentially — name resolution is the hard prerequisite for type checking, and type checking must be complete before codegen begins, because IL instruction selection depends on fully-resolved types at every expression node.
+The most critical design constraint is measurement fairness. Writ has an explicit AOT compile step that other interpreted languages do not; this must be reported as a separate `compile_ms` metric so Writ `execution_ms` is directly comparable to Lua/Python/Node execution time. Node.js requires warmup before TurboFan JIT activates; without it, Node.js appears 5-10x slower than steady-state. Squirrel is not in Ubuntu apt repositories and must be built from source in Docker — its inclusion carries high implementation risk and must be validated early. Statistical rigor (median over mean, minimum 30 iterations, inter-quartile range reported alongside median) is non-negotiable for publishable results that can withstand external scrutiny.
 
-The primary risk category is correctness-before-completion: 15 specific pitfalls are documented, all of which produce either silent wrong behavior or deferred runtime crashes rather than immediate compile-time errors. The mitigation strategy is consistent: establish correct architectural shapes before writing any logic (two-pass collection in name resolution, a separate `TypedExpr` IR, contract-canonical slot ordering in codegen), write adversarial tests for each pitfall immediately after implementing the relevant feature, and defer nothing that is currently listed as deferred in PROJECT.md tech debt — specifically `?`/`!` desugaring, singleton speaker validation, and lifecycle hook TypeDef registration.
+The implementation risk is concentrated in three areas: Squirrel build reliability in CI, per-language measurement methodology correctness (warmup, startup separation, anonymous RSS for memory), and CI runner variance making committed numbers misleading. All three are avoidable by front-loading the Docker environment and harness design phases before writing any benchmark programs. A note on a specific gap: STACK.md and ARCHITECTURE.md give conflicting information on whether `squirrel3` is in Ubuntu 24.04 apt — STACK.md says it must be built from source, ARCHITECTURE.md lists `apt-get install squirrel3`. This must be validated with a single `docker run` test before Phase 2 planning.
 
 ---
 
@@ -19,178 +19,152 @@ The primary risk category is correctness-before-completion: 15 specific pitfalls
 
 ### Recommended Stack
 
-See `.planning/research/STACK.md` for full details.
+The benchmark suite requires no changes to existing workspace crates. New infrastructure lives in `benchmark/` (top-level directory). The harness is implemented as a shell script (`bench_runner.sh`) inside the Docker container using `hyperfine` for timing and `jq` for JSON assembly, with chart generation handled by a Python script (`generate.py`) using `pygal` on the host. Criterion is explicitly ruled out: it cannot time external processes and is an in-process Rust-only tool. A `writ-bench` Rust crate is optional; the shell-based approach is fully sufficient and avoids adding a new crate.
 
-The existing workspace (Rust 2024 edition, `chumsky 0.12`, `logos 0.16`, `thiserror 2.0`, `insta 1`, `slotmap 1.1.1`, `indexmap 2.13`) requires no changes. The middle-end adds exactly four new crates and one new cross-crate dependency link. `writ-compiler` gains `writ-module` as a dependency for the codegen phase — this is safe, as the direction is compiler → module with no cycle.
+**Core technologies:**
+- `hyperfine` 1.18.0 — subprocess timing with JSON export; installed from GitHub Releases `.deb` (NOT in Ubuntu apt)
+- `ubuntu:24.04` multi-stage Docker — reproducible runtime environment; matches GitHub Actions `ubuntu-latest` since January 2025
+- `pygal` (Python, pip) — headless SVG bar chart generation; no system GUI dependencies; pure Python
+- `jq` (apt) — JSON assembly inside the shell runner script
+- `squirrel3` — must be built from source via CMake OR may be in Ubuntu 24.04 apt (validate before Phase 2)
+- Rust 1.85+ stable — needed in Docker builder stage only; final image does not need the Rust toolchain
+- `actions/checkout@v4` + `actions/upload-artifact@v4` — standard CI artifact pipeline
+- `plotters` 0.3.7 + `plotters-svg` 0.3.7 — alternative to pygal if chart generation moves into a Rust binary
 
-**Core technologies (new additions for v3.0):**
-- `id-arena 2.3.0`: Type node storage — `Arena<T>` + `Id<T>` eliminates `'tcx` lifetime pollution from all type-checker function signatures; type equality becomes `id_a == id_b`; interning via a `FxHashMap<TyKind, Id<TyKind>>` deduplicates type nodes
-- `rustc-hash 2.1.1`: Symbol table performance — `FxHashMap`/`FxHashSet` for the hundreds of small scope frames created during name resolution; the same hasher used inside `rustc`, tuned for short-string and integer keys
-- `ena 0.14.4`: Type variable unification — `UnificationTable` with snapshot/rollback for `let` inference and generic call site unification; extracted from `rustc`, maintained by the Rust compiler team
-- `ariadne 0.6.0`: Diagnostic rendering — already in `writ-parser` dev-deps; promote to production dep in `writ-cli` for multi-span, multi-file error display; designed explicitly to pair with `chumsky`
-
-Two conditional additions: `petgraph 0.8.3` only if declaration-ordering cycles require graph toposort; `bitflags 2.11.0` only if type modifier flags exceed 3-4 boolean fields. Do not add `salsa` (incremental compilation is out of scope), `rayon` (parallel type checking is premature), or any native-code backend.
+**What NOT to add:** `criterion`, `mlua`, `docker-compose`, Python `matplotlib`, `benchmark-action` on every PR, `squirrel-rs` FFI bindings.
 
 ### Expected Features
 
-See `.planning/research/FEATURES.md` for full details, feature dependency graph, and prioritization matrix.
+**Must have (P1 — table stakes):**
+- Docker image with all 6 language runtimes at pinned versions — without this, nothing is reproducible
+- Compute benchmarks: fib(40) recursive + prime sieve (N=1,000,000) in all 6 languages — minimum viable comparison
+- Runner script producing structured JSON output — hub for all downstream reporting
+- Writ compile time reported separately from execution time (`compile_ms` distinct from `execution_ms`) — fairness requirement unique to Writ
+- Markdown table reporter (language, median_ms, memory_mb, relative-to-Rust ratio) — primary publishable artifact
+- SVG bar chart for compute category on log scale — visual proof for README; log scale required because Rust/interpreter gap spans 2-3 orders of magnitude
+- Methodology README disclosing hardware, language versions, run count, what is and is not measured
+- Statistical rigor: median + IQR (or MAD), minimum 30 iterations, outlier treatment
 
-This is a spec-driven milestone: the Writ language spec fully defines what must be compiled, and the IL spec fully defines what must be emitted. The feature landscape is divided across three phases with clear dependency ordering.
+**Should have (P2 — add after compute pipeline validated):**
+- String processing category (concat loop, word count)
+- Data structures category (linked list 100K nodes, hash map 1M insert/lookup)
+- OOP/dispatch category (virtual method chain, closure/callback chain) — hardest to keep fair; add last
+- Memory measurement via anonymous RSS (not total RSS) — important for game context; requires correct cgroup v2 handling
+- GitHub Actions CI workflow with `workflow_dispatch` + weekly schedule
+- Matrix multiply benchmark (500x500)
 
-**Must have — Phase 1 (Name Resolution):**
-- Two-pass symbol collection: all declaration kinds collected across all files before any body resolution
-- `using` resolution (plain and alias), qualified path `::` resolution, visibility enforcement, same-namespace cross-file visibility per §23
-- Type name resolution: every `AstType` mapped to a `TypeRef` blob or primitive tag, including cross-module lookup of `writ-runtime` virtual module types
-- Impl-type association, generic parameter scoping, forward reference handling
-- Singleton speaker validation and `[Singleton]`/`[Conditional]` attribute validation (explicitly deferred from lowering; must not be deferred again)
-
-**Must have — Phase 2 (Type Checking):**
-- Primitive type propagation, `let` inference via bidirectional propagation, function call checking, field access and component field distinction
-- Contract bounds checking at generic call sites, strict mutability enforcement (`let` blocks both reassignment AND mutation through `mut self` methods — two separate checks)
-- Return type checking, `Option`/`?`/`!` rules, `Result`/`try` rules, pattern match exhaustiveness for enums
-- Closure capture inference (classify `let` as by-value, `let mut` as by-reference), generic type argument inference via unification
-- `spawn`/`join`/`cancel` type rules: `spawn expr` always produces `TaskHandle`, never the callee's return type
-- `?` and `!` desugaring to typed match nodes in the typed IR (deferred from lowering; must not be deferred again)
-
-**Must have — Phase 3 (IL Codegen):**
-- All 21 metadata tables populated with correct token assignment
-- Linear register allocation with LIFO high-watermark tracking (not per-expression reset)
-- All 90 IL instructions emitted with correct selection driven by type annotations
-- Entity construction sequence exactly as spec §14.7.5: `SPAWN_ENTITY → SET_FIELD for overrides only → INIT_ENTITY`
-- Lifecycle hook TypeDef registration (emit MethodDef AND register token in TypeDef hook slot)
-- Closure/delegate emission: compiler-generated capture struct TypeDef + method + `NEW_DELEGATE`
-- `TAIL_CALL` for dialogue transitions (`return dialogueFn(args)` in dlg-lowered functions)
-- Debug info emission (SourceSpan + DebugLocal) for all method bodies
-- CALL_VIRT slot numbers derived from contract declaration order, never from impl block traversal order
-
-**Should have (P2, after pipeline validated end-to-end):**
-- Diagnostic-quality ambiguity errors with multiple candidates and definition spans
-- Unresolved name fuzzy suggestions ("did you mean `survival::HealthPotion`?")
-- Contract satisfaction suggestion in type errors
-- `CALL_VIRT` → `CALL` specialization when receiver's static type is known concrete
-- Constant folding for `const` expressions
-
-**Defer to v4+:**
-- `writ-std` module (requires v3.0 to be validated first)
-- Incremental compilation (requires stable module identity scheme)
-- Language server / LSP (requires stable type-checking API)
-- JIT compilation (requires validated reference interpreter + type-annotated IR)
+**Defer (v2+):**
+- CI baseline comparison with regression alerts — only useful after historical baseline exists
+- Per-run archival and trend tracking dashboards
+- Squirrel OOP variants — Squirrel OOP model complexity is high
+- Live web dashboard — maintenance burden, out of scope
 
 ### Architecture Approach
 
-See `.planning/research/ARCHITECTURE.md` for full details, data flow diagrams, build order, and anti-patterns.
-
-All three new phases live inside `writ-compiler` as additional Rust modules (`resolve/`, `typecheck/`, `codegen/`), not as new crates. This matches the `lower/` module precedent, avoids circular dependency risk, and keeps intra-phase imports as natural `mod` imports rather than cross-crate public APIs. The pipeline is strictly linear: each phase produces a distinct IR type (no in-place AST mutation) and accumulates errors before the next phase boundary. Phase boundaries are hard stops: errors in name resolution prevent type checking from running; errors in type checking prevent codegen from running.
+The system follows a clean separation: the Docker container handles all benchmark execution and produces `raw.json` via a volume-mounted results directory; chart generation and markdown table production run on the host after the container exits. This makes chart regeneration independent of benchmark re-runs and keeps the container image small (no Python charting dependencies inside). The multi-stage Docker build is critical: Rust benchmark binaries are pre-compiled in a builder stage so the runtime measurement excludes compilation overhead. Writ is measured in two separate hyperfine passes: `writ compile` and `writ run`.
 
 **Major components:**
-1. `resolve/` — Two-pass name resolution: pass 1 collects all top-level declarations into `DefMap + NamespaceMap`; pass 2 resolves all references in bodies using the fully-populated map; produces `NameResolved` IR where every `Ident`/`Path` is replaced by a `DefId`
-2. `typecheck/` — Constraint-based type checking: assigns explicit types from annotations, infers `let` bindings via `ena` union-find, validates contract impls (signature match AND completeness), produces `Typed` IR where every expression node carries a non-optional `Ty`; includes `?`/`!` desugaring and closure capture classification
-3. `codegen/` — Two-sub-pass IL emission: skeleton pass emits all `TypeDef`/`FieldDef`/`MethodDef` rows and assigns `MetadataToken`s; body pass emits instruction sequences using the token map; drives `writ_module::ModuleBuilder`; produces `writ_module::Module`
+1. `benchmark/cases/<suite>/` — six source files per benchmark suite (fib.writ, fib.lua, fib.nut, fib.py, fib.js, fib.rs); flat layout for direct visual comparison
+2. `benchmark/runner/Dockerfile` — multi-stage: writ-builder stage (Rust), rust-bench-builder stage (pre-compiled Rust benchmarks), final ubuntu:24.04 runtime image with hyperfine + language runtimes
+3. `benchmark/runner/bench_runner.sh` — runs inside container; calls hyperfine per language per suite; assembles raw.json via jq; handles Writ two-step compile+run measurement
+4. `benchmark/runner/run.sh` + `run.ps1` — host-side launchers; detect docker/podman; mount results volume; call generate.py after container exits
+5. `benchmark/chart_gen/generate.py` — reads raw.json; produces per-suite SVG charts (log scale, Y=0 baseline) + RESULTS.md markdown table
+6. `benchmark/results/YYYY-MM-DD/` — dated output directories; raw.json + charts/ + RESULTS.md; git-tracked
+7. `.github/workflows/benchmark.yml` — `workflow_dispatch` + weekly schedule; artifact upload; optional manual result commit
 
-Key cross-cutting patterns: `DefId` as the resolution currency (no string lookups after pass 1), `FxHashMap` rib stack for O(1) scope lookup, `LinearRegisterAllocator` with LIFO high-watermark for correct temporary management, `CodegenCtx` as the stateful thread through all emission functions.
+**Key architectural patterns:**
+- Multi-stage Docker: Rust binaries pre-compiled in builder stage so runtime measurement is execution-only
+- Two-step Writ measurement: `writ compile` timed separately; only `writ_run_ms` in execution comparison chart
+- JSON as canonical format: SVG and markdown are derived outputs regenerable from any historical raw.json
+- Host-side chart generation: separates measurement environment from visualization tooling
+- Dated subdirectories for results: prevents overwrite, enables historical diff
 
 ### Critical Pitfalls
 
-See `.planning/research/PITFALLS.md` for all 15 pitfalls with full prevention strategies, warning signs, and recovery costs.
+1. **Non-equivalent workloads across languages** — define a paradigm-neutral canonical algorithm spec (exact data structure, exact operation count, expected output checksum) before writing any language implementations. OOP benchmarks must allocate the same number of objects in each language; verify with allocation counters. This is the highest-cost pitfall to fix after the fact.
 
-1. **Single-pass name resolution** — forward references between top-level declarations fail. Prevention: implement two-phase collection before writing any lookup logic; this is the first architectural decision in Phase 1. Recovery cost if discovered late: MEDIUM.
+2. **Writ compile time mixed into execution time** — always run `writ compile` as a pre-measurement step and report its time as `compile_ms`; the execution comparison chart must show only `writ_run_ms`. Must be a first-class constraint in the harness design, not an afterthought.
 
-2. **`let` mutation vs. reassignment — two distinct checks** — only checking `x = y` but missing `x.mutMethod()` through an immutable binding. Prevention: separate mutability analysis pass that runs after method resolution; store `is_mut_self` flag in method metadata. Recovery cost if discovered late: MEDIUM.
+3. **Node.js JIT warmup missing** — run at minimum 200-500 warmup iterations before the timed measurement window for Node.js; never use `--jitless`; verify TurboFan is active for the timed portion. Without warmup, Node.js appears 5-10x slower than realistic steady-state.
 
-3. **CALL_VIRT slot ordering: impl-order vs. contract-order** — methods in the `impl` block listed in a different order than the contract declaration produce incorrect runtime dispatch (silent wrong behavior). Prevention: always look up canonical slot from the contract declaration during impl codegen, never from the impl block's traversal order. Recovery cost if discovered late: MEDIUM.
+4. **Squirrel not buildable in Docker CI** — validate the Squirrel CMake build (or apt availability) in Docker before committing to it as a benchmark target. If not reproducible, drop from CI and document as local-only rather than producing silent zero results.
 
-4. **Type-annotated AST: in-place mutation vs. separate typed IR** — `Option<ResolvedType>` fields on `AstExpr` create `None` traps throughout codegen. Prevention: define `TypedExpr`/`TypedStmt` IR before writing any type-checking logic; all type fields are non-optional. Recovery cost if discovered late: HIGH.
+5. **Memory metric includes OS page cache** — read anonymous RSS (`VmRSS - RssFile - RssShmem`) not total RSS; on cgroup v2 use `memory.stat` → `anon`; use a shared shell function for all languages so measurement method is identical across the comparison.
 
-5. **`?` and `!` desugaring deferred again** — `UnaryPostfix` nodes left in the typed IR have no corresponding IL instruction. Prevention: desugar in the type checker's expression lowering pass; verify the typed IR contains no raw `UnaryPostfix` nodes. Recovery cost if discovered late: MEDIUM.
+6. **GitHub Actions timing variance (10-30%)** — do not commit CI runner numbers as authoritative results; use CI only for regression detection with a minimum 15% threshold; generate publishable numbers locally in Docker on a stable machine.
+
+7. **Chart Y-axis truncation** — always set Y-axis minimum to 0 for bar charts; use log scale for charts including Rust native (label it explicitly); generate a second linear-scale chart showing only interpreted/VM languages so the interpreted-language comparison is legible.
 
 ---
 
 ## Implications for Roadmap
 
-The strict dependency ordering established in research dictates the phase structure. Name resolution must be fully working and tested before type checking begins; type checking must be fully working before codegen begins. Within codegen, the metadata skeleton pass must be complete before any method body can reference tokens.
+The dependency graph dictates a strict phase ordering: Docker environment and measurement methodology must be locked before benchmark programs are written; JSON pipeline must be proven before charts are generated; charts must be validated before CI is wired up. FEATURES.md identifies a clear MVP (compute category only) that proves the pipeline end-to-end before expanding to harder categories. The pitfalls research reinforces this conservative ordering — every major pitfall has its root cause in a later phase assuming earlier phases were correct.
 
-### Phase 1: Name Resolution
+### Phase 1: Algorithm Specifications and Benchmark Design
+**Rationale:** Research (Are-We-Fast-Yet methodology) shows that algorithm specification must precede any language implementation. Locking the canonical algorithm spec — exact parameters, expected output checksum, operation counts — prevents the most expensive pitfall: discovering non-equivalent implementations after all six language versions are written.
+**Delivers:** Written spec document for each benchmark category (compute, string, data structures, OOP/dispatch) covering exact algorithm, parameters, expected output, object allocation count (for OOP parity). No code written yet. Writ compile/run separation policy documented here.
+**Addresses:** Compute-heavy MVP (fib(40), prime sieve); algorithm specs for remaining categories
+**Avoids:** Pitfall 1 (non-equivalent workloads — prevented by locking spec before implementation); Pitfall 2 (compile/run separation is specified here, not discovered later)
+**Research flag:** Standard — algorithm selection and parameterization is exhaustively documented in prior art (AWFY, kostya/benchmarks, drujensen/fib). No additional research phase needed.
 
-**Rationale:** Name resolution is the absolute prerequisite for all downstream work. Neither the type checker nor codegen can proceed without knowing what each identifier refers to. The two-pass architecture (collection before body resolution) must be the first design decision — retrofitting it is expensive.
+### Phase 2: Docker Environment and Measurement Harness
+**Rationale:** Docker environment and measurement methodology are the foundation everything else depends on. Squirrel build risk must be confronted here, not discovered after benchmark programs exist. The measurement protocol (warmup, startup separation, anonymous RSS, iteration count) must be locked before any benchmark programs are written against it, because the protocol determines how each language's benchmark script must be structured.
+**Delivers:** Working multi-stage Dockerfile with all 6 language runtimes at pinned versions; `bench_runner.sh` with correct per-language measurement protocol (Node.js warmup, Writ two-step, Python self-timing); validated Squirrel build or explicit fallback; version-check assertions at container startup; raw.json schema defined and validated with a stub benchmark
+**Uses:** `ubuntu:24.04`, `hyperfine` 1.18.0 (from GitHub Releases `.deb`), `jq`, multi-stage Docker build, Squirrel 3.2
+**Implements:** Docker container component, bench_runner.sh component
+**Avoids:** Pitfall 3 (LuaJIT/PUC Lua conflation — version assertions in container startup); Pitfall 4 (Squirrel build); Pitfall 5 (memory metric — anonymous RSS function shared across all languages); Pitfall 6 (Python startup separation); Pitfall 2 (Node.js warmup protocol)
+**Research flag:** Squirrel availability needs early validation — run `docker run ubuntu:24.04 apt-cache show squirrel3` before planning Phase 2 in detail. STACK.md and ARCHITECTURE.md conflict on this point.
 
-**Delivers:** `NameResolved` IR with every identifier bound to a `DefId`; `DefMap` mapping every `DefId` to its declaration location; `NamespaceMap` resolving `using` imports and cross-namespace visibility; type name resolution to TypeRef blobs including `writ-runtime` virtual module types; singleton speaker validation; attribute validation.
+### Phase 3: Benchmark Programs — Compute Category (MVP)
+**Rationale:** Implement only the compute category (fib + prime sieve) across all six languages first. This validates the end-to-end pipeline with the simplest, most well-understood algorithms before tackling harder categories. Output checksum verification confirms algorithmic equivalence before any timing begins.
+**Delivers:** `benchmark/cases/fib/` and `benchmark/cases/sieve/` with six source files each; output checksums verified across all six languages; `writ compile` + `writ run` both succeed; raw.json produced with correct `compile_ms` and `execution_ms` separation; statistical rigor validated (N>=30, median + IQR)
+**Addresses:** P1 compute benchmarks; Writ compile-time separation; statistical rigor
+**Avoids:** Pitfall 1 (output checksums verified before timing begins); Pitfall 10 (insufficient iterations — adaptive harness ensures N>=30)
+**Research flag:** Standard — fib(40) and prime sieve are the most benchmarked algorithms in existence. No research needed.
 
-**Addresses:** All Phase 1 table-stakes features from FEATURES.md — symbol collection, `using` + `::` resolution, visibility enforcement, type name resolution, impl-type association, generic parameter scoping, singleton speaker validation, `[Singleton]`/`[Conditional]` attribute validation.
+### Phase 4: Chart Generation and Results Pipeline
+**Rationale:** With compute benchmarks producing raw.json, build the full reporting pipeline before expanding to more benchmark categories. Locking chart configuration (Y-axis-zero policy, log scale, units) in version-controlled code prevents the chart Y-axis truncation pitfall and ensures all future categories automatically get correct charts without per-category manual configuration.
+**Delivers:** `generate.py` producing per-suite SVG charts (log scale, Y=0 baseline enforced, units labeled) + linear-scale interpreted-languages-only chart + RESULTS.md markdown table; `run.sh` + `run.ps1` host launchers; validated end-to-end: one command from repo root produces committed results in `benchmark/results/YYYY-MM-DD/`
+**Uses:** `pygal` (headless SVG, pip), Python 3.12, dated subdirectory results structure
+**Implements:** chart_gen component, host runner scripts, results/ directory structure
+**Avoids:** Pitfall 9 (Y-axis truncation — enforced in code with automated SVG assertion); anti-pattern of flat results directory (dated subdirectories used)
+**Research flag:** Standard — pygal SVG generation is well-documented. No research phase needed.
 
-**Avoids:** Pitfall 1 (single-pass resolution), Pitfall 6 (speaker validation ordering — post-collection check), Pitfall 3 (namespace-as-string-table anti-pattern).
+### Phase 5: Benchmark Programs — Remaining Categories
+**Rationale:** Expand from compute-only MVP to full four-category suite after the pipeline is proven. String processing is added first (medium complexity), then data structures (moderate — Squirrel requires hand-rolled structures), then OOP/dispatch last (highest fairness risk). Each category is gated by the same parity verification used in Phase 3 before any timing.
+**Delivers:** `string_processing/`, `data_structures/`, `dispatch/` cases in all six languages; expanded raw.json with all four suites; updated charts and RESULTS.md; memory measurement added (anonymous RSS via shared shell function)
+**Addresses:** P2 features: string processing, data structures, OOP/dispatch, memory measurement, matrix multiply
+**Avoids:** Pitfall 1 (parity checklist from "Looks Done But Isn't" applied per category); Pitfall 5 (memory measurement with correct cgroup v2 anonymous RSS)
+**Research flag:** OOP/dispatch category needs a targeted research spike before implementation — Squirrel OOP (metatables), Lua OOP (metatables), Python (native classes), Writ (struct + entity model), Rust (traits), Node.js (class syntax) all have different dispatch overhead profiles. Need to confirm canonical equivalence before writing code.
 
-**Research flag:** Standard patterns — two-pass collection + rib stack is well-documented (rustc dev guide). No phase research needed.
-
-### Phase 2: Type Checking
-
-**Rationale:** Requires complete `DefMap` from Phase 1. Cannot be started until Phase 1 is validated. The typed IR structure produced here determines whether codegen can be implemented cleanly — defining the IR correctly up front is more important than any individual type rule.
-
-**Delivers:** `Typed` IR where every expression node carries a non-optional `Ty`; closure capture classifications (`CaptureByValue` / `CaptureByRef`); boxing annotations at generic call sites; `?`/`!` desugaring to typed match nodes; fully validated contract impls (signature match AND completeness); mutability violations as compile errors; `spawn` expressions typed as `TaskHandle`.
-
-**Addresses:** All Phase 2 table-stakes features from FEATURES.md — primitive type propagation, `let` inference, function call checking, field access + component field distinction, contract bounds, mutability enforcement, return type checking, Option/Result/`?`/`!`/`try` rules, pattern exhaustiveness, closure capture inference, generic type argument inference, `spawn`/`join`/`cancel` type rules, `new` construction type checking, `for` loop element type binding.
-
-**Uses:** `ena 0.14.4` (union-find), `id-arena 2.3.0` (type interner), `rustc-hash 2.1.1` (TypeEnv scope maps).
-
-**Implements:** `typecheck/` component — `InferCtx`, `TypeEnv`, `check.rs`, `contract.rs`, separate `TypedExpr`/`TypedStmt` IR defined before any logic is written.
-
-**Avoids:** Pitfall 2 (`let` mutation — separate mutability pass after method resolution), Pitfall 4 (boxing annotations on call nodes), Pitfall 5 (closure capture classification in type checker, not codegen), Pitfall 7 (contract completeness check), Pitfall 8 (component access type ambiguity — concrete entity vs. generic Entity), Pitfall 11 (in-place AST mutation), Pitfall 12 (`?`/`!` desugaring), Pitfall 13 (`spawn` task handle type).
-
-**Research flag:** Standard patterns — bidirectional type checking with constraint unification is well-documented. Component access type distinction and closure capture classification are Writ-specific but fully specified. No phase research needed.
-
-### Phase 3: IL Codegen — Metadata Skeleton
-
-**Rationale:** Codegen has a mandatory internal sub-ordering: all TypeDef/FieldDef/MethodDef/ContractDef rows must be emitted and assigned `MetadataToken`s before any method body can reference them (forward references require the token to exist first). The skeleton pass also establishes the CALL_VIRT slot ordering from the contract declaration — this decision cannot be changed after method bodies start emitting.
-
-**Delivers:** All 21 metadata tables populated in the `ModuleBuilder`; `DefId → MetadataToken` mapping complete; `Ty → TypeRef blob` encoding working; lifecycle hook TypeDef registration (each hook's method token registered in the entity's TypeDef hook slot); CALL_VIRT slot numbers assigned from contract declaration order.
-
-**Addresses:** Module metadata emission (ModuleDef, ModuleRef, ExportDef), TypeDef + FieldDef + MethodDef + ParamDef, ContractDef + ContractMethod + ImplDef, GenericParam + GenericConstraint, GlobalDef + ExternDef, ComponentSlot, lifecycle hook registration, localization key registry initialization.
-
-**Uses:** `writ-module::ModuleBuilder` (new dependency on `writ-compiler`), `indexmap 2.13` (declaration-order iteration for field slots).
-
-**Avoids:** Pitfall 3 (CALL_VIRT slot ordering established here from contract declaration), Pitfall 14 (lifecycle hooks registered in TypeDef metadata in this pass, before method bodies are emitted).
-
-**Research flag:** Standard patterns — the skeleton-pass-then-body-pass approach matches the assembler's existing two-pass design. No phase research needed.
-
-### Phase 4: IL Codegen — Method Bodies
-
-**Rationale:** Requires all metadata tokens from Phase 3. This is the highest-complexity implementation phase — 90 instructions across 16 categories, entity construction sequences, closure emit, concurrency, dialogue tail calls, pattern match, boxing, `?`/`try` desugaring in instruction sequences. The register allocator design must be established first; retrofitting it requires rewriting all expression codegen.
-
-**Delivers:** Complete instruction sequences for all method bodies; correct LIFO high-watermark register allocation with no register clobber on simultaneous live values; entity construction sequences exactly per spec §14.7.5 (`SPAWN_ENTITY → overrides only → INIT_ENTITY`); closure/delegate emission with compiler-generated capture struct TypeDef; `SPAWN_TASK`/`JOIN`/`CANCEL`/`DEFER_*` emission; `TAIL_CALL` for dialogue transitions; `BOX`/`UNBOX` from type-checker boxing annotations; debug info (SourceSpan + DebugLocal); cross-file localization key collision detection.
-
-**Addresses:** All Phase 3 table-stakes features from FEATURES.md — all basic instruction emission, CALL/CALL_VIRT/CALL_EXTERN/CALL_INDIRECT, object model, entity instructions, array instructions, Option/Result instructions, closure/delegate emission, concurrency, pattern match, enum construction, conversion, string, boxing, `?`/`try` desugaring in codegen, tail call, localization, debug info.
-
-**Avoids:** Pitfall 4 (boxing emission from type-checker annotations), Pitfall 5 (closure emit from capture classifications), Pitfall 9 (register clobber — LIFO allocator with high-watermark), Pitfall 10 (entity construction SET_FIELD only for explicit overrides, not defaults), Pitfall 15 (localization key cross-file collision — module-level registry).
-
-**Research flag:** The entity construction sequence, closure delegate emission, and CALL_VIRT slot resolution are Writ-specific; the IL spec is authoritative and complete. The register allocator design is the highest-risk decision — establish it before writing any expression codegen. No external research needed.
-
-### Phase 5: CLI Integration and End-to-End Validation
-
-**Rationale:** Wire all phases into the `writ-cli compile` subcommand; validate the full source → .writil → VM execution pipeline with representative Writ programs covering all language features.
-
-**Delivers:** `writ-cli compile` subcommand; end-to-end test suite covering entities, dialogue, closures, generics, concurrency, Option/Result, pattern match; the "looks done but isn't" checklist from PITFALLS.md fully green.
-
-**Avoids:** All 15 pitfalls — final integration tests catch anything missed in earlier phases.
-
-**Research flag:** Standard CLI wiring (clap subcommand). No phase research needed.
+### Phase 6: GitHub Actions CI Workflow
+**Rationale:** CI is added last, after the pipeline is locally validated and results are trusted. Adding CI before results are stable creates noise and burns CI minutes unnecessarily. The variance policy (15% regression threshold, no auto-commit of authoritative numbers from shared runners) must be encoded in the workflow design.
+**Delivers:** `.github/workflows/benchmark.yml` with `workflow_dispatch` + weekly `schedule` trigger; artifact upload of raw.json + SVG charts; conditional result commit only on manual dispatch; CI variance documented in results README; regression threshold set to 15%
+**Uses:** `actions/checkout@v4`, `actions/upload-artifact@v4`, `actions/setup-python@v5`, Docker (pre-installed on ubuntu-24.04 runners)
+**Avoids:** Pitfall 7 (CI runner variance — 15% threshold, no auto-commit of authoritative numbers); anti-pattern of running benchmarks on every push
+**Research flag:** Standard — GitHub Actions patterns are well-documented. No research phase needed.
 
 ### Phase Ordering Rationale
 
-- **Strict sequential ordering** is imposed by data dependencies: type checking cannot begin without `DefMap`; codegen cannot begin without `Typed` IR; method bodies cannot be emitted without metadata tokens.
-- **Sub-phase ordering within codegen** (metadata before bodies) mirrors the two-pass pattern used successfully in name resolution and is required by forward-reference structure in the IL module format.
-- **Deferred P2 features** (fuzzy name suggestions, diagnostic polish, `CALL_VIRT` specialization, constant folding) are intentionally placed after Phase 5 validation — they add user experience value but cannot be correctly implemented until the pipeline is proven correct.
-- **The 15 pitfalls from research directly informed phase sequencing.** Pitfalls 1 and 6 (name resolution architecture), pitfalls 2, 4, 5, 7, 8, 11, 12, and 13 (type checking), and pitfalls 3, 9, 10, 14, and 15 (codegen) are each addressed in the phase where they are introduced, not deferred.
+- Algorithm spec precedes code (Phase 1 before Phase 3) because fixing non-equivalent implementations after all six language versions are written is the highest-cost recovery in the pitfalls list.
+- Docker and harness precede benchmark programs (Phase 2 before Phase 3) because the measurement protocol determines how benchmark programs must be structured (self-timing approach, warmup protocol, output format).
+- MVP compute category precedes expanded categories (Phase 3 before Phase 5) because it validates the end-to-end pipeline with the least implementation risk before tackling Squirrel OOP or hash map fairness across six languages.
+- Chart pipeline comes before expanded categories (Phase 4 before Phase 5) because chart configuration must be version-controlled code — not a one-off session — to guarantee consistent presentation for all future categories.
+- CI comes last (Phase 6) because it is only useful after local results are trusted and the pipeline is stable. Adding CI earlier creates noise before the signal exists.
 
 ### Research Flags
 
-Phases needing deeper research during planning:
-- None identified. The Writ language spec and IL spec are both complete and authoritative. All compiler patterns (two-pass resolution, HM unification, linear register allocation, metadata-before-bodies codegen) are standard and well-documented.
+Phases needing deeper investigation before or during planning:
 
-Phases with standard patterns (no research-phase needed):
-- **Phase 1:** Two-pass name resolution with rib stack — established pattern (rustc, Go)
-- **Phase 2:** Bidirectional type checking with constraint unification — established pattern (Swift, Kotlin, rustc)
-- **Phase 3:** Metadata skeleton pass — mirrors the assembler's existing two-pass approach
-- **Phase 4:** Register-based codegen — matches the IL spec's design intent; existing assembler tests serve as reference
-- **Phase 5:** CLI wiring — straightforward `clap` subcommand addition
+- **Phase 2 (pre-planning):** Squirrel `squirrel3` apt availability in Ubuntu 24.04. Run `docker run ubuntu:24.04 apt-cache show squirrel3` immediately. If available: Phase 2 Dockerfile is simpler. If not: plan for a 3-5 minute CMake build layer and verify it on arm64 if needed.
+- **Phase 5 (OOP/dispatch):** Canonical OOP benchmark implementation across six languages. Squirrel metatables, Lua metatables, Python native classes, Writ struct model, and Rust traits all have meaningfully different dispatch overhead profiles. Needs a targeted research spike to confirm canonical equivalence before any OOP benchmark code is written.
+
+Phases with standard patterns (skip research-phase):
+- **Phase 1:** Algorithm selection and parameterization is exhaustively documented in AWFY, kostya, drujensen/fib.
+- **Phase 3:** fib(40) and prime sieve are the most benchmarked algorithms in existence.
+- **Phase 4:** pygal SVG generation and markdown table generation are straightforward.
+- **Phase 6:** GitHub Actions patterns are well-documented official documentation.
 
 ---
 
@@ -198,53 +172,52 @@ Phases with standard patterns (no research-phase needed):
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | All crates verified against docs.rs with confirmed versions; version compatibility confirmed for Rust 2024 edition; `ena` and `id-arena` are rustc-extracted libraries with authoritative lineage |
-| Features | HIGH | The Writ language spec and IL spec are the authoritative and complete source; feature set is determined by the spec, not market research; dependency ordering is unambiguous |
-| Architecture | HIGH | All patterns (two-pass resolver, typed IR, skeleton+body codegen) are verified against rustc dev guide and the existing `writ-compiler` pipeline structure; anti-patterns are documented with concrete examples |
-| Pitfalls | HIGH | 15 pitfalls documented with specific warning signs, verification tests, and recovery costs; majority are corroborated by rustc dev guide, compiler literature, and Writ's own PROJECT.md tech debt log |
+| Stack | HIGH | All core technologies verified against official docs and repos. One gap: Squirrel apt availability conflicts between research files — needs a one-line validation before Phase 2. Node.js LTS version has a minor conflict (STACK.md says 20 LTS, FEATURES.md says 22 LTS; use 22 to avoid immediate EOL). |
+| Features | HIGH | Prior art is abundant and consistent across five reference suites. MVP definition (compute category first) is well-supported. Feature priority matrix is clear with explicit P1/P2/P3 assignments. |
+| Architecture | HIGH | Component boundaries and data flow are fully specified with working code examples in all four research files. Multi-stage Docker pattern, two-step Writ measurement, and host-side chart generation are all validated against official docs and reference suites. |
+| Pitfalls | HIGH | All 10 pitfalls are grounded in peer-reviewed literature (2025-2026), official V8/Docker/cgroup documentation, and direct measurement studies. Prevention strategies are specific, actionable, and include concrete "warning signs" for early detection. |
 
 **Overall confidence:** HIGH
 
 ### Gaps to Address
 
-- **`ena` snapshot/rollback necessity:** Research recommends `ena` for union-find with snapshot/rollback for type-checking `if` branches independently. If type checking proves to be fully forward-only (no speculative paths), a hand-rolled union-find without rollback would suffice, saving a dependency. Validate after implementing basic type checking — starting with `ena` is safe and can be simplified if rollback is never triggered.
-
-- **`petgraph` necessity:** Only needed if declaration ordering requires cycle detection (e.g., mutually recursive type aliases). The current spec does not have type aliases. Skip `petgraph` initially; add only if declaration ordering proves non-trivial in practice.
-
-- **Multi-file compilation scope:** The architecture research notes that Phases 1-4 assume a pre-merged AST or single-file compilation. A module driver that parses all `.writ` files and merges `DefMap`s across files is needed for real projects. The exact mechanism (merge before resolve, or per-file resolve with cross-file DefMap joining) should be decided before Phase 1 implementation begins to avoid redesigning the `DefMap` structure mid-phase.
-
-- **`ariadne` placement:** Should stay in `writ-cli` dev-deps if diagnostic rendering lives only at the CLI boundary, or move to `writ-compiler` production dep if the compiler exposes a `render_diagnostics` API. Decide at the start of Phase 5 CLI integration.
+- **Squirrel apt availability conflict:** STACK.md states Squirrel must be built from source; ARCHITECTURE.md lists `apt-get install squirrel3`. Validate with `docker run ubuntu:24.04 apt-cache show squirrel3` before Phase 2 planning. The answer determines Dockerfile complexity.
+- **Node.js LTS version:** STACK.md recommends Node.js 20 LTS (EOL April 2026); FEATURES.md mentions Node.js 22 LTS. Use Node.js 22 LTS to avoid an EOL migration in the near term.
+- **Writ benchmark program syntax:** Benchmark authors writing `.writ` files must be familiar with the current Writ language feature set (no generics, explicit `self`, `new Type {}` construction syntax, entity-component model). Validate each `.writ` file with `writ compile` on the current build before the Docker image is finalized.
+- **Memory measurement on non-Linux hosts:** The anonymous RSS approach is Linux-only. Local development workflows on macOS/Windows will report `0` for memory. Document this clearly so developers do not file bugs about missing memory values in local non-Docker runs.
+- **OOP/dispatch canonical algorithm:** The exact dispatch pattern to use across Squirrel metatables, Lua metatables, Python classes, and Writ structs is not resolved in the current research. This must be resolved (via a research spike in Phase 5) before any OOP benchmark code is written.
 
 ---
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- Writ Language Specification §5, §7, §11, §13, §14, §21, §23 — type system, variables, generics, dialogue, entities, scoping, modules (authoritative)
-- Writ IL Specification §2.1–§2.16 — typed IL, calling convention, boxing, entity construction protocol, register model (authoritative)
-- Writ PROJECT.md — known tech debt: lifecycle hook dispatch, singleton speaker assumption, `?`/`!` desugaring deferred (authoritative)
-- Existing `writ-compiler` source (`ast/`, `lower/`, `lower/context.rs`) — pipeline shape and conventions (codebase)
-- Existing `writ-module` source (`builder.rs`, `tables.rs`, `instruction.rs`) — codegen output API (codebase)
-- [rustc Dev Guide: Name Resolution](https://rustc-dev-guide.rust-lang.org/name-resolution.html) — two-phase collection, rib stack, forward references
-- [rustc Dev Guide: ty module](https://rustc-dev-guide.rust-lang.org/ty.html) — TyKind interning, arena allocation, type equality via IDs
-- [rustc Dev Guide: Type Inference](https://rustc-dev-guide.rust-lang.org/type-inference.html) — constraint-based inference with union-find
-- [rustc Dev Guide: Two-Phase Borrows](https://rustc-dev-guide.rust-lang.org/borrow_check/two_phase_borrows.html) — mutability analysis phases
-- [id-arena docs.rs 2.3.0](https://docs.rs/id-arena/2.3.0/id_arena/) — Arena<T> + Id<T> API, no-lifetime-in-callers pattern
-- [rustc-hash docs.rs 2.1.1](https://docs.rs/rustc-hash/latest/rustc_hash/) — FxHashMap/FxHashSet design rationale for compiler use
-- [ena docs.rs 0.14.4](https://docs.rs/ena/latest/ena/) — UnificationTable, snapshot/rollback, union-find for type inference
-- [ariadne docs.rs 0.6.0](https://docs.rs/ariadne/latest/ariadne/) — multi-span, multi-file diagnostic rendering
+- `github.com/kostya/benchmarks` — methodology, Docker approach, median+MAD reporting, memory measurement, idiomatic implementation requirement
+- `github.com/smarr/are-we-fast-yet` + ACM DLS paper — paradigm-neutral algorithm design, cross-language fairness methodology (peer-reviewed)
+- `github.com/drujensen/fib` — compile-time vs runtime separation pattern, 5-run average, Docker approach; widely cited
+- `github.com/bdrung/startup-time` — startup time measurement, 1000-run averaging methodology
+- `v8.dev/blog/maglev` — V8 JIT tier pipeline (Ignition → Sparkplug → Maglev → TurboFan), official V8 blog
+- `docs.docker.com/engine/containers/runmetrics/` — cgroup v1/v2 memory accounting, anonymous RSS vs total RSS
+- `runs-on.com/benchmarks/github-actions-cpu-performance/` — direct measurement of 20%+ CPU variance on GitHub Actions shared runners
+- `arxiv:2501.12878` — statistical methods for reliable benchmarks, median over mean (IEEE/ACM 2025, peer-reviewed)
+- `arxiv:2511.03533` — process isolation in benchmarking, Docker measurement variance (IEEE/ACM 2025, peer-reviewed)
+- `github.com/sharkdp/hyperfine` — JSON export schema, v1.18.0 installation, timing methodology
+- `github.com/plotters-rs/plotters` — 0.3.7 SVGBackend API, September 2024 release confirmed
+- `packages.ubuntu.com/lua5.4` — Lua 5.4 availability in Ubuntu 24.04 confirmed
+- `github.com/albertodemichelis/squirrel` — official Squirrel repo, v3.2 tag, CMake build required, last commit February 2026
+- `github.com/actions/runner-images/issues/10636` — ubuntu-latest = ubuntu-24.04 confirmed January 2025
 
 ### Secondary (MEDIUM confidence)
-- [The AST Typing Problem — Edward Z. Yang (2013)](https://blog.ezyang.com/2013/05/the-ast-typing-problem/) — explicitly-typed IR advantages vs. optional-field decoration on existing AST nodes
-- [Lowering AST to Escape the Typechecker — Thunderseethe's Devlog](https://thunderseethe.dev/posts/lowering-base-ir/) — typed IR practical tradeoffs and postmortem
-- [Luau Bytecode Generation — DeepWiki](https://deepwiki.com/luau-lang/luau/4.1-bytecode-generation) — LIFO register allocation (RegScope), three-way closure capture classification
-- [Interface Dispatch — Lukas Atkinson (2018)](https://lukasatkinson.de/2018/interface-dispatch/) — slot-based dispatch table ordering, contract-canonical slot assignment
-- [Lowering Rust Traits to Logic — Nicholas Matsakis (2017)](https://smallcultfollowing.com/babysteps/blog/2017/01/26/lowering-rust-traits-to-logic/) — contract completeness checking, solver design
-- [Implementing a typechecker in Rust (RCL)](https://ruudvanasseldonk.com/2024/implementing-a-typechecker-for-rcl-in-rust) — practical single-pass typechecking, Env struct pattern
+- `crates.io/crates/procfs` 0.17 — VmRSS and peak RSS in Status struct (alternative to shell-based memory measurement)
+- `github.com/benchmark-action/github-action-benchmark` — CI regression detection patterns
+- `pypi.org/project/pygal` — headless SVG generation, no system GUI dependency confirmed
+- `codspeed.io/blog/benchmarks-in-ci-without-noise` — 15% regression threshold for sub-1% false positive rate on shared runners
+- `nodesource.com/blog/State-of-Nodejs-Performance-2024` — Node.js v22 Maglev tier behavior
+- `github.com/RafaelGSS/bench-node` — official Node.js benchmarking library with warmup handling
 
-### Tertiary (LOW confidence)
-- [How the CLR Dispatches Virtual Method Calls](https://www.codestudy.net/blog/clr-implementation-of-virtual-method-calls-to-interface-members/) — method slot ordering in vtables; Writ's dispatch model differs from CLR but the slot-canonical-ordering principle is directly applicable
+### Tertiary (LOW confidence — needs validation)
+- Squirrel `squirrel3` package in Ubuntu 24.04 apt — conflicting signals between research files; validate with `docker run` before Phase 2 planning begins
 
 ---
-*Research completed: 2026-03-02*
+*Research completed: 2026-03-20*
 *Ready for roadmap: yes*

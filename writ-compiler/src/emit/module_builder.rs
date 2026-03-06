@@ -3,12 +3,24 @@
 //! Two-pass approach per CONTEXT.md locked decision:
 //! Pass 1 (collect): call add_* methods to register all definitions.
 //! Pass 2 (finalize): assign contiguous row indices, respecting list-ownership.
+//!
+//! ## SPLIT-08 review (Phase 63)
+//!
+//! Reviewed for split opportunities at 1,063 lines. Conclusion: no split.
+//! `ModuleBuilder` is a single struct with 40+ fields. Its impl block contains
+//! constructor, 14 "add" methods (Pass 1), `finalize` (Pass 2), and ~30 query
+//! methods (post-finalize). All methods read/write `self` fields directly.
+//! Splitting impl blocks across files would add file navigation overhead without
+//! reducing complexity — callers still use `builder.add_typedef(...)`,
+//! `builder.finalize()`, etc. regardless of file layout.
 
 use rustc_hash::FxHashMap;
 
 use crate::resolve::def_map::DefId;
 
 use super::heaps::{BlobHeap, StringHeap};
+// Intentional wildcard: metadata module exports 21 table-row structs that mirror
+// the writ-module tables vocabulary — all are used during IL emission.
 use super::metadata::*;
 
 /// Provisional handle for a TypeDef entry (index into type_defs Vec).
@@ -548,12 +560,11 @@ impl ModuleBuilder {
             let mut current_parent: Option<usize> = None;
             for (i, entry) in self.method_defs.iter().enumerate() {
                 let row_idx = (i + 1) as u32;
-                if let Some(parent) = entry.parent {
-                    if current_parent != Some(parent.0) {
+                if let Some(parent) = entry.parent
+                    && current_parent != Some(parent.0) {
                         current_parent = Some(parent.0);
                         self.type_defs[parent.0].method_list = row_idx;
                     }
-                }
                 // Map DefId -> token
                 let token = MetadataToken::new(TableId::MethodDef, row_idx);
                 if let Some(id) = entry.def_id {
@@ -802,17 +813,16 @@ impl ModuleBuilder {
 
         let parent_handle = TypeDefHandle(parent_idx);
 
-        // After finalize(), field_defs are sorted by parent index (stable by insertion).
-        // We iterate to find the matching field.
-        // We count up the 1-based FieldDef row index as we iterate.
-        for (i, entry) in self.field_defs.iter().enumerate() {
+        // Return a 0-based local field index within the parent type.
+        // This matches what the runtime expects: fields[idx] indexed from 0.
+        let mut local_idx = 0u32;
+        for entry in self.field_defs.iter() {
             if entry.parent == parent_handle {
-                // Compare the field name from the string heap
                 let name_in_heap = self.string_heap.get_str(entry.row.name);
                 if name_in_heap == field_name {
-                    let row_idx = (i + 1) as u32;
-                    return Some(MetadataToken::new(TableId::FieldDef, row_idx).0);
+                    return Some(local_idx);
                 }
+                local_idx += 1;
             }
         }
         None
@@ -861,6 +871,34 @@ impl ModuleBuilder {
         None
     }
 
+    /// Look up the MethodDef token by parent type DefId and method name.
+    ///
+    /// Used by the emitter to resolve impl method calls like `obj.method()` where
+    /// `callee_def_id` is None (type checker did not propagate a DefId for the method).
+    /// Finds the MethodDef whose parent TypeDef was registered with `parent_def_id`
+    /// and whose name matches `method_name`.
+    ///
+    /// Returns None if not found.
+    pub fn methoddef_token_by_type_and_name(&self, parent_def_id: DefId, method_name: &str) -> Option<u32> {
+        // Find the TypeDef index for the parent type.
+        let parent_idx = self.type_def_def_ids
+            .iter()
+            .position(|id| id.as_ref() == Some(&parent_def_id))?;
+        let parent_handle = TypeDefHandle(parent_idx);
+
+        // Find a MethodDef with this parent and matching name.
+        for (i, md) in self.method_defs.iter().enumerate() {
+            if md.parent == Some(parent_handle) {
+                let name_in_heap = self.string_heap.get_str(md.row.name);
+                if name_in_heap == method_name {
+                    let row_idx = (i + 1) as u32;
+                    return Some(MetadataToken::new(TableId::MethodDef, row_idx).0);
+                }
+            }
+        }
+        None
+    }
+
     /// Look up a FieldDef token by closure struct name and field name.
     ///
     /// This is the closure-specific version of `field_token_by_name`. Since closure
@@ -876,13 +914,15 @@ impl ModuleBuilder {
         })?;
         let parent_handle = TypeDefHandle(parent_idx);
 
-        for (i, entry) in self.field_defs.iter().enumerate() {
+        // Return a 0-based local field index within the closure type.
+        let mut local_idx = 0u32;
+        for entry in self.field_defs.iter() {
             if entry.parent == parent_handle {
                 let name_in_heap = self.string_heap.get_str(entry.row.name);
                 if name_in_heap == field_name {
-                    let row_idx = (i + 1) as u32;
-                    return Some(MetadataToken::new(TableId::FieldDef, row_idx).0);
+                    return Some(local_idx);
                 }
+                local_idx += 1;
             }
         }
         None

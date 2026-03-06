@@ -1,0 +1,37 @@
+.module "main" "0.1.0" {
+    .extern "writ-runtime" "1.0.0"
+    .method "main" () -> void pub mut {
+        .locals {
+            r1: ? "n" [18, 90)
+            r2: int "a" [24, 90)
+            r4: int "b" [76, 90)
+            r8: bool "c" [82, 90)
+            r9: bool "d" [88, 90)
+        }
+        .reg r0 int
+        .reg r1 ?
+        .reg r2 int
+        .reg r3 bool
+        .reg r4 int
+        .reg r5 string
+        .reg r6 int
+        .reg r7 int
+        .reg r8 bool
+        .reg r9 bool
+        LOAD_INT r0, 1  ; line:1 col:22
+        WRAP_SOME r1, r0
+        UNWRAP r2, r1  ; line:1 col:50
+        IS_NONE r3, r1  ; line:1 col:75
+        BR_FALSE r3, 34
+        LOAD_STRING r5, 56
+        CRASH r5
+        MOV r4, r6
+        BR 20
+        UNWRAP r7, r1
+        MOV r4, r7
+        IS_NONE r8, r1  ; line:1 col:92
+        IS_SOME r9, r1  ; line:1 col:118
+        RET_VOID
+    }
+    // .export "main" method 117440513
+}

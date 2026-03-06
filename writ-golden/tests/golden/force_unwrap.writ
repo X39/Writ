@@ -1,0 +1,7 @@
+pub fn main() {
+    let n: int? = Some(1);
+    let a = n.unwrap();
+    let b = n!;
+    let c = n.is_none();
+    let d = n.is_some();
+}

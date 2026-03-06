@@ -1,0 +1,155 @@
+.module "main" "0.1.0" {
+    .extern "writ-runtime" "1.0.0"
+    .type "QuestState" enum {
+    }
+    .type "Merchant" entity {
+        .field "name" string
+        .field "has_quest" bool
+    }
+    // .extern_fn "say" (?, string) -> void "say"
+    // .extern_fn "say_localized" (?, string, string) -> void "say_localized"
+    // .extern_fn "log::info" (string) -> void "log::info"
+    // .extern_fn "say" (string) -> void "say"
+    .method "can_offer_quest" (state: ?) -> bool mut {
+        .locals {
+            r0: ? "state" [0, 82)
+        }
+        .reg r0 int
+        .reg r1 int
+        .reg r2 bool
+        .reg r3 bool
+        .reg r4 bool
+        .reg r5 bool
+        GET_TAG r1, r0  ; line:1 col:888
+        SWITCH r1, 18, 36, 54
+        LOAD_TRUE r3  ; line:1 col:939
+        MOV r2, r3
+        BR 44
+        LOAD_FALSE r4  ; line:1 col:979
+        MOV r2, r4
+        BR 26
+        LOAD_FALSE r5  ; line:1 col:1023
+        MOV r2, r5
+        BR 8
+        RET r2
+    }
+    .method "get_reward" (base: int) -> int mut {
+        .locals {
+            r0: int "base" [0, 24)
+        }
+        .reg r0 int
+        .reg r1 int
+        .reg r2 int
+        LOAD_INT r1, 2  ; line:1 col:1125
+        MUL_I r2, r0, r1
+        RET r2
+    }
+    .method "merchant_greeting" (merchant: ?) -> void mut {
+        .locals {
+            r0: ? "merchant" [0, 76)
+        }
+        .reg r0 int
+        .reg r1 void
+        .reg r2 string
+        .reg r3 int
+        .reg r4 string
+        .reg r5 void
+        .reg r6 string
+        .reg r7 int
+        .reg r8 string
+        .reg r9 void
+        LOAD_STRING r2, 262  ; line:1 col:1226
+        MOV r3, r0
+        MOV r4, r2
+        CALL_EXTERN r1, 268435460, r3, 2
+        LOAD_STRING r6, 295  ; line:1 col:1271
+        MOV r7, r0
+        MOV r8, r6
+        CALL_EXTERN r5, 268435460, r7, 2
+        TAIL_CALL 117440516, r0, 1  ; line:1 col:1312
+        RET_VOID
+    }
+    .method "merchant_quest" (merchant: ?) -> void mut {
+        .locals {
+            r0: ? "merchant" [0, 150)
+            r1: QuestState "state" [12, 150)
+            r2: bool "available" [24, 150)
+        }
+        .reg r0 int
+        .reg r1 QuestState
+        .reg r2 bool
+        .reg r3 void
+        .reg r4 void
+        .reg r5 string
+        .reg r6 int
+        .reg r7 string
+        .reg r8 void
+        .reg r9 string
+        .reg r10 int
+        .reg r11 string
+        .reg r12 void
+        .reg r13 string
+        .reg r14 int
+        .reg r15 string
+        LOAD_INT r1, 0  ; line:1 col:1447
+        CALL r2, 117440513, r1, 1  ; line:1 col:1502
+        BR_FALSE r2, 86  ; line:1 col:1558
+        LOAD_STRING r5, 324  ; line:1 col:1579
+        MOV r6, r0
+        MOV r7, r5
+        CALL_EXTERN r4, 268435460, r6, 2
+        LOAD_STRING r9, 350  ; line:1 col:1621
+        MOV r10, r0
+        MOV r11, r9
+        CALL_EXTERN r8, 268435460, r10, 2
+        MOV r3, r8
+        BR 46
+        LOAD_STRING r13, 397  ; line:1 col:1698
+        MOV r14, r0
+        MOV r15, r13
+        CALL_EXTERN r12, 268435460, r14, 2
+        MOV r3, r12
+        RET_VOID
+    }
+    .method "merchant_complete" (merchant: ?) -> void mut {
+        .locals {
+            r0: ? "merchant" [0, 110)
+            r5: int "reward" [56, 110)
+        }
+        .reg r0 int
+        .reg r1 void
+        .reg r2 string
+        .reg r3 int
+        .reg r4 string
+        .reg r5 int
+        .reg r6 int
+        .reg r7 void
+        .reg r8 string
+        .reg r9 int
+        .reg r10 string
+        .reg r11 void
+        .reg r12 string
+        LOAD_STRING r2, 442  ; line:1 col:1864
+        MOV r3, r0
+        MOV r4, r2
+        CALL_EXTERN r1, 268435460, r3, 2
+        LOAD_INT r6, 50  ; line:1 col:1919
+        CALL r5, 117440514, r6, 1
+        LOAD_STRING r8, 483  ; line:1 col:1958
+        MOV r9, r0
+        MOV r10, r8
+        CALL_EXTERN r7, 268435460, r9, 2
+        LOAD_STRING r12, 507  ; line:1 col:1996
+        CALL_EXTERN r11, 268435459, r12, 1
+        RET_VOID
+    }
+    .method "main" () -> void mut {
+        .reg r0 void
+        .reg r1 string
+        LOAD_STRING r1, 528  ; line:1 col:2051
+        CALL_EXTERN r0, 268435459, r1, 1
+        RET_VOID
+    }
+    // .export "say" method 268435460
+    // .export "say_localized" method 268435458
+}

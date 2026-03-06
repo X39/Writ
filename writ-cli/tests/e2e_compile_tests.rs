@@ -47,7 +47,7 @@ fn compile_source(src: &str) -> Result<Vec<u8>, String> {
     }
 
     // Stage 4: Type checking
-    let (typed_ast, interner, type_diags) = writ_compiler::check::typecheck(
+    let (typed_ast, interner, _type_env, type_diags) = writ_compiler::check::typecheck(
         resolved,
         &[(file_id, &ast)],
     );
@@ -58,7 +58,7 @@ fn compile_source(src: &str) -> Result<Vec<u8>, String> {
     }
 
     // Stage 5: IL codegen (includes metadata + bodies + serialization)
-    writ_compiler::emit_bodies(&typed_ast, &interner, &[(file_id, &ast)])
+    writ_compiler::emit_bodies(&typed_ast, &interner, &[(file_id, &ast)], true, &[])
         .map_err(|diags| {
             let msgs: Vec<_> = diags.iter().map(|d| d.message.clone()).collect();
             format!("{} codegen error(s): {}", diags.len(), msgs.join("; "))
@@ -100,7 +100,7 @@ fn compile_expect_error(src: &str) -> (bool, Vec<String>) {
 
     // Also check type errors — undefined variable references (E0102) are type errors,
     // not resolution errors, since the resolver only validates type-level names.
-    let (_typed_ast, _interner, type_diags) = writ_compiler::check::typecheck(
+    let (_typed_ast, _interner, _type_env, type_diags) = writ_compiler::check::typecheck(
         resolved,
         &[(file_id, &ast)],
     );
@@ -278,4 +278,108 @@ dlg greet() {}
         module.locale_defs.len() > 0,
         "compiled module should have at least one LocaleDef row for [Locale(\"ja\")] override"
     );
+}
+
+// ─── Test: Struct with Result field and Ok constructor ──────────────────────
+
+/// Compile and run a program that constructs a struct with a Result<int, bool> field
+/// initialized with Ok(1). Validates the full pipeline handles Ok() inside new.
+#[test]
+fn test_struct_with_result_field_ok() {
+    let src = r#"
+struct SomeStruct {
+    x: int,
+    y: Result<int, bool>
+}
+
+pub fn main() {
+    let x = new SomeStruct{ x: 0, y: Ok(1) };
+}
+"#;
+
+    let bytes = compile_source(src).expect("struct with Result field should compile");
+    let module = Module::from_bytes(&bytes).expect("module should deserialize");
+
+    let main_export = module
+        .export_defs
+        .iter()
+        .find(|e| read_string(&module.string_heap, e.name).unwrap_or("") == "main")
+        .expect("compiled pub fn main() must appear in export_defs");
+
+    let method_idx = (main_export.item.0 & 0x00FF_FFFF) as usize - 1;
+
+    let mut runtime = RuntimeBuilder::new(module)
+        .build()
+        .expect("runtime should build");
+    runtime
+        .spawn_task(method_idx, vec![])
+        .expect("spawn_task should succeed");
+
+    let mut completed = false;
+    loop {
+        match runtime.tick(0.0, ExecutionLimit::None) {
+            TickResult::AllCompleted | TickResult::Empty => {
+                completed = true;
+                break;
+            }
+            TickResult::TasksSuspended(_) => break,
+            TickResult::ExecutionLimitReached => break,
+        }
+    }
+
+    assert!(completed, "struct with Result field should run to completion");
+}
+
+// ─── Test: Struct field access (get + set) with multiple fields ────────────
+
+/// Compile and run a program that constructs a struct, reads back its fields,
+/// and assigns to them. Validates that field indices are correctly emitted
+/// as 0-based local offsets (not MetadataTokens with table prefix).
+#[test]
+fn test_struct_field_get_set() {
+    let src = r#"
+struct Point {
+    x: int,
+    y: int
+}
+
+pub fn main() {
+    let mut p = new Point{ x: 10, y: 20 };
+    let a = p.x;
+    let b = p.y;
+    p.x = 30;
+}
+"#;
+
+    let bytes = compile_source(src).expect("struct field access should compile");
+    let module = Module::from_bytes(&bytes).expect("module should deserialize");
+
+    let main_export = module
+        .export_defs
+        .iter()
+        .find(|e| read_string(&module.string_heap, e.name).unwrap_or("") == "main")
+        .expect("compiled pub fn main() must appear in export_defs");
+
+    let method_idx = (main_export.item.0 & 0x00FF_FFFF) as usize - 1;
+
+    let mut runtime = RuntimeBuilder::new(module)
+        .build()
+        .expect("runtime should build");
+    runtime
+        .spawn_task(method_idx, vec![])
+        .expect("spawn_task should succeed");
+
+    let mut completed = false;
+    loop {
+        match runtime.tick(0.0, ExecutionLimit::None) {
+            TickResult::AllCompleted | TickResult::Empty => {
+                completed = true;
+                break;
+            }
+            TickResult::TasksSuspended(_) => break,
+            TickResult::ExecutionLimitReached => break,
+        }
+    }
+
+    assert!(completed, "struct field get/set should run to completion");
 }

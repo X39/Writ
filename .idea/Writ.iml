@@ -17,6 +17,10 @@
       <sourceFolder url="file://$MODULE_DIR$/writ-module/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/writ-runtime/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/writ-golden/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/writ-dap/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/writ-dap/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/writ-lsp/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/writ-lsp/tests" isTestSource="true" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />

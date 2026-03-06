@@ -38,7 +38,7 @@ fn parse_int_literal(s: &str) -> i64 {
 ///
 /// All other variants are structural translations that recursively call `lower_expr`.
 /// No `_ =>` wildcard — every `Expr` variant is matched explicitly.
-pub fn lower_expr(spanned: Spanned<Expr<'_>>, ctx: &mut LoweringContext) -> AstExpr {
+pub(crate) fn lower_expr(spanned: Spanned<Expr<'_>>, ctx: &mut LoweringContext) -> AstExpr {
     let (expr, span) = spanned;
     match expr {
         // --- Literals ---
@@ -459,7 +459,7 @@ fn lower_match_arm(
 // =========================================================
 
 /// Lowers a CST `Pattern` into a lowered `AstPattern`.
-pub fn lower_pattern(spanned: Spanned<Pattern<'_>>, ctx: &mut LoweringContext) -> AstPattern {
+pub(crate) fn lower_pattern(spanned: Spanned<Pattern<'_>>, ctx: &mut LoweringContext) -> AstPattern {
     let (pattern, span) = spanned;
     match pattern {
         Pattern::Literal(expr) => AstPattern::Literal {

@@ -6,7 +6,7 @@ use crate::gc::{GcHeap, GcStats, MarkSweepHeap};
 use crate::heap::BumpHeap;
 use crate::host::{HostRequest, HostResponse, NullHost, RequestId, RuntimeHost};
 use crate::scheduler::Scheduler;
-use crate::task::TaskState;
+use crate::task::{SuspendReason, TaskState};
 use crate::value::{HeapRef, TaskId, Value};
 
 /// Execution budget for a tick.
@@ -218,7 +218,7 @@ impl<H: RuntimeHost> Runtime<H> {
                 t.state == TaskState::Suspended
                     && t.pending_request
                         .as_ref()
-                        .map_or(false, |(id, _)| *id == request_id)
+                        .is_some_and(|(id, _)| *id == request_id)
             })
             .map(|t| t.id);
 
@@ -235,7 +235,7 @@ impl<H: RuntimeHost> Runtime<H> {
         match &response {
             HostResponse::Value(val) => {
                 if let Some(frame) = task.call_stack.last_mut() {
-                    frame.registers[0] = *val;
+                    frame.registers[0] = val.clone();
                 }
             }
             HostResponse::EntityHandle(eid) => {
@@ -259,6 +259,84 @@ impl<H: RuntimeHost> Runtime<H> {
 
         task.state = TaskState::Ready;
         task.pending_request = None;
+        task.suspend_reason = None;
+        self.scheduler.ready_queue.push_back(task_id);
+        Ok(())
+    }
+
+    /// Resume a task that was suspended for debug (breakpoint or step).
+    ///
+    /// The DAP server calls this after the user issues a Continue, Step, or similar command.
+    /// For normal debug suspensions, clears `suspend_reason` and puts the task back in the
+    /// ready queue. For `CrashPending` suspensions, performs the deferred crash unwind
+    /// (executes defers, sets Cancelled, stores CrashInfo) instead of re-queuing.
+    pub fn resume_debug(&mut self, task_id: TaskId) -> Result<(), crate::error::RuntimeError> {
+        let task = self.scheduler.tasks.get_mut(&task_id).ok_or_else(|| {
+            crate::error::RuntimeError::ExecutionError(format!(
+                "no task found with id {:?}",
+                task_id
+            ))
+        })?;
+
+        if task.state != TaskState::Suspended {
+            return Err(crate::error::RuntimeError::ExecutionError(format!(
+                "task {:?} is not suspended (state: {:?})",
+                task_id, task.state
+            )));
+        }
+
+        // Check if this is a deferred crash — if so, execute the crash unwind now
+        // instead of resuming normal execution.
+        if let Some(SuspendReason::CrashPending { message }) = task.suspend_reason.take() {
+            // Perform the full crash unwind (defers, cancellation, CrashInfo).
+            crate::dispatch::execute_crash(
+                task,
+                message,
+                &self.domain.modules,
+                self.user_module_idx,
+                &self.dispatch_table,
+                self.heap.as_mut(),
+                &mut self.host,
+                &mut self.scheduler.globals,
+                &mut self.next_request_id,
+                &mut self.scheduler.entity_registry,
+            );
+
+            // Cancel scoped children, mirrors the non-debug crash path in scheduler.rs.
+            let children = self.scheduler.tasks.get(&task_id)
+                .map(|t| t.scoped_children.clone())
+                .unwrap_or_default();
+            for child_id in children {
+                self.scheduler.cancel_task_tree(
+                    child_id,
+                    &self.domain.modules,
+                    self.user_module_idx,
+                    &self.dispatch_table,
+                    self.heap.as_mut(),
+                    &mut self.host,
+                    &mut self.next_request_id,
+                );
+            }
+
+            // Release any global locks held by this task.
+            let locks: Vec<u32> = self.scheduler.tasks.get(&task_id)
+                .map(|t| t.atomic_locks.clone())
+                .unwrap_or_default();
+            for global_idx in locks {
+                self.scheduler.global_locks.remove(&global_idx);
+            }
+            if let Some(t) = self.scheduler.tasks.get_mut(&task_id) {
+                t.atomic_locks.clear();
+            }
+
+            // Wake any tasks waiting to JOIN this one.
+            self.scheduler.wake_joiners(task_id, None);
+            return Ok(());
+        }
+
+        // Normal resume path (breakpoint/step): put task back in the ready queue.
+        task.state = TaskState::Ready;
+        task.suspend_reason = None;
         self.scheduler.ready_queue.push_back(task_id);
         Ok(())
     }
@@ -292,7 +370,7 @@ impl<H: RuntimeHost> Runtime<H> {
         self.scheduler.tasks.get(&task_id).and_then(|t| {
             t.call_stack
                 .last()
-                .and_then(|f| f.registers.get(reg as usize).copied())
+                .and_then(|f| f.registers.get(reg as usize).cloned())
         })
     }
 
@@ -309,7 +387,7 @@ impl<H: RuntimeHost> Runtime<H> {
         self.scheduler
             .tasks
             .get(&task_id)
-            .and_then(|t| t.return_value)
+            .and_then(|t| t.return_value.clone())
     }
 
     /// Run a specific task within the given budget.
@@ -383,7 +461,7 @@ impl<H: RuntimeHost> Runtime<H> {
             match self.scheduler.task_state(task_id) {
                 Some(TaskState::Completed) => {
                     let ret = self.scheduler.tasks.get(&task_id)
-                        .and_then(|t| t.return_value)
+                        .and_then(|t| t.return_value.clone())
                         .unwrap_or(Value::Void);
                     return Ok(ret);
                 }
@@ -453,28 +531,25 @@ impl<H: RuntimeHost> Runtime<H> {
 
     /// Collect all heap references that are roots for GC.
     fn collect_roots(&self) -> Vec<HeapRef> {
+        use crate::gc::collect_value_refs;
         let mut roots = Vec::new();
 
         // Task registers (all frames in all tasks)
         for task in self.scheduler.tasks.values() {
             for frame in &task.call_stack {
                 for reg in &frame.registers {
-                    if let Value::Ref(href) = reg {
-                        roots.push(*href);
-                    }
+                    collect_value_refs(reg, &mut roots);
                 }
             }
             // Also check return_value for completed tasks
-            if let Some(Value::Ref(href)) = task.return_value {
-                roots.push(href);
+            if let Some(ref rv) = task.return_value {
+                collect_value_refs(rv, &mut roots);
             }
         }
 
         // Globals
         for global in &self.scheduler.globals {
-            if let Value::Ref(href) = global {
-                roots.push(*href);
-            }
+            collect_value_refs(global, &mut roots);
         }
 
         // Entity data refs for alive entities
@@ -521,5 +596,137 @@ impl<H: RuntimeHost> Runtime<H> {
     /// The user module index in the domain.
     pub fn user_module_idx(&self) -> usize {
         self.user_module_idx
+    }
+
+    /// Get the suspend reason for a task (used by the DAP server).
+    ///
+    /// Returns `None` if the task does not exist or has no suspend reason set.
+    pub fn suspend_reason(&self, task_id: TaskId) -> Option<&SuspendReason> {
+        self.scheduler.tasks.get(&task_id)
+            .and_then(|t| t.suspend_reason.as_ref())
+    }
+
+    /// Get a snapshot of all call stack frames for a task (used by the DAP server).
+    ///
+    /// Returns `(method_idx, pc)` pairs ordered from bottom (oldest) to top (newest frame).
+    /// Returns `None` if the task does not exist.
+    pub fn call_stack_frames(&self, task_id: TaskId) -> Option<Vec<(usize, usize)>> {
+        self.scheduler.tasks.get(&task_id)
+            .map(|t| t.call_stack.iter().map(|f| (f.method_idx, f.pc)).collect())
+    }
+
+    /// Get a clone of all registers for a specific call frame of a task.
+    ///
+    /// `frame_index` 0 is the bottom (oldest) frame; `frame_index N-1` is the top (innermost).
+    /// Returns `None` if the task does not exist or the frame index is out of range.
+    pub fn frame_registers(&self, task_id: TaskId, frame_index: usize) -> Option<Vec<Value>> {
+        self.scheduler.tasks.get(&task_id)
+            .and_then(|t| t.call_stack.get(frame_index))
+            .map(|f| f.registers.clone())
+    }
+
+    /// Return the IDs of all non-terminal tasks (Ready, Running, or Suspended).
+    ///
+    /// Excludes tasks in Completed or Cancelled states.
+    pub fn all_task_ids(&self) -> Vec<TaskId> {
+        self.scheduler.tasks.values()
+            .filter(|t| !matches!(t.state, TaskState::Completed | TaskState::Cancelled))
+            .map(|t| t.id)
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frame::CallFrame;
+    use crate::host::NullHost;
+    use crate::task::Task;
+
+    fn make_runtime() -> Runtime<NullHost> {
+        let module = writ_module::Module::new();
+        RuntimeBuilder::new(module).build().expect("build runtime")
+    }
+
+    /// Insert a task directly into the scheduler, bypassing method index checks.
+    /// Returns the TaskId. The frame has `reg_count` registers initialized to Void,
+    /// with optional arg placed in register 0.
+    fn insert_task(rt: &mut Runtime<NullHost>, reg_count: usize, arg0: Option<Value>) -> TaskId {
+        let id = TaskId::new(rt.scheduler.next_task_index, 0);
+        rt.scheduler.next_task_index += 1;
+        let mut frame = CallFrame::new(0, reg_count, 0);
+        if let Some(v) = arg0 {
+            frame.registers[0] = v;
+        }
+        let task = Task::new(id, frame);
+        rt.scheduler.tasks.insert(id, task);
+        rt.scheduler.ready_queue.push_back(id);
+        id
+    }
+
+    #[test]
+    fn test_frame_registers_returns_registers_for_frame0() {
+        let mut rt = make_runtime();
+        let task_id = insert_task(&mut rt, 4, Some(Value::Int(7)));
+        let regs = rt.frame_registers(task_id, 0).expect("should have frame 0");
+        assert_eq!(regs.len(), 4);
+        assert_eq!(regs[0], Value::Int(7));
+    }
+
+    #[test]
+    fn test_frame_registers_returns_none_for_out_of_range_index() {
+        let mut rt = make_runtime();
+        let task_id = insert_task(&mut rt, 2, None);
+        // Frame 1 doesn't exist — call stack has only 1 frame
+        let result = rt.frame_registers(task_id, 1);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_frame_registers_returns_none_for_invalid_task_id() {
+        let rt = make_runtime();
+        let fake_id = TaskId::new(999, 999);
+        assert!(rt.frame_registers(fake_id, 0).is_none());
+    }
+
+    #[test]
+    fn test_all_task_ids_returns_spawned_task() {
+        let mut rt = make_runtime();
+        let task_id = insert_task(&mut rt, 1, None);
+        let ids = rt.all_task_ids();
+        assert!(ids.contains(&task_id));
+    }
+
+    #[test]
+    fn test_all_task_ids_empty_when_no_tasks() {
+        let rt = make_runtime();
+        assert!(rt.all_task_ids().is_empty());
+    }
+
+    #[test]
+    fn test_all_task_ids_excludes_completed_tasks() {
+        let mut rt = make_runtime();
+        let task_id = insert_task(&mut rt, 1, None);
+        rt.scheduler.tasks.get_mut(&task_id).unwrap().state = TaskState::Completed;
+        let ids = rt.all_task_ids();
+        assert!(!ids.contains(&task_id));
+    }
+
+    #[test]
+    fn test_all_task_ids_excludes_cancelled_tasks() {
+        let mut rt = make_runtime();
+        let task_id = insert_task(&mut rt, 1, None);
+        rt.scheduler.tasks.get_mut(&task_id).unwrap().state = TaskState::Cancelled;
+        let ids = rt.all_task_ids();
+        assert!(!ids.contains(&task_id));
+    }
+
+    #[test]
+    fn test_all_task_ids_includes_suspended_tasks() {
+        let mut rt = make_runtime();
+        let task_id = insert_task(&mut rt, 1, None);
+        rt.scheduler.tasks.get_mut(&task_id).unwrap().state = TaskState::Suspended;
+        let ids = rt.all_task_ids();
+        assert!(ids.contains(&task_id));
     }
 }

@@ -17,11 +17,12 @@
 | Option/Result specialization | **Both specialized + general enum**                | Common types get fast path, general instructions for user types                                                   |
 | DEFER_POP                    | **Keep it**                                        | Optimization for compiler to discard irrelevant defers early                                                      |
 | Memory model                 | **GC-assumed**                                     | Language semantics designed for GC; runtime implementors choose algorithm                                         |
-| Structs                      | **Reference types**                                | Heap-allocated, GC-managed. Assignment copies reference (shared object).                                          |
+| Structs                      | **Value types**                                    | Inline storage, copy-on-assign. Reference-typed fields copy pointer (shallow copy). Structural equality auto-derived. No lifecycle hooks. Recursive value-type structs are illegal (infinite size). |
+| Classes                      | **Reference types**                                | Heap-allocated, GC-managed, shared-on-assign. Support lifecycle hooks (on create/finalize/serialize/deserialize). The `class` keyword fills the reference-type role. |
 | Enums                        | **Value types**                                    | Tag + inline payload. Copied on assignment. Reference payloads are GC-traced.                                     |
 | Binding mutability           | **Binding-only**                                   | `let`/`let mut` controls the binding, not the object. Standard GC-language model.                                 |
 | Closure/function values      | **Delegate model (C# style)**                      | Unified: closures, function refs, and bound methods are all delegates                                             |
-| Closure mut captures         | **Shared capture struct**                          | Compiler generates a struct; both outer scope and closure reference it                                            |
+| Closure mut captures         | **Shared capture class**                           | Compiler generates a class; both outer scope and closure reference it                                            |
 | Empty closures               | **Null target optimization**                       | No capture struct allocated if nothing is captured                                                                |
 | Dead entity access           | **Crash**                                          | Accessing a destroyed entity handle crashes the task                                                              |
 | Entity ownership             | **Runtime owns script state, host owns native**    | Extern component fields proxied through host API                                                                  |
@@ -29,10 +30,10 @@
 | Self parameter               | **Explicit `self`/`mut self`**                     | Methods take explicit receiver; operators and lifecycle hooks have implicit self                                  |
 | Binding mutability           | **Strict (prevents mutation)**                     | `let` prevents both reassignment and mutation through the binding                                                 |
 | Component back-ref           | **Hidden `@entity` field**                         | Compiler-emitted, unreachable from script; set during SPAWN_ENTITY, used internally for component access lowering |
-| Construction syntax          | **`new Type { ... }`**                             | `new` keyword disambiguates construction from blocks; same syntax for structs and entities                        |
+| Construction syntax          | **`new Type { ... }`**                             | `new` keyword disambiguates construction from blocks; same syntax for structs, classes, and entities              |
 | Default field values         | **Runtime expressions, inlined**                   | Compiler emits default expression code at each construction site; `NEW` allocates zeroed                          |
 | Components                   | **Extern-only, data-only**                         | No script-defined components; components are host-provided data schemas, no methods                               |
-| Lifecycle hooks              | **Universal `on` hooks**                           | `on create/finalize/serialize/deserialize` on structs and entities; `on destroy/interact` entity-only             |
+| Lifecycle hooks              | **Universal `on` hooks**                           | `on create/finalize/serialize/deserialize` on classes and entities; `on destroy/interact` entity-only             |
 | Host communication           | **Suspend-and-confirm**                            | Runtime suspends on host operations until host confirms; aligns with game engine logic loop                       |
 | Registers                    | **Abstract typed slots**                           | Each register holds one value of declared type; runtime determines physical storage                               |
 | Primitive type tags          | **Fixed u8 tags (0x00–0x04)**                      | void, int, float, bool, string — self-describing, no payload                                                      |

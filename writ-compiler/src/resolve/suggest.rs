@@ -30,14 +30,13 @@ pub struct Suggestion {
 impl Suggestion {
     /// Format the suggestion as a help string.
     pub fn to_help_string(&self) -> String {
-        if self.needs_import {
-            if let Some(ref fqn) = self.fqn {
+        if self.needs_import
+            && let Some(ref fqn) = self.fqn {
                 if let Some(ref ns) = self.import_ns {
                     return format!("did you mean `{fqn}`? (add `using {ns};`)");
                 }
                 return format!("did you mean `{fqn}`?");
             }
-        }
         format!("did you mean `{}`?", self.name)
     }
 }
@@ -109,18 +108,14 @@ pub fn suggest_similar(
 
     // Phase B: Cross-namespace search (only if we have room for more suggestions)
     if suggestions.len() < MAX_SUGGESTIONS {
-        for (fqn, _) in &def_map.by_fqn {
+        for fqn in def_map.by_fqn.keys() {
             // Extract simple name from FQN
             let simple_name = fqn.rsplit("::").next().unwrap_or(fqn);
             let score = strsim::jaro_winkler(unresolved, simple_name);
             if score >= SIMILARITY_THRESHOLD && simple_name != unresolved {
                 // Check if this is already in visible_names
                 if !visible_names.contains(&simple_name.to_string()) {
-                    let ns = if let Some(pos) = fqn.rfind("::") {
-                        Some(fqn[..pos].to_string())
-                    } else {
-                        None
-                    };
+                    let ns = fqn.rfind("::").map(|pos| fqn[..pos].to_string());
                     suggestions.push(Suggestion {
                         name: simple_name.to_string(),
                         fqn: Some(fqn.clone()),

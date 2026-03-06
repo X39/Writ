@@ -23,7 +23,7 @@ fn test_builder_with_version() {
 #[test]
 fn test_builder_with_type_and_fields() {
     let mut builder = ModuleBuilder::new("test_mod");
-    let _type_tok = builder.add_type_def("MyStruct", "game", TypeDefKind::Struct.as_u8(), 0);
+    let _type_tok = builder.add_type_def("MyStruct", "game", TypeDefKind::Struct, 0);
     let _field1 = builder.add_field_def("x", &[0x00], 0); // int
     let _field2 = builder.add_field_def("y", &[0x00], 0); // int
 
@@ -74,7 +74,7 @@ fn test_builder_round_trip_through_serialization() {
     let mut builder = ModuleBuilder::new("round_trip_test");
 
     // Add a type with a field
-    let _type_tok = builder.add_type_def("Point", "math", TypeDefKind::Struct.as_u8(), 0);
+    let _type_tok = builder.add_type_def("Point", "math", TypeDefKind::Struct, 0);
     let _field = builder.add_field_def("x", &[0x00], 0);
 
     // Add a method with body
@@ -108,12 +108,12 @@ fn test_builder_multiple_types() {
     let mut builder = ModuleBuilder::new("multi_type");
 
     // Type 1 with 2 fields
-    let _t1 = builder.add_type_def("Vec2", "math", TypeDefKind::Struct.as_u8(), 0);
+    let _t1 = builder.add_type_def("Vec2", "math", TypeDefKind::Struct, 0);
     let _f1 = builder.add_field_def("x", &[0x01], 0);
     let _f2 = builder.add_field_def("y", &[0x01], 0);
 
     // Type 2 with 1 field
-    let _t2 = builder.add_type_def("Color", "gfx", TypeDefKind::Struct.as_u8(), 0);
+    let _t2 = builder.add_type_def("Color", "gfx", TypeDefKind::Struct, 0);
     let _f3 = builder.add_field_def("r", &[0x00], 0);
 
     let module = builder.build();
@@ -148,4 +148,17 @@ fn test_builder_serialization_no_error() {
     let bytes = bytes.unwrap();
     assert!(bytes.len() >= 200, "Output should have at least a 200-byte header");
     assert_eq!(&bytes[0..4], b"WRIT");
+}
+
+#[test]
+fn test_builder_class_type() {
+    let mut builder = ModuleBuilder::new("class_test");
+    let _tok = builder.add_type_def("MyClass", "game", TypeDefKind::Class, 0);
+
+    let module = builder.build();
+    assert_eq!(module.type_defs.len(), 1);
+    assert_eq!(module.type_defs[0].kind, 4, "Class kind should be 4");
+
+    let type_name = heap::read_string(&module.string_heap, module.type_defs[0].name).unwrap();
+    assert_eq!(type_name, "MyClass");
 }

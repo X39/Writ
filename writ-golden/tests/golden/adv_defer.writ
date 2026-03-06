@@ -1,0 +1,6 @@
+fn main() {
+    defer {
+        ::log::info("cleanup");
+    }
+    ::log::info("main body");
+}

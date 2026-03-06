@@ -1,14 +1,10 @@
-﻿pub fn main() {
-    ::log("saying Test");
+
+pub fn main() {
+    ::log::info("saying Test");
     ::say("Test");
-    ::log("showing choice");
+    ::log::info("showing choice");
     ::choice([
-            ::Option("Good!", fn() {
-                ::say(Option::None, "Glad to hear it.");
-            }),
-            ::Option("Not great", fn() {
-                ::say(Option::None, "Things are rough.");
-                ::say(Option::None, "Sorry to hear that.");
-            }),
-        ]);
+        ::ChoiceOption("Option A", "opt_a", fn() {}),
+        ::ChoiceOption("Option B", "opt_b", fn() {}),
+    ]);
 }

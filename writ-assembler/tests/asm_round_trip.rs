@@ -1,4 +1,5 @@
 /// ASM-03/ASM-04 tests: assembled binary -> Module::from_bytes() -> no error.
+/// Also covers .class directive round-trip (kind=4 TypeDef).
 
 #[test]
 fn assembled_binary_is_valid() {
@@ -112,4 +113,39 @@ fn round_trip_with_labels() {
     } else {
         panic!("expected BR instruction after round-trip");
     }
+}
+
+#[test]
+fn test_class_round_trip() {
+    // Assemble a .writil source containing a .class type definition,
+    // then disassemble back to text and confirm the output contains ".class MyClass".
+    let src = r#"
+.module "test_class" "1.0.0" {
+    .type "MyClass" class {
+        .field "value" int pub
+    }
+    .method "main" () -> void {
+        RET_VOID
+    }
+}
+"#;
+    // Parse + assemble -> binary
+    let module = writ_assembler::assemble(src).expect("should assemble .class directive");
+
+    // Verify the TypeDef was encoded with kind=4 (Class)
+    assert_eq!(module.type_defs.len(), 1, "expected 1 TypeDef");
+    assert_eq!(module.type_defs[0].kind, 4, "expected kind=4 (Class)");
+
+    // Round-trip: binary -> bytes -> Module
+    let bytes = module.to_bytes().expect("should encode to bytes");
+    let reloaded = writ_module::Module::from_bytes(&bytes).expect("should decode from bytes");
+    assert_eq!(reloaded.type_defs[0].kind, 4, "kind=4 preserved through binary round-trip");
+
+    // Disassemble and confirm "class" appears in output
+    let text = writ_assembler::disassemble(&reloaded);
+    assert!(
+        text.contains(".type \"MyClass\" class"),
+        "disassembled output should contain '.type \"MyClass\" class', got:\n{}",
+        text
+    );
 }

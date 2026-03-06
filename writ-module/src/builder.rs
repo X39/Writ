@@ -1,5 +1,7 @@
 use crate::heap;
 use crate::module::{MethodBody, Module, ModuleHeader};
+// Intentional wildcard: tables module exports 23 row-struct types that form
+// the domain vocabulary for module building — all are used in this file.
 use crate::tables::*;
 use crate::token::MetadataToken;
 
@@ -38,7 +40,7 @@ pub struct ModuleBuilder {
 struct TypeDefBuilder {
     name: String,
     namespace: String,
-    kind: u8,
+    kind: TypeDefKind,
     flags: u16,
     field_list: u32,
     method_list: u32,
@@ -186,7 +188,7 @@ impl ModuleBuilder {
     /// `field_list` and `method_list` use the "next index" pattern:
     /// the builder records the current counts, so add a type's fields
     /// and methods immediately after adding the type.
-    pub fn add_type_def(&mut self, name: &str, namespace: &str, kind: u8, flags: u16) -> MetadataToken {
+    pub fn add_type_def(&mut self, name: &str, namespace: &str, kind: TypeDefKind, flags: u16) -> MetadataToken {
         let idx = self.type_defs.len() as u32 + 1;
         let field_list = self.field_defs.len() as u32 + 1;
         let method_list = self.method_defs.len() as u32 + 1;
@@ -442,7 +444,7 @@ impl ModuleBuilder {
             TypeDefRow {
                 name: intern_str(&b.name),
                 namespace: intern_str(&b.namespace),
-                kind: b.kind,
+                kind: b.kind.as_u8(),
                 flags: b.flags,
                 field_list: b.field_list,
                 method_list: b.method_list,
@@ -593,7 +595,7 @@ impl ModuleBuilder {
 
         Module {
             header: ModuleHeader {
-                format_version: 1,
+                format_version: 4,
                 flags: 0,
                 module_name: name_off,
                 module_version: version_off,

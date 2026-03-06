@@ -1,0 +1,145 @@
+{
+  "name": "writ",
+  "displayName": "Writ Language Support",
+  "description": "Syntax highlighting and language server integration for the Writ scripting language",
+  "version": "0.1.0",
+  "publisher": "writ-lang",
+  "icon": "resources/icon_128.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/X39/Writ.git"
+  },
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "writ",
+        "aliases": [
+          "Writ"
+        ],
+        "extensions": [
+          ".writ"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "writ",
+        "scopeName": "source.writ",
+        "path": "./syntaxes/writ.tmLanguage.json"
+      }
+    ],
+    "semanticTokenScopes": [
+      {
+        "language": "writ",
+        "scopes": {
+          "entity": [
+            "support.class.writ"
+          ],
+          "type": [
+            "entity.name.type.writ"
+          ],
+          "component": [
+            "support.other.component.writ"
+          ],
+          "dialogueSpeaker": [
+            "variable.other.constant.speaker.writ"
+          ]
+        }
+      }
+    ],
+    "breakpoints": [
+      {
+        "language": "writ"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "writ",
+        "label": "Writ Debug",
+        "languages": [
+          "writ"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "program"
+            ],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "Absolute path to the .writ file to debug."
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "writ",
+            "request": "launch",
+            "name": "Launch Writ Program",
+            "program": "${workspaceFolder}/${file}"
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "Writ: Launch Current File",
+            "description": "Launch the current .writ file in the Writ debugger.",
+            "body": {
+              "type": "writ",
+              "request": "launch",
+              "name": "${1:Launch Writ Program}",
+              "program": "^\"\\${workspaceFolder}/\\${file}\""
+            }
+          }
+        ]
+      }
+    ],
+    "configuration": {
+      "title": "Writ",
+      "properties": {
+        "writ.serverPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to directory containing writ-lsp and writ-dap binaries. Leave empty to use bundled binaries."
+        }
+      }
+    },
+    "configurationDefaults": {
+      "editor.semanticTokenColorCustomizations": {
+        "[*]": {
+          "rules": {
+            "entity": "#4EC9B0",
+            "type": "#4FC1FF",
+            "component": "#9CDCFE",
+            "dialogueSpeaker": "#CE9178"
+          }
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -b",
+    "watch": "tsc -b -w",
+    "build-binaries": "cargo build --release --manifest-path ../Cargo.toml -p writ-lsp -p writ-dap",
+    "copy-binaries": "node scripts/copy-bins.js",
+    "package": "npm run compile && npm run build-binaries && npm run copy-binaries && npx vsce package"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "@types/vscode": "^1.74.0",
+    "@vscode/vsce": "^3.0.0",
+    "typescript": "^5.0.0"
+  }
+}

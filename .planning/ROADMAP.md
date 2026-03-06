@@ -7,7 +7,13 @@
 - ✅ **v1.2 Gap Closure** — Phases 14-15 (shipped 2026-03-01)
 - ✅ **v2.0 Writ Runtime** — Phases 16-21 (shipped 2026-03-02)
 - ✅ **v3.0 Writ Compiler** — Phases 22-29 (shipped 2026-03-03)
-- 🚧 **v3.1 Compiler Bug Fixes** — Phases 30-36 (in progress)
+- ✅ **v3.1 Compiler Bug Fixes** — Phases 30-39 (shipped 2026-03-04)
+- ✅ **v3.2 Spec Corrections and Tooling** — Phases 40-46 (shipped 2026-03-07)
+- ✅ **v4.0 Structs as Value Types** — Phases 47-51 (shipped 2026-03-13)
+- ✅ **v5.0 LSP and DAP** — Phases 52-61 (shipped 2026-03-17)
+- ✅ **v6.0 Code Cleanup** — Phases 62-66 (shipped 2026-03-18)
+- ✅ **v6.1 LSP/DAP Fixes** — Phases 67-69 (shipped 2026-03-18)
+- ✅ **v7.0 Benchmark Suite** — Phases 70-74 (shipped 2026-03-20)
 
 ## Phases
 
@@ -80,208 +86,122 @@ Full details: `milestones/v3.0-ROADMAP.md`
 
 </details>
 
-### 🚧 v3.1 Compiler Bug Fixes (In Progress)
+<details>
+<summary>✅ v3.1 Compiler Bug Fixes (Phases 30-39) — SHIPPED 2026-03-04</summary>
 
-**Milestone Goal:** Fix all known IL generation bugs, establish a golden file test harness, and lock hand-validated IL output for every language feature as regression tests.
+- [x] Phase 30: Critical Bug Fixes (2/2 plans) — completed 2026-03-04
+- [x] Phase 31: Test Harness and Functions Golden Test (2/2 plans) — completed 2026-03-04
+- [x] Phase 31.1: Fix Function IL Emission Bugs (3/3 plans) — completed 2026-03-04
+- [x] Phase 31.2: Fix Register Convention, Debug Info, and Parser Bugs (4/4 plans) — completed 2026-03-04
+- [x] Phase 32: Core Golden Tests Batch 1 — completed 2026-03-04
+- [x] Phase 33: Core Golden Tests Batch 2 — completed 2026-03-04
+- [x] Phase 34: Advanced Golden Tests Batch 1 — completed 2026-03-04
+- [x] Phase 35: Advanced Golden Tests Batch 2 — completed 2026-03-04
+- [x] Phase 36: Remaining Golden Tests and Tech Debt — completed 2026-03-04
+- [x] Phase 37: Fix Spurious Void Register in Empty Function Bodies (2/2 plans) — completed 2026-03-04
+- [x] Phase 38: Fix CALL Method Token Resolution in Runtime (1/1 plan) — completed 2026-03-04
+- [x] Phase 39: Extend method_defs Metadata (3/3 plans) — completed 2026-03-04
 
-- [x] **Phase 30: Critical Bug Fixes** — Eliminate stack overflow, fix register types, method tokens, return registers, extern calls, and phantom MOVs (completed 2026-03-04)
-- [ ] **Phase 31: Test Harness and Functions Golden Test** — Create the compile-disassemble-compare framework; validate basic function IL
-- [x] **Phase 31.1: Fix Function IL Emission Bugs** — Fix CALL vs CALL_INDIRECT, method signature types, RET/MOV register selection, and branch offsets discovered by golden tests (completed 2026-03-04)
-- [x] **Phase 31.2: Fix Register Convention, Debug Info, and Parser Bugs** — Fix parameter register pre-allocation (uninitialized registers), debug local names, source span emission, and bare `fn` parse error (completed 2026-03-04)
-- [ ] **Phase 32: Core Golden Tests Batch 1** — Structs, enums, and control flow golden files hand-validated and locked
-- [ ] **Phase 33: Core Golden Tests Batch 2** — Entities, dialogue, and contracts golden files hand-validated and locked
-- [ ] **Phase 34: Advanced Golden Tests Batch 1** — Generics, error handling, and Option type golden files hand-validated and locked
-- [ ] **Phase 35: Advanced Golden Tests Batch 2** — Closures, concurrency, and globals golden files hand-validated and locked
-- [ ] **Phase 36: Remaining Golden Tests and Tech Debt** — Arrays/strings golden file plus closure captures, GC hooks, and dead code cleanup
+Full details: `milestones/v3.1-ROADMAP.md`
 
-## Phase Details
+</details>
 
-### Phase 30: Critical Bug Fixes
-**Goal**: The compiler produces structurally valid IL for all programs — no crashes, correct register types, correct method tokens, correct return wiring, correct extern calls, no phantom moves
-**Depends on**: Phase 29 (v3.0 complete)
-**Requirements**: BUG-01, BUG-02, BUG-03, BUG-04, BUG-05, BUG-06
-**Success Criteria** (what must be TRUE):
-  1. `writ compile` on any valid .writ file completes without a stack overflow or panic
-  2. Every register in emitted IL carries its actual type blob (not `int` for all types)
-  3. Every CALL instruction in emitted IL references a non-zero method metadata token
-  4. Every RET instruction references the register that holds the computed return value, not register 0 by default
-  5. Calls to extern functions (`::log`, `::print`, etc.) emit CALL_EXTERN instructions with correct extern method tokens
-  6. Argument setup for function calls emits no MOV from uninitialized registers (phantom moves eliminated)
-**Plans**: 2 plans
+<details>
+<summary>✅ v3.2 Spec Corrections and Tooling (Phases 40-46) — SHIPPED 2026-03-07</summary>
 
-Plans:
-- [ ] 30-01-PLAN.md — Fix stack overflow (BUG-01) and register type blob encoding (BUG-02)
-- [ ] 30-02-PLAN.md — Fix extern call dispatch (BUG-03, BUG-05), return register wiring (BUG-04), and phantom MOV elimination (BUG-06)
+- [x] Phase 40: Spec Cleanup (3/3 plans) — completed 2026-03-06
+- [x] Phase 41: Fix fn_log_say_choice (3/3 plans) — completed 2026-03-06
+- [x] Phase 42: ChoiceOption Rename (1/1 plan) — completed 2026-03-06
+- [x] Phase 43: Unqualified None/Some (3/3 plans) — completed 2026-03-06
+- [x] Phase 44: Extended Log with Levels (2/2 plans) — completed 2026-03-06
+- [x] Phase 45: writ.toml Project File Compilation (2/2 plans) — completed 2026-03-06
+- [x] Phase 46: Structs-as-Value-Types Design Discussion (1/1 plan) — completed 2026-03-06
 
-### Phase 31: Test Harness and Functions Golden Test
-**Goal**: A golden file test infrastructure exists and the basic function IL is hand-validated and locked as the first regression anchor
-**Depends on**: Phase 30
-**Requirements**: GOLD-01, GOLD-02
-**Success Criteria** (what must be TRUE):
-  1. Running the test suite compiles .writ fixtures, disassembles the output, and diffs it against a .expected file — failing with a readable diff on mismatch
-  2. A functions.writ fixture covering declarations, parameters, return types, locals, and calls between methods exists with a locked .expected IL file
-  3. Any future change that alters function IL output causes an explicit test failure with a diff
-  4. The harness can be extended by adding a new .writ file plus its corresponding .expected file
-**Plans**: 2 plans
+Full details: `milestones/v3.2-ROADMAP.md`
 
-Plans:
-- [ ] 31-01-PLAN.md — Create writ-golden workspace crate with compile-disassemble-compare harness (BLESS=1 workflow, unified diff on failure)
-- [ ] 31-02-PLAN.md — Write fn_basic_call, fn_typed_params, fn_recursion fixture sources; bless and hand-validate .expected IL files
+</details>
 
-### Phase 31.1: Fix Function IL Emission Bugs
-**Goal**: All 5 IL emission bugs discovered by the Phase 31 golden tests are fixed; the three function fixtures are re-blessed with spec-correct IL and all golden tests pass
-**Depends on**: Phase 31
-**Requirements**: BUG-07, BUG-08, BUG-09, BUG-10, BUG-11
-**Success Criteria** (what must be TRUE):
-  1. Direct function calls emit `CALL` (not `CALL_INDIRECT`) — `CALL_INDIRECT` only appears for delegate/closure calls
-  2. Every method's disassembled signature shows correct parameter types and return type (no swapped types)
-  3. Every `RET` in non-void functions references the register holding the computed return value (typed int/bool/etc, not void)
-  4. Every `MOV` in if/else branch merging references the register holding the actual branch value (not a void register)
-  5. Every `BR`/`BR_FALSE`/`BR_TRUE` emits a non-zero offset that correctly reaches the branch target
-  6. All three function golden tests pass (`cargo test -p writ-golden`) with the re-blessed .expected files
-**Plans**: 3 plans
+<details>
+<summary>✅ v4.0 Structs as Value Types (Phases 47-51) — SHIPPED 2026-03-13</summary>
 
-Plans:
-- [x] 31.1-01-PLAN.md — Fix CALL_INDIRECT for direct calls (BUG-07), void return register (BUG-09), void MOV source in if/else (BUG-10)
-- [x] 31.1-02-PLAN.md — Fix method signature type ordering in disassembler (BUG-08), branch offsets always 0 (BUG-11)
-- [x] 31.1-03-PLAN.md — Re-bless golden fixtures and human-validate spec-correct IL output
+- [x] Phase 47: Spec Amendments (4/4 plans) — completed 2026-03-12
+- [x] Phase 48: IL Format (2/2 plans) — completed 2026-03-12
+- [x] Phase 49: VM Runtime (2/2 plans) — completed 2026-03-12
+- [x] Phase 50: Compiler Frontend (2/2 plans) — completed 2026-03-13
+- [x] Phase 51: Compiler Backend and Tests (2/2 plans) — completed 2026-03-13
 
-### Phase 31.2: Fix Register Convention, Debug Info, and Parser Bugs
-**Goal**: Function parameters occupy the correct registers (r0..r(param_count-1)), debug locals carry their source names, source spans are emitted, and bare `fn` declarations parse without error; fn_recursion and fn_empty_main golden tests pass with spec-correct IL
-**Depends on**: Phase 31.1
-**Requirements**: BUG-12, BUG-13, BUG-14, BUG-15
-**Success Criteria** (what must be TRUE):
-  1. Every function parameter is accessible via the same register in all branches — no uninitialized registers appear in emitted IL for functions with parameters
-  2. `DebugLocal.name` for each register that corresponds to a source variable contains the correct string heap offset of that variable's name
-  3. `SourceSpan` entries exist in every compiled method body, mapping instruction byte offsets to 1-based line/column source coordinates
-  4. `fn main() {}` (without `pub`) compiles without a parse error and produces correct IL
-  5. All function golden tests pass after re-blessing fn_recursion with spec-correct IL
-**Plans**: 4 plans
+Full details: `milestones/v4.0-ROADMAP.md`
 
-Plans:
-- [ ] 31.2-01-PLAN.md — Fix parameter register pre-allocation in emit_all_bodies (BUG-12); re-bless fn_recursion golden test
-- [ ] 31.2-02-PLAN.md — Fix parser to accept bare `fn` declarations (BUG-15); add and bless fn_empty_main golden test
-- [ ] 31.2-03-PLAN.md — Fix debug local names and source span emission (BUG-13, BUG-14)
-- [ ] 31.2-04-PLAN.md — Human validation of re-blessed golden tests (checkpoint)
+</details>
 
-### Phase 32: Core Golden Tests Batch 1
-**Goal**: Struct, enum, and control flow IL is hand-validated against the spec and locked as regression golden files
-**Depends on**: Phase 31
-**Requirements**: GOLD-03, GOLD-04, GOLD-15
-**Success Criteria** (what must be TRUE):
-  1. A structs.writ fixture covers `new` construction, field access, and method calls; its .expected file shows correct GET_FIELD/SET_FIELD instruction sequences
-  2. An enums.writ fixture covers unit and payload variants plus pattern matching; its .expected file shows correct GET_TAG/SWITCH sequences and exhaustiveness
-  3. A control_flow.writ fixture covers if/else, while, for, match, break, continue, and return; its .expected file shows correct branch and jump instruction sequences
-  4. All three golden files pass the harness on the first run after hand-validation; any regression causes a diff failure
-**Plans**: TBD
+<details>
+<summary>✅ v5.0 LSP and DAP (Phases 52-61) — SHIPPED 2026-03-17</summary>
 
-Plans:
-- [ ] 32-01: TBD
+- [x] Phase 52: Compiler and Runtime Preparation (3/3 plans) — completed 2026-03-13
+- [x] Phase 53: LSP Server Skeleton and Diagnostics (3/3 plans) — completed 2026-03-14
+- [x] Phase 54: LSP Navigation and Completions (4/4 plans) — completed 2026-03-14
+- [x] Phase 55: DAP Server Core (2/2 plans) — completed 2026-03-14
+- [x] Phase 56: DAP Advanced Inspection (2/2 plans) — completed 2026-03-14
+- [x] Phase 57: VS Code Extension Integration (2/2 plans) — completed 2026-03-16
+- [x] Phase 58: Dialogue Speaker Semantic Tokens (1/1 plan) — completed 2026-03-16
+- [x] Phase 59: VSIX Release Build (1/1 plan) — completed 2026-03-16
+- [x] Phase 60: LSP Query Robustness (1/1 plan) — completed 2026-03-17
+- [x] Phase 61: Signature Help, Diagnostics, and Extension Polish (1/1 plan) — completed 2026-03-17
 
-### Phase 33: Core Golden Tests Batch 2
-**Goal**: Entity, dialogue, and contract IL is hand-validated against the spec and locked as regression golden files
-**Depends on**: Phase 32
-**Requirements**: GOLD-05, GOLD-06, GOLD-07
-**Success Criteria** (what must be TRUE):
-  1. An entities.writ fixture covers entity definition, SPAWN_ENTITY/INIT_ENTITY/DESTROY_ENTITY sequences, component slots, and lifecycle hooks; its .expected file matches spec Section 28 entity construction
-  2. A dialogue.writ fixture covers dlg blocks, say/say_localized emission, choice branches, speaker resolution, and string interpolation; its .expected file shows correct LocaleDef entries and SAY/CHOICE instructions
-  3. A contracts.writ fixture covers contract definition, impl blocks, and operator overloading; its .expected file shows correct CALL_VIRT slot assignments and dispatch table entries
-  4. All three golden files pass the harness and any regression causes a diff failure
-**Plans**: TBD
+Full details: `milestones/v5.0-ROADMAP.md`
 
-Plans:
-- [ ] 33-01: TBD
+</details>
 
-### Phase 34: Advanced Golden Tests Batch 1
-**Goal**: Generic, error-handling, and Option type IL is hand-validated against the spec and locked as regression golden files
-**Depends on**: Phase 33
-**Requirements**: GOLD-08, GOLD-10, GOLD-14
-**Success Criteria** (what must be TRUE):
-  1. A generics.writ fixture covers generic functions, generic structs, type parameters, constraint bounds, and BOX/UNBOX at generic call sites; its .expected file shows correct type parameter specialization
-  2. An error_handling.writ fixture covers Result type, `?` operator desugaring (IS_ERR + early return), try blocks, and WRAP_OK/WRAP_ERR; its .expected file matches spec error propagation sequences
-  3. An option.writ fixture covers WRAP_SOME/LOAD_NULL, IS_NONE/IS_SOME, `!` unwrap, and `?` propagation; its .expected file matches spec Option instruction sequences
-  4. All three golden files pass the harness and any regression causes a diff failure
-**Plans**: TBD
+<details>
+<summary>✅ v6.0 Code Cleanup (Phases 62-66) — SHIPPED 2026-03-18</summary>
 
-Plans:
-- [ ] 34-01: TBD
+- [x] Phase 62: Clippy Warning Elimination (2/2 plans) — completed 2026-03-18
+- [x] Phase 63: writ-compiler File Splits (4/4 plans) — completed 2026-03-18
+- [x] Phase 64: Cross-Crate File Splits (4/4 plans) — completed 2026-03-18
+- [x] Phase 65: Code Duplication and Module Boundaries (3/3 plans) — completed 2026-03-18
+- [x] Phase 66: Regression Fixes (1/1 plan) — completed 2026-03-18
 
-### Phase 35: Advanced Golden Tests Batch 2
-**Goal**: Closure, concurrency, and globals IL is hand-validated against the spec and locked as regression golden files
-**Depends on**: Phase 34
-**Requirements**: GOLD-09, GOLD-11, GOLD-12
-**Success Criteria** (what must be TRUE):
-  1. A closures.writ fixture covers lambda expressions, capture struct synthesis, NEW_DELEGATE, CALL_INDIRECT, and function value passing; its .expected file shows correct delegate and capture emission
-  2. A concurrency.writ fixture covers spawn (SPAWN_TASK), join (JOIN), cancel (CANCEL), defer (DEFER_PUSH/DEFER_POP), and detached spawn; its .expected file matches spec concurrency sequences
-  3. A globals.writ fixture covers global constants, global mut, and atomic sections (ATOMIC_BEGIN/ATOMIC_END); its .expected file shows correct static field and atomic wrapper emission
-  4. All three golden files pass the harness and any regression causes a diff failure
-**Plans**: TBD
+Full details: `milestones/v6.0-ROADMAP.md`
 
-Plans:
-- [ ] 35-01: TBD
+</details>
 
-### Phase 36: Remaining Golden Tests and Tech Debt
-**Goal**: Arrays/strings IL is validated and locked; closure captures, GC finalization hooks, generic constraint tokens, and dead code are all resolved
-**Depends on**: Phase 35
-**Requirements**: GOLD-13, DEBT-01, DEBT-02, DEBT-03, DEBT-04
-**Success Criteria** (what must be TRUE):
-  1. An arrays_strings.writ fixture covers NEW_ARRAY, ARRAY_LOAD/STORE/LEN, STR_CONCAT/STR_BUILD, and I2S/F2S conversions; its .expected file shows correct array and string IL
-  2. Closures that capture outer variables compile to delegates with populated capture structs and execute correctly on the VM
-  3. GC finalization triggers `on_finalize` method invocation via the scheduler task queue (runtime.rs finalization wired end-to-end)
-  4. Generic constraint DefIds resolve to non-zero metadata tokens during module finalization (no zero-token fallbacks for constraints)
-  5. Dead code (extract_callee_def_id_opt and any other unreachable code identified during golden testing) is removed and the codebase is clean
-**Plans**: TBD
+<details>
+<summary>✅ v6.1 LSP/DAP Fixes (Phases 67-69) — SHIPPED 2026-03-18</summary>
 
-Plans:
-- [ ] 36-01: TBD
+- [x] Phase 67: LSP Completions (2/2 plans) — completed 2026-03-18
+- [x] Phase 68: DAP Runtime and Launch Fixes (2/2 plans) — completed 2026-03-18
+- [x] Phase 69: Dialogue/Function Golden Tests (1/1 plan) — completed 2026-03-18
+
+Full details: `milestones/v6.1-ROADMAP.md`
+
+</details>
+
+<details>
+<summary>✅ v7.0 Benchmark Suite (Phases 70-74) — SHIPPED 2026-03-20</summary>
+
+- [x] Phase 70: Docker Environment and Measurement Harness (4/4 plans) — completed 2026-03-20
+- [x] Phase 71: Compute Benchmarks MVP (2/2 plans) — completed 2026-03-20
+- [x] Phase 72: Chart Generation and Results Pipeline (2/2 plans) — completed 2026-03-20
+- [x] Phase 73: Remaining Benchmark Categories (3/3 plans) — completed 2026-03-20
+- [x] Phase 74: CI Workflow (1/1 plan) — completed 2026-03-20
+
+Full details: `milestones/v7.0-ROADMAP.md`
+
+</details>
 
 ## Progress
 
-**Execution Order:** 30 → 31 → 31.1 → 32 → 33 → 34 → 35 → 36 → 38
-
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|----------------|--------|-----------|
-| 30. Critical Bug Fixes | v3.1 | 2/2 | Complete | 2026-03-04 |
-| 31. Test Harness and Functions Golden Test | 1/2 | In Progress|  | - |
-| 31.1. Fix Function IL Emission Bugs | v3.1 | 3/3 | Complete | 2026-03-04 |
-| 31.2. Fix Register Convention, Debug Info, and Parser Bugs | 4/4 | Complete    | 2026-03-04 | - |
-| 32. Core Golden Tests Batch 1 | v3.1 | 0/? | Not started | - |
-| 33. Core Golden Tests Batch 2 | v3.1 | 0/? | Not started | - |
-| 34. Advanced Golden Tests Batch 1 | v3.1 | 0/? | Not started | - |
-| 35. Advanced Golden Tests Batch 2 | v3.1 | 0/? | Not started | - |
-| 36. Remaining Golden Tests and Tech Debt | v3.1 | 0/? | Not started | - |
-| 37. Fix spurious void register in empty function bodies | v3.1 | 2/2 | Complete | 2026-03-04 |
-| 38. Fix CALL method token resolution in runtime | v3.1 | Complete    | 2026-03-04 | 2026-03-04 |
-
-### Phase 37: Fix spurious void register in empty function bodies
-
-**Goal:** Empty void function bodies emit zero registers — no spurious `.reg r0 void` declaration for functions like `fn main() {}` that produce no values
-**Requirements**: BUG-16
-**Depends on:** Phase 31.2
-**Plans:** 2/2 plans complete
-
-Plans:
-- [x] 37-01-PLAN.md — Fix Block emitter to skip void reg allocation for empty void blocks; re-bless fn_empty_main and fn_basic_call golden files
-- [x] 37-02-PLAN.md — Human-validate re-blessed golden IL output (checkpoint)
-
-### Phase 38: Fix CALL method token resolution in runtime
-
-**Goal:** Running any compiled `.writil` file that contains function calls succeeds — the VM resolves the MethodDef metadata token in `CALL` operands to the correct in-module method index instead of treating the raw token value as an array index
-**Requirements**: BUG-17
-**Depends on:** Phase 37
-**Plans:** 1/1 plans complete
-
-Plans:
-- [x] 38-01-PLAN.md — Fix CALL/TailCall/NewDelegate/SpawnTask/SpawnDetached to decode MethodDef metadata tokens to 0-based method body indices; update vm_tests to use proper tokens
-
-### Phase 39: Extend method_defs metadata to include parameter names, register indices, and type information
-
-**Goal:** MethodDef metadata is complete — param_count is stored in the binary format (format_version 2), ParamDef rows carry correct names and types, and the disassembler displays parameter names in method signatures for human validation
-**Requirements**: META-01
-**Depends on:** Phase 38
-**Plans:** 3/3 plans complete
-
-Plans:
-- [x] 39-01-PLAN.md — Extend MethodDefRow with param_count; update binary format reader/writer (format_version 2); wire param_count through compiler serialize
-- [x] 39-02-PLAN.md — Update disassembler to show param names from ParamDef; re-bless all golden .expected files
-- [x] 39-03-PLAN.md — Update IL spec with param_count documentation; add META-01 requirement; human validation checkpoint
+| 1-7 | v1.0 | 13/13 | Complete | 2026-02-27 |
+| 8-13 | v1.1 | 12/12 | Complete | 2026-03-01 |
+| 14-15 | v1.2 | 3/3 | Complete | 2026-03-01 |
+| 16-21 | v2.0 | 16/16 | Complete | 2026-03-02 |
+| 22-29 | v3.0 | 24/24 | Complete | 2026-03-03 |
+| 30-39 | v3.1 | 22/22 | Complete | 2026-03-04 |
+| 40-46 | v3.2 | 15/15 | Complete | 2026-03-07 |
+| 47-51 | v4.0 | 12/12 | Complete | 2026-03-13 |
+| 52-61 | v5.0 | 20/20 | Complete | 2026-03-17 |
+| 62-66 | v6.0 | 14/14 | Complete | 2026-03-18 |
+| 67-69 | v6.1 | 5/5 | Complete | 2026-03-18 |
+| 70-74 | v7.0 | 12/12 | Complete | 2026-03-20 |

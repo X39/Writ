@@ -125,5 +125,5 @@ environment.
 - **Component field validation:** If the host rejects a component field write (invalid value, read-only field), the
   runtime should crash the calling task with a descriptive error, logged via §2.14.7.
 - **Dialogue functions:** `say`, `choice`, and `wait` are transition points that suspend execution. The host is
-  responsible for presenting UI and signaling completion. See spec §13.9 for the language-level semantics.
+  responsible for presenting UI and signaling completion. See spec §1.14.9 for the language-level semantics.
 

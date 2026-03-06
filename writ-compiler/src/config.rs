@@ -20,6 +20,9 @@ pub struct WritConfig {
     /// Conditional compilation flags.
     #[serde(default)]
     pub conditions: HashMap<String, bool>,
+    /// Build profile settings (debug and release).
+    #[serde(default)]
+    pub profile: ProfilesConfig,
 }
 
 /// Project metadata section.
@@ -34,10 +37,53 @@ pub struct ProjectConfig {
 /// Locale configuration section.
 #[derive(Debug, Clone, Deserialize)]
 pub struct LocaleConfig {
-    /// Default locale identifier.
+    /// Default locale identifier (TOML key: `default`).
+    #[serde(rename = "default")]
     pub default_locale: String,
-    /// List of supported locale identifiers.
+    /// Supported locale identifiers (TOML key: `supported`).
+    #[serde(rename = "supported")]
+    #[serde(default)]
     pub locales: Vec<String>,
+}
+
+/// Build profile configuration (debug vs release settings).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProfileConfig {
+    /// Whether to emit DebugLocal entries in the compiled module.
+    #[serde(default = "default_debug_info")]
+    pub debug_info: bool,
+}
+
+fn default_debug_info() -> bool {
+    true
+}
+
+/// Profiles configuration section, containing debug and release profiles.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProfilesConfig {
+    /// Debug profile settings.
+    #[serde(default = "default_debug_profile")]
+    pub debug: ProfileConfig,
+    /// Release profile settings.
+    #[serde(default = "default_release_profile")]
+    pub release: ProfileConfig,
+}
+
+fn default_debug_profile() -> ProfileConfig {
+    ProfileConfig { debug_info: true }
+}
+
+fn default_release_profile() -> ProfileConfig {
+    ProfileConfig { debug_info: false }
+}
+
+impl Default for ProfilesConfig {
+    fn default() -> Self {
+        Self {
+            debug: default_debug_profile(),
+            release: default_release_profile(),
+        }
+    }
 }
 
 /// Compiler configuration section.
@@ -132,8 +178,8 @@ name = "test-game"
 version = "0.1.0"
 
 [locale]
-default_locale = "en"
-locales = ["en", "ja"]
+default = "en"
+supported = ["en", "ja"]
 
 [compiler]
 sources = ["src/", "scripts/"]
@@ -145,6 +191,42 @@ output = "build/"
         assert_eq!(config.locale.as_ref().unwrap().default_locale, "en");
         assert_eq!(config.compiler.sources, vec!["src/", "scripts/"]);
         assert_eq!(config.compiler.output.as_deref(), Some("build/"));
+    }
+
+    #[test]
+    fn locale_without_supported() {
+        let toml_str = r#"
+[project]
+name = "test-game"
+version = "0.1.0"
+
+[locale]
+default = "en"
+"#;
+        let config: WritConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.locale.as_ref().unwrap().default_locale, "en");
+        assert!(config.locale.as_ref().unwrap().locales.is_empty());
+    }
+
+    #[test]
+    fn scaffold_toml_round_trips() {
+        // Mirrors the scaffold output from `writ new my-project` after the sources fix
+        let toml_str = r#"
+[project]
+name = "my-project"
+version = "0.1.0"
+
+[locale]
+default = "en"
+
+[compiler]
+sources = ["sources/"]
+"#;
+        let config: WritConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.project.name, "my-project");
+        assert_eq!(config.locale.as_ref().unwrap().default_locale, "en");
+        assert!(config.locale.as_ref().unwrap().locales.is_empty());
+        assert_eq!(config.compiler.sources, vec!["sources/"]);
     }
 
     #[test]
@@ -179,6 +261,54 @@ version = "0.1.0"
         assert!(files.iter().all(|f| f.extension().unwrap() == "writ"));
 
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn profile_defaults_when_omitted() {
+        // No [profile] section — defaults apply
+        let toml_str = r#"
+[project]
+name = "test"
+version = "0.1.0"
+"#;
+        let config: WritConfig = toml::from_str(toml_str).unwrap();
+        assert!(config.profile.debug.debug_info, "debug profile should default to debug_info=true");
+        assert!(!config.profile.release.debug_info, "release profile should default to debug_info=false");
+    }
+
+    #[test]
+    fn profile_explicit_override() {
+        // Both [profile.debug] and [profile.release] sections explicitly set
+        let toml_str = r#"
+[project]
+name = "test"
+version = "0.1.0"
+
+[profile.debug]
+debug_info = false
+
+[profile.release]
+debug_info = true
+"#;
+        let config: WritConfig = toml::from_str(toml_str).unwrap();
+        assert!(!config.profile.debug.debug_info, "debug profile should be overridden to debug_info=false");
+        assert!(config.profile.release.debug_info, "release profile should be overridden to debug_info=true");
+    }
+
+    #[test]
+    fn profile_partial_override() {
+        // Only [profile.release] is set; debug profile should use its default
+        let toml_str = r#"
+[project]
+name = "test"
+version = "0.1.0"
+
+[profile.release]
+debug_info = true
+"#;
+        let config: WritConfig = toml::from_str(toml_str).unwrap();
+        assert!(config.profile.debug.debug_info, "debug profile should keep its default of debug_info=true");
+        assert!(config.profile.release.debug_info, "release profile should have the explicit override debug_info=true");
     }
 
     #[test]

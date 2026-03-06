@@ -123,6 +123,22 @@ fn collect_items(
                 );
             }
 
+            AstDecl::Class(c) => {
+                let vis = ast_vis_to_def_vis(c.vis.as_ref());
+                let generics = c.generics.iter().map(|g| g.name.clone()).collect();
+                try_insert(
+                    &c.name,
+                    c.name_span,
+                    c.span,
+                    DefKind::Class,
+                    vis,
+                    generics,
+                    ctx,
+                    def_map,
+                    diags,
+                );
+            }
+
             AstDecl::Entity(e) => {
                 let vis = ast_vis_to_def_vis(e.vis.as_ref());
                 try_insert(
@@ -237,6 +253,21 @@ fn collect_items(
                         s.name_span,
                         s.span,
                         DefKind::ExternStruct,
+                        vis,
+                        generics,
+                        ctx,
+                        def_map,
+                        diags,
+                    );
+                }
+                AstExternDecl::Class(vis, c) => {
+                    let vis = ast_vis_to_def_vis(vis.as_ref());
+                    let generics = c.generics.iter().map(|g| g.name.clone()).collect();
+                    try_insert(
+                        &c.name,
+                        c.name_span,
+                        c.span,
+                        DefKind::ExternClass,
                         vis,
                         generics,
                         ctx,

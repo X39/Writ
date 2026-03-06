@@ -12,7 +12,7 @@ Writ is designed specifically for game development, combining familiar scripting
 
 The type system draws heavily from Rust: strong static typing, `Option<T>`/`Result<T,E>` for nullable and fallible values, pattern matching, explicit mutability, and a trait-like contract system for polymorphism. Entity declarations and lifecycle hooks are built directly into the language, with an extern-only component model that keeps host-managed data separate from script logic.
 
-The current implementation is a reference toolchain: a complete CST-to-AST lowering pipeline (compiler frontend) and a full IL runtime. The register-based IL VM executes Writ bytecode with cooperative task scheduling, a mark-sweep GC, and contract dispatch.
+The current implementation is a production-quality reference toolchain: a complete compiler pipeline (frontend, type checker, IL code generator), a full IL runtime, a language server, a debug adapter, and a VS Code extension. 79,005 LOC Rust across 10 crates.
 
 ## Features
 
@@ -32,17 +32,33 @@ Built-in `entity` declarations with component slots (extern-only, data-only — 
 
 A 91-instruction register-based VM with a 5-state cooperative task scheduler, mark-sweep GC with finalization queues, contract dispatch via CALL_VIRT, and a suspend-and-confirm host interface at 9 transition points. Entity handles are generation-indexed for stale-handle detection.
 
+### Developer Tooling
+
+Full editor integration via the `writ-lsp` language server and `writ-dap` debug adapter, packaged in the `writ-vscode/` VS Code extension:
+
+- **LSP:** diagnostics, completions (identifiers, keywords, fields, namespaces, post-`new` type suggestions), hover, go-to-definition, find references, signature help, semantic token highlighting
+- **DAP:** breakpoints, step over/into/out, call stack inspection, variable and watch expression evaluation, crash halt with break-before-unwind and live variable inspection
+- **Crash stacktraces:** full stack trace with source locations displayed in the editor when the runtime crashes
+
+### Benchmark Suite
+
+Cross-language benchmarks in `benchmark/` comparing Writ against Lua, Python, Ruby, Perl, and Node.js across 7 case categories (fibonacci, sieve, string concat, array sort, hash map, OOP dispatch, object creation). Reproducible Docker-based runner with SVG chart generation and GitHub Actions CI workflow.
+
 ## Project Structure
 
 ```
 writ-parser       -- Lexer (logos) and CST parser (chumsky)
-writ-compiler     -- CST-to-AST lowering pipeline (Section 28 desugaring)
+writ-compiler     -- Name resolution, type checking, and IL code generation
 writ-module       -- IL binary module format (reader/writer, 200-byte header, 21 metadata tables)
 writ-runtime      -- Register-based VM, task scheduler, entity system, GC, contract dispatch
 writ-assembler    -- Text IL assembler and disassembler
-writ-diagnostics  -- Diagnostic rendering and error reporting
+writ-diagnostics  -- Diagnostic rendering and error codes
+writ-lsp          -- Language server (LSP) for editor intelligence
+writ-dap          -- Debug adapter (DAP) for source-level debugging
 writ-golden       -- Golden file integration tests
-writ-cli          -- `writ` command-line tool (new, compile, assemble, disassemble, run)
+writ-cli          -- `writ` command-line tool (new, build, compile, assemble, disassemble, run)
+writ-vscode/      -- VS Code extension with TextMate grammar, LSP client, DAP client
+benchmark/        -- Cross-language benchmark suite (Docker, Python charts, CI workflow)
 tools/            -- ImHex pattern for .writc inspection, IL hex viewer
 ```
 
@@ -56,22 +72,29 @@ cargo test --workspace
 ## CLI
 
 ```
-writ new <name>       Create a new Writ project
-writ compile <file>   Compile a .writ source file to a .writc binary module
-writ assemble <file>  Assemble a .writil text file to a .writc binary module
-writ disasm <file>    Disassemble a .writc binary module to .writil text
-writ run <file>       Execute a .writc binary module
+writ new <name>         Create a new Writ project
+writ build [path]       Build a writ.toml project (--release/--debug)
+writ compile <file>     Compile a .writ source file to a .writc binary module
+writ assemble <file>    Assemble a .writil text file to a .writc binary module
+writ disasm <file>      Disassemble a .writc binary module to .writil text
+writ run <file>         Execute a .writc binary module
 ```
 
 ## Status
 
-**v0.5 (current):** Language spec v0.5. Vibe-coded end-to-end proof of concept demonstrating source-to-execution flow.
+The project has shipped 12 milestones (v1.0 through v7.0) across 74 phases and 168 plans:
 
-**v0.2:** Full IL runtime — VM (91 instructions), cooperative task scheduler, entity system with GC, contract dispatch, binary module format (200-byte header, 21 metadata tables), text assembler/disassembler, and `writ` CLI.
+- **v1.0:** Complete CST-to-AST lowering pipeline with 7 desugaring passes (optional sugar, formattable strings, compound assignment, operators, concurrency, dialogue with localization, entities with lifecycle hooks)
+- **v2.0:** Full IL runtime — 91-instruction register-based VM, cooperative task scheduler, entity system with mark-sweep GC, contract dispatch, binary module format (200-byte header, 21 metadata tables), text assembler/disassembler, and `writ` CLI
+- **v3.0–v3.2:** Complete compiler pipeline (name resolution, type checking, IL codegen), spec corrections, and tooling improvements
+- **v4.0:** Struct/class split — structs as value types, classes as reference types
+- **v5.0:** VS Code extension, language server (LSP), and debug adapter (DAP)
+- **v6.0–v6.1:** Codebase cleanup, LSP/DAP refinements, namespace completions, crash stacktraces
+- **v7.0:** Cross-language benchmark suite (Docker, SVG charts, GitHub Actions CI)
 
-**v0.1:** Complete CST-to-AST lowering pipeline with 7 desugaring passes (optional sugar, formattable strings, compound assignment, operators, concurrency, dialogue with localization, entities with lifecycle hooks).
+The project is 79,005 LOC Rust across 10 crates, plus a TypeScript VS Code extension and Python benchmark tooling.
 
-The language specification lives in [`language-spec/spec/`](language-spec/spec/) (splatted files, v0.5). Sections 00–29 cover the language; Sections 30–69 cover the IL spec.
+The language specification lives in [`language-spec/spec/`](language-spec/spec/) (splatted files). Sections 00–29 cover the language; Sections 30–66 cover the IL spec.
 
 ## License
 

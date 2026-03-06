@@ -1,155 +1,316 @@
 # Stack Research
 
-**Domain:** Compiler middle-end — name resolution, type checking, IL codegen for the Writ language (v3.0 milestone)
-**Researched:** 2026-03-02
-**Confidence:** HIGH (core crates), MEDIUM (type inference strategy), HIGH (what to avoid)
+**Domain:** Cross-language benchmark suite — Writ vs Lua, Squirrel, Python, Node.js, Rust (native)
+**Researched:** 2026-03-20
+**Confidence:** HIGH (Rust tooling), MEDIUM (Docker/CI patterns), MEDIUM (Squirrel embedding)
 
 ---
 
 ## Context
 
-This is the v3.0 milestone: adding name resolution, type checking, and IL codegen to the existing Writ compiler toolchain.
+This is a SUBSEQUENT MILESTONE on an existing 9-crate Rust workspace (v6.1, 74,997 LOC). The question
+is NOT "what stack do we need?" but "what NEW infrastructure and dependencies are required for
+cross-language benchmarking?". Existing crates (`writ-compiler`, `writ-runtime`, `writ-cli`) are the
+subjects under test — they are not changed here.
 
-**Already validated and NOT re-researched:**
-- Rust 2024 edition, workspace resolver "3"
-- `chumsky 0.12` + `logos 0.16` (parser)
-- `thiserror 2.0` (errors)
-- `insta 1` (snapshot testing)
-- `byteorder 1.5` (binary format)
-- `clap 4.5` (CLI)
-- `slotmap 1.1.1`, `indexmap 2.13` (runtime)
+**Scope of new additions:**
+- A new `writ-bench` Rust crate: benchmark harness, result collection, SVG/markdown output
+- A `benchmark/` top-level directory: benchmark programs in each language + runner scripts
+- A `benchmark/docker/` subdirectory: Dockerfile + container scripts
+- A `.github/workflows/benchmark.yml` GitHub Actions CI workflow
 
-**Scope of this document:** What NEW crates or patterns are needed in `writ-compiler` and `writ-module` for the middle-end pipeline?
+---
+
+## Already Validated (DO NOT RE-RESEARCH)
+
+| Crate | Purpose | Benchmark relevance |
+|-------|---------|---------------------|
+| `writ-cli` | `writ compile` + `writ run` | Subject under test; invoked as a child process by the harness |
+| `writ-runtime` | IL VM + scheduler | Rust-native benchmark variant runs runtime directly in-process |
+| `writ-compiler` | Compile pipeline | Compile time reported separately from run time |
+| `writ-module` | IL binary format | `.writc` output loaded by runtime benchmarks |
+
+**Existing workspace dependencies (already available, do not re-add):**
+`serde`, `serde_json` (1.0), `thiserror` (2.0), `clap`, `ariadne`, `byteorder`, `rustc-hash`
 
 ---
 
 ## Recommended Stack
 
-### Core Technologies (New Additions Only)
+### Core: `writ-bench` Rust Crate
 
-| Technology | Version | Purpose | Why Recommended |
-|------------|---------|---------|-----------------|
-| `id-arena` | `2.3.0` | Type node storage with stable IDs | Name resolution and type checking require a type representation that can be referenced from multiple places without lifetimes. `id-arena`'s `Arena<T>` + `Id<T>` pattern gives stable integer identifiers — type equality is then `Id<Ty> == Id<Ty>` (pointer equality by another name, but without unsafe). No deletion needed: the type arena lives for the whole compilation. Preferred over `typed-arena` (returns references requiring `'arena` lifetime pollution throughout the type checker) and over `slotmap` (slotmap supports deletion, which adds overhead not needed here). |
-| `rustc-hash` | `2.1.1` | Fast HashMap/HashSet for symbol tables and scope environments | Name resolution creates hundreds of small scope `HashMap`s. The stdlib default `SipHash` is cryptographic and measurably slower for short string keys. `rustc-hash` provides `FxHashMap` and `FxHashSet` — the same hasher used inside rustc, tuned for integer and short-string keys. A direct type alias swap: no API changes, just performance. |
-| `ena` | `0.14.4` | Union-find for type variable unification | The Writ type system has local variable inference (`let x = 42; // inferred as int`). The standard approach is constraint-based: fresh type variables are assigned, then constraints (from assignments, function calls) are solved via unification. `ena::unify::UnificationTable` provides union-find with snapshot/rollback (needed when type checking branches). Extracted from rustc, actively maintained by the Rust compiler team. Alternative (hand-rolled union-find via `Vec`) is feasible but `ena` also provides the snapshot mechanism needed for backtracking. |
-| `ariadne` | `0.6.0` | Rich diagnostic output with labeled source spans | Already used in `writ-parser` dev-dependencies for error display. The type checker produces errors with multiple labeled spans (e.g., "type `int` declared here, but used as `string` here"). `ariadne` handles multi-span, multi-file diagnostics with correct rendering of variable-width characters. The library is a sibling project to `chumsky` (same author, designed to work together). Moving it from dev-dep to a production dep in `writ-compiler` is the right step for phase 3. |
+This crate is the measurement harness and output generator. It does NOT use `cargo bench` / Criterion
+because the benchmarks being measured are cross-language (separate processes) and the harness must
+shell out to Lua, Python, Node, Squirrel interpreters. Criterion is designed for in-process Rust
+microbenchmarks only — it cannot time external processes. The harness is a custom binary.
 
-### Supporting Libraries (Evaluate Per Phase)
+#### Measurement
 
-| Library | Version | Purpose | When to Use |
-|---------|---------|---------|-------------|
-| `bitflags` | `2.11.0` | Compact type modifier flags | Use if `TypeKind` variants need flag sets (e.g., mutability, constness, `extern` marker on declarations). A `Flags(u32)` field is cleaner than six separate `bool` fields and enables set operations. Only add if the number of boolean type properties exceeds 3–4. |
-| `petgraph` | `0.8.3` | Dependency graph for declaration ordering | Use for the name resolution pass that must determine declaration order (structs referencing other structs, contract implementations needing their contract declared first). `petgraph::algo::toposort` gives ordering; `is_cyclic_directed` detects illegal cycles. Only add if declaration ordering proves non-trivial — a hand-rolled adjacency list may suffice for a language without recursive types at the module level. |
-| `indexmap` | `2.13.0` | Already in workspace (via writ-runtime) | Use `IndexMap<String, SymbolId>` for scope frames where declaration order matters (e.g., struct fields must iterate in declaration order for IL field slot assignment). Already present in workspace — zero new dependency. |
+| Technology | Version | Purpose | Why |
+|------------|---------|---------|-----|
+| `std::process::Command` | stdlib | Spawn each language interpreter as a child process | Zero-dependency, correct stdio capture. No external crate needed. |
+| `std::time::Instant` | stdlib | Wall-clock timing of each subprocess invocation | Nanosecond resolution, portable. Used for execution time and startup time. |
+| `procfs` | 0.17 | Read peak RSS from `/proc/<pid>/status` on Linux | Cross-language memory measurement requires external observation. `procfs` exposes `VmPeak` (peak virtual) and `VmRSS` (current resident set) for any PID. Linux-only; Docker container runs Linux so this is fine. Provides `Process::new(pid)?.status()?.vm_rss_peak`. |
+| `serde` + `serde_json` | 1.0 | Serialize measurement results to JSON for persistence | Already in workspace. Results written to `benchmark/results/YYYY-MM-DD.json` for CI artifact upload and chart input. |
 
-### No New Development Tools
+**Memory measurement approach:** The harness spawns each interpreter as a child process, captures its
+PID, and polls `/proc/<pid>/status` at 10 ms intervals while the child runs to capture peak RSS.
+On non-Linux hosts (Windows, macOS), memory measurement falls back to `0` with a `#[cfg]` guard —
+Docker ensures Linux in CI.
 
-The existing dev toolchain (insta snapshots, cargo test) is sufficient. No new test frameworks needed.
+**Startup time:** Measured as wall-clock time for a no-op benchmark (empty main). Subtracted from
+execution time in reporting.
+
+#### SVG Chart Generation
+
+| Technology | Version | Purpose | Why |
+|------------|---------|---------|-----|
+| `plotters` | 0.3.7 | Generate SVG bar charts | Most mature Rust charting library with SVG backend. Actively maintained (0.3.7 released September 2024). Provides `SVGBackend`, `ChartBuilder`, `BarChart`-equivalent via `Histogram`. No system dependencies (pure Rust). Outputs standalone `.svg` files. |
+| `plotters-svg` | 0.3.7 | SVG rendering backend for plotters | Required companion crate; `plotters` since 0.3 splits backends into separate crates. Pure Rust, no native dependencies. |
+
+**Why plotters over alternatives:**
+- `resvg`: SVG renderer (input SVG → rasterize), not a chart generator. Wrong tool.
+- `poloto`: Simpler API but no bar chart support, limited styling.
+- `charts-rs`: Newer, easier bar charts, but smaller ecosystem, less documentation.
+- Hand-rolled SVG string generation: Viable for simple bar charts (SVG is XML). Acceptable fallback
+  if plotters bar chart API proves cumbersome — SVG bar charts are ~50 lines of string formatting.
+
+#### Markdown Table Generation
+
+No crate needed. Markdown tables are plain text with `|` separators. The harness generates them
+via `std::fmt::Write` directly. A template crate like `minijinja` would be over-engineering for
+a fixed-schema results table.
 
 ---
 
-## Architecture Patterns
+### Docker Container
 
-### 1. Type Representation: Arena + Id, Not Rust References
+| Technology | Version | Purpose | Why |
+|------------|---------|---------|-----|
+| Docker / Podman | latest (Docker 27.x / Podman 5.x) | Reproducible build + run environment | All interpreters pinned to known versions; eliminates "works on my machine" timing variance. Single Dockerfile supports both `docker build` and `podman build` (OCI-compatible). |
+| `ubuntu:24.04` base image | 24.04 LTS | Base OS for all interpreters | Ubuntu 24.04 (Noble Numbat) is the current LTS. GitHub Actions `ubuntu-latest` now maps to ubuntu-24.04 (confirmed January 2025 rollout). Lua 5.4, Python 3.12, Node.js 20 LTS are all available as `apt` packages. Consistency between local Docker and CI. |
 
-**The problem:** A type checker that uses Rust references (`&'tcx TyKind`) requires threading the arena lifetime `'tcx` through every function signature. This is what rustc does — and it's a documented source of complexity ("the `'tcx` lifetime is everywhere").
+**Language interpreter versions in the container:**
 
-**The Writ solution:** Use `id-arena`'s `Arena<TyKind>` and carry `Id<TyKind>` values. Type equality is `id_a == id_b`. Interning (deduplication) is layered on top: before inserting a new `TyKind`, check a `HashMap<TyKind, Id<TyKind>>` intern table. If found, return the existing `Id`. This eliminates `'tcx` from all signatures.
+| Language | Version | Installation method | Notes |
+|----------|---------|---------------------|-------|
+| Lua | 5.4.8 | `apt-get install lua5.4` | lua5.4 package available in Ubuntu 24.04. Current Lua release. |
+| Squirrel | 3.2 | Build from source (github.com/albertodemichelis/squirrel) | Squirrel is NOT in apt repositories. Must clone + cmake build in Dockerfile. ~5 min Docker layer. Pin to git tag `v3.2`. |
+| Python | 3.12 | `apt-get install python3.12` | Default Python in Ubuntu 24.04. |
+| Node.js | 20.x LTS | `curl -fsSL https://deb.nodesource.com/setup_20.x | bash` | NodeSource PPA. Node 20 is the current LTS (EOL April 2026). Do NOT use Ubuntu's `nodejs` package — it is severely outdated. |
+| Rust (native) | 1.87+ stable | `curl https://sh.rustup.rs | sh` | Rust stable toolchain needed to compile the Writ CLI and native Rust benchmark variants. Pin via `rust-toolchain.toml` in repo root. |
 
-```rust
-pub struct TypeInterner {
-    arena: Arena<TyKind>,
-    map: FxHashMap<TyKind, Id<TyKind>>,
-}
+**Squirrel build concern:** Squirrel has no official Docker image and is not in Ubuntu package repositories.
+The Dockerfile must build it from source. This is a one-time cost cached in the Docker layer. The
+Squirrel command-line interpreter binary is `sq` after `cmake --build`.
 
-impl TypeInterner {
-    pub fn intern(&mut self, ty: TyKind) -> Id<TyKind> {
-        if let Some(&id) = self.map.get(&ty) {
-            return id;
-        }
-        let id = self.arena.alloc(ty.clone());
-        self.map.insert(ty, id);
-        id
-    }
-}
+---
+
+### Runner Scripts
+
+| Technology | Version | Purpose | Why |
+|------------|---------|---------|-----|
+| `benchmark/run.sh` (POSIX sh) | sh (not bash) | Linux/macOS runner script | Invoke `docker build` then `docker run writ-bench`. POSIX sh for maximum portability — no bash-isms. |
+| `benchmark/run.ps1` (PowerShell) | PowerShell 7.x | Windows runner script | PowerShell 7 is cross-platform and available on all GitHub Actions Windows runners. Equivalent logic to `run.sh`. Calls `docker` or `podman` depending on what's on PATH. |
+
+Scripts are thin wrappers: they build the Docker image, run the container with `--volume` mounts for
+results output, and print the path to generated files. No complex logic in scripts.
+
+---
+
+### GitHub Actions CI
+
+| Technology | Version | Purpose | Why |
+|------------|---------|---------|-----|
+| `actions/checkout` | v4 | Checkout repository | Standard. v4 is the current stable version. |
+| `actions/upload-artifact` | v4 | Upload benchmark result JSON + SVG files | Standard. v4 uses immutable artifacts (no overwrite). |
+| Docker (pre-installed) | included in ubuntu-24.04 runner | Container build + run in CI | GitHub Actions ubuntu-24.04 runners include Docker. No additional setup step needed. |
+| `benchmark-action/github-action-benchmark` | v1 | Optional: track performance over time, alert on regression | Consumes JSON result files, stores history in `gh-pages` branch, posts PR comments on regression. Use in a scheduled weekly run, not every commit. |
+
+**Workflow triggers:**
+- `workflow_dispatch` (manual) — primary trigger; benchmark runs are expensive
+- `schedule: cron: '0 2 * * 0'` (weekly Sunday 02:00 UTC) — baseline tracking
+- NOT triggered on every push/PR — execution cost is too high
+
+**Artifact strategy:** Upload `benchmark/results/YYYY-MM-DD.json` and the SVG charts as workflow
+artifacts. Do NOT commit results to `master` on every run — commit only on manual dispatch with
+explicit `--commit-results` flag in the runner script. This avoids polluting git history.
+
+---
+
+### Supporting Libraries (NEW — add to `writ-bench/Cargo.toml`)
+
+| Library | Version | Purpose | When to Use |
+|---------|---------|---------|-------------|
+| `plotters` | 0.3.7 | SVG bar chart generation | Always — the chart generator |
+| `plotters-svg` | 0.3.7 | SVG backend for plotters | Always — companion to plotters |
+| `procfs` | 0.17 | Peak RSS memory measurement via `/proc` | Linux only (Docker container). Gated with `#[cfg(target_os = "linux")]`. |
+| `serde` | 1.0 | Serialize/deserialize benchmark results | Derive `Serialize`/`Deserialize` on result structs |
+| `serde_json` | 1.0 | Write results to JSON files | Already in workspace; add to `writ-bench` explicitly |
+| `thiserror` | 2.0 | Error types in harness | Already in workspace |
+| `clap` | 4.x | CLI flags for harness binary (`--languages`, `--output-dir`, `--commit-results`) | Already in workspace |
+
+**NOT adding `criterion`:** Criterion is a Rust in-process microbenchmark framework. It cannot time
+external processes and is not suitable for cross-language comparison. The `writ-bench` crate is a
+custom harness binary, not a `[[bench]]` target.
+
+---
+
+## Integration Points with Existing Crates
+
+### How `writ-bench` Exercises the Writ Toolchain
+
+```
+writ-bench binary
+    ↓  subprocess
+writ compile benchmark/writ/fib.writ  → benchmark/writ/fib.writc
+    (timing: compile_time_ms)
+    ↓  subprocess
+writ run benchmark/writ/fib.writc
+    (timing: exec_time_ms, memory: peak_rss_kb)
 ```
 
-`TyKind` must implement `Eq + Hash` for the intern table. This is a clean pattern used by rust-analyzer (pre-Salsa era) and is appropriate for a language without lifetime parameters in its type system.
+The harness invokes `writ` CLI as a subprocess (not in-process). This is intentional:
+- Measures real user experience including process startup overhead
+- Compile time and run time are reported separately (Writ design constraint from PROJECT.md)
+- The CLI binary path is configurable; CI builds it with `cargo build --release` first
 
-### 2. Scope Stack: Vec of FxHashMap (Ribs Pattern)
+**Rust-native variant:** For the native Rust benchmark, the harness compiles and runs a standalone
+`benchmark/rust/fib.rs` via `rustc` subprocess, or links a pre-compiled `writ-bench-native` binary.
+This represents the Rust "ceiling" — the best case performance target.
 
-Rustc uses "Ribs" — a stack of scopes. Each Rib is pushed on entry to a block, function, or loop and popped on exit. Name lookup traverses inward-to-outward. This is the right pattern for Writ's scoping rules (§21).
+### New Crate: `writ-bench`
 
-```rust
-pub struct ScopeEnv {
-    // Each frame: name -> declaration Id
-    ribs: Vec<FxHashMap<String, DeclId>>,
-}
-
-impl ScopeEnv {
-    pub fn push(&mut self) { self.ribs.push(FxHashMap::default()); }
-    pub fn pop(&mut self)  { self.ribs.pop(); }
-    pub fn define(&mut self, name: String, id: DeclId) { ... }
-    pub fn lookup(&self, name: &str) -> Option<DeclId> {
-        self.ribs.iter().rev().find_map(|rib| rib.get(name).copied())
-    }
-}
+Added to `Cargo.toml` workspace `members`:
+```toml
+[workspace]
+resolver = "3"
+members = [
+    "writ-assembler", "writ-cli", "writ-compiler", "writ-dap",
+    "writ-diagnostics", "writ-golden", "writ-lsp", "writ-module",
+    "writ-parser", "writ-runtime",
+    "writ-bench",   # NEW
+]
 ```
 
-No external crate needed. `Vec<FxHashMap<String, DeclId>>` is the entire implementation.
-
-### 3. Type Inference: Two-Phase Constraint Collection + Unification
-
-The Writ type system has local type inference only (function signatures and field types are explicit). This means:
-
-1. **Phase A (constraint collection):** Walk expressions, assign fresh type variables via `ena::UnificationTable::new_key()`, emit constraints (`TypeVar(x) == Int`).
-2. **Phase B (unification):** Solve constraints. `ena::UnificationTable::unify_var_var` / `unify_var_value`.
-3. **Zonk:** Walk the AST again, replace all `TypeVar(x)` with their resolved types. Unresolved variables after this pass are a "type annotation required" error.
-
-The `ena` snapshot/rollback is needed for type checking `if` branches independently.
-
-### 4. IL Codegen: Extend writ-compiler to Call writ-module
-
-The `writ-module` crate already provides a `ModuleBuilder` with a complete fluent API for all 21 IL table types. IL codegen is a new pass in `writ-compiler` that:
-
-1. Receives the type-checked, fully-resolved AST.
-2. Instantiates a `ModuleBuilder` from `writ-module`.
-3. Traverses the AST depth-first, emitting instructions via `ModuleBuilder`.
-4. Returns the finished `Module`.
-
-**No new crate needed for codegen.** The builder is already written. The codegen pass belongs in `writ-compiler/src/codegen/` and adds `writ-module` as a dependency to `writ-compiler`.
-
-### 5. Diagnostic Accumulation: Keep LoweringContext Pattern
-
-The existing `LoweringContext` accumulates errors as `Vec<LoweringError>`. Extend this pattern: the `ResolveContext` and `TypeCheckContext` each accumulate errors. Callers collect all errors before failing. This matches the existing design and enables reporting multiple errors per compilation.
-
-For rendering errors to the terminal, `ariadne` provides the `Report` + `Label` API. The existing `LoweringError` variants already carry `SimpleSpan`; this is directly compatible with ariadne's `Span` trait.
+`writ-bench` has NO dependencies on other workspace crates. It is a standalone harness that invokes
+`writ` as a subprocess. This keeps the benchmarking infrastructure independent of compiler internals
+and ensures the benchmark measures the same binary a user would run.
 
 ---
 
 ## Installation
 
+### Rust
+
 ```toml
-# writ-compiler/Cargo.toml additions for v3.0:
+# writ-bench/Cargo.toml
+[package]
+name    = "writ-bench"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "writ-bench"
+path = "src/main.rs"
 
 [dependencies]
-writ-parser  = { path = "../writ-parser" }
-writ-module  = { path = "../writ-module" }    # NEW: for IL codegen
-chumsky      = { version = "0.12.0", features = ["pratt"] }
-thiserror    = "2.0"
-id-arena     = "2.3"                          # NEW: type node arena
-rustc-hash   = "2.1"                          # NEW: fast HashMaps for scope/symbol tables
-ena          = "0.14"                         # NEW: union-find for type inference
+plotters     = { version = "0.3.7", default-features = false, features = ["svg_backend"] }
+plotters-svg = "0.3.7"
+serde        = { version = "1", features = ["derive"] }
+serde_json   = "1"
+thiserror    = "2"
+clap         = { version = "4", features = ["derive"] }
 
-[dev-dependencies]
-insta        = { version = "1", features = ["ron"] }
-ariadne      = "0.6"                          # Move from dev-dep to dep if rendering in-crate
+[target.'cfg(target_os = "linux")'.dependencies]
+procfs = { version = "0.17", default-features = false }
 ```
 
-Notes:
-- `ariadne` stays in dev-dependencies if diagnostic rendering lives in `writ-cli`. Move it to a production dependency only if `writ-compiler` exposes a `render_diagnostics` API.
-- `petgraph` is conditional on whether declaration ordering needs a full graph (see "Alternatives Considered").
-- `bitflags` is conditional on type modifier complexity.
+### Docker
+
+```dockerfile
+# benchmark/docker/Dockerfile
+FROM ubuntu:24.04
+
+RUN apt-get update && apt-get install -y \
+    lua5.4 \
+    python3.12 \
+    cmake cmake-extras build-essential git \
+    curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node.js 20 LTS via NodeSource
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs
+
+# Squirrel 3.2 from source
+RUN git clone --depth 1 --branch v3.2 \
+        https://github.com/albertodemichelis/squirrel.git /tmp/squirrel \
+    && cmake -S /tmp/squirrel -B /tmp/squirrel/build -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build /tmp/squirrel/build \
+    && cp /tmp/squirrel/build/sq/sq /usr/local/bin/sq \
+    && rm -rf /tmp/squirrel
+
+# Rust toolchain
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+WORKDIR /workspace
+COPY . .
+
+RUN cargo build --release -p writ-cli
+
+ENTRYPOINT ["cargo", "run", "--release", "-p", "writ-bench", "--"]
+```
+
+### Runner Scripts
+
+```sh
+#!/bin/sh
+# benchmark/run.sh
+set -e
+CONTAINER_TOOL=${CONTAINER_TOOL:-docker}
+$CONTAINER_TOOL build -t writ-bench -f benchmark/docker/Dockerfile .
+$CONTAINER_TOOL run --rm -v "$(pwd)/benchmark/results:/workspace/benchmark/results" \
+    writ-bench "$@"
+```
+
+```powershell
+# benchmark/run.ps1
+param([string]$ContainerTool = "docker")
+& $ContainerTool build -t writ-bench -f benchmark/docker/Dockerfile .
+& $ContainerTool run --rm -v "${PWD}/benchmark/results:/workspace/benchmark/results" `
+    writ-bench @args
+```
+
+### GitHub Actions Workflow Skeleton
+
+```yaml
+# .github/workflows/benchmark.yml
+name: Benchmark Suite
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 2 * * 0'
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build benchmark container
+        run: docker build -t writ-bench -f benchmark/docker/Dockerfile .
+      - name: Run benchmarks
+        run: |
+          mkdir -p benchmark/results
+          docker run --rm \
+            -v "${{ github.workspace }}/benchmark/results:/workspace/benchmark/results" \
+            writ-bench --output-dir /workspace/benchmark/results
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-${{ github.run_id }}
+          path: benchmark/results/
+```
 
 ---
 
@@ -157,14 +318,14 @@ Notes:
 
 | Recommended | Alternative | When to Use Alternative |
 |-------------|-------------|-------------------------|
-| `id-arena 2.3` for type storage | `typed-arena 2.0.2` (references, `'arena` lifetime) | Use typed-arena if you specifically want to navigate the type graph with references rather than IDs, and are comfortable threading `'arena` through all type-checker functions. This is the rustc approach. For a smaller language without lifetime parameters in its type system, the `'arena` burden is not worth it. |
-| `id-arena 2.3` for type storage | `salsa` (query-based compilation) | Use salsa if you need incremental compilation (IDE re-check on keypress). Salsa adds significant design complexity: all computation must be expressed as memoized queries, the database object is pervasive, and the learning curve is steep. Writ v3.0 is a batch compiler; incremental compilation is not required. Salsa is the right choice for a language server (future milestone), not for a correctness-first batch compiler. |
-| `rustc-hash 2.1` for HashMaps | stdlib `HashMap` with `SipHash` | Use stdlib HashMap when security matters (e.g., accepting user-controlled keys in a web service). The symbol table in a compiler is not user-facing in a security sense; deterministic, fast hashing is preferred. |
-| `ena 0.14` for unification | Hand-rolled union-find (`Vec<Option<TypeVar>>`) | Hand-rolling union-find is feasible for simple languages without the snapshot/rollback requirement. Add snapshots only when the type checker needs to explore speculative paths. If Writ's inference proves to be fully forward-only (no backtracking needed), a hand-rolled approach saves a dependency. Verify after implementing the basic type checker. |
-| `Vec<FxHashMap>` scope stack | Persistent (immutable) scope maps | Persistent maps (e.g., `im` crate) allow cheap snapshot of the current scope by structural sharing. Useful when you need to freeze scope state for closures. Writ closures capture by value at declaration time; the type checker can record the scope snapshot when a closure node is encountered. Only needed if closure capture analysis becomes complex. |
-| Extend `writ-compiler` for codegen | New `writ-codegen` crate | Create a separate `writ-codegen` crate if the codegen pass grows large enough to have its own tests and release cycle, or if multiple backends are planned. For the initial IL codegen pass targeting a single IL format, keeping it in `writ-compiler` is simpler. Split later if needed. |
-| `ariadne 0.6` for diagnostics | `miette` | `miette` is a comprehensive diagnostic framework that also replaces `thiserror` and adds procedural macros. It is better suited for applications that want opinionated error printing out of the box. Writ already uses `thiserror` for error types and manages rendering separately; migrating to `miette` would require touching all existing error types. Not worth the migration cost. Use `miette` for a greenfield project. |
-| `ariadne 0.6` for diagnostics | `codespan-reporting` | `codespan-reporting` is a lower-level library focused purely on rendering. `ariadne` is the more actively maintained successor and is explicitly designed to pair with chumsky (same author). Since writ-parser already uses ariadne in dev-deps, ariadne is the correct continuation. |
+| Custom harness binary (`writ-bench`) | `criterion` + `[[bench]]` targets | Only if all benchmarks are in-process Rust. Criterion cannot time external processes — wrong tool for cross-language work. |
+| `plotters` 0.3.7 + `plotters-svg` | Hand-rolled SVG string generation | SVG bar charts are simple enough that ~80 lines of `write!` macros would work. Use if plotters API proves difficult for the specific bar chart layout needed. |
+| `plotters` 0.3.7 | `charts-rs` | `charts-rs` has a simpler bar chart API, but is less mature (smaller community, less documentation). Use if plotters bar charts require too much boilerplate. |
+| `procfs` for memory measurement | `psutil` (Python) / shell `ps` in container | `procfs` is native Rust and works in-process. Polling with `ps` requires spawning a shell subprocess while the benchmarked process is running — adds jitter. |
+| `ubuntu:24.04` base image | `debian:bookworm-slim` | Debian slim is smaller but requires more manual apt source configuration for Node.js. Ubuntu 24.04 matches the GitHub Actions runner OS exactly — less divergence. |
+| Docker/Podman single Dockerfile | `docker-compose` with separate services | Separate services add complexity for a sequential benchmark runner. One container + one entrypoint is simpler and sufficient. |
+| `workflow_dispatch` + weekly `schedule` trigger | Trigger on every push | Benchmark runs take 10-30 minutes. Running on every push consumes GitHub Actions minutes unnecessarily. Manual dispatch is the primary trigger. |
+| Squirrel 3.2 built from source | Squirrel as an embedded Rust crate via `squirrel-rs` | `squirrel-rs` (github.com/cyderize/squirrel-rs) provides Rust FFI bindings, but the project has low activity. Building the `sq` CLI from source and running it as a subprocess is simpler and more consistent with how Lua/Python/Node are measured. |
 
 ---
 
@@ -172,59 +333,70 @@ Notes:
 
 | Avoid | Why | Use Instead |
 |-------|-----|-------------|
-| `salsa` | Salsa's query system requires restructuring the entire compilation pipeline around its database object. This is a correct architectural choice for IDE-oriented incremental compilation, but v3.0 is a batch compiler where correctness is the goal, not incremental re-checking. Adding salsa to a non-incremental pipeline adds ~20 minutes of design work per feature with no benefit. | Flat, imperative passes in `writ-compiler/src/resolve/`, `writ-compiler/src/typecheck/`, `writ-compiler/src/codegen/`. |
-| `lalrpop` / `pest` / second parser | The middle-end does not parse new syntax. The CST is already produced by `writ-parser`. Name resolution and type checking operate on `writ-compiler::ast` types, not text. | No new parser. |
-| `rayon` for parallel type checking | Type checking is single-file for v3.0. Parallel type checking requires split compilation units and a more complex name resolution model (well-defined module interfaces before type checking). Premature for v3.0. | Sequential single-threaded passes. |
-| `cranelift` / `inkwell` / `wasm-bindgen` | Code generation targets other than Writ IL are explicitly out of scope. The IL spec already defines the target format; `writ-module::ModuleBuilder` is the codegen backend. | `writ-module::ModuleBuilder` for IL emission. |
-| `serde` on the type IR | The internal type representation (`TyKind`, `DeclId`, resolved AST) does not need serialization. The serialized artifact is the binary IL module (handled by `writ-module`). Adding serde to internal type IR adds derive macros and feature gating with zero benefit. | Binary module serialization via `writ-module::ModuleWriter`. |
-| Separate diagnostic crate | Creating a `writ-diagnostics` crate for the diagnostic types adds cross-crate dependency complexity. The existing `LoweringError` pattern — error types in the crate that produces them, rendering at the boundary (CLI) — is the correct separation. | Keep error types in their producing crate (`writ-compiler`), render in `writ-cli`. |
+| `criterion` | In-process Rust-only microbenchmark framework. Cannot time external processes. Adding it would measure Rust overhead of calling subprocess, not the actual language performance. | Custom `writ-bench` binary with `std::time::Instant` and `std::process::Command` |
+| `hyperfine` (the CLI tool) | `hyperfine` v1.20.0 is excellent for manual cross-language benchmarking from a terminal, but it cannot be embedded in a Rust binary to collect structured results for SVG/markdown output. | `std::process::Command` + `std::time::Instant` in `writ-bench` |
+| `mlua` (Lua embedding crate) | Embeds Lua into the Rust process. This would measure Lua performance through Rust FFI overhead, NOT as a standalone language. The benchmark must run Lua as an independent process to be a fair comparison. | Invoke `lua5.4` as a subprocess via `std::process::Command` |
+| `docker-compose` | Adds a YAML dependency for what is ultimately a sequential task. One Dockerfile + one entrypoint is simpler. | Single `Dockerfile` with an entrypoint that runs the harness |
+| `benchmark-action/github-action-benchmark` in every PR | Expensive (minutes per run) and adds flakiness if runners have load variance. | Use only in weekly scheduled workflow; not in PR checks |
+| Separate `writ-bench-results` git branch for auto-commit | Auto-committing to a results branch from CI makes git history confusing and requires write tokens. | Upload results as GitHub Actions artifacts; commit manually when publishing |
+| Python `matplotlib` for chart generation | Introduces a Python dependency in the Rust build pipeline. All chart generation should be in `writ-bench` Rust binary. | `plotters` + `plotters-svg` |
 
 ---
 
-## Crate Placement for v3.0 Features
+## Stack Patterns by Variant
 
-| Feature | Crate | Rationale |
-|---------|-------|-----------|
-| Name resolution pass (`resolve/`) | `writ-compiler` | Operates on `ast::AstDecl`; produces `resolved::ResolvedAst` with `DeclId` annotations. Natural extension of the lowering pipeline. |
-| Type checking pass (`typecheck/`) | `writ-compiler` | Operates on `resolved::ResolvedAst`; produces `typed::TypedAst`. Uses `ena` for unification. |
-| Type representation (`ty/`) | `writ-compiler` | `TyKind`, `Id<TyKind>`, `TypeInterner`. Internal to the compiler. |
-| IL codegen pass (`codegen/`) | `writ-compiler` | Operates on `typed::TypedAst`; emits via `writ-module::ModuleBuilder`. Adds `writ-module` as a dependency. |
-| Diagnostic rendering | `writ-cli` | `writ-cli` imports `ariadne` and renders `Vec<CompilerError>` to stderr. Keeps rendering out of the library crate. |
+**If running benchmarks locally without Docker:**
+- Invoke `writ-bench --no-docker` (flag to skip container, use system interpreters)
+- Harness detects available interpreters via `which lua5.4 lua lua5.3` etc.
+- Memory measurement only available on Linux; skipped gracefully on macOS/Windows
+- This mode is for development; Docker mode is canonical for published results
+
+**If Squirrel source build fails in Docker:**
+- Fall back to Squirrel 3.1 from SourceForge if the git tag is unavailable
+- Or skip Squirrel from that benchmark run and mark results as `N/A`
+- The harness result schema must support `null` for missing language entries
+
+**If GitHub Actions free minutes are a concern:**
+- Use `workflow_dispatch` only (disable the weekly schedule)
+- Cache the Docker image layer between runs using `actions/cache` with the Dockerfile hash as cache key
+- Build the container once as a separate job, push to GitHub Container Registry (ghcr.io), pull in benchmark jobs
 
 ---
 
 ## Version Compatibility
 
-| Package | Compatible With | Notes |
-|---------|-----------------|-------|
-| `id-arena 2.3.0` | Rust stable, no_std optional | No conflicts with Rust 2024 edition. MIT/Apache-2.0. |
-| `rustc-hash 2.1.1` | Rust 1.64+ | Well under the Rust 2024 edition requirement (1.85+). Zero unsafe in user code. |
-| `ena 0.14.4` | Rust stable | Maintained by the Rust compiler team. No known compatibility issues. |
-| `ariadne 0.6.0` | `chumsky 0.12`, Rust stable | Same author, designed to interoperate. Already used as dev-dep in `writ-parser`. |
-| `petgraph 0.8.3` | Rust 1.64+ | No conflict with workspace. Conditional addition. |
-| `writ-module` (existing) | `writ-compiler` (new dep) | Currently `writ-module` has no dependency on `writ-compiler`. Adding the reverse edge (`writ-compiler` → `writ-module`) is safe — no cycle. |
+| Package | Version | Compatible With | Notes |
+|---------|---------|-----------------|-------|
+| `plotters 0.3.7` | `plotters-svg 0.3.7` | Must match major.minor | Both in `plotters-rs` org; keep versions in sync |
+| `plotters 0.3.7` | Rust 2021 edition | Compatible | Rust 2024 edition (workspace) is also compatible |
+| `procfs 0.17` | Linux kernel 4.x+ | Compatible | Ubuntu 24.04 runs kernel 6.x; fully supported |
+| `serde 1.0` + `serde_json 1.0` | Already workspace versions | No conflict | `writ-bench` declares same versions as workspace |
+| `clap 4.x` | Already workspace version | No conflict | Already used by `writ-cli` |
+| `ubuntu:24.04` Docker base | GitHub Actions `ubuntu-latest` | Match — ubuntu-latest = ubuntu-24.04 since Jan 2025 | Ensures container and CI runner OS match |
+| Node.js 20 LTS | EOL April 2026 | Fine for v7.0 milestone | Upgrade to Node 22 LTS after April 2026 |
+| Squirrel 3.2 | cmake 3.16+ | `cmake` in Ubuntu 24.04 is 3.28+ | Compatible |
 
 ---
 
 ## Sources
 
-- [id-arena docs.rs 2.3.0](https://docs.rs/id-arena/2.3.0/id_arena/) — Arena<T> and Id<T> API, no-lifetime-in-callers pattern — HIGH confidence
-- [typed-arena docs.rs 2.0.2](https://docs.rs/typed-arena/latest/typed_arena/) — Reference-returning alternative, lifetime tradeoff — HIGH confidence
-- [rustc-hash docs.rs 2.1.1](https://docs.rs/rustc-hash/latest/rustc_hash/) — FxHashMap/FxHashSet, design rationale for compiler use — HIGH confidence
-- [ena docs.rs 0.14.4](https://docs.rs/ena/latest/ena/) — UnificationTable, snapshot/rollback, union-find for type inference — HIGH confidence
-- [ariadne docs.rs 0.6.0](https://docs.rs/ariadne/latest/ariadne/) — Report, Label, multi-span diagnostics — HIGH confidence
-- [petgraph docs.rs 0.8.3](https://docs.rs/petgraph/latest/petgraph/) — toposort, is_cyclic_directed — HIGH confidence (version 0.8.3 confirmed)
-- [indexmap docs.rs 2.13.0](https://docs.rs/indexmap/latest/indexmap/) — Already in workspace — HIGH confidence
-- [bitflags docs.rs 2.11.0](https://docs.rs/bitflags/latest/bitflags/) — Type modifier flags — HIGH confidence
-- [Rustc Dev Guide: Name Resolution](https://rustc-dev-guide.rust-lang.org/name-resolution.html) — Ribs/scope-stack pattern, namespace separation — HIGH confidence (authoritative)
-- [Rustc Dev Guide: ty module](https://rustc-dev-guide.rust-lang.org/ty.html) — TyKind interning, arena allocation, pointer equality — HIGH confidence (authoritative)
-- [Rustc Dev Guide: Type Inference](https://rustc-dev-guide.rust-lang.org/type-inference.html) — Constraint-based inference with union-find — HIGH confidence (authoritative)
-- [Implementing a typechecker in Rust (RCL)](https://ruudvanasseldonk.com/2024/implementing-a-typechecker-for-rcl-in-rust) — Single-pass typechecking, Env struct, no-framework approach — MEDIUM confidence (single external article, consistent with rustc patterns)
-- [Writ Language Spec §5](../../../language-spec/spec/06_5_type_system.md) — Type categories: primitives, arrays, structs, entities, enums, optionals, generics — authoritative
-- [Writ Language Spec §11](../../../language-spec/spec/12_11_generics.md) — Generics with contract bounds, boxing for value types, dispatch table — authoritative
-- [Writ Language Spec §21](../../../language-spec/spec/22_21_scoping_rules.md) — Scoping rules that constrain the resolver — authoritative
+- `docs.rs/plotters/latest` — version 0.3.7 confirmed, SVGBackend API verified (HIGH confidence, official docs)
+- `github.com/plotters-rs/plotters` — 0.3.7 released September 8, 2024, active maintenance confirmed (HIGH confidence, official repo)
+- `crates.io/crates/criterion` — 0.8.2 latest (criterion-rs org fork, released February 2026); Criterion is in-process only, confirmed inapplicable for cross-language subprocess timing (HIGH confidence)
+- `github.com/criterion-rs/criterion.rs` — 0.8.2 latest release February 4, 2026 (HIGH confidence, official repo)
+- `crates.io/crates/mlua` — 0.11.6 confirmed; ruled out because it embeds Lua in-process (HIGH confidence)
+- `crates.io/crates/procfs` — 0.17 for `/proc` memory stats; `VmRSS` and peak RSS confirmed in `Status` struct (MEDIUM confidence, docs.rs)
+- `github.com/sharkdp/hyperfine/releases` — v1.20.0 released November 18, 2025; ruled out for embedded use (HIGH confidence, official repo)
+- `github.com/kostya/benchmarks` — methodology review: RSS measurement, Docker containers, median ± MAD reporting (MEDIUM confidence, community project)
+- `github.com/khvzak/script-bench-rs` — uses Criterion for in-process embedding benchmarks; confirmed inapplicable for subprocess approach (MEDIUM confidence, community project)
+- `packages.ubuntu.com/lua5.4` — Lua 5.4 available in Ubuntu 24.04 repositories (HIGH confidence, official Ubuntu package search)
+- `lua.org/versions.html` — Lua 5.4.8 current release, June 2025 (HIGH confidence, official site)
+- `github.com/albertodemichelis/squirrel` — official Squirrel repository; v3.2 tag; cmake build required (HIGH confidence, official repo)
+- `github.com/actions/runner-images/issues/10636` — ubuntu-latest = ubuntu-24.04 confirmed January 2025 (HIGH confidence, official GitHub Actions repo)
+- `crates.io/crates/serde_json` — 1.0.149 latest as of January 2026; using SemVer `"1"` range (HIGH confidence)
+- WebSearch: GitHub Actions benchmark action patterns, artifact upload for results (MEDIUM confidence)
 
 ---
 
-*Stack research for: Writ compiler middle-end (name resolution, type checking, IL codegen)*
-*Researched: 2026-03-02*
+*Stack research for: Writ v7.0 cross-language benchmark suite*
+*Researched: 2026-03-20*

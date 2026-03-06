@@ -21,9 +21,19 @@ enum Option<T> {
 ```
 
 Tag assignments are mandatory: `None = 0`, `Some = 1`. Zero-initialization of an Option register produces `None`.
-The specialized IL instructions (`WRAP_SOME`, `UNWRAP`, `IS_SOME`, `IS_NONE`) depend on these tag values.
+The specialized IL instructions (`WRAP_SOME`, `UNWRAP`, `IS_SOME`, `IS_NONE`) depend on these tag values. The query and extraction instructions are exposed as intrinsic methods — see table below.
 
 The `T?` syntax is sugar for `Option<T>`. The `null` literal is sugar for `Option::None`.
+
+**Methods (intrinsic):**
+
+| Method    | Signature                  | Intrinsic IL |
+|-----------|----------------------------|--------------|
+| `is_some` | `fn is_some(self) -> bool` | `IS_SOME`    |
+| `is_none` | `fn is_none(self) -> bool` | `IS_NONE`    |
+| `unwrap`  | `fn unwrap(self) -> T`     | `UNWRAP`     |
+
+The `unwrap` method crashes the task if the value is `None`. This is equivalent to the `!` postfix operator — `opt.unwrap()` and `opt!` produce identical IL.
 
 #### Result\<T, E: Error\>
 
@@ -35,7 +45,18 @@ enum Result<T, E: Error> {
 ```
 
 Tag assignments are mandatory: `Ok = 0`, `Err = 1`. The `E` parameter is constrained to the `Error` contract
-(§2.18.3). Specialized IL instructions: `WRAP_OK`, `WRAP_ERR`, `UNWRAP_OK`, `IS_OK`, `IS_ERR`, `EXTRACT_ERR`.
+(§2.18.3). Specialized IL instructions: `WRAP_OK`, `WRAP_ERR`, `UNWRAP_OK`, `IS_OK`, `IS_ERR`, `EXTRACT_ERR`. The query and extraction instructions are exposed as intrinsic methods — see table below.
+
+**Methods (intrinsic):**
+
+| Method       | Signature                  | Intrinsic IL  |
+|--------------|----------------------------|---------------|
+| `is_ok`      | `fn is_ok(self) -> bool`   | `IS_OK`       |
+| `is_err`     | `fn is_err(self) -> bool`  | `IS_ERR`      |
+| `unwrap`     | `fn unwrap(self) -> T`     | `UNWRAP_OK`   |
+| `unwrap_err` | `fn unwrap_err(self) -> E` | `EXTRACT_ERR` |
+
+The `unwrap` method crashes the task if the value is `Err`. This is equivalent to the `!` postfix operator — `result.unwrap()` and `result!` produce identical IL.
 
 ### 2.18.2 Range\<T\>
 
@@ -69,7 +90,7 @@ to support custom range iteration.
 ### 2.18.3 Contracts
 
 The following contracts are defined in `writ-runtime`. The compiler maps operator syntax to these contracts
-automatically (§10.1, §2.7). Each contract produces a `ContractDef` row in the `writ-runtime` module metadata.
+automatically (§1.11.1, §2.7). Each contract produces a `ContractDef` row in the `writ-runtime` module metadata.
 
 **Arithmetic:**
 

@@ -67,6 +67,8 @@ pub enum Item<'src> {
     Dlg(Spanned<DlgDecl<'src>>),
     /// Struct declaration: `[vis] struct Name [<generics>] { fields }`
     Struct(Spanned<StructDecl<'src>>),
+    /// Class declaration: `[vis] class Name [<generics>] { fields }` (reference type)
+    Class(Spanned<ClassDecl<'src>>),
     /// Enum declaration: `[vis] enum Name [<generics>] { variants }`
     Enum(Spanned<EnumDecl<'src>>),
     /// Contract declaration: `[vis] contract Name [<generics>] { signatures }`
@@ -241,6 +243,35 @@ pub struct StructField<'src> {
 /// A member inside a struct body: field or lifecycle hook.
 #[derive(Debug, Clone, PartialEq)]
 pub enum StructMember<'src> {
+    /// Field: `[vis] name: type [= default]`
+    Field(StructField<'src>),
+    /// Lifecycle hook: `on event { body }`
+    OnHook {
+        event: Spanned<&'src str>,
+        body: Vec<Spanned<Stmt<'src>>>,
+    },
+}
+
+/// Class declaration: `[attrs] [vis] class Name [<generics>] { fields }` (reference type, heap-allocated)
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClassDecl<'src> {
+    /// Stacked attribute blocks.
+    pub attrs: Vec<Spanned<Vec<Attribute<'src>>>>,
+    /// Optional visibility modifier.
+    pub vis: Option<Visibility>,
+    /// Class name.
+    pub name: Spanned<&'src str>,
+    /// Optional generic parameters.
+    pub generics: Option<Vec<Spanned<GenericParam<'src>>>>,
+    /// Class members: fields and lifecycle hooks interleaved.
+    pub members: Vec<Spanned<ClassMember<'src>>>,
+}
+
+/// A member inside a class body: field or lifecycle hook.
+///
+/// Classes accept all lifecycle hooks (create, finalize, serialize, deserialize).
+#[derive(Debug, Clone, PartialEq)]
+pub enum ClassMember<'src> {
     /// Field: `[vis] name: type [= default]`
     Field(StructField<'src>),
     /// Lifecycle hook: `on event { body }`
@@ -441,6 +472,8 @@ pub enum ExternDecl<'src> {
     Fn(Option<Visibility>, Spanned<FnSig<'src>>),
     /// Extern struct: `[vis] extern struct Name { fields }`
     Struct(Option<Visibility>, Spanned<StructDecl<'src>>),
+    /// Extern class: `[vis] extern class Name { fields }`
+    Class(Option<Visibility>, Spanned<ClassDecl<'src>>),
     /// Extern component: `[vis] extern component Name { fields }`
     Component(Option<Visibility>, Spanned<ComponentDecl<'src>>),
 }

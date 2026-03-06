@@ -1,0 +1,171 @@
+// Quest System demo -- exercises enums, functions, match, control flow,
+// arrays, Option, defer, atomic, and dialogue builtins (say + log) in combination.
+
+enum QuestStatus {
+    NotStarted,
+    Active,
+    Completed,
+    Failed,
+}
+
+enum QuestType {
+    MainStory,
+    SideQuest,
+    Daily,
+}
+
+const MAX_QUESTS: int = 10;
+const XP_MULTIPLIER: int = 2;
+
+global mut active_quest_count: int = 0;
+global mut total_xp: int = 0;
+
+// Calculate XP reward based on quest type and a base amount.
+fn calculate_reward(base_xp: int, quest_type: QuestType) -> int {
+    let multiplier: int = match quest_type {
+        QuestType::MainStory => { XP_MULTIPLIER * 3 }
+        QuestType::SideQuest => { XP_MULTIPLIER }
+        QuestType::Daily => { 1 }
+    };
+    base_xp * multiplier
+}
+
+// Check whether a quest can be accepted given its current status.
+fn is_quest_available(status: QuestStatus) -> bool {
+    match status {
+        QuestStatus::NotStarted => { true }
+        QuestStatus::Active => { false }
+        QuestStatus::Completed => { false }
+        QuestStatus::Failed => { true }
+    }
+}
+
+// Return the index of the first Active quest in a status array, or None.
+fn find_first_active(statuses: QuestStatus[]) -> int? {
+    let mut idx: int = 0;
+    for s in statuses {
+        match s {
+            QuestStatus::Active => { return Option::Some(idx); }
+            QuestStatus::NotStarted => { idx = idx + 1; }
+            QuestStatus::Completed => { idx = idx + 1; }
+            QuestStatus::Failed => { idx = idx + 1; }
+        }
+    }
+    Option::None
+}
+
+// Attempt to complete a quest. Returns the new status and awards XP atomically.
+fn complete_quest(status: QuestStatus, base_xp: int, quest_type: QuestType) -> QuestStatus {
+    let available: bool = is_quest_available(status);
+    if available {
+        return QuestStatus::Active;
+    }
+    match status {
+        QuestStatus::Active => {
+            let reward: int = calculate_reward(base_xp, quest_type);
+            atomic {
+                total_xp = total_xp + reward;
+                active_quest_count = active_quest_count + 1;
+            }
+            QuestStatus::Completed
+        }
+        QuestStatus::NotStarted => { QuestStatus::Failed }
+        QuestStatus::Completed => { QuestStatus::Completed }
+        QuestStatus::Failed => { QuestStatus::Failed }
+    }
+}
+
+// Count how many quests in the log have been completed.
+fn process_quest_log(statuses: QuestStatus[]) -> int {
+    let mut completed: int = 0;
+    for s in statuses {
+        match s {
+            QuestStatus::Completed => { completed = completed + 1; }
+            QuestStatus::NotStarted => { completed = completed; }
+            QuestStatus::Active => { completed = completed; }
+            QuestStatus::Failed => { completed = completed; }
+        }
+    }
+    completed
+}
+
+// Announce a quest type via say and log builtins.
+fn announce_quest(quest_type: QuestType) {
+    match quest_type {
+        QuestType::MainStory => {
+            ::log::info("Announcing main story quest");
+            ::say("A new chapter of the main story begins.");
+        }
+        QuestType::SideQuest => {
+            ::log::info("Announcing side quest");
+            ::say("A side quest has appeared.");
+        }
+        QuestType::Daily => {
+            ::log::info("Announcing daily quest");
+            ::say("Your daily quest is ready.");
+        }
+    }
+}
+
+fn main() {
+    defer {
+        ::log::info("Quest system session ended.");
+    }
+
+    // Initialise status and type arrays.
+    let statuses: QuestStatus[] = [
+        QuestStatus::NotStarted,
+        QuestStatus::Active,
+        QuestStatus::Completed,
+        QuestStatus::Failed,
+    ];
+    let types: QuestType[] = [
+        QuestType::MainStory,
+        QuestType::SideQuest,
+        QuestType::Daily,
+    ];
+
+    // Announce each quest type via dialogue and log builtins.
+    for t in types {
+        announce_quest(t);
+    }
+
+    // Find first active quest.
+    let maybe_active: int? = find_first_active(statuses);
+    match maybe_active {
+        Option::None => {
+            ::log::info("No active quest found.");
+            ::say("No quests are currently active.");
+        }
+        Option::Some(idx) => {
+            ::log::info("Found active quest.");
+            ::say("You have an active quest.");
+            let new_status: QuestStatus = complete_quest(
+                QuestStatus::Active,
+                50,
+                QuestType::MainStory
+            );
+            match new_status {
+                QuestStatus::Completed => { ::log::info("Quest completed."); }
+                QuestStatus::Failed => { ::log::info("Quest failed."); }
+                QuestStatus::Active => { ::log::info("Quest still active."); }
+                QuestStatus::NotStarted => { ::log::info("Quest not started."); }
+            }
+        }
+    }
+
+    // Tally completed quests.
+    let num_completed: int = process_quest_log(statuses);
+
+    // Guard: only continue if total quests within limit.
+    if active_quest_count < MAX_QUESTS {
+        ::log::info("Quest log within capacity.");
+        ::say("Quest tracker is ready.");
+    }
+
+    // Summarise session XP atomically.
+    atomic {
+        let snapshot_xp: int = total_xp;
+        let snapshot_count: int = num_completed;
+    }
+}

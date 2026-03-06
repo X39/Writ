@@ -41,7 +41,7 @@ fn emit_src(src: &'static str) -> (ModuleBuilder, Vec<Diagnostic>) {
         resolve_errors
     );
 
-    let (typed_ast, interner, type_diags) = typecheck(resolved, &asts);
+    let (typed_ast, interner, _type_env, type_diags) = typecheck(resolved, &asts);
     let type_errors: Vec<&Diagnostic> = type_diags
         .iter()
         .filter(|d| d.severity == Severity::Error)
@@ -232,7 +232,52 @@ fn global_mut_emits_globaldef() {
 fn extern_fn_emits_externdef() {
     let (builder, diags) = emit_src("extern fn print(msg: string);");
     assert!(diags.is_empty(), "unexpected emit diags: {:?}", diags);
-    assert_eq!(builder.extern_def_count(), 1, "should have 1 ExternDef for print");
+    // 1 user-declared extern (print). Log-level externs are only emitted when referenced.
+    assert_eq!(builder.extern_def_count(), 1, "should have 1 ExternDef: print");
+    // The user-declared extern must be present by name
+    let has_print = builder
+        .extern_defs
+        .iter()
+        .any(|row| builder.string_heap.get_str(row.name) == "print");
+    assert!(has_print, "expected ExternDef named 'print'");
+}
+
+// =========================================================
+// ChoiceOption rename tests
+// =========================================================
+
+#[test]
+fn choice_option_emits_externdef() {
+    let (builder, diags) = emit_src(
+        r#"
+        pub extern fn say(speaker: Entity, text: string);
+        pub extern fn choice(options: Array<ChoiceOption>);
+        pub extern fn ChoiceOption(label: string, key: string, body: fn());
+
+        dlg ask(narrator: Entity) {
+            @narrator What do you think?
+            $ choice {
+                "Good!" { @narrator Great! }
+                "Bad" { @narrator Sorry. }
+            }
+        }
+        "#,
+    );
+    assert!(diags.is_empty(), "unexpected emit diags: {:?}", diags);
+    // At least one ExternDef row must be named "ChoiceOption"
+    let has_choice_option = builder
+        .extern_defs
+        .iter()
+        .any(|row| builder.string_heap.get_str(row.name) == "ChoiceOption");
+    assert!(
+        has_choice_option,
+        "expected ExternDef named ChoiceOption, got: {:?}",
+        builder
+            .extern_defs
+            .iter()
+            .map(|r| builder.string_heap.get_str(r.name))
+            .collect::<Vec<_>>()
+    );
 }
 
 // =========================================================
@@ -249,15 +294,21 @@ fn typedef_tokens_are_one_based() {
         "#,
     );
     assert!(diags.is_empty());
-    // After finalize, all DefIds should have tokens
+    // After finalize, DefIds have tokens: 3 TypeDef (A/B/C). Log-level externs are
+    // only emitted when referenced, so they don't contribute tokens here.
     assert_eq!(
         builder.def_token_map.len(),
         3,
-        "should have 3 tokens (one per struct)"
+        "should have 3 tokens: 3 structs (no log refs)"
     );
-    // All tokens should be TypeDef table with 1-based rows
-    for token in builder.def_token_map.values() {
-        assert_eq!(token.table(), TableId::TypeDef);
+    // The 3 struct tokens should be TypeDef table with 1-based rows
+    let typedef_tokens: Vec<_> = builder
+        .def_token_map
+        .values()
+        .filter(|t| t.table() == TableId::TypeDef)
+        .collect();
+    assert_eq!(typedef_tokens.len(), 3, "should have 3 TypeDef tokens");
+    for token in &typedef_tokens {
         assert!(token.row() >= 1 && token.row() <= 3, "row should be 1-3, got {}", token.row());
     }
 }
@@ -272,9 +323,15 @@ fn fn_tokens_are_methoddef() {
     );
     assert!(diags.is_empty());
     assert_eq!(builder.method_def_count(), 2);
-    for token in builder.def_token_map.values() {
-        assert_eq!(token.table(), TableId::MethodDef);
-        assert!(token.row() >= 1 && token.row() <= 2);
+    // def_token_map now includes 2 MethodDef (foo/bar) + 5 ExternDef (log levels)
+    let method_tokens: Vec<_> = builder
+        .def_token_map
+        .values()
+        .filter(|t| t.table() == TableId::MethodDef)
+        .collect();
+    assert_eq!(method_tokens.len(), 2, "should have 2 MethodDef tokens");
+    for token in &method_tokens {
+        assert!(token.row() >= 1 && token.row() <= 2, "row should be 1-2, got {}", token.row());
     }
 }
 
@@ -291,7 +348,7 @@ fn pub_items_emit_exportdef() {
         "#,
     );
     assert!(diags.is_empty());
-    // Only the pub item should produce an ExportDef
+    // Only the pub item should produce an ExportDef (synthetic log-level externs are excluded).
     assert_eq!(
         builder.export_def_count(),
         1,

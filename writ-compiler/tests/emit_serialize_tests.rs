@@ -3,7 +3,13 @@
 //! Task 2 tests: DebugLocal emission, SourceSpan emission, serialize::translate(),
 //! emit() returning Vec<u8>, pipeline error short-circuit.
 
-use writ_compiler::check::ty::{TyInterner, TyKind};
+use rustc_hash::FxHashMap;
+use std::sync::LazyLock;
+use writ_compiler::check::ty::{Ty, TyInterner, TyKind};
+
+/// Static empty struct_field_types map for tests that don't exercise struct equality.
+static EMPTY_STRUCT_FIELD_TYPES: LazyLock<FxHashMap<DefId, Vec<(String, Ty)>>> =
+    LazyLock::new(FxHashMap::default);
 use writ_compiler::check::ir::{
     TypedAst, TypedDecl, TypedExpr, TypedLiteral,
 };
@@ -50,7 +56,7 @@ fn test_debug_locals_all_registers_have_entries() {
     let mut interner = make_interner();
     let ty_int = interner.int();
     let ty_float = interner.float();
-    let mut emitter = BodyEmitter::new(&builder, &interner);
+    let mut emitter = BodyEmitter::new(&builder, &interner, &EMPTY_STRUCT_FIELD_TYPES);
 
     // Allocate some registers
     emitter.regs.alloc(ty_int);
@@ -74,7 +80,7 @@ fn test_debug_locals_span_whole_body() {
     let builder = ModuleBuilder::new();
     let mut interner = make_interner();
     let ty_int = interner.int();
-    let mut emitter = BodyEmitter::new(&builder, &interner);
+    let mut emitter = BodyEmitter::new(&builder, &interner, &EMPTY_STRUCT_FIELD_TYPES);
     emitter.regs.alloc(ty_int);
 
     let total_size = 42u32;
@@ -90,7 +96,7 @@ fn test_debug_locals_named_registers() {
     let builder = ModuleBuilder::new();
     let mut interner = make_interner();
     let ty_int = interner.int();
-    let mut emitter = BodyEmitter::new(&builder, &interner);
+    let mut emitter = BodyEmitter::new(&builder, &interner, &EMPTY_STRUCT_FIELD_TYPES);
 
     let r = emitter.regs.alloc(ty_int);
     emitter.locals.insert("my_var".to_string(), r);
@@ -108,7 +114,7 @@ fn test_source_spans_from_emitter() {
     // Source spans should be emitted from emitter.source_spans
     let builder = ModuleBuilder::new();
     let interner = make_interner();
-    let mut emitter = BodyEmitter::new(&builder, &interner);
+    let mut emitter = BodyEmitter::new(&builder, &interner, &EMPTY_STRUCT_FIELD_TYPES);
 
     // Push some source span entries
     emitter.source_spans.push((0, SimpleSpan::new((), 10..20)));
@@ -131,7 +137,7 @@ fn test_serialize_empty_module_produces_bytes() {
     let interner = make_interner();
     let bodies: Vec<EmittedBody> = Vec::new();
 
-    let result = serialize::serialize(&mut builder, &bodies, &interner);
+    let result = serialize::serialize(&mut builder, &bodies, &interner, true, &[]);
     assert!(result.is_ok(), "serialize of empty module should succeed, got {:?}", result.err());
     let bytes = result.unwrap();
     assert!(!bytes.is_empty(), "serialized module should not be empty");
@@ -145,7 +151,7 @@ fn test_serialize_produces_correct_magic_bytes() {
     let interner = make_interner();
     let bodies: Vec<EmittedBody> = Vec::new();
 
-    let bytes = serialize::serialize(&mut builder, &bodies, &interner).unwrap();
+    let bytes = serialize::serialize(&mut builder, &bodies, &interner, true, &[]).unwrap();
     assert!(bytes.len() >= 4, "module must be at least 4 bytes");
     assert_eq!(&bytes[0..4], b"WRIT",
         "first 4 bytes should be magic WRIT, got {:?}", &bytes[0..4]);
@@ -159,7 +165,7 @@ fn test_serialize_with_module_def() {
     let interner = make_interner();
     let bodies: Vec<EmittedBody> = Vec::new();
 
-    let result = serialize::serialize(&mut builder, &bodies, &interner);
+    let result = serialize::serialize(&mut builder, &bodies, &interner, true, &[]);
     assert!(result.is_ok(), "module with ModuleDef should serialize, got {:?}", result.err());
 }
 
@@ -190,7 +196,7 @@ fn test_serialize_module_with_body_produces_bytes() {
         label_allocator: writ_compiler::emit::body::labels::LabelAllocator::new(),
     };
 
-    let result = serialize::serialize(&mut builder, &[body], &interner);
+    let result = serialize::serialize(&mut builder, &[body], &interner, true, &[]);
     assert!(result.is_ok(), "module with body should serialize, got {:?}", result.err());
     let bytes = result.unwrap();
     assert!(bytes.len() > 200, "module with body should be > 200 bytes (header size)");
@@ -214,11 +220,13 @@ fn test_emit_returns_bytes_for_valid_ast() {
                 stmts: vec![],
                 tail: None,
             },
+            param_name_spans: vec![],
         }],
         def_map,
+        struct_field_types: FxHashMap::default(),
     };
 
-    let result = emit::emit_bodies(&typed_ast, &interner, &[]);
+    let result = emit::emit_bodies(&typed_ast, &interner, &[], true, &[]);
     assert!(result.is_ok(), "emit_bodies should return Ok for valid AST, got {:?}", result.err());
     let bytes = result.unwrap();
     assert!(!bytes.is_empty(), "emitted bytes should not be empty");
@@ -240,10 +248,12 @@ fn test_emit_returns_err_for_error_nodes() {
                 ty: ty_err,
                 span: dummy_span(),
             },
+            param_name_spans: vec![],
         }],
         def_map,
+        struct_field_types: FxHashMap::default(),
     };
 
-    let result = emit::emit_bodies(&typed_ast, &interner, &[]);
+    let result = emit::emit_bodies(&typed_ast, &interner, &[], true, &[]);
     assert!(result.is_err(), "emit_bodies should return Err for AST with Error nodes");
 }

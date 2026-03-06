@@ -15,6 +15,7 @@
 //! (flag 0x80) since they map to native operations, not IL method bodies.
 
 use writ_module::module::MethodBody;
+use writ_module::tables::TypeDefKind;
 use writ_module::token::MetadataToken;
 use writ_module::{Module, ModuleBuilder};
 
@@ -180,16 +181,16 @@ pub fn build_writ_runtime_module() -> Module {
     // ────────────────────────────────────────────────────────────────
 
     // Option<T> (kind=Enum=1)
-    let option_type = builder.add_type_def("Option", "writ", 1, 0);
+    let option_type = builder.add_type_def("Option", "writ", TypeDefKind::Enum, 0);
     builder.add_generic_param(option_type, 0, 0, "T");
 
     // Result<T, E> (kind=Enum=1)
-    let result_type = builder.add_type_def("Result", "writ", 1, 0);
+    let result_type = builder.add_type_def("Result", "writ", TypeDefKind::Enum, 0);
     builder.add_generic_param(result_type, 0, 0, "T");
     builder.add_generic_param(result_type, 0, 1, "E");
 
     // Range<T> (kind=Struct=0) with 4 fields
-    let range_type = builder.add_type_def("Range", "writ", 0, 0);
+    let range_type = builder.add_type_def("Range", "writ", TypeDefKind::Struct, 0);
     builder.add_field_def("start", &[0x12, 0x00, 0x00], 0);         // GenericParam ordinal 0 = T
     builder.add_field_def("end", &[0x12, 0x00, 0x00], 0);
     builder.add_field_def("start_inclusive", &[0x03], 0);             // bool
@@ -202,10 +203,10 @@ pub fn build_writ_runtime_module() -> Module {
     // These are anchor types for ImplDef entries that map primitives
     // to their contract implementations.
 
-    let int_type = builder.add_type_def("Int", "writ", 0, 0);
-    let float_type = builder.add_type_def("Float", "writ", 0, 0);
-    let bool_type = builder.add_type_def("Bool", "writ", 0, 0);
-    let string_type = builder.add_type_def("String", "writ", 0, 0);
+    let int_type = builder.add_type_def("Int", "writ", TypeDefKind::Struct, 0);
+    let float_type = builder.add_type_def("Float", "writ", TypeDefKind::Struct, 0);
+    let bool_type = builder.add_type_def("Bool", "writ", TypeDefKind::Struct, 0);
+    let string_type = builder.add_type_def("String", "writ", TypeDefKind::Struct, 0);
 
     // ────────────────────────────────────────────────────────────────
     // Section 4: Primitive contract implementations (spec section 2.18.5)
@@ -317,7 +318,7 @@ pub fn build_writ_runtime_module() -> Module {
     // Section 5: Array<T> TypeDef and methods (spec section 2.18.6)
     // ────────────────────────────────────────────────────────────────
 
-    let array_type = builder.add_type_def("Array", "writ", 0, 0);
+    let array_type = builder.add_type_def("Array", "writ", TypeDefKind::Struct, 0);
     builder.add_field_def("length", &[0x01], 0x01);  // int type, read-only flag
     builder.add_generic_param(array_type, 0, 0, "T");
 
@@ -346,7 +347,7 @@ pub fn build_writ_runtime_module() -> Module {
     // Section 6: Entity base TypeDef (spec section 2.18.7)
     // ────────────────────────────────────────────────────────────────
 
-    let _entity_type = builder.add_type_def("Entity", "writ", 2, 0); // kind=Entity=2
+    let _entity_type = builder.add_type_def("Entity", "writ", TypeDefKind::Entity, 0);
 
     // Entity intrinsic static methods
     add_intrinsic_method(&mut builder, "entity_destroy");

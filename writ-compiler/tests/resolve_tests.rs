@@ -4,7 +4,7 @@ use writ_compiler::ast::Ast;
 use writ_compiler::lower::lower;
 use writ_compiler::resolve::collector::collect_declarations;
 use writ_compiler::resolve::def_map::{DefKind, DefMap};
-use writ_diagnostics::{Diagnostic, FileId};
+use writ_diagnostics::{Diagnostic, FileId, Severity};
 
 // =========================================================
 // Test helpers
@@ -823,5 +823,67 @@ pub struct Container<T> { pub value: T }
         !has_error_code(&diags, "W0003"),
         "generic T should NOT produce W0003 since there's no existing type T: {:?}",
         diags.iter().filter(|d| d.code == "W0003").collect::<Vec<_>>()
+    );
+}
+
+// =========================================================
+// Phase 43: using-glob
+// =========================================================
+
+/// LANG-02-F: `using Status::*;` brings all Status variants into scope unqualified.
+/// RED until resolver implements glob-enum expansion in process_usings.
+#[test]
+fn using_enum_glob() {
+    let (_, diags) = resolve_src(
+        r#"
+pub enum Status { Active, Inactive }
+using Status::*;
+pub fn test(s: Status) -> bool {
+    s == Active
+}
+"#,
+    );
+    assert!(
+        !diags.iter().any(|d| d.severity == Severity::Error),
+        "LANG-02-F: using Status::*; should bring Active into scope without error, got: {:?}",
+        diags
+    );
+}
+
+/// LANG-02-G: two using-glob declarations both exporting `Green` must produce an ambiguity error.
+/// May currently error with "unresolved name" rather than "ambiguous" — both are acceptable for stub.
+#[test]
+fn using_glob_conflict_ambiguous() {
+    let (_, diags) = resolve_src(
+        r#"
+pub enum ColorA { Green, Red }
+pub enum ColorB { Green, Blue }
+using ColorA::*;
+using ColorB::*;
+pub fn test() -> bool {
+    Green == Green
+}
+"#,
+    );
+    assert!(
+        diags.iter().any(|d| d.severity == Severity::Error),
+        "LANG-02-G: two using-glob declarations both exporting Green must produce an error (ambiguity or unresolved)"
+    );
+}
+
+/// LANG-02-I: `using Option::*;` is valid and produces no error (vacuous but consistent).
+/// RED until parser accepts `::*` and resolver treats Option (prelude type) as vacuous glob.
+#[test]
+fn using_option_glob_redundant_no_error() {
+    let (_, diags) = resolve_src(
+        r#"
+using Option::*;
+pub fn f() {}
+"#,
+    );
+    assert!(
+        !diags.iter().any(|d| d.severity == Severity::Error),
+        "LANG-02-I: using Option::*; should be valid (redundant but no error), got: {:?}",
+        diags
     );
 }

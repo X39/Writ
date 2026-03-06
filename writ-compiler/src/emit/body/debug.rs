@@ -15,7 +15,7 @@ use super::BodyEmitter;
 ///
 /// `string_heap_out` is used to intern the names; returns the offset for each.
 pub fn emit_debug_locals(emitter: &BodyEmitter<'_>, total_code_size: u32) -> Vec<DebugLocal> {
-    let reg_count = emitter.regs.reg_count() as u16;
+    let reg_count = emitter.regs.reg_count();
 
     // Build reverse map: register -> name (from emitter.locals)
     let mut reg_to_name: rustc_hash::FxHashMap<u16, &str> = rustc_hash::FxHashMap::default();
@@ -39,7 +39,8 @@ pub fn emit_debug_locals(emitter: &BodyEmitter<'_>, total_code_size: u32) -> Vec
 
         result.push(DebugLocal {
             register: r,
-            name: 0, // placeholder; real offset set during serialization
+            name: 0,     // placeholder; real offset set during serialization
+            type_ref: 0, // placeholder; populated from register_types in serialize.rs
             start_pc: 0,
             end_pc: total_code_size,
         });

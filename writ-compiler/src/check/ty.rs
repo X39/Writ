@@ -21,6 +21,8 @@ pub enum TyKind {
     String,
     Void,
     Struct(DefId),
+    /// Class type (reference type, heap-allocated).
+    Class(DefId),
     Entity(DefId),
     Enum(DefId),
     Array(Ty),
@@ -72,6 +74,12 @@ impl UnifyKey for InferVar {
 pub struct TyInterner {
     kinds: Vec<TyKind>,
     map: FxHashMap<TyKind, Ty>,
+}
+
+impl Default for TyInterner {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TyInterner {
@@ -150,6 +158,7 @@ impl TyInterner {
             TyKind::String => "string".to_string(),
             TyKind::Void => "void".to_string(),
             TyKind::Struct(_) => "struct".to_string(),
+            TyKind::Class(_) => "class".to_string(),
             TyKind::Entity(_) => "entity".to_string(),
             TyKind::Enum(_) => "enum".to_string(),
             TyKind::Array(elem) => format!("{}[]", self.display(*elem)),
@@ -165,6 +174,40 @@ impl TyInterner {
             TyKind::GenericParam(idx) => format!("T{}", idx),
             TyKind::Infer(var) => format!("?{}", var.0),
             TyKind::Error => "<error>".to_string(),
+        }
+    }
+
+    /// Format a type as a human-readable string, resolving named types via DefMap.
+    ///
+    /// Unlike `display()` which shows "struct"/"entity"/etc., this shows the actual
+    /// type name (e.g., "Potion", "Player") by looking up DefEntry::name.
+    pub fn display_named(&self, ty: Ty, def_map: &crate::resolve::def_map::DefMap) -> String {
+        match self.kind(ty) {
+            TyKind::Struct(def_id)
+            | TyKind::Class(def_id)
+            | TyKind::Entity(def_id)
+            | TyKind::Enum(def_id) => {
+                def_map.get_entry(*def_id).name.clone()
+            }
+            TyKind::Array(elem) => format!("{}[]", self.display_named(*elem, def_map)),
+            TyKind::Option(inner) => format!("Option<{}>", self.display_named(*inner, def_map)),
+            TyKind::Result(ok, err) => format!(
+                "Result<{}, {}>",
+                self.display_named(*ok, def_map),
+                self.display_named(*err, def_map)
+            ),
+            TyKind::Func { params, ret } => {
+                let ps: Vec<String> = params
+                    .iter()
+                    .map(|p| self.display_named(*p, def_map))
+                    .collect();
+                format!("fn({}) -> {}", ps.join(", "), self.display_named(*ret, def_map))
+            }
+            TyKind::TaskHandle(inner) => {
+                format!("TaskHandle<{}>", self.display_named(*inner, def_map))
+            }
+            // Primitives, GenericParam, Infer, Error — fall back to plain display
+            _ => self.display(ty),
         }
     }
 }

@@ -1,16 +1,29 @@
+//! Dialogue lowering: transforms a `DlgDecl` CST node into an `AstFnDecl`.
+//!
+//! ## SPLIT-10 review (Phase 63)
+//!
+//! Reviewed for split opportunities at 858 lines. Conclusion: no split.
+//! The file implements a single cohesive operation: lowering a `DlgDecl` CST node
+//! into an `AstFnDecl`. All internal sections (speaker collection, line lowering,
+//! loc-key computation, text lowering, choice lowering, control flow, transition)
+//! share `DlgLowerState` and participate in a single-pass transformation. Splitting
+//! would create artificial file boundaries in what is a tightly-coupled algorithmic
+//! pipeline.
+
 use std::collections::HashMap;
 use chumsky::span::SimpleSpan;
 use writ_parser::cst::{
     DlgChoice, DlgDecl, DlgEscape, DlgIf, DlgElse, DlgLine, DlgMatch,
-    DlgTextSegment, DlgTransition, Spanned,
+    DlgTextSegment, DlgTransition, Spanned, StringSegment,
 };
 use crate::ast::decl::{AstAttributeArg, AstFnDecl, AstFnParam};
-use crate::ast::expr::{AstArg, AstExpr, AstMatchArm, BinaryOp};
+use crate::ast::expr::{AstArg, AstExpr, AstMatchArm};
 use crate::ast::stmt::AstStmt;
 use crate::ast::types::AstType;
 use crate::lower::context::{LoweringContext, SpeakerScope};
 use crate::lower::error::LoweringError;
 use crate::lower::expr::{lower_expr, lower_pattern};
+use crate::lower::fmt_string::lower_fmt_string;
 use crate::lower::stmt::lower_stmt;
 use super::{lower_attrs, lower_param, lower_vis};
 
@@ -45,7 +58,7 @@ struct DlgLowerState {
 ///
 /// Localization keys are 8-char hex FNV-1a 32-bit hashes. Manual `#key` overrides
 /// replace auto-generated keys; duplicates within a dlg block emit `DuplicateLocKey`.
-pub fn lower_dialogue(
+pub(crate) fn lower_dialogue(
     dlg: DlgDecl<'_>,
     dlg_span: SimpleSpan,
     ctx: &mut LoweringContext,
@@ -516,55 +529,25 @@ fn expr_to_slot_text(expr: &Spanned<writ_parser::cst::Expr<'_>>) -> String {
 // Private: lower_dlg_text
 // =========================================================
 
-/// Lowers dialogue text segments to a left-associative Add chain (mirrors lower_fmt_string).
+/// Lowers dialogue text segments to a left-associative Add chain.
+/// Delegates to `lower_fmt_string` after converting DlgTextSegment -> StringSegment.
+/// Both segment types are structurally identical (Text/Expr variants with the same inner types).
 fn lower_dlg_text(
     segments: Vec<Spanned<DlgTextSegment<'_>>>,
     outer_span: SimpleSpan,
     ctx: &mut LoweringContext,
 ) -> AstExpr {
-    if segments.is_empty() {
-        return AstExpr::StringLit {
-            value: String::new(),
-            span: outer_span,
-        };
-    }
-
-    let parts: Vec<AstExpr> = segments
+    let string_segments: Vec<Spanned<StringSegment<'_>>> = segments
         .into_iter()
-        .map(|(seg, seg_span)| match seg {
-            DlgTextSegment::Text(s) => AstExpr::StringLit {
-                value: s.to_string(),
-                span: seg_span,
-            },
-            DlgTextSegment::Expr(inner) => {
-                let lowered = lower_expr(*inner, ctx);
-                AstExpr::GenericCall {
-                    callee: Box::new(AstExpr::MemberAccess {
-                        object: Box::new(lowered),
-                        field: "into".to_string(),
-                        field_span: seg_span,
-                        span: seg_span,
-                    }),
-                    type_args: vec![AstType::Named {
-                        name: "string".to_string(),
-                        span: seg_span,
-                    }],
-                    args: vec![],
-                    span: seg_span,
-                }
-            }
+        .map(|(seg, span)| {
+            let converted = match seg {
+                DlgTextSegment::Text(s) => StringSegment::Text(s),
+                DlgTextSegment::Expr(e) => StringSegment::Expr(e),
+            };
+            (converted, span)
         })
         .collect();
-
-    // Left-associative fold: (((a + b) + c) + d) + ...
-    let mut iter = parts.into_iter();
-    let first = iter.next().expect("segments non-empty: checked above");
-    iter.fold(first, |acc, next| AstExpr::Binary {
-        left: Box::new(acc),
-        op: BinaryOp::Add,
-        right: Box::new(next),
-        span: outer_span,
-    })
+    lower_fmt_string(string_segments, outer_span, ctx)
 }
 
 // =========================================================
@@ -651,10 +634,10 @@ fn lower_choice(
                 ctx.pop_speaker();
             }
 
-            // Build: Option(label_text, loc_key, fn() { body })
+            // Build: ChoiceOption(label_text, loc_key, fn() { body })
             AstExpr::Call {
                 callee: Box::new(AstExpr::Ident {
-                    name: "Option".to_string(),
+                    name: "ChoiceOption".to_string(),
                     span: arm_span,
                 }),
                 args: vec![

@@ -113,6 +113,18 @@ pub enum TypeError {
         span: SimpleSpan,
         file: FileId,
     },
+    NoneWithoutAnnotation {
+        span: SimpleSpan,
+        file: FileId,
+    },
+    RecursiveStruct {
+        /// The name of the struct that starts the cycle.
+        struct_name: String,
+        /// Human-readable description of the cycle chain.
+        chain: String,
+        span: SimpleSpan,
+        file: FileId,
+    },
 }
 
 impl From<TypeError> for Diagnostic {
@@ -365,6 +377,25 @@ impl From<TypeError> for Diagnostic {
                 format!("type `{}` is not iterable", ty_name),
             )
             .with_primary(file, span, "not iterable")
+            .build(),
+            TypeError::NoneWithoutAnnotation { span, file } => Diagnostic::error(
+                code::E0120,
+                "cannot infer type for `None` -- add a type annotation: `let x: T? = None`"
+                    .to_string(),
+            )
+            .with_primary(file, span, "type annotation needed")
+            .build(),
+            TypeError::RecursiveStruct {
+                struct_name,
+                chain,
+                span,
+                file,
+            } => Diagnostic::error(
+                code::E0121,
+                format!("recursive struct `{}` has infinite size: {}", struct_name, chain),
+            )
+            .with_primary(file, span, "recursive struct defined here")
+            .with_help("consider using `class` instead of `struct` for reference semantics".to_string())
             .build(),
         }
     }

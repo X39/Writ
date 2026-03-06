@@ -12,7 +12,7 @@ use chumsky::span::SimpleSpan;
 
 use super::check_expr::{check_expr, CheckCtx};
 use super::error::TypeError;
-use super::ir::*;
+use super::ir::{TypedExpr, TypedArm, TypedPattern};
 use super::ty::TyKind;
 use crate::ast::expr::AstExpr;
 
@@ -238,12 +238,13 @@ fn build_unwrap_match(
         span,
     };
 
-    // Arm 2: None/Err => crash (represented as Error node)
+    // Arm 2: None/Err => crash (runtime panic, not a compilation error)
     let crash_arm = TypedArm {
         pattern: TypedPattern::Wildcard { span },
-        body: TypedExpr::Error {
-            ty: value_ty, // crash produces expected type for continuity
+        body: TypedExpr::Crash {
+            ty: value_ty, // crash produces expected type for type continuity
             span,
+            message: "unwrap failed: value is None/Err".into(),
         },
         span,
     };

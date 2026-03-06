@@ -1,0 +1,36 @@
+.module "main" "0.1.0" {
+    .extern "writ-runtime" "1.0.0"
+    .method "check" (val: ?) -> void mut {
+        .locals {
+            r0: ? "val" [0, 56)
+        }
+        .reg r0 int
+        .reg r1 int
+        .reg r2 int
+        .reg r3 int
+        LOAD_INT r2, 0  ; line:1 col:75
+        MOV r1, r2
+        BR 34
+        LOAD_INT r3, 1  ; line:1 col:109
+        MOV r1, r3
+        BR 8
+        RET r1
+    }
+    .method "main" () -> void mut {
+        .locals {
+            r0: int "a" [16, 40)
+            r2: int "b" [38, 40)
+        }
+        .reg r0 int
+        .reg r1 ?
+        .reg r2 int
+        .reg r3 bool
+        .reg r4 ?
+        LOAD_NULL r1  ; line:1 col:143
+        CALL r0, 117440513, r1, 1
+        LOAD_TRUE r3  ; line:1 col:174
+        WRAP_SOME r4, r3
+        CALL r2, 117440513, r4, 1
+        RET_VOID
+    }
+}

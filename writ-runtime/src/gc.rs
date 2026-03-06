@@ -54,41 +54,48 @@ pub trait GcHeap {
     fn object_count(&self) -> usize;
 }
 
-/// Extract all HeapRef values reachable from a HeapObject (one level deep).
+/// Recursively collect all HeapRefs reachable from a Value.
+/// Handles nested InlineStructs (structs containing struct fields).
+pub fn collect_value_refs(val: &Value, refs: &mut Vec<HeapRef>) {
+    match val {
+        Value::Ref(href) => refs.push(*href),
+        Value::InlineStruct { fields, .. } => {
+            for field in fields {
+                collect_value_refs(field, refs);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Extract all HeapRef values reachable from a HeapObject.
+/// Uses collect_value_refs to recursively scan InlineStruct fields.
 pub fn trace_refs(obj: &HeapObject) -> Vec<HeapRef> {
     let mut refs = Vec::new();
     match obj {
         HeapObject::String(_) => {}
         HeapObject::Struct { fields, .. } => {
             for v in fields {
-                if let Value::Ref(href) = v {
-                    refs.push(*href);
-                }
+                collect_value_refs(v, &mut refs);
             }
         }
         HeapObject::Array { elements, .. } => {
             for v in elements {
-                if let Value::Ref(href) = v {
-                    refs.push(*href);
-                }
+                collect_value_refs(v, &mut refs);
             }
         }
         HeapObject::Delegate { target, .. } => {
-            if let Some(Value::Ref(href)) = target {
-                refs.push(*href);
+            if let Some(t) = target {
+                collect_value_refs(t, &mut refs);
             }
         }
         HeapObject::Enum { fields, .. } => {
             for v in fields {
-                if let Value::Ref(href) = v {
-                    refs.push(*href);
-                }
+                collect_value_refs(v, &mut refs);
             }
         }
         HeapObject::Boxed(v) => {
-            if let Value::Ref(href) = v {
-                refs.push(*href);
-            }
+            collect_value_refs(v, &mut refs);
         }
     }
     refs
@@ -211,14 +218,14 @@ impl GcHeap for MarkSweepHeap {
 
     fn get_field(&self, href: HeapRef, idx: usize) -> Result<Value, RuntimeError> {
         match self.get_obj(href)? {
-            HeapObject::Struct { fields, .. } => fields.get(idx).copied().ok_or_else(|| {
+            HeapObject::Struct { fields, .. } => fields.get(idx).cloned().ok_or_else(|| {
                 RuntimeError::ExecutionError(format!(
                     "field index {} out of range for struct with {} fields",
                     idx,
                     fields.len()
                 ))
             }),
-            HeapObject::Enum { fields, .. } => fields.get(idx).copied().ok_or_else(|| {
+            HeapObject::Enum { fields, .. } => fields.get(idx).cloned().ok_or_else(|| {
                 RuntimeError::ExecutionError(format!(
                     "field index {} out of range for enum with {} fields",
                     idx,

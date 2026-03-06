@@ -59,12 +59,9 @@ fn validate_attrs_in_items(items: &[AstDecl], file_id: FileId, diags: &mut Vec<D
             AstDecl::Global(g) => {
                 check_attrs(&g.attrs, "global", file_id, diags);
             }
-            AstDecl::Extern(ext) => match ext {
-                AstExternDecl::Fn(_, sig) => {
-                    check_attrs(&sig.attrs, "extern fn", file_id, diags);
-                }
-                _ => {}
-            },
+            AstDecl::Extern(AstExternDecl::Fn(_, sig)) => {
+                check_attrs(&sig.attrs, "extern fn", file_id, diags);
+            }
             _ => {}
         }
     }
@@ -72,8 +69,8 @@ fn validate_attrs_in_items(items: &[AstDecl], file_id: FileId, diags: &mut Vec<D
 
 fn check_attrs(attrs: &[AstAttribute], decl_kind: &str, file_id: FileId, diags: &mut Vec<Diagnostic>) {
     for attr in attrs {
-        if let Some((_, valid_kinds)) = KNOWN_ATTRS.iter().find(|(name, _)| *name == attr.name) {
-            if !valid_kinds.contains(&decl_kind) {
+        if let Some((_, valid_kinds)) = KNOWN_ATTRS.iter().find(|(name, _)| *name == attr.name)
+            && !valid_kinds.contains(&decl_kind) {
                 diags.push(
                     ResolutionError::InvalidAttributeTarget {
                         attr_name: attr.name.clone(),
@@ -84,7 +81,6 @@ fn check_attrs(attrs: &[AstAttribute], decl_kind: &str, file_id: FileId, diags: 
                     .into(),
                 );
             }
-        }
         // Unknown attributes: we don't warn for them currently (future-proofing)
         // If we wanted to warn:
         // else if !KNOWN_ATTRS.iter().any(|(name, _)| *name == attr.name) { ... }

@@ -1,0 +1,42 @@
+.module "main" "0.1.0" {
+    .extern "writ-runtime" "1.0.0"
+    .method "main" () -> void mut {
+        .locals {
+            r0: int "i" [12, 180)
+        }
+        .reg r0 int
+        .reg r1 int
+        .reg r2 bool
+        .reg r3 int
+        .reg r4 int
+        .reg r5 int
+        .reg r6 bool
+        .reg r7 void
+        .reg r8 int
+        .reg r9 bool
+        .reg r10 void
+        LOAD_INT r0, 0  ; line:1 col:18
+        LOAD_INT r1, 100  ; line:1 col:43
+        CMP_LT_I r2, r0, r1
+        BR_FALSE r2, 146
+        LOAD_INT r3, 1  ; line:1 col:68
+        ADD_I r4, r0, r3
+        MOV r0, r4
+        LOAD_INT r5, 5  ; line:1 col:88
+        CMP_EQ_I r6, r0, r5
+        BR_FALSE r6, 30
+        BR -82  ; line:1 col:113
+        MOV r7, r0
+        BR 10
+        NOP
+        LOAD_INT r8, 10  ; line:1 col:143
+        CMP_EQ_I r9, r0, r8
+        BR_FALSE r9, 30
+        BR 32  ; line:1 col:169
+        MOV r10, r0
+        BR 10
+        NOP
+        BR -158
+        RET_VOID
+    }
+}

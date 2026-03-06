@@ -36,7 +36,7 @@ fn typecheck_src(src: &'static str) -> (TypedAst, Vec<Diagnostic>) {
         resolve_errors
     );
 
-    let (typed_ast, _interner, type_diags) = typecheck(resolved, &asts);
+    let (typed_ast, _interner, _type_env, type_diags) = typecheck(resolved, &asts);
     (typed_ast, type_diags)
 }
 
@@ -779,6 +779,257 @@ fn lambda_void_return() {
         "pub fn test() { let f = fn(x: int) { let y = x; }; }",
     );
     assert!(has_no_errors(&diags), "errors: {:?}", diags);
+}
+
+// =========================================================
+// Root-qualified path resolution tests (check_path normalization)
+// =========================================================
+
+/// Helper: collect all Call node types from a TypedExpr (depth-first).
+fn collect_call_types(expr: &TypedExpr, out: &mut Vec<(Ty, Option<writ_compiler::resolve::def_map::DefId>)>) {
+    match expr {
+        TypedExpr::Call { ty, args, callee, callee_def_id, .. } => {
+            out.push((*ty, *callee_def_id));
+            collect_call_types(callee, out);
+            for a in args { collect_call_types(a, out); }
+        }
+        TypedExpr::Block { stmts, tail, .. } => {
+            for s in stmts { collect_stmt_call_types(s, out); }
+            if let Some(t) = tail { collect_call_types(t, out); }
+        }
+        TypedExpr::If { condition, then_branch, else_branch, .. } => {
+            collect_call_types(condition, out);
+            collect_call_types(then_branch, out);
+            if let Some(e) = else_branch { collect_call_types(e, out); }
+        }
+        TypedExpr::Binary { left, right, .. } => {
+            collect_call_types(left, out);
+            collect_call_types(right, out);
+        }
+        TypedExpr::UnaryPrefix { expr, .. } => { collect_call_types(expr, out); }
+        TypedExpr::Field { receiver, .. } => { collect_call_types(receiver, out); }
+        TypedExpr::Lambda { body, .. } => { collect_call_types(body, out); }
+        _ => {}
+    }
+}
+
+fn collect_stmt_call_types(stmt: &writ_compiler::check::ir::TypedStmt, out: &mut Vec<(Ty, Option<writ_compiler::resolve::def_map::DefId>)>) {
+    use writ_compiler::check::ir::TypedStmt;
+    match stmt {
+        TypedStmt::Let { value, .. } => { collect_call_types(value, out); }
+        TypedStmt::Expr { expr, .. } => { collect_call_types(expr, out); }
+        TypedStmt::Return { value, .. } => { if let Some(v) = value { collect_call_types(v, out); } }
+        _ => {}
+    }
+}
+
+/// Root-qualified `::log` must resolve to the `log` ExternFn def, not error.
+/// Before fix: check_path joins ["::log"] → "::log", which is NOT in DefMap (registered as "log").
+///             call gets ty: error — silently broken, codegen produces no instructions.
+/// After fix: check_path strips the leading "::" before DefMap lookup.
+///            call gets ty: void (the extern fn's return type).
+#[test]
+fn root_qualified_log_resolves_to_non_error_call() {
+    let (typed_ast, _diags) = typecheck_src(
+        r#"pub extern fn log(msg: string);
+           pub fn test() { ::log("hello"); }"#,
+    );
+
+    // Find the `test` function body and check that the call is not error-typed.
+    let mut call_types = Vec::new();
+    for decl in &typed_ast.decls {
+        if let TypedDecl::Fn { body, .. } = decl {
+            collect_call_types(body, &mut call_types);
+        }
+    }
+
+    assert!(!call_types.is_empty(), "should have at least one call in test body");
+    let (call_ty, _callee_def_id) = call_types[0];
+    let mut interner = writ_compiler::check::ty::TyInterner::new();
+    assert!(
+        !matches!(interner.kind(call_ty), TyKind::Error),
+        "::log call must not produce error type — the :: prefix must be stripped before DefMap lookup"
+    );
+}
+
+/// Root-qualified `::say` must resolve without producing error-typed call.
+#[test]
+fn root_qualified_say_resolves_to_non_error_call() {
+    let (typed_ast, _diags) = typecheck_src(
+        r#"pub extern fn say(text: string);
+           pub fn test() { ::say("hello"); }"#,
+    );
+
+    let mut call_types = Vec::new();
+    for decl in &typed_ast.decls {
+        if let TypedDecl::Fn { body, .. } = decl {
+            collect_call_types(body, &mut call_types);
+        }
+    }
+
+    assert!(!call_types.is_empty(), "should have at least one call");
+    let (call_ty, _callee_def_id) = call_types[0];
+    let mut interner = writ_compiler::check::ty::TyInterner::new();
+    assert!(
+        !matches!(interner.kind(call_ty), TyKind::Error),
+        "::say call must not produce error type — the :: prefix must be stripped before DefMap lookup"
+    );
+}
+
+/// Root-qualified `::choice` must resolve and return the correct return type (int), not error.
+#[test]
+fn root_qualified_choice_resolves_with_return_type() {
+    let (typed_ast, _diags) = typecheck_src(
+        r#"pub extern fn choice(label: string) -> int;
+           pub fn test() -> int { ::choice("Pick") }"#,
+    );
+
+    let mut call_types = Vec::new();
+    for decl in &typed_ast.decls {
+        if let TypedDecl::Fn { body, .. } = decl {
+            collect_call_types(body, &mut call_types);
+        }
+    }
+
+    assert!(!call_types.is_empty(), "should have at least one call");
+    let (call_ty, _callee_def_id) = call_types[0];
+    let mut interner = writ_compiler::check::ty::TyInterner::new();
+    let expected_int = interner.int();
+    assert_eq!(
+        call_ty, expected_int,
+        "::choice() must return int (the extern fn's declared return type), not error — got {:?}",
+        interner.kind(call_ty)
+    );
+}
+
+/// Unqualified form `log` must still resolve (regression guard).
+#[test]
+fn unqualified_log_still_resolves() {
+    let (_ast, diags) = typecheck_src(
+        r#"pub extern fn log(msg: string);
+           pub fn test() { log("hello"); }"#,
+    );
+    assert!(
+        has_no_errors(&diags),
+        "unqualified log should still resolve without error, got: {:?}",
+        diags
+    );
+}
+
+// =========================================================
+// Phase 43: Unqualified None/Some
+// =========================================================
+
+/// LANG-02-A: `let x: bool? = None;` compiles with no errors.
+/// RED until resolver and type checker inject `None` as a sub-prelude builtin.
+#[test]
+fn none_unqualified_with_annotation() {
+    let (_ast, diags) = typecheck_src("pub fn f() { let x: bool? = None; }");
+    assert!(has_no_errors(&diags), "LANG-02-A: unqualified None with annotation should compile, errors: {:?}", diags);
+}
+
+/// LANG-02-B: `let y = Some(true);` compiles with no errors (type inferred from arg).
+/// RED until resolver and type checker inject `Some` as a sub-prelude builtin.
+#[test]
+fn some_unqualified_infers_type() {
+    let (_ast, diags) = typecheck_src("pub fn f() { let y = Some(true); }");
+    assert!(has_no_errors(&diags), "LANG-02-B: unqualified Some(true) should compile, errors: {:?}", diags);
+}
+
+/// LANG-02-H: `match x { None => {}, Some(v) => {} }` compiles with no errors.
+/// GREEN after plan 43-03: parser accepts single-segment Some(v), check_pattern handles Option arms.
+#[test]
+fn none_some_in_pattern_position() {
+    let (_ast, diags) = typecheck_src("pub fn f(x: bool?) { match x { None => {}, Some(v) => {} } }");
+    assert!(has_no_errors(&diags), "LANG-02-H: None/Some pattern arms on Option should compile, errors: {:?}", diags);
+}
+
+/// LANG-02-C: user-defined function named `None` shadows the builtin — no error.
+/// This may pass even before implementation because the user-defined `None` is in the DefMap.
+#[test]
+fn user_none_shadows_builtin() {
+    let (_ast, diags) = typecheck_src("pub fn None() -> int { 0 } pub fn f() -> int { None() }");
+    assert!(has_no_errors(&diags), "LANG-02-C: user-defined None() should shadow builtin without error, got: {:?}", diags);
+}
+
+/// LANG-02-E: `let x = None;` with no type annotation must produce an error.
+/// Acceptable if the test panics at resolve stage (undefined None) — still RED for the right reason.
+#[test]
+fn bare_none_no_annotation_error() {
+    let (_ast, diags) = typecheck_src("pub fn f() { let x = None; }");
+    assert!(!has_no_errors(&diags), "LANG-02-E: bare None without type annotation must produce at least one error");
+}
+
+// =========================================================
+// Phase 44: Log Namespace
+// =========================================================
+
+#[test]
+fn log_namespace_info_compiles() {
+    let (_ast, diags) = typecheck_src(r#"pub fn f() { log::info("msg"); }"#);
+    assert!(has_no_errors(&diags), "log::info should compile without error: {:?}", diags);
+}
+
+#[test]
+fn log_all_levels_compile() {
+    let (_ast, diags) = typecheck_src(
+        r#"pub fn f() {
+            log::trace("t");
+            log::debug("d");
+            log::info("i");
+            log::warn("w");
+            log::error("e");
+        }"#,
+    );
+    assert!(has_no_errors(&diags), "all log levels should compile without error: {:?}", diags);
+}
+
+#[test]
+fn log_root_qualified_compiles() {
+    let (_ast, diags) = typecheck_src(r#"pub fn f() { ::log::debug("msg"); }"#);
+    assert!(has_no_errors(&diags), "::log::debug should compile without error: {:?}", diags);
+}
+
+#[test]
+fn log_bare_fails() {
+    let (_ast, diags) = typecheck_src(r#"pub fn f() { log("msg"); }"#);
+    assert!(!has_no_errors(&diags), "bare log(msg) without extern decl should fail");
+}
+
+#[test]
+fn log_namespace_not_callable() {
+    let (_ast, diags) = typecheck_src(r#"pub fn f() { log(); }"#);
+    assert!(!has_no_errors(&diags), "log() with no args should fail");
+}
+
+// =========================================================
+// Force-unwrap operator (n!) tests
+// =========================================================
+
+/// Force-unwrap on Option<T> must not produce any type errors.
+/// The desugared match's crash arm uses TypedExpr::Crash (not TypedExpr::Error),
+/// so the expr_has_error pre-pass must NOT flag this as broken.
+#[test]
+fn force_unwrap_option_no_errors() {
+    let (_ast, diags) = typecheck_src(
+        r#"pub fn main() {
+            let n: int? = Some(1);
+            let b = n!;
+        }"#,
+    );
+    assert!(has_no_errors(&diags), "force-unwrap should not produce errors: {:?}", diags);
+}
+
+/// Force-unwrap on Result<T, E> must not produce any type errors.
+#[test]
+fn force_unwrap_result_no_errors() {
+    let (_ast, diags) = typecheck_src(
+        r#"pub fn main() {
+            let r: Result<int, string> = Ok(42);
+            let v = r!;
+        }"#,
+    );
+    assert!(has_no_errors(&diags), "force-unwrap on Result should not produce errors: {:?}", diags);
 }
 
 // =========================================================

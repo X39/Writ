@@ -1,5 +1,7 @@
 use crate::error::{DecodeError, EncodeError};
 use crate::heap;
+// Intentional wildcard: tables module exports 23 row-struct types that form
+// the domain vocabulary for module access and querying — all are used in this file.
 use crate::tables::*;
 
 /// The 200-byte header of a binary module file.
@@ -34,7 +36,8 @@ pub struct MethodBody {
 #[derive(Debug, Clone, PartialEq)]
 pub struct DebugLocal {
     pub register: u16,
-    pub name: u32, // string heap offset
+    pub name: u32,     // string heap offset
+    pub type_ref: u32, // blob heap offset (0 = unknown); added in format version 4
     pub start_pc: u32,
     pub end_pc: u32,
 }
@@ -84,11 +87,11 @@ pub struct Module {
 }
 
 impl Module {
-    /// Create a new empty module with initialized heaps and format_version = 1.
+    /// Create a new empty module with initialized heaps and format_version = 4.
     pub fn new() -> Self {
         Module {
             header: ModuleHeader {
-                format_version: 2,
+                format_version: 4,
                 flags: 0,
                 module_name: 0,
                 module_version: 0,

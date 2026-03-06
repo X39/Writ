@@ -1,0 +1,61 @@
+name: Benchmarks
+
+on:
+  workflow_dispatch:
+    inputs:
+      runs:
+        description: 'Benchmark iterations (default: 10)'
+        required: false
+        default: '10'
+        type: string
+  schedule:
+    - cron: '0 6 * * 1'
+
+concurrency:
+  group: benchmark-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set date and results directory
+        run: |
+          echo "DATE=$(date +%Y-%m-%d)" >> $GITHUB_ENV
+          echo "RESULTS_DIR=$GITHUB_WORKSPACE/benchmark/results/$(date +%Y-%m-%d)" >> $GITHUB_ENV
+
+      - name: Create results directory
+        run: mkdir -p "${{ env.RESULTS_DIR }}"
+
+      - name: Build benchmark image
+        run: docker build -t writ-bench -f benchmark/runner/Dockerfile .
+
+      - name: Run benchmarks
+        run: |
+          docker run --rm \
+            -v "${{ env.RESULTS_DIR }}:/results" \
+            -e RESULTS_DIR=/results \
+            -e RUNS=${{ inputs.runs || 10 }} \
+            writ-bench
+
+      - name: Install pygal
+        run: pip install pygal==3.1.0
+
+      - name: Generate charts and RESULTS.md
+        run: python3 benchmark/generate.py "${{ env.RESULTS_DIR }}/raw.json"
+
+      - name: Write job summary
+        run: |
+          echo "## Benchmark Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          cat "${{ env.RESULTS_DIR }}/RESULTS.md" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload benchmark artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-${{ env.DATE }}
+          path: ${{ env.RESULTS_DIR }}/

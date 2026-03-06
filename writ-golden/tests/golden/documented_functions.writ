@@ -1,0 +1,40 @@
+// Documented functions demo -- exercises doc comment hover in the LSP.
+// Each function has a leading doc comment that should appear in hover text.
+
+// Adds two integers and returns their sum.
+// This is the simplest arithmetic operation.
+fn add(a: int, b: int) -> int {
+    a + b
+}
+
+// Computes the square of a number.
+// Equivalent to n * n.
+fn square(n: int) -> int {
+    n * n
+}
+
+// Clamps a value between a minimum and maximum bound.
+// If value < min, returns min; if value > max, returns max; otherwise returns value.
+fn clamp(value: int, min: int, max: int) -> int {
+    if value < min {
+        min
+    } else {
+        if value > max {
+            max
+        } else {
+            value
+        }
+    }
+}
+
+// Returns true if n is even, false otherwise.
+fn is_even(n: int) -> bool {
+    n % 2 == 0
+}
+
+fn main() {
+    let sum: int = add(3, 4);
+    let sq: int = square(5);
+    let clamped: int = clamp(15, 0, 10);
+    let even: bool = is_even(sum);
+}

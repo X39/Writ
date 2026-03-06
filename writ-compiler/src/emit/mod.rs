@@ -64,24 +64,19 @@ pub fn emit(
 /// (field names, method signatures, export detection). Pass `&[]` for unit tests
 /// that construct TypedAst programmatically and do not need export/attribute tables.
 ///
+/// `sources` provides per-file source text for computing 1-based line/column numbers
+/// in SourceSpan entries (PREP-01). Pass `&[]` when source text is unavailable —
+/// SourceSpan entries will fall back to line=1, col=offset+1.
+///
 /// Returns `Ok(Vec<u8>)` on success, `Err(Vec<Diagnostic>)` on failure.
 pub fn emit_bodies(
     typed_ast: &TypedAst,
     interner: &TyInterner,
     asts: &[(FileId, &Ast)],
+    emit_debug_info: bool,
+    sources: &[(FileId, &str)],
 ) -> Result<Vec<u8>, Vec<Diagnostic>> {
     let mut diags = Vec::new();
-
-    // Error pre-pass: abort if TypedAst contains error nodes
-    if body::has_error_nodes(typed_ast) {
-        diags.push(
-            writ_diagnostics::Diagnostic::error(
-                "E9000",
-                "Codegen aborted: TypedAst contains error nodes",
-            ).build()
-        );
-        return Err(diags);
-    }
 
     // Build metadata tables
     let mut builder = ModuleBuilder::new();
@@ -108,11 +103,17 @@ pub fn emit_bodies(
     // This populates ExportDef rows for all pub-visible items.
     collect::collect_post_finalize(typed_ast, asts, &mut builder);
 
-    // Emit all method bodies (including lambda bodies via lambda_infos)
-    let (mut bodies, body_diags) = body::emit_all_bodies(typed_ast, interner, &builder, &lambda_infos);
+    // Emit all method bodies (including lambda bodies via lambda_infos).
+    // Per-function error nodes cause that function's body to be skipped with an E9001
+    // diagnostic; other functions in the same file are still emitted.
+    let (mut bodies, body_diags) = body::emit_all_bodies(typed_ast, interner, &builder, &lambda_infos, &typed_ast.struct_field_types);
     diags.extend(body_diags);
 
-    if !diags.is_empty() {
+    // Only return Err if there are ZERO valid bodies AND there are diagnostics.
+    // When at least one body was emitted, continue to serialization so the LSP
+    // can still use the partial results.  Per-function skip diagnostics (E9001)
+    // are returned as part of the Ok variant via the serialized binary.
+    if bodies.is_empty() && !diags.is_empty() {
         return Err(diags);
     }
 
@@ -133,11 +134,11 @@ pub fn emit_bodies(
     }
 
     // Serialize to binary
-    match serialize::serialize(&mut builder, &bodies, interner) {
+    match serialize::serialize(&mut builder, &bodies, interner, emit_debug_info, sources) {
         Ok(bytes) => Ok(bytes),
         Err(e) => {
             diags.push(
-                writ_diagnostics::Diagnostic::error("E9001", &format!("Serialization failed: {}", e)).build()
+                writ_diagnostics::Diagnostic::error("E9001", format!("Serialization failed: {}", e)).build()
             );
             Err(diags)
         }

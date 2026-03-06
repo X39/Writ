@@ -78,7 +78,8 @@ fn disassemble_inner(module: &Module, verbose: bool) -> String {
             Some(TypeDefKind::Enum) => "enum",
             Some(TypeDefKind::Entity) => "entity",
             Some(TypeDefKind::Component) => "component",
-            None => "struct",
+            Some(TypeDefKind::Class) => "class",
+            None => unreachable!("reader validates TypeDef kinds"),
         };
 
         // Emit type flags as keyword(s) if recognized, otherwise as integer
@@ -151,8 +152,8 @@ fn disassemble_inner(module: &Module, verbose: bool) -> String {
             .map(|next| next.method_list.saturating_sub(1) as usize)
             .unwrap_or_else(|| {
                 // Find the end: next impl or end of impl-owned methods
-                let last_impl_method = find_last_impl_method_end(module, &impl_owned_methods);
-                last_impl_method
+                
+                find_last_impl_method_end(module, &impl_owned_methods)
             });
 
         for (mi, md) in module.method_defs[method_start..method_end].iter().enumerate() {
@@ -495,6 +496,28 @@ pub(crate) fn decode_method_sig(blob_heap: &[u8], sig_offset: u32, module: &Modu
 fn disassemble_body(body: &writ_module::module::MethodBody, module: &Module, verbose: bool, indent: &str) -> String {
     let mut out = String::new();
 
+    // ── .locals section (PREP-05) ──────────────────────────────────────────────
+    // Emit named locals (skip unnamed temporaries where name == 0).
+    let named_locals: Vec<_> = body.debug_locals.iter().filter(|dl| dl.name != 0).collect();
+    if !named_locals.is_empty() {
+        writeln!(out, "{}.locals {{", indent).unwrap();
+        for dl in &named_locals {
+            let name = read_string(&module.string_heap, dl.name).unwrap_or("?");
+            let type_text = if dl.type_ref != 0 {
+                decode_type_sig(&module.blob_heap, dl.type_ref, module)
+            } else {
+                "?".to_string()
+            };
+            writeln!(
+                out,
+                "{}    r{}: {} \"{}\" [{}, {})",
+                indent, dl.register, type_text, name, dl.start_pc, dl.end_pc
+            )
+            .unwrap();
+        }
+        writeln!(out, "{}}}", indent).unwrap();
+    }
+
     // Emit register declarations
     // register_types are blob heap offsets (stored as 0 by current assembler, but we try to decode)
     // If a register_type offset is 0, we emit "int" as a reasonable default (the blob at offset 0 is empty)
@@ -516,6 +539,10 @@ fn disassemble_body(body: &writ_module::module::MethodBody, module: &Module, ver
         return out;
     }
 
+    // Build a sorted cursor into source_spans for efficient linear scan.
+    // source_spans is already sorted by pc (inserted in instruction order by the compiler).
+    let mut span_cursor = 0usize;
+
     let mut cursor = Cursor::new(code.as_slice());
     while (cursor.position() as usize) < code.len() {
         let byte_offset = cursor.position() as usize;
@@ -528,8 +555,40 @@ fn disassemble_body(body: &writ_module::module::MethodBody, module: &Module, ver
                     writeln!(out, "{}// +{:#06x}", indent, byte_offset).unwrap();
                 }
 
+                // ── Inline source location comment (PREP-01) ──────────────────
+                // Advance span_cursor to find the last SourceSpan with pc <= byte_offset.
+                while span_cursor + 1 < body.source_spans.len()
+                    && body.source_spans[span_cursor + 1].pc <= byte_offset as u32
+                {
+                    span_cursor += 1;
+                }
+                let source_comment = if !body.source_spans.is_empty()
+                    && body.source_spans[span_cursor].pc == byte_offset as u32
+                    && (body.source_spans[span_cursor].line != 0
+                        || body.source_spans[span_cursor].column != 0)
+                {
+                    let ss = &body.source_spans[span_cursor];
+                    Some(format!("; line:{} col:{}", ss.line, ss.column))
+                } else {
+                    None
+                };
+
                 if operands.is_empty() {
-                    writeln!(out, "{}{}", indent, mnemonic).unwrap();
+                    if let Some(comment) = source_comment {
+                        writeln!(out, "{}{}  {}", indent, mnemonic, comment).unwrap();
+                    } else {
+                        writeln!(out, "{}{}", indent, mnemonic).unwrap();
+                    }
+                } else if let Some(comment) = source_comment {
+                    writeln!(
+                        out,
+                        "{}{} {}  {}",
+                        indent,
+                        mnemonic,
+                        operands.join(", "),
+                        comment
+                    )
+                    .unwrap();
                 } else {
                     writeln!(out, "{}{} {}", indent, mnemonic, operands.join(", ")).unwrap();
                 }
@@ -546,7 +605,7 @@ fn disassemble_body(body: &writ_module::module::MethodBody, module: &Module, ver
 
 /// Convert an `Instruction` variant to its (mnemonic, operand_strings) representation.
 ///
-/// All 91 instruction variants are covered. Mnemonics match the assembler's `map_instruction` table.
+/// All 94 instruction variants are covered. Mnemonics match the assembler's `map_instruction` table.
 fn instr_to_text(instr: &Instruction) -> (String, Vec<String>) {
     let r = |n: u16| format!("r{}", n);
     let tok = |t: u32| format!("{}", t);
@@ -640,11 +699,11 @@ fn instr_to_text(instr: &Instruction) -> (String, Vec<String>) {
         Instruction::New { r_dst, type_idx } => ("NEW".into(), vec![r(*r_dst), tok(*type_idx)]),
         Instruction::GetField { r_dst, r_obj, field_idx } => (
             "GET_FIELD".into(),
-            vec![r(*r_dst), r(*r_obj), tok(*field_idx)],
+            vec![r(*r_dst), r(*r_obj), format!("{}", field_idx)],
         ),
         Instruction::SetField { r_obj, field_idx, r_val } => (
             "SET_FIELD".into(),
-            vec![r(*r_obj), tok(*field_idx), r(*r_val)],
+            vec![r(*r_obj), format!("{}", field_idx), r(*r_val)],
         ),
         Instruction::SpawnEntity { r_dst, type_idx } => ("SPAWN_ENTITY".into(), vec![r(*r_dst), tok(*type_idx)]),
         Instruction::InitEntity { r_entity } => ("INIT_ENTITY".into(), vec![r(*r_entity)]),
@@ -730,6 +789,9 @@ fn instr_to_text(instr: &Instruction) -> (String, Vec<String>) {
             "CONVERT".into(),
             vec![r(*r_dst), r(*r_src), tok(*target_type)],
         ),
+        Instruction::S2i { r_dst, r_src } => ("S2I".into(), vec![r(*r_dst), r(*r_src)]),
+        Instruction::S2f { r_dst, r_src } => ("S2F".into(), vec![r(*r_dst), r(*r_src)]),
+        Instruction::S2b { r_dst, r_src } => ("S2B".into(), vec![r(*r_dst), r(*r_src)]),
 
         // ── 0x0E Strings ──
         Instruction::StrConcat { r_dst, r_a, r_b } => ("STR_CONCAT".into(), vec![r(*r_dst), r(*r_a), r(*r_b)]),

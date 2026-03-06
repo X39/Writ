@@ -1,0 +1,5 @@
+fn main() {
+    atomic {
+        let x: int = 42;
+    }
+}

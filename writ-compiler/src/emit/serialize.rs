@@ -7,7 +7,11 @@
 
 use writ_module::module::{DebugLocal, MethodBody, Module, SourceSpan};
 use writ_module::token::MetadataToken as WmToken;
+// Intentional wildcard: tables module exports 23 row-struct types — serialization
+// consumes all table types during binary module encoding.
 use writ_module::tables::*;
+
+use writ_diagnostics::FileId;
 
 use crate::check::ty::TyInterner;
 
@@ -22,10 +26,15 @@ use super::module_builder::ModuleBuilder;
 ///
 /// Takes `builder` by `&mut` so that register type blobs can be interned into
 /// the builder's blob heap during body translation.
+///
+/// `sources` provides per-file source text (parallel to `bodies` by FileId) for
+/// computing real 1-based line/column numbers in SourceSpan entries (PREP-01).
 pub fn translate(
     builder: &mut ModuleBuilder,
     bodies: &[EmittedBody],
     interner: &TyInterner,
+    emit_debug_info: bool,
+    sources: &[(FileId, &str)],
 ) -> Module {
     let mut module = Module::new();
 
@@ -103,12 +112,28 @@ pub fn translate(
     // We add placeholders; body_offset/body_size/reg_count filled in after body serialization.
     let mut method_def_body_indices: Vec<Option<usize>> = Vec::new();
 
+    // Collect orphaned body indices (bodies with method_def_id == None, i.e. lambda bodies).
+    // These are matched to orphaned MethodDefs (def_id == None) in discovery order.
+    let orphaned_body_indices: Vec<usize> = bodies
+        .iter()
+        .enumerate()
+        .filter(|(_, b)| b.method_def_id.is_none())
+        .map(|(i, _)| i)
+        .collect();
+    let mut orphan_cursor = 0usize;
+
     for (def_id, md) in builder.finalized_method_def_entries() {
-        // Find the body for this method (by DefId)
+        // Find the body for this method (by DefId for named methods,
+        // by position order for lambda methods with def_id == None).
         let body_idx = if let Some(did) = def_id {
             bodies.iter().position(|b| b.method_def_id == Some(did))
         } else {
-            None
+            // Lambda MethodDef: match to the next orphaned body in order.
+            let idx = orphaned_body_indices.get(orphan_cursor).copied();
+            if idx.is_some() {
+                orphan_cursor += 1;
+            }
+            idx
         };
         method_def_body_indices.push(body_idx);
 
@@ -262,13 +287,38 @@ pub fn translate(
 
             // Debug info
             let instr_byte_starts = compute_instr_byte_starts(&body.instructions);
-            let debug_locals = build_debug_locals(
-                body.reg_count,
-                &body.debug_locals,
-                total_code_size,
-                &mut builder.string_heap,
-            );
-            let source_spans = build_source_spans(&body.source_spans, &instr_byte_starts);
+
+            // Find source text for this body's file (for PREP-01 line/col computation).
+            // If no source is available, fall back to line_starts = [0] which gives
+            // line=1, col=offset+1 — acceptable for test-only paths without source text.
+            let line_starts: Vec<u32> = if let Some(file_id) = body.method_def_id
+                .and(None::<FileId>) // bodies don't carry FileId directly
+                .or_else(|| sources.first().map(|(fid, _)| *fid))
+            {
+                sources
+                    .iter()
+                    .find(|(fid, _)| *fid == file_id)
+                    .map(|(_, src)| build_line_starts(src))
+                    .unwrap_or_else(|| vec![0u32])
+            } else if !sources.is_empty() {
+                // Use the first (and usually only) source file's line map
+                build_line_starts(sources[0].1)
+            } else {
+                vec![0u32]
+            };
+
+            let mut debug_locals = if emit_debug_info {
+                build_debug_locals(
+                    body.reg_count,
+                    &body.debug_locals,
+                    total_code_size,
+                    &mut builder.string_heap,
+                    &instr_byte_starts,
+                )
+            } else {
+                Vec::new()
+            };
+            let source_spans = build_source_spans(&body.source_spans, &instr_byte_starts, &line_starts);
 
             // Register type table: encode each register's Ty into a blob heap offset.
             //
@@ -318,6 +368,14 @@ pub fn translate(
                 })
                 .collect();
 
+            // Back-fill type_ref in debug_locals from the register_types blob offsets (PREP-05).
+            // Each DebugLocal.register is an index into register_types.
+            for dl in &mut debug_locals {
+                if (dl.register as usize) < register_types.len() {
+                    dl.type_ref = register_types[dl.register as usize];
+                }
+            }
+
             // Update the MethodDef row's reg_count (already set above)
             // body_offset and body_size are set by the writ-module writer from the body index
             module.method_bodies.push(MethodBody {
@@ -340,9 +398,17 @@ pub fn translate(
     // copy the final state now (after all body processing is complete).
     module.blob_heap = builder.blob_heap.data().to_vec();
 
-    // Set header format_version
-    module.header.format_version = 2;
-    module.header.flags = 1; // debug flag on
+    // ── String heap (finalized after debug local name interning) ──────────────
+    // The string heap may have grown during build_debug_locals (which interns
+    // variable names via string_heap.intern()). We copy the final state now,
+    // overwriting the snapshot taken at the top of translate() which pre-dates
+    // body processing. Without this update, DebugLocal.name offsets would point
+    // past the end of module.string_heap and read_string would fail (BUG-15 fix).
+    module.string_heap = builder.string_heap.data().to_vec();
+
+    // Format version 4: DebugLocal extended with type_ref field (PREP-05)
+    module.header.format_version = 4;
+    module.header.flags = if emit_debug_info { 1 } else { 0 };
 
     module
 }
@@ -352,8 +418,10 @@ pub fn serialize(
     builder: &mut ModuleBuilder,
     bodies: &[EmittedBody],
     interner: &TyInterner,
+    emit_debug_info: bool,
+    sources: &[(FileId, &str)],
 ) -> Result<Vec<u8>, String> {
-    let module = translate(builder, bodies, interner);
+    let module = translate(builder, bodies, interner, emit_debug_info, sources);
     module.to_bytes().map_err(|e| format!("{:?}", e))
 }
 
@@ -361,15 +429,19 @@ pub fn serialize(
 
 /// Encode a list of instructions to bytes, applying branch offset fixups.
 ///
-/// Uses a 3-pass approach:
+/// Uses a 4-pass approach:
 /// 1. Compute the byte start position for each instruction index (for offset translation).
 /// 2. Encode all instructions to a flat byte buffer (branch offsets start as 0).
 /// 3. Translate instruction-index-keyed label positions/fixups to byte positions,
 ///    build a byte-keyed LabelAllocator, and apply fixups to patch branch offsets.
+/// 4. Convert SWITCH instruction-index offsets to byte-position offsets.
+///    (SWITCH bypasses the fixup pipeline due to variable-length offset arrays.)
 fn encode_instructions(
     instructions: &[writ_module::instruction::Instruction],
     labels: &LabelAllocator,
 ) -> Vec<u8> {
+    use writ_module::instruction::Instruction;
+
     // Pass 1: compute byte start position for each instruction index
     let mut instr_byte_starts: Vec<usize> = Vec::with_capacity(instructions.len() + 1);
     let mut pos = 0usize;
@@ -399,6 +471,52 @@ fn encode_instructions(
     }
     byte_labels.apply_fixups(&mut code);
 
+    // Pass 4: convert instruction-index-relative fields to byte-position values.
+    //
+    // Two instruction types store instruction indices that the runtime expects as byte offsets:
+    //
+    // a) SWITCH: emit_enum_match stores offsets as (target_instr_idx - switch_instr_idx).
+    //    The runtime's decode_and_reindex expects (target_byte_start - switch_byte_start).
+    //    Br/BrTrue/BrFalse go through the fixup pipeline (Pass 3) which handles this,
+    //    but SWITCH bypasses it because it has variable-length offset arrays.
+    //
+    // b) DeferPush: emit_defer stores method_idx as a raw instruction index (handler start).
+    //    The runtime's decode_and_reindex expects the handler's byte offset from method start.
+    for (instr_idx, instr) in instructions.iter().enumerate() {
+        match instr {
+            Instruction::Switch { offsets, .. } => {
+                let switch_byte_start = instr_byte_starts[instr_idx];
+                // SWITCH binary layout: opcode(2) + r_tag(2) + count(2) + offsets(4 each)
+                let offsets_patch_start = switch_byte_start + 6;
+                for (slot_idx, &instr_offset) in offsets.iter().enumerate() {
+                    // instr_offset = target_instr_idx - switch_instr_idx (instruction distance)
+                    let target_instr_idx = (instr_idx as i64 + instr_offset as i64) as usize;
+                    let target_byte_start = instr_byte_starts
+                        .get(target_instr_idx)
+                        .copied()
+                        .unwrap_or(code.len());
+                    let byte_offset = (target_byte_start as i64 - switch_byte_start as i64) as i32;
+                    let patch_pos = offsets_patch_start + slot_idx * 4;
+                    code[patch_pos..patch_pos + 4].copy_from_slice(&byte_offset.to_le_bytes());
+                }
+            }
+            Instruction::DeferPush { method_idx: handler_instr_idx, .. } => {
+                // DeferPush binary layout: opcode(2) + r_dst(2) + method_idx(4)
+                // method_idx stores the instruction index of the handler body start.
+                // The runtime expects the byte offset of the handler from method start.
+                let defer_push_byte_start = instr_byte_starts[instr_idx];
+                let handler_byte_start = instr_byte_starts
+                    .get(*handler_instr_idx as usize)
+                    .copied()
+                    .unwrap_or(code.len());
+                let patch_pos = defer_push_byte_start + 4;
+                code[patch_pos..patch_pos + 4]
+                    .copy_from_slice(&(handler_byte_start as u32).to_le_bytes());
+            }
+            _ => {}
+        }
+    }
+
     code
 }
 
@@ -423,11 +541,15 @@ fn compute_instr_byte_starts(instructions: &[writ_module::instruction::Instructi
 ///
 /// Variable names are interned into the string heap so DebugLocal.name carries the
 /// correct heap offset rather than the hardcoded 0 placeholder (BUG-13 fix).
+///
+/// `instr_byte_starts` is used to convert instruction-index PCs to byte-offset PCs
+/// (BUG-15 fix), matching the format expected by the DAP server's collect_frame_variables.
 fn build_debug_locals(
     reg_count: u16,
     debug_locals: &[(u16, String, u32, u32)],
     total_code_size: u32,
     string_heap: &mut super::heaps::StringHeap,
+    instr_byte_starts: &[usize],
 ) -> Vec<DebugLocal> {
     // Build register -> (name, start_pc, end_pc) from the recorded debug locals.
     // If a register appears multiple times (shouldn't in practice), keep the first entry.
@@ -438,10 +560,27 @@ fn build_debug_locals(
 
     (0..reg_count)
         .map(|r| {
-            let (name_str, start_pc, end_pc) = reg_info
+            let (name_str, start_pc_instr, end_pc_instr) = reg_info
                 .get(&r)
                 .copied()
-                .unwrap_or(("", 0, total_code_size));
+                .unwrap_or(("", 0, u32::MAX));
+
+            // Convert instruction-index start_pc to byte-offset PC.
+            let start_pc = instr_byte_starts
+                .get(start_pc_instr as usize)
+                .copied()
+                .unwrap_or(0) as u32;
+
+            // Convert instruction-index end_pc to byte-offset PC.
+            // The u32::MAX sentinel means "end of method"; clamp to total_code_size.
+            let end_pc = if end_pc_instr == u32::MAX {
+                total_code_size
+            } else {
+                instr_byte_starts
+                    .get(end_pc_instr as usize)
+                    .copied()
+                    .unwrap_or(total_code_size as usize) as u32
+            };
 
             // Intern the name into the string heap. Unnamed registers (name="") get offset 0.
             let name_offset = if name_str.is_empty() {
@@ -453,34 +592,180 @@ fn build_debug_locals(
             DebugLocal {
                 register: r,
                 name: name_offset,
+                type_ref: 0, // populated after register_types are encoded (see translate())
                 start_pc,
-                end_pc: if end_pc == u32::MAX { total_code_size } else { end_pc },
+                end_pc,
             }
         })
         .collect()
 }
 
+/// Build a sorted table of byte offsets for the start of each line.
+///
+/// `line_starts[0]` is always 0 (start of line 1).
+/// `line_starts[n]` is the byte offset immediately after the nth newline (start of line n+1).
+pub(crate) fn build_line_starts(src: &str) -> Vec<u32> {
+    let mut starts = vec![0u32];
+    for (i, b) in src.as_bytes().iter().enumerate() {
+        if *b == b'\n' {
+            starts.push(i as u32 + 1);
+        }
+    }
+    starts
+}
+
+/// Convert a byte offset into a source file to a 1-based (line, column) pair.
+///
+/// Both line and column are 1-based, matching LSP and DAP conventions.
+pub(crate) fn byte_offset_to_line_col(offset: u32, line_starts: &[u32]) -> (u32, u16) {
+    let line_idx = line_starts.partition_point(|&s| s <= offset).saturating_sub(1);
+    let line = line_idx as u32 + 1;
+    let col = offset.saturating_sub(line_starts[line_idx]) + 1;
+    (line, col.min(u16::MAX as u32) as u16)
+}
+
 /// Build SourceSpan entries from the body's recorded span info.
 ///
 /// Uses `instr_byte_starts` to convert instruction indices to byte offsets (BUG-14 fix).
-/// The source_spans vec is empty for now (body emitter doesn't yet push spans), so
-/// this returns an empty Vec in practice. The fix ensures correctness when spans are added.
+/// Uses `line_starts` to convert source byte offsets to 1-based line/column numbers (PREP-01).
 fn build_source_spans(
     source_spans: &[(u32, chumsky::span::SimpleSpan)],
     instr_byte_starts: &[usize],
+    line_starts: &[u32],
 ) -> Vec<SourceSpan> {
     source_spans
         .iter()
-        .map(|(instr_idx, _span)| {
+        .map(|(instr_idx, span)| {
             let byte_offset = instr_byte_starts
                 .get(*instr_idx as usize)
                 .copied()
                 .unwrap_or(0) as u32;
+            let (line, column) = byte_offset_to_line_col(span.start as u32, line_starts);
             SourceSpan {
                 pc: byte_offset,
-                line: 0,   // MVP: line=0 (unknown) — line tracking requires threading spans through emit_expr
-                column: 0,
+                line,
+                column,
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_encode_switch_byte_offsets() {
+        use writ_module::instruction::Instruction;
+
+        // Build a minimal instruction sequence that exercises SWITCH:
+        // [0] LoadInt r0, 1          (some setup)
+        // [1] Switch r_tag=0, offsets=[2, 3]  (2 variants: arm at instr 3, arm at instr 4)
+        // [2] Nop                    (filler)
+        // [3] Nop                    (variant 0 arm target)
+        // [4] Nop                    (variant 1 arm target)
+        let instructions = vec![
+            Instruction::LoadInt { r_dst: 0, value: 1 },
+            Instruction::Switch { r_tag: 0, offsets: vec![2, 3] },
+            Instruction::Nop,
+            Instruction::Nop,
+            Instruction::Nop,
+        ];
+
+        let labels = super::super::body::labels::LabelAllocator::new();
+        let code = encode_instructions(&instructions, &labels);
+
+        // Compute expected byte starts to verify the patch:
+        let byte_starts = compute_instr_byte_starts(&instructions);
+        // LoadInt: opcode(2) + r_dst(2) + value(8) = 12 bytes
+        // Switch:  opcode(2) + r_tag(2) + count(2) + 2*4 = 14 bytes
+        // Nop:     opcode(2) = 2 bytes each
+
+        let switch_byte_start = byte_starts[1];
+        // SWITCH layout: opcode(2) + r_tag(2) + count(2) = 6 bytes before offsets
+        let offset0_pos = switch_byte_start + 6;
+        let offset1_pos = switch_byte_start + 10;
+
+        // Expected byte offsets:
+        // Variant 0 target is instr 3 (switch is instr 1, so instr_offset=2)
+        //   byte_offset = byte_starts[3] - byte_starts[1]
+        let expected_off0 = (byte_starts[3] as i64 - switch_byte_start as i64) as i32;
+        // Variant 1 target is instr 4 (switch is instr 1, so instr_offset=3)
+        //   byte_offset = byte_starts[4] - byte_starts[1]
+        let expected_off1 = (byte_starts[4] as i64 - switch_byte_start as i64) as i32;
+
+        let actual_off0 = i32::from_le_bytes(code[offset0_pos..offset0_pos + 4].try_into().unwrap());
+        let actual_off1 = i32::from_le_bytes(code[offset1_pos..offset1_pos + 4].try_into().unwrap());
+
+        assert_eq!(actual_off0, expected_off0,
+            "SWITCH offset[0] should be byte-relative, not instruction-index-relative");
+        assert_eq!(actual_off1, expected_off1,
+            "SWITCH offset[1] should be byte-relative, not instruction-index-relative");
+
+        // Sanity: byte offsets should be > instruction-index offsets
+        // because each instruction is at least 2 bytes
+        assert!(expected_off0 > 2, "byte offset should be larger than instruction-index offset (2)");
+        assert!(expected_off1 > 3, "byte offset should be larger than instruction-index offset (3)");
+    }
+
+    #[test]
+    fn test_build_line_starts_empty() {
+        assert_eq!(build_line_starts(""), vec![0]);
+    }
+
+    #[test]
+    fn test_build_line_starts_single_line() {
+        assert_eq!(build_line_starts("abc"), vec![0]);
+    }
+
+    #[test]
+    fn test_build_line_starts_multiline() {
+        // "abc\ndef\nghi": newlines at byte 3 and 7
+        assert_eq!(build_line_starts("abc\ndef\nghi"), vec![0, 4, 8]);
+    }
+
+    #[test]
+    fn test_byte_offset_to_line_col_start() {
+        let starts = vec![0u32, 4, 8];
+        assert_eq!(byte_offset_to_line_col(0, &starts), (1, 1));
+    }
+
+    #[test]
+    fn test_byte_offset_to_line_col_end_of_first_line() {
+        let starts = vec![0u32, 4, 8];
+        // byte 3 = 'c' in "abc\n" = line 1, col 4
+        assert_eq!(byte_offset_to_line_col(3, &starts), (1, 4));
+    }
+
+    #[test]
+    fn test_byte_offset_to_line_col_start_of_second_line() {
+        let starts = vec![0u32, 4, 8];
+        // byte 4 = start of "def" = line 2, col 1
+        assert_eq!(byte_offset_to_line_col(4, &starts), (2, 1));
+    }
+
+    #[test]
+    fn test_byte_offset_to_line_col_middle_of_second_line() {
+        let starts = vec![0u32, 4, 8];
+        // byte 6 = 'f' in "def" (offset 2 from line start 4) = line 2, col 3
+        assert_eq!(byte_offset_to_line_col(6, &starts), (2, 3));
+    }
+
+    #[test]
+    fn test_build_source_spans_real_line_col() {
+        use chumsky::span::SimpleSpan;
+        // "abc\ndef": newlines at byte 3 -> line_starts = [0, 4]
+        let line_starts = build_line_starts("abc\ndef");
+        assert_eq!(line_starts, vec![0, 4]);
+
+        // Instruction 0 at byte_start 0, span starting at byte 4 (start of "def")
+        let source_spans = vec![(0u32, SimpleSpan { start: 4usize, end: 6usize, context: () })];
+        let instr_byte_starts = vec![0usize, 10]; // instr 0 starts at byte 0
+
+        let spans = build_source_spans(&source_spans, &instr_byte_starts, &line_starts);
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].pc, 0);
+        assert_eq!(spans[0].line, 2, "byte 4 should be line 2");
+        assert_eq!(spans[0].column, 1, "byte 4 should be col 1");
+    }
 }

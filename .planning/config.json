@@ -1,14 +1,15 @@
 {
   "mode": "yolo",
-  "depth": "standard",
   "parallelization": true,
   "commit_docs": true,
-  "model_profile": "budget",
+  "model_profile": "balanced",
   "workflow": {
-    "research": false,
+    "research": true,
     "plan_check": true,
     "verifier": true,
-    "auto_advance": true
+    "auto_advance": true,
+    "_auto_chain_active": true
   },
-  "milestone": "v1.0"
+  "milestone": "v1.0",
+  "granularity": "standard"
 }

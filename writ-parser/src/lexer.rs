@@ -131,9 +131,7 @@ fn formattable_string<'src>(lex: &mut logos::Lexer<'src, Token<'src>>) -> bool {
                 i += 1;
             }
             b'}' => {
-                if brace_depth > 0 {
-                    brace_depth -= 1;
-                }
+                brace_depth = brace_depth.saturating_sub(1);
                 i += 1;
             }
             b'"' if brace_depth == 0 => {
@@ -231,6 +229,8 @@ pub enum Token<'src> {
     KwDlg,
     #[token("struct")]
     KwStruct,
+    #[token("class")]
+    KwClass,
     #[token("enum")]
     KwEnum,
     #[token("contract")]

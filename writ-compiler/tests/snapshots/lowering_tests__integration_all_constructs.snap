@@ -280,7 +280,7 @@ Ast {
                                         elements: [
                                             Call {
                                                 callee: Ident {
-                                                    name: "Option",
+                                                    name: "ChoiceOption",
                                                     span: 215..238,
                                                 },
                                                 args: [
@@ -344,7 +344,7 @@ Ast {
                                             },
                                             Call {
                                                 callee: Ident {
-                                                    name: "Option",
+                                                    name: "ChoiceOption",
                                                     span: 247..271,
                                                 },
                                                 args: [

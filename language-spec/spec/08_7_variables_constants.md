@@ -1,7 +1,7 @@
 # 1. Writ Language Specification
-## 7. Variables & Constants
+## 1.7 Variables & Constants
 
-### 7.1 Variable Declarations
+### 1.7.1 Variable Declarations
 
 Variables are declared with `let` (immutable) or `let mut` (mutable). Immutability is the default. Type is inferred from
 the initializer or can be explicitly annotated.
@@ -15,7 +15,7 @@ name = "Bob";      // COMPILE ERROR: name is immutable
 health += 10;       // ok: health is mutable
 ```
 
-### 7.2 Shadowing
+### 1.7.2 Shadowing
 
 Variables can be shadowed by a new `let` declaration in the same scope. The new binding can have a different type. This
 allows transformations without mutability.
@@ -26,7 +26,7 @@ let x = x * 2;      // shadows, x is now 20 (still immutable)
 let x = "hello";    // shadows again, different type
 ```
 
-### 7.3 Constants
+### 1.7.3 Constants
 
 Constants are declared with `const` at the top level. They must have a compile-time known value.
 

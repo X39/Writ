@@ -1,0 +1,196 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Writ",
+  "scopeName": "source.writ",
+  "fileTypes": [".writ"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#attributes" },
+    { "include": "#strings" },
+    { "include": "#dialogue-blocks" },
+    { "include": "#keywords" },
+    { "include": "#numbers" },
+    { "include": "#function-calls" },
+    { "include": "#type-names" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.writ",
+          "match": "//.*$"
+        },
+        {
+          "name": "comment.block.writ",
+          "begin": "/\\*",
+          "end": "\\*/",
+          "beginCaptures": {
+            "0": { "name": "punctuation.definition.comment.begin.writ" }
+          },
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.comment.end.writ" }
+          }
+        }
+      ]
+    },
+    "attributes": {
+      "name": "meta.attribute.writ",
+      "begin": "\\[(?!\\])",
+      "end": "\\]",
+      "beginCaptures": {
+        "0": { "name": "punctuation.definition.attribute.begin.writ" }
+      },
+      "endCaptures": {
+        "0": { "name": "punctuation.definition.attribute.end.writ" }
+      },
+      "patterns": [
+        { "include": "#strings" }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "comment": "Triple-quoted raw strings MUST come before double-quoted to avoid greedy match",
+          "name": "string.quoted.triple.writ",
+          "begin": "\"\"\"",
+          "end": "\"\"\"",
+          "beginCaptures": {
+            "0": { "name": "punctuation.definition.string.begin.writ" }
+          },
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.string.end.writ" }
+          }
+        },
+        {
+          "comment": "Formattable strings with interpolation: $\"...{expr}...\"",
+          "name": "string.quoted.double.formattable.writ",
+          "begin": "\\$\"",
+          "end": "\"",
+          "beginCaptures": {
+            "0": { "name": "punctuation.definition.string.begin.writ" }
+          },
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.string.end.writ" }
+          },
+          "patterns": [
+            {
+              "name": "constant.character.escape.writ",
+              "match": "\\\\."
+            },
+            {
+              "name": "meta.interpolation.writ",
+              "begin": "\\{",
+              "end": "\\}",
+              "beginCaptures": {
+                "0": { "name": "punctuation.section.interpolation.begin.writ" }
+              },
+              "endCaptures": {
+                "0": { "name": "punctuation.section.interpolation.end.writ" }
+              },
+              "patterns": [
+                { "include": "#keywords" },
+                { "include": "#numbers" },
+                { "include": "#strings" },
+                { "include": "#function-calls" },
+                { "include": "#operators" }
+              ]
+            }
+          ]
+        },
+        {
+          "comment": "Regular double-quoted strings",
+          "name": "string.quoted.double.writ",
+          "begin": "\"",
+          "end": "\"",
+          "beginCaptures": {
+            "0": { "name": "punctuation.definition.string.begin.writ" }
+          },
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.string.end.writ" }
+          },
+          "patterns": [
+            {
+              "name": "constant.character.escape.writ",
+              "match": "\\\\."
+            }
+          ]
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.declaration.writ",
+          "match": "\\b(fn|dlg|struct|enum|contract|impl|entity|component|class|namespace|extern|using)\\b"
+        },
+        {
+          "name": "keyword.control.writ",
+          "match": "\\b(if|else|match|for|while|in|return|break|continue|try)\\b"
+        },
+        {
+          "name": "keyword.other.writ",
+          "match": "\\b(let|mut|const|global|pub|priv|void|self|true|false|null|new|on|use|spawn|detached|join|cancel|defer|atomic)\\b"
+        },
+        {
+          "name": "storage.type.primitive.writ",
+          "match": "\\b(int|float|bool|string|char)\\b"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.writ",
+          "match": "\\b0x[0-9a-fA-F][0-9a-fA-F_]*\\b"
+        },
+        {
+          "name": "constant.numeric.binary.writ",
+          "match": "\\b0b[01][01_]*\\b"
+        },
+        {
+          "name": "constant.numeric.writ",
+          "match": "\\b[0-9][0-9_]*(\\.[0-9][0-9_]*)?\\b"
+        }
+      ]
+    },
+    "dialogue-blocks": {
+      "comment": "Dialogue sigils: @ for speaker attribution, $ for code escapes",
+      "patterns": [
+        {
+          "comment": "Speaker attribution: @SpeakerName at start of line (with optional leading whitespace)",
+          "match": "^(\\s*)(@[A-Za-z_][A-Za-z0-9_]*)\\b",
+          "captures": {
+            "2": { "name": "entity.name.tag.speaker.writ" }
+          }
+        },
+        {
+          "comment": "Dialogue code escape $ before { if match choice (not $\" which is handled by strings)",
+          "name": "keyword.operator.dialogue-escape.writ",
+          "match": "\\$(?=\\s*[\\{]|\\s*if\\b|\\s*match\\b|\\s*choice\\b)"
+        }
+      ]
+    },
+    "function-calls": {
+      "comment": "Identifier followed by ( — highlight identifier as function name",
+      "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=\\()",
+      "captures": {
+        "1": { "name": "entity.name.function.writ" }
+      }
+    },
+    "type-names": {
+      "comment": "PascalCase identifiers are type names",
+      "name": "entity.name.type.writ",
+      "match": "\\b([A-Z][a-zA-Z0-9_]*)\\b"
+    },
+    "operators": {
+      "patterns": [
+        {
+          "comment": "Multi-character operators must come before single-character ones",
+          "name": "keyword.operator.writ",
+          "match": "(::|->|\\.\\.\\.=|\\.\\.=|\\.\\.|\\?\\.|[+\\-*/%=<>!&|^?~])"
+        }
+      ]
+    }
+  }
+}

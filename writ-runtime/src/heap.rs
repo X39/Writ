@@ -98,7 +98,7 @@ impl BumpHeap {
     pub fn get_field(&self, href: HeapRef, idx: usize) -> Result<Value, RuntimeError> {
         match self.objects.get(href.0 as usize) {
             Some(HeapObject::Struct { fields }) => {
-                fields.get(idx).copied().ok_or_else(|| {
+                fields.get(idx).cloned().ok_or_else(|| {
                     RuntimeError::ExecutionError(format!(
                         "field index {} out of range for struct with {} fields",
                         idx,
@@ -107,7 +107,7 @@ impl BumpHeap {
                 })
             }
             Some(HeapObject::Enum { fields, .. }) => {
-                fields.get(idx).copied().ok_or_else(|| {
+                fields.get(idx).cloned().ok_or_else(|| {
                     RuntimeError::ExecutionError(format!(
                         "field index {} out of range for enum with {} fields",
                         idx,

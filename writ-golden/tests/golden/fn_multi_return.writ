@@ -1,0 +1,10 @@
+pub fn abs(n: int) -> int {
+    if n < 0 {
+        return -n;
+    }
+    n
+}
+
+fn main() {
+    let x: int = abs(-5);
+}

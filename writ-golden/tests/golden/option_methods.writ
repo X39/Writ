@@ -1,0 +1,6 @@
+fn main() {
+    let opt: int? = Option::Some(42);
+    let a: bool = opt.is_some();
+    let b: bool = opt.is_none();
+    let c: int = opt.unwrap();
+}

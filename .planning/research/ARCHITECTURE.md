@@ -1,473 +1,928 @@
 # Architecture Research
 
-**Domain:** Compiler frontend — name resolution, type checking, IL codegen for the Writ language
-**Researched:** 2026-03-02
-**Confidence:** HIGH
+**Domain:** Cross-Language Benchmark Suite — Docker-based multi-runtime benchmark runner integrated with the Writ toolchain
+**Researched:** 2026-03-20
+**Confidence:** HIGH (existing codebase inspected directly; Docker/hyperfine/GitHub Actions patterns verified against official docs and reference suites)
 
-## Standard Architecture
+---
 
-### System Overview
+## System Overview
 
 ```
-+============================================================================+
-|  Existing Crates (mostly unchanged)                                        |
-|                                                                            |
-|  writ-parser           writ-compiler                                       |
-|  logos lexer           LoweringContext, lower()                            |
-|  chumsky CST           multi-pass CST → AST                                |
-+====================================+=======================================+
-                                     |
-                              Ast { items: Vec<AstDecl> }
-                                     |
-                                     v
-+====================================+=======================================+
-|  NEW phases inside writ-compiler   (same crate, new modules)              |
-|                                                                            |
-|  +--------------------+   +--------------------+   +------------------+  |
-|  |  resolve/          |   |  typecheck/         |   |  codegen/        |  |
-|  |  name resolution   | → |  type inference +   | → |  IL codegen      |  |
-|  |  NameResolved (IR) |   |  checking           |   |  → ModuleBuilder |  |
-|  |                    |   |  Typed (IR)         |   |                  |  |
-|  +--------------------+   +--------------------+   +--------+---------+  |
-+================================================================|===========+
-                                                                 |
-                                                          writ_module::Module
-                                                                 |
-+================================================================|===========+
-|  Existing Crates (unchanged)                                   |           |
-|                                                                v           |
-|  writ-module                    writ-runtime                              |
-|  Module / ModuleBuilder         VM + scheduler + entities + GC            |
-|                                                                            |
-|  writ-assembler                 writ-cli                                   |
-|  text IL → Module               `writ` binary (gains `compile` subcommand)|
-+============================================================================+
++---------------------------------------------------------------+
+|              benchmark/ (top-level directory)                  |
+|                                                                |
+|  +---------------+  +------------------+  +-----------------+ |
+|  |  cases/       |  |  runner/          |  |  results/       | |
+|  |  (6 languages |  |  run.sh           |  |  YYYY-MM-DD/    | |
+|  |   x 4 suites) |  |  run.ps1          |  |  raw.json       | |
+|  +-------+-------+  |  Dockerfile       |  |  charts/*.svg   | |
+|          |          +--------+----------+  |  RESULTS.md     | |
+|          |                   |             +-----------------+ |
+|          v                   v                                 |
+|  +-------+-------------------+-----------------------------+   |
+|  |         Docker Container (ubuntu:24.04 base)            |   |
+|  |                                                         |   |
+|  |  Runtimes:  lua5.4  squirrel3  python3  node  rustc     |   |
+|  |  Writ:      /usr/local/bin/writ  (copied from build)    |   |
+|  |  Tools:     hyperfine  /usr/bin/time                    |   |
+|  |                                                         |   |
+|  |  bench_runner.sh  (orchestrates all cases)              |   |
+|  |  -> for each case: measure compile + run separately     |   |
+|  |  -> write JSON to /results/raw.json                     |   |
+|  +---+-----------------------------------------------------+   |
+|      |                                                         |
+|      v                                                         |
+|  +---+--------------------+                                    |
+|  |  chart_gen/            |  (Python, runs outside container) |
+|  |  generate.py           |  JSON -> SVG + markdown table     |
+|  +------------------------+                                    |
++---------------------------------------------------------------+
+         |
+         v
++-------------------+   +---------------------------+
+|  GitHub Actions   |   |  benchmark/results/        |
+|  benchmark.yml    |-->|  committed to repo          |
+|  (on: workflow_   |   |  charts referenced in       |
+|   dispatch +      |   |  README.md                  |
+|   schedule)       |   +---------------------------+
++-------------------+
 ```
-
-**Decision: All new phases live inside `writ-compiler` as additional modules.**
-
-Rationale: Name resolution and type checking have a tight feedback loop with each other and with the AST types that already live in `writ-compiler`. Introducing a new crate (`writ-resolver` or `writ-typeck`) creates a circular dependency risk: the resolver needs AST types from `writ-compiler`, but `writ-compiler` could also want resolver output. Keeping all three phases inside `writ-compiler` keeps the dependency graph acyclic and the `Ast` → `NameResolved` → `Typed` → `Module` pipeline linear. This matches how Rust's own `rustc_resolve` lives in the same logical compilation unit as the AST lowering passes. The assembler precedent (all assembler phases in one crate) also validates this approach.
-
-`writ-module` gains no new code — it is already the correct interface for codegen output.
-`writ-cli` gains a `compile` subcommand that calls `writ-compiler`'s new public `compile()` function.
 
 ### Component Responsibilities
 
-| Component | Responsibility | Communicates With |
-|-----------|----------------|-------------------|
-| `writ-compiler::lower` | Existing: CST → `Ast` (desugaring, lowering) | Consumes `writ-parser::cst`; produces `writ-compiler::ast::Ast` |
-| `writ-compiler::resolve` | NEW: `Ast` → `NameResolved` — binds all identifier/path occurrences to their declaring `DefId`, builds per-scope `SymbolTable`, handles `using` imports, detects undefined names and ambiguities | Consumes `Ast`; produces `NameResolved` IR + `DefMap` |
-| `writ-compiler::typecheck` | NEW: `NameResolved` → `Typed` — infers and checks all expression types, validates contract impls, checks mutability, resolves overloaded operators | Consumes `NameResolved` + `DefMap`; produces `Typed` IR |
-| `writ-compiler::codegen` | NEW: `Typed` → `Module` — walks typed IR, emits typed IL instructions via `ModuleBuilder` | Consumes `Typed` IR + `DefMap`; calls `writ_module::ModuleBuilder`; returns `Module` |
-| `writ-module::ModuleBuilder` | Existing: programmatic IL module construction API | Used exclusively by codegen phase |
-| `writ-cli` | Gains `compile` subcommand | Calls `writ_compiler::compile()`; writes output `.writil` |
+| Component | Responsibility | Implementation |
+|-----------|----------------|----------------|
+| `benchmark/cases/` | One subdirectory per benchmark suite; each contains 6 source files | Static files, no build step |
+| `benchmark/runner/Dockerfile` | Single image with all 6 language runtimes + hyperfine + writ binary | Multi-stage Docker build |
+| `benchmark/runner/bench_runner.sh` | Runs all cases inside the container; writes `/results/raw.json` | Bash, calls hyperfine |
+| `benchmark/runner/run.sh` | Host-side entry point (Linux/macOS): builds image, mounts results, runs container | Bash |
+| `benchmark/runner/run.ps1` | Host-side entry point (Windows): same logic in PowerShell | PowerShell |
+| `benchmark/chart_gen/generate.py` | Reads `raw.json`, produces SVG charts and a markdown table | Python 3, pygal |
+| `benchmark/results/` | Versioned output directory; SVG files + `RESULTS.md` committed to repo | Git-tracked |
+| `.github/workflows/benchmark.yml` | CI workflow: builds writ, runs benchmark container, commits results | GitHub Actions |
+
+---
 
 ## Recommended Project Structure
 
 ```
-writ-compiler/
-├── Cargo.toml                     (add writ-module dependency)
-└── src/
-    ├── lib.rs                     (add pub mod resolve, typecheck, codegen; pub fn compile())
-    ├── ast/                       (existing — unchanged)
-    │   ├── mod.rs
-    │   ├── decl.rs
-    │   ├── expr.rs
-    │   ├── stmt.rs
-    │   └── types.rs
-    ├── lower/                     (existing — unchanged)
-    │   ├── mod.rs
-    │   ├── context.rs
-    │   ├── error.rs
-    │   └── ...
-    ├── resolve/                   (NEW)
-    │   ├── mod.rs                 (pub fn resolve(ast: Ast) -> (NameResolved, Vec<ResolveError>))
-    │   ├── def.rs                 (DefId, DefKind, DefMap: DefId → AstDecl location)
-    │   ├── scope.rs               (Scope, SymbolTable: name → DefId, rib stack for block scoping)
-    │   ├── namespace.rs           (NamespaceMap: namespace path → Set<DefId>; using resolution)
-    │   ├── ir.rs                  (NameResolved IR: mirrors Ast but Ident/Path replaced by DefId refs)
-    │   └── error.rs               (ResolveError: UndefinedName, AmbiguousName, PrivateName, ...)
-    ├── typecheck/                 (NEW)
-    │   ├── mod.rs                 (pub fn typecheck(ir: NameResolved, defs: &DefMap) -> (Typed, Vec<TypeError>))
-    │   ├── ty.rs                  (Ty enum: Int, Float, Bool, String, Named(DefId), Generic(DefId, Vec<Ty>), ...)
-    │   ├── infer.rs               (InferCtx: type variable unification, constraint solving)
-    │   ├── env.rs                 (TypeEnv: local variable → Ty map, threaded through function bodies)
-    │   ├── check.rs               (check_expr, check_stmt, check_decl — top-level type walk)
-    │   ├── coerce.rs              (implicit coercions: int literal → float, Option wrapping)
-    │   ├── contract.rs            (contract impl validation: all methods present, types match)
-    │   ├── ir.rs                  (Typed IR: mirrors NameResolved but every expr/stmt carries Ty)
-    │   └── error.rs               (TypeError: TypeMismatch, UnresolvedType, MissingImpl, ...)
-    └── codegen/                   (NEW)
-        ├── mod.rs                 (pub fn codegen(ir: Typed, defs: &DefMap) -> Result<Module, CodegenError>)
-        ├── context.rs             (CodegenCtx: ModuleBuilder + token maps + register allocator)
-        ├── type_sig.rs            (Ty → TypeRef blob encoding for ModuleBuilder)
-        ├── decl.rs                (emit_fn, emit_struct, emit_enum, emit_entity, emit_impl, ...)
-        ├── expr.rs                (emit_expr → register allocation + instruction emission)
-        ├── stmt.rs                (emit_stmt: let, for, while, return, atomic, ...)
-        ├── register.rs            (LinearRegisterAllocator: assigns u16 register indices)
-        ├── label.rs               (LabelMap: label name → byte offset; forward ref patching)
-        └── error.rs               (CodegenError: UnsupportedFeature, RegisterOverflow, ...)
+benchmark/
+├── cases/
+│   ├── fib/                    # Compute-heavy: recursive Fibonacci
+│   │   ├── fib.writ
+│   │   ├── fib.lua
+│   │   ├── fib.nut             # Squirrel uses .nut extension
+│   │   ├── fib.py
+│   │   ├── fib.js
+│   │   └── fib.rs
+│   ├── string_processing/      # String processing: split/join/format
+│   │   ├── strings.writ
+│   │   ├── strings.lua
+│   │   ├── strings.nut
+│   │   ├── strings.py
+│   │   ├── strings.js
+│   │   └── strings.rs
+│   ├── data_structures/        # Data structures: list/map operations
+│   │   ├── data.writ
+│   │   ├── data.lua
+│   │   ├── data.nut
+│   │   ├── data.py
+│   │   ├── data.js
+│   │   └── data.rs
+│   └── dispatch/               # OOP/dispatch: virtual calls, method dispatch
+│       ├── dispatch.writ
+│       ├── dispatch.lua
+│       ├── dispatch.nut
+│       ├── dispatch.py
+│       ├── dispatch.js
+│       └── dispatch.rs
+├── runner/
+│   ├── Dockerfile              # All runtimes + writ binary
+│   ├── bench_runner.sh         # Runs inside container; writes raw.json
+│   ├── run.sh                  # Host entry: Linux/macOS
+│   └── run.ps1                 # Host entry: Windows
+├── chart_gen/
+│   ├── generate.py             # JSON -> SVG charts + markdown table
+│   └── requirements.txt        # pygal (no other deps needed)
+└── results/
+    ├── latest/                 # Symlink or copy of most recent run
+    │   ├── raw.json
+    │   ├── charts/
+    │   │   ├── fib.svg
+    │   │   ├── string_processing.svg
+    │   │   ├── data_structures.svg
+    │   │   └── dispatch.svg
+    │   └── RESULTS.md
+    └── YYYY-MM-DD/             # Dated archives of past runs
+        └── ...
 ```
 
 ### Structure Rationale
 
-- **`resolve/`, `typecheck/`, `codegen/` as modules not crates:** All three need access to the same `ast::*` type hierarchy. Keeping them inside `writ-compiler` avoids exporting AST types as a public API for cross-crate consumption. The existing `lower/` module set the precedent.
-- **`writ-module` as a dependency of `writ-compiler`:** Codegen needs `ModuleBuilder`. This is the only new dependency — it is already the right direction (compiler produces modules, does not depend on the VM).
-- **`DefId` as the resolution currency:** All name-to-declaration bindings pass through an opaque `DefId` (e.g., `u32` index into a flat `DefMap`). This decouples the IR from the raw `String` names in the AST and lets type checking skip all name lookups.
-- **Separate `ir.rs` per phase:** Each phase produces its own IR type rather than mutating the `Ast` in place. The `NameResolved` IR mirrors the `Ast` structure but replaces `Ident { name }` and `Path { segments }` with `DefId`-resolved references. The `Typed` IR adds a `Ty` annotation on every expression node. This makes each phase testable in isolation without needing the subsequent phase.
-- **`InferCtx` inside `typecheck/infer.rs`:** Holds the union-find structure for type variable unification. When type inference resolves all type variables (or reports errors for unresolved ones), the `Typed` IR is emitted with all variables substituted. This is the standard Hindley-Milner constraint + unification approach, appropriate for Writ's "local variables inferred, signatures explicit" model.
-- **`LinearRegisterAllocator` in `codegen/register.rs`:** Assigns a fresh `u16` register per SSA-like value. For the reference implementation, simple linear allocation (no reuse) is correct and sufficient. The IL spec's abstract typed registers match this directly — the VM allocates storage from type metadata, not register indices.
+- **cases/ flat language files:** Each benchmark is a single source file per language. No per-language subdirectory nesting — keeps comparison immediately visible (`ls benchmark/cases/fib/`).
+- **runner/ self-contained:** The `Dockerfile`, inside-container script, and host-side launcher scripts are co-located. Anyone can reproduce the run with `./benchmark/runner/run.sh` without reading anything else.
+- **chart_gen/ separate from runner/:** Chart generation runs on the host after the container exits. It has no Docker dependency — a developer can regenerate charts from any `raw.json` without re-running benchmarks.
+- **results/ git-tracked:** SVG files and the markdown table are committed so the README can embed them as relative links. Dated subdirectory archives let historical comparisons be done by diffing `raw.json` files.
 
-## Architectural Patterns
+---
 
-### Pattern 1: Two-Pass Name Resolution (Decls Before Bodies)
+## Dockerfile Design
 
-**What:** Name resolution runs in two passes over the AST. Pass 1 collects all top-level declaration names into the `DefMap` and `NamespaceMap` without resolving bodies. Pass 2 resolves all name references (in function bodies, type positions, impl targets) against the fully-populated `DefMap`. This handles forward references between top-level declarations.
+### Multi-Stage Build Pattern
 
-**When to use:** Mandatory — Writ allows `fn a() { b() }` and `fn b() { ... }` in any order. Single-pass resolution would fail on forward references.
+```dockerfile
+# Stage 1: Build the writ binary from source
+FROM rust:1.85-slim AS writ-builder
+WORKDIR /writ
+COPY . .
+RUN cargo build --release --bin writ
 
-**Trade-offs:** Two passes means the AST is traversed twice. For this project size this is negligible. The alternative (building a dependency graph and topological ordering) is far more complex and still needs two conceptual phases.
+# Stage 2: Build the Rust benchmark binaries
+# (pre-compile so runtime measurement excludes compilation overhead)
+FROM rust:1.85-slim AS rust-bench-builder
+WORKDIR /bench
+COPY benchmark/cases/ ./cases/
+# Compile each Rust benchmark case to a binary
+RUN for dir in cases/*/; do \
+      name=$(basename "$dir"); \
+      rustc -O -o "/bench/bin/${name}" "${dir}${name}.rs"; \
+    done
 
-**Example:**
-```rust
-// resolve/mod.rs
-pub fn resolve(ast: Ast) -> (NameResolved, Vec<ResolveError>) {
-    let mut ctx = ResolveCtx::new();
+# Stage 3: Final runtime image
+FROM ubuntu:24.04
 
-    // Pass 1: collect all top-level def names
-    for decl in &ast.items {
-        ctx.register_decl(decl);
-    }
+# Install all 5 scripting language runtimes
+RUN apt-get update && apt-get install -y \
+    lua5.4 \
+    squirrel3 \
+    python3 \
+    nodejs \
+    && rm -rf /var/lib/apt/lists/*
 
-    // Pass 2: resolve all references in bodies
-    let mut ir_items = Vec::new();
-    for decl in ast.items {
-        ir_items.push(ctx.resolve_decl(decl));
-    }
+# Install hyperfine for timing
+RUN apt-get update && apt-get install -y curl && \
+    HYPERFINE_VERSION=1.18.0 && \
+    curl -sSL "https://github.com/sharkdp/hyperfine/releases/download/v${HYPERFINE_VERSION}/hyperfine_${HYPERFINE_VERSION}_amd64.deb" \
+      -o hyperfine.deb && \
+    dpkg -i hyperfine.deb && rm hyperfine.deb && \
+    apt-get remove -y curl && rm -rf /var/lib/apt/lists/*
 
-    (NameResolved { items: ir_items }, ctx.take_errors())
+# Copy writ binary from builder stage
+COPY --from=writ-builder /writ/target/release/writ /usr/local/bin/writ
+
+# Copy pre-compiled Rust benchmark binaries
+COPY --from=rust-bench-builder /bench/bin/ /bench/bin/
+
+# Copy benchmark cases and runner script
+COPY benchmark/cases/ /bench/cases/
+COPY benchmark/runner/bench_runner.sh /bench/bench_runner.sh
+RUN chmod +x /bench/bench_runner.sh
+
+WORKDIR /bench
+ENTRYPOINT ["/bench/bench_runner.sh"]
+```
+
+**Why multi-stage:** The `writ` binary and Rust benchmark binaries are compiled in dedicated builder stages that include the full Rust toolchain. The final image only needs the runtime tools (lua, squirrel3, python3, nodejs, hyperfine) — no Rust compiler in the benchmark image. This keeps the image small and ensures compile time is not accidentally included in runtime measurements.
+
+**Why pre-compile Rust:** Rust compilation time would dominate all other measurements if done at benchmark time. Compiling in a separate stage means the Rust measurement only captures execution time, matching the semantics of the other interpreted-language measurements.
+
+---
+
+## Invoking Each Language
+
+### Writ (compile-then-run, measured separately)
+
+```bash
+# Compile step (timed separately)
+writ compile /bench/cases/fib/fib.writ -o /tmp/fib.writc
+
+# Run step (timed separately)
+writ run /tmp/fib.writc
+```
+
+Both steps are timed with hyperfine in separate passes. The JSON output records `writ_compile_ms` and `writ_run_ms` as distinct fields.
+
+### Lua
+
+```bash
+lua5.4 /bench/cases/fib/fib.lua
+```
+
+Binary: `lua5.4` (Ubuntu package: `lua5.4`). Startup + execution measured together.
+
+### Squirrel
+
+```bash
+squirrel /bench/cases/fib/fib.nut
+```
+
+Binary: `squirrel` (Ubuntu package: `squirrel3`). The interpreter is called `squirrel`, not `sq`. Script extension is `.nut`.
+
+### Python
+
+```bash
+python3 /bench/cases/fib/fib.py
+```
+
+Binary: `python3` (Ubuntu package: `python3`). No virtualenv needed — benchmarks use only stdlib.
+
+### Node.js
+
+```bash
+node /bench/cases/fib/fib.js
+```
+
+Binary: `node` (Ubuntu package: `nodejs`). No npm install needed — benchmarks use only stdlib.
+
+### Rust (pre-compiled binary)
+
+```bash
+/bench/bin/fib
+```
+
+Binary compiled with `rustc -O` in the builder stage. Execution only — no compile step measured in the runtime pass. Compile time is recorded separately from the `rust-bench-builder` stage timing if desired, but is not included in the comparison charts (Rust compile time is not comparable to interpreter startup).
+
+---
+
+## bench_runner.sh Design
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+RESULTS_DIR="${RESULTS_DIR:-/results}"
+RUNS="${RUNS:-10}"
+WARMUP="${WARMUP:-2}"
+
+mkdir -p "$RESULTS_DIR"
+
+# Output accumulator: array of JSON objects
+results='{"benchmarks":[]}'
+
+for suite_dir in /bench/cases/*/; do
+    suite=$(basename "$suite_dir")
+
+    # --- Writ: compile time ---
+    writ compile "${suite_dir}${suite}.writ" -o /tmp/${suite}.writc 2>/dev/null
+    writ_compile_json=$(hyperfine --runs "$RUNS" --warmup "$WARMUP" \
+        --export-json /tmp/writ_compile.json \
+        "writ compile ${suite_dir}${suite}.writ -o /tmp/${suite}.writc" \
+        2>/dev/null && cat /tmp/writ_compile.json)
+
+    # --- Writ: run time ---
+    writ_run_json=$(hyperfine --runs "$RUNS" --warmup "$WARMUP" \
+        --export-json /tmp/writ_run.json \
+        "writ run /tmp/${suite}.writc" \
+        2>/dev/null && cat /tmp/writ_run.json)
+
+    # --- Lua ---
+    lua_json=$(hyperfine --runs "$RUNS" --warmup "$WARMUP" \
+        --export-json /tmp/lua.json \
+        "lua5.4 ${suite_dir}${suite}.lua" \
+        2>/dev/null && cat /tmp/lua.json)
+
+    # --- Squirrel ---
+    sq_json=$(hyperfine --runs "$RUNS" --warmup "$WARMUP" \
+        --export-json /tmp/sq.json \
+        "squirrel ${suite_dir}${suite}.nut" \
+        2>/dev/null && cat /tmp/sq.json)
+
+    # --- Python ---
+    py_json=$(hyperfine --runs "$RUNS" --warmup "$WARMUP" \
+        --export-json /tmp/py.json \
+        "python3 ${suite_dir}${suite}.py" \
+        2>/dev/null && cat /tmp/py.json)
+
+    # --- Node.js ---
+    node_json=$(hyperfine --runs "$RUNS" --warmup "$WARMUP" \
+        --export-json /tmp/node.json \
+        "node ${suite_dir}${suite}.js" \
+        2>/dev/null && cat /tmp/node.json)
+
+    # --- Rust ---
+    rust_json=$(hyperfine --runs "$RUNS" --warmup "$WARMUP" \
+        --export-json /tmp/rust.json \
+        "/bench/bin/${suite}" \
+        2>/dev/null && cat /tmp/rust.json)
+
+    # Merge into results using jq
+    results=$(echo "$results" | jq \
+        --arg suite "$suite" \
+        --argjson writ_compile "$writ_compile_json" \
+        --argjson writ_run "$writ_run_json" \
+        --argjson lua "$lua_json" \
+        --argjson sq "$sq_json" \
+        --argjson py "$py_json" \
+        --argjson node "$node_json" \
+        --argjson rust "$rust_json" \
+        '.benchmarks += [{
+            suite: $suite,
+            writ_compile: $writ_compile.results[0],
+            writ_run: $writ_run.results[0],
+            lua: $lua.results[0],
+            squirrel: $sq.results[0],
+            python: $py.results[0],
+            node: $node.results[0],
+            rust: $rust.results[0]
+        }]')
+done
+
+echo "$results" > "$RESULTS_DIR/raw.json"
+echo "Results written to $RESULTS_DIR/raw.json"
+```
+
+**Note:** `jq` must be added to the Docker image (`apt-get install -y jq`). It is the cleanest way to merge JSON fragments inside a shell script without writing a Python helper.
+
+---
+
+## raw.json Schema
+
+hyperfine exports each measurement as:
+
+```json
+{
+  "command": "writ run /tmp/fib.writc",
+  "mean": 0.004231,
+  "stddev": 0.000123,
+  "median": 0.004198,
+  "user": 0.003987,
+  "system": 0.000244,
+  "min": 0.004012,
+  "max": 0.004891,
+  "times": [0.004231, 0.004198, ...]
 }
 ```
 
-### Pattern 2: Rib Stack for Block-Scoped Name Resolution
+The `bench_runner.sh` wraps these into a top-level structure:
 
-**What:** A "rib" is an abstraction of a scope. The resolver maintains a `Vec<Rib>` (a stack). When entering a function body, a new rib is pushed. When entering a `{ }` block, another rib is pushed. Name resolution walks the rib stack from innermost to outermost, returning the first match (shadowing). Leaving a scope pops the rib.
-
-**When to use:** All block-scoped name lookup in Writ: `let` bindings, function parameters, `for` loop bindings, match arm variables. This is the pattern used by `rustc_resolve` and mirrors how `LoweringContext` uses its namespace stack.
-
-**Trade-offs:** Simple and correct for Writ's lexical scoping rules. The `LoweringContext::push_namespace / pop_namespace` pattern in `lower/context.rs` is structurally identical — the resolver extends the same idea to all name kinds.
-
-**Example:**
-```rust
-// resolve/scope.rs
-pub struct Rib {
-    pub bindings: HashMap<String, DefId>,
-    pub kind: RibKind,  // FunctionBody | Block | ForLoop | MatchArm
-}
-
-pub struct SymbolTable {
-    ribs: Vec<Rib>,
-}
-
-impl SymbolTable {
-    pub fn push_rib(&mut self, kind: RibKind) { self.ribs.push(Rib::new(kind)); }
-    pub fn pop_rib(&mut self) { self.ribs.pop(); }
-
-    pub fn bind(&mut self, name: String, def: DefId) {
-        self.ribs.last_mut().unwrap().bindings.insert(name, def);
-    }
-
-    pub fn lookup(&self, name: &str) -> Option<DefId> {
-        // Innermost wins (shadowing)
-        for rib in self.ribs.iter().rev() {
-            if let Some(&def) = rib.bindings.get(name) {
-                return Some(def);
-            }
-        }
-        None
-    }
+```json
+{
+  "benchmarks": [
+    {
+      "suite": "fib",
+      "writ_compile": { "mean": 0.0312, "stddev": 0.002, ... },
+      "writ_run":     { "mean": 0.0041, "stddev": 0.0001, ... },
+      "lua":          { "mean": 0.0018, "stddev": 0.00008, ... },
+      "squirrel":     { "mean": 0.0023, "stddev": 0.0001, ... },
+      "python":       { "mean": 0.0412, "stddev": 0.002, ... },
+      "node":         { "mean": 0.0891, "stddev": 0.003, ... },
+      "rust":         { "mean": 0.00012, "stddev": 0.000005, ... }
+    },
+    ...
+  ],
+  "meta": {
+    "date": "2026-03-20",
+    "runs": 10,
+    "warmup": 2,
+    "platform": "linux/amd64"
+  }
 }
 ```
 
-### Pattern 3: Hindley-Milner Constraint Unification for Local Type Inference
+All times are in seconds (hyperfine always uses seconds in JSON output, regardless of display format).
 
-**What:** Writ's type system requires explicit annotations on function parameters and return types but infers local variable types. The type checker uses a constraint-based approach: fresh type variables (`TyVar`) are introduced for unannotated locals; equality constraints are generated as expressions are checked; a union-find structure resolves constraints by unification.
+---
 
-**When to use:** Any `let x = expr;` with no annotation. Also for resolving which concrete type `Option::Some(x)` wraps when the outer context specifies an `Option<int>`. Full Hindley-Milner (polymorphic let) is not required — Writ does not have implicit polymorphism. The inference is local and rank-1.
+## Host-Side Runner Scripts
 
-**Trade-offs:** A full union-find implementation is ~50 lines. The alternative (bidirectional propagation without unification) breaks on cases like `let x = f(); let y: int = x;` where x's type is determined by downstream use. Unification handles this correctly.
+### run.sh (Linux/macOS)
 
-**Example:**
-```rust
-// typecheck/infer.rs
-pub struct InferCtx {
-    next_var: u32,
-    subst: Vec<Option<Ty>>,  // union-find: TyVar(i) → Ty or None
-}
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-impl InferCtx {
-    pub fn fresh_var(&mut self) -> Ty {
-        let v = self.next_var;
-        self.next_var += 1;
-        self.subst.push(None);
-        Ty::Var(v)
-    }
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+RESULTS_DIR="$REPO_ROOT/benchmark/results/$(date +%Y-%m-%d)"
 
-    pub fn unify(&mut self, a: Ty, b: Ty) -> Result<(), TypeError> {
-        let a = self.resolve(a);
-        let b = self.resolve(b);
-        match (a, b) {
-            (Ty::Var(i), t) | (t, Ty::Var(i)) => { self.subst[i as usize] = Some(t); Ok(()) }
-            (Ty::Int, Ty::Int) => Ok(()),
-            (Ty::Named(da), Ty::Named(db)) if da == db => Ok(()),
-            (a, b) => Err(TypeError::TypeMismatch { expected: a, found: b, span: ... }),
-        }
-    }
-}
+mkdir -p "$RESULTS_DIR"
+
+# Detect Docker or Podman
+if command -v docker &>/dev/null; then
+    CONTAINER_CMD=docker
+elif command -v podman &>/dev/null; then
+    CONTAINER_CMD=podman
+else
+    echo "error: neither docker nor podman found in PATH" >&2
+    exit 1
+fi
+
+# Build image
+echo "Building benchmark image..."
+"$CONTAINER_CMD" build -t writ-benchmark "$REPO_ROOT" \
+    -f "$SCRIPT_DIR/Dockerfile"
+
+# Run container, mount results dir
+echo "Running benchmarks..."
+"$CONTAINER_CMD" run --rm \
+    -v "$RESULTS_DIR:/results" \
+    -e "RESULTS_DIR=/results" \
+    -e "RUNS=${RUNS:-10}" \
+    writ-benchmark
+
+# Generate charts
+echo "Generating charts..."
+python3 "$REPO_ROOT/benchmark/chart_gen/generate.py" \
+    --input "$RESULTS_DIR/raw.json" \
+    --output "$RESULTS_DIR"
+
+echo "Done. Results in: $RESULTS_DIR"
 ```
 
-### Pattern 4: `CodegenCtx` as the Stateful Codegen Thread
+### run.ps1 (Windows PowerShell)
 
-**What:** The codegen phase threads a `CodegenCtx` through all emission functions. It holds the `ModuleBuilder`, a `DefId → MetadataToken` map (so that references to already-emitted declarations resolve to their token), a per-function `LinearRegisterAllocator`, and a `LabelMap` for forward branch patching.
+```powershell
+param(
+    [int]$Runs = 10,
+    [string]$ContainerCmd = ""
+)
 
-**When to use:** All codegen functions receive `&mut CodegenCtx`. The `ModuleBuilder` is never passed directly — all builder calls go through `CodegenCtx` methods that also update the token maps.
+$ErrorActionPreference = "Stop"
 
-**Trade-offs:** Matches the pattern used by `LoweringContext` in the lowering phase. Centralizing state in a context struct prevents codegen functions from needing 6 parameters. The risk is that `CodegenCtx` grows too large; subdivide into `FnCodegenCtx` (per-function state: register allocator, label map) nested inside `ModuleCodegenCtx` (cross-function state: builder, token maps).
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$RepoRoot  = Split-Path -Parent (Split-Path -Parent $ScriptDir)
+$Date      = Get-Date -Format "yyyy-MM-dd"
+$ResultsDir = Join-Path $RepoRoot "benchmark\results\$Date"
 
-**Example:**
-```rust
-// codegen/context.rs
-pub struct ModuleCodegenCtx {
-    pub builder: ModuleBuilder,
-    pub def_tokens: HashMap<DefId, MetadataToken>,  // resolved def → IL token
-    pub string_pool: HashMap<String, u32>,           // deduplicated string index
-}
+New-Item -ItemType Directory -Force -Path $ResultsDir | Out-Null
 
-pub struct FnCodegenCtx<'m> {
-    pub module: &'m mut ModuleCodegenCtx,
-    pub regs: LinearRegisterAllocator,
-    pub labels: LabelMap,
-    pub instructions: Vec<Instruction>,
-}
-
-impl FnCodegenCtx<'_> {
-    pub fn alloc_reg(&mut self) -> u16 { self.regs.alloc() }
-    pub fn emit(&mut self, instr: Instruction) { self.instructions.push(instr); }
-    pub fn define_label(&mut self, name: &str) { self.labels.define(name, self.instructions.len()); }
-    pub fn finish_method(self, name: &str, sig: &[u8], flags: u16) -> MetadataToken {
-        let body = MethodBody { code: encode_instructions(&self.instructions), ... };
-        self.module.builder.add_method(name, sig, flags, self.regs.count(), body)
+# Detect Docker or Podman
+if ($ContainerCmd -eq "") {
+    if (Get-Command docker -ErrorAction SilentlyContinue) {
+        $ContainerCmd = "docker"
+    } elseif (Get-Command podman -ErrorAction SilentlyContinue) {
+        $ContainerCmd = "podman"
+    } else {
+        Write-Error "Neither docker nor podman found in PATH"
+        exit 1
     }
 }
+
+# Docker requires Unix-style paths for volume mounts on Windows
+$ResultsMounted = $ResultsDir -replace '\\', '/' -replace '^([A-Z]):', { "/$($_.Groups[1].Value.ToLower())" }
+
+Write-Host "Building benchmark image..."
+& $ContainerCmd build -t writ-benchmark $RepoRoot -f "$ScriptDir\Dockerfile"
+
+Write-Host "Running benchmarks..."
+& $ContainerCmd run --rm `
+    -v "${ResultsMounted}:/results" `
+    -e "RESULTS_DIR=/results" `
+    -e "RUNS=$Runs" `
+    writ-benchmark
+
+Write-Host "Generating charts..."
+python "$RepoRoot\benchmark\chart_gen\generate.py" `
+    --input "$ResultsDir\raw.json" `
+    --output $ResultsDir
+
+Write-Host "Done. Results in: $ResultsDir"
 ```
+
+**Key decisions:**
+- Both scripts require only Docker or Podman — no other tooling.
+- Path normalization for Windows volume mounts is handled in the PowerShell script.
+- `RUNS` is configurable via environment variable (shell) or parameter (PowerShell) without editing the script.
+- Both scripts call `generate.py` after the container exits, so chart generation happens on the host (no need for Python inside the container).
+
+---
+
+## Chart Generation Pipeline
+
+### generate.py Design
+
+```python
+#!/usr/bin/env python3
+"""
+benchmark/chart_gen/generate.py
+
+Reads raw.json and produces:
+  - One SVG bar chart per benchmark suite (execution time, log scale)
+  - One SVG bar chart for Writ compile+run combined (absolute time)
+  - RESULTS.md with embedded chart links and a markdown table
+"""
+import json
+import argparse
+import os
+from datetime import date
+
+import pygal
+from pygal.style import CleanStyle
+
+LANGUAGES = ["writ_run", "lua", "squirrel", "python", "node", "rust"]
+LANGUAGE_LABELS = {
+    "writ_run":  "Writ (run)",
+    "lua":       "Lua 5.4",
+    "squirrel":  "Squirrel 3",
+    "python":    "Python 3",
+    "node":      "Node.js",
+    "rust":      "Rust (native)",
+}
+
+def ms(seconds: float) -> float:
+    return round(seconds * 1000, 3)
+
+def generate_chart(suite_name: str, data: dict, output_dir: str):
+    chart = pygal.Bar(style=CleanStyle, logarithmic=True,
+                      title=f"{suite_name} — execution time (ms, log scale)",
+                      y_title="ms", x_title="Language")
+    for lang in LANGUAGES:
+        if lang in data and data[lang]:
+            chart.add(LANGUAGE_LABELS[lang], [ms(data[lang]["mean"])])
+    chart.render_to_file(os.path.join(output_dir, "charts", f"{suite_name}.svg"))
+
+def generate_writ_compile_chart(benchmarks: list, output_dir: str):
+    chart = pygal.Bar(style=CleanStyle,
+                      title="Writ: compile time vs run time (ms)",
+                      y_title="ms")
+    chart.x_labels = [b["suite"] for b in benchmarks]
+    chart.add("Compile", [ms(b["writ_compile"]["mean"]) for b in benchmarks])
+    chart.add("Run",     [ms(b["writ_run"]["mean"])     for b in benchmarks])
+    chart.render_to_file(os.path.join(output_dir, "charts", "writ_compile_vs_run.svg"))
+
+def generate_markdown_table(benchmarks: list) -> str:
+    header = "| Suite | Writ (run) | Lua 5.4 | Squirrel 3 | Python 3 | Node.js | Rust |\n"
+    sep    = "|-------|------------|---------|------------|----------|---------|------|\n"
+    rows = []
+    for b in benchmarks:
+        def cell(lang):
+            if lang in b and b[lang]:
+                return f"{ms(b[lang]['mean']):.2f} ms"
+            return "—"
+        rows.append(
+            f"| {b['suite']} | {cell('writ_run')} | {cell('lua')} | "
+            f"{cell('squirrel')} | {cell('python')} | {cell('node')} | {cell('rust')} |"
+        )
+    return header + sep + "\n".join(rows)
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input",  required=True, help="Path to raw.json")
+    parser.add_argument("--output", required=True, help="Output directory")
+    args = parser.parse_args()
+
+    with open(args.input) as f:
+        data = json.load(f)
+
+    os.makedirs(os.path.join(args.output, "charts"), exist_ok=True)
+
+    for bench in data["benchmarks"]:
+        generate_chart(bench["suite"], bench, args.output)
+
+    generate_writ_compile_chart(data["benchmarks"], args.output)
+
+    table = generate_markdown_table(data["benchmarks"])
+
+    results_md = f"""# Benchmark Results
+
+Generated: {date.today().isoformat()}
+
+## Execution Time (ms, lower is better)
+
+{table}
+
+*All times are median of {data.get('meta', {}).get('runs', 10)} runs inside a Docker container on linux/amd64.*
+
+## Charts
+
+### Fibonacci (compute-heavy)
+![fib](charts/fib.svg)
+
+### String Processing
+![string_processing](charts/string_processing.svg)
+
+### Data Structures
+![data_structures](charts/data_structures.svg)
+
+### OOP/Dispatch
+![dispatch](charts/dispatch.svg)
+
+### Writ: Compile Time vs Run Time
+![writ_compile_vs_run](charts/writ_compile_vs_run.svg)
+"""
+
+    with open(os.path.join(args.output, "RESULTS.md"), "w") as f:
+        f.write(results_md)
+
+    print(f"Charts written to {os.path.join(args.output, 'charts')}/")
+    print(f"RESULTS.md written to {args.output}")
+
+if __name__ == "__main__":
+    main()
+```
+
+**Why pygal:** Pure Python, no system dependencies (matplotlib requires a display context or explicit Agg backend configuration), generates clean SVG files directly, installs with `pip install pygal`. The bar chart type and `logarithmic=True` mode are the right defaults for multi-language execution time comparison where Rust and Writ runtime will differ from Python by 10-100x.
+
+**Why log scale:** Without log scale, Rust native and Writ execution bars will be near-invisible next to Python and Node.js for compute-heavy benchmarks. Log scale keeps all bars legible.
+
+---
+
+## GitHub Actions Workflow
+
+```yaml
+# .github/workflows/benchmark.yml
+name: Benchmark
+
+on:
+  workflow_dispatch:        # manual trigger
+  schedule:
+    - cron: '0 3 * * 1'    # weekly, Monday 03:00 UTC
+
+permissions:
+  contents: write           # needed to commit results
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python (for chart generation)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install chart dependencies
+        run: pip install pygal
+
+      - name: Build benchmark image
+        run: |
+          docker build -t writ-benchmark . \
+            -f benchmark/runner/Dockerfile
+
+      - name: Run benchmarks
+        run: |
+          DATE=$(date +%Y-%m-%d)
+          mkdir -p benchmark/results/$DATE
+          docker run --rm \
+            -v "${{ github.workspace }}/benchmark/results/$DATE:/results" \
+            -e RESULTS_DIR=/results \
+            -e RUNS=10 \
+            writ-benchmark
+          echo "RESULTS_DATE=$DATE" >> $GITHUB_ENV
+
+      - name: Generate charts
+        run: |
+          python benchmark/chart_gen/generate.py \
+            --input  "benchmark/results/${{ env.RESULTS_DATE }}/raw.json" \
+            --output "benchmark/results/${{ env.RESULTS_DATE }}"
+
+      - name: Upload raw results as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-${{ env.RESULTS_DATE }}
+          path: benchmark/results/${{ env.RESULTS_DATE }}/
+
+      - name: Commit results to repo
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add benchmark/results/
+          git diff --cached --quiet || \
+            git commit -m "benchmark: results for ${{ env.RESULTS_DATE }}"
+          git push
+```
+
+**Design decisions:**
+- `workflow_dispatch` allows manual one-click runs from the GitHub UI.
+- `schedule` weekly cron keeps results fresh without burning CI minutes daily.
+- Python runs on the host runner (not inside Docker) for chart generation — simpler and faster than installing Python in the benchmark container.
+- Results are committed back to the repo so SVG charts can be embedded in `README.md` via relative paths. This is the pattern used by benchmark-action and most language benchmark repos.
+- `permissions: contents: write` is required for the commit step in post-2022 GitHub Actions security model.
+- No matrix strategy needed — all languages run inside the single Docker container in sequence, not as parallel jobs.
+
+---
 
 ## Data Flow
 
-### Full Pipeline Flow
+### Full Benchmark Run Flow
 
 ```
-Source text (.writ files)
+run.sh (host)
     |
     v
-writ-parser::parse()
+docker build (or podman build)
+    -> rust:1.85-slim: cargo build --release --bin writ
+    -> rust:1.85-slim: rustc -O cases/*/*.rs -> /bench/bin/*
+    -> ubuntu:24.04: apt-get lua5.4 squirrel3 python3 nodejs + hyperfine
+    -> copy writ binary, rust binaries, case files, bench_runner.sh
     |
     v
-Vec<Spanned<Item>>  (CST — preserves all syntax, has &str borrows)
+docker run -v $RESULTS_DIR:/results writ-benchmark
+    -> /bench/bench_runner.sh executes
+    -> for each suite in cases/:
+         hyperfine "writ compile ..."  -> writ_compile JSON
+         hyperfine "writ run ..."      -> writ_run JSON
+         hyperfine "lua5.4 ..."        -> lua JSON
+         hyperfine "squirrel ..."      -> squirrel JSON
+         hyperfine "python3 ..."       -> python JSON
+         hyperfine "node ..."          -> node JSON
+         hyperfine "/bench/bin/suite"  -> rust JSON
+         jq merges into raw.json
+    -> write /results/raw.json
     |
     v
-writ-compiler::lower()         [existing, unchanged]
-    |-- desugar T? → Option<T>
-    |-- lower dlg → fn
-    |-- lower entity → struct + impl + hooks
-    |-- lower operators → contract impls
+container exits; results available at $RESULTS_DIR/raw.json (host volume mount)
     |
     v
-writ-compiler::ast::Ast { items: Vec<AstDecl> }   (owned, no lifetimes)
+python3 generate.py --input raw.json --output $RESULTS_DIR
+    -> read benchmarks[] array
+    -> for each suite: pygal.Bar chart -> charts/suite.svg
+    -> pygal.Bar chart -> charts/writ_compile_vs_run.svg
+    -> markdown table -> RESULTS.md
     |
     v
-writ-compiler::resolve::resolve()                  [NEW]
-    |-- pass 1: collect top-level def names → DefMap
-    |-- pass 2: bind all Ident/Path refs → DefId
-    |-- resolve using-imports → namespace visibility sets
-    |-- detect undefined names, privacy violations, ambiguities
-    |
-    v
-NameResolved IR + DefMap + Vec<ResolveError>
-    |
-    (if errors: report and stop; otherwise continue)
-    |
-    v
-writ-compiler::typecheck::typecheck()              [NEW]
-    |-- assign explicit types from signatures and field decls
-    |-- infer local variable types (unification)
-    |-- check operand types, return types, contract impls
-    |-- resolve operator overloads via contract dispatch
-    |
-    v
-Typed IR + Vec<TypeError>
-    |
-    (if errors: report and stop; otherwise continue)
-    |
-    v
-writ-compiler::codegen::codegen()                  [NEW]
-    |-- emit TypeDef rows for structs, enums, entities, components
-    |-- emit FieldDef rows for all fields
-    |-- emit MethodDef + bodies for all functions
-    |-- emit ImplDef rows for contract implementations
-    |-- encode TypeRef blobs for all types
-    |-- allocate registers (linear, SSA-style)
-    |-- patch forward branch labels
-    |-- call ModuleBuilder::build() → Module
-    |
-    v
-writ_module::Module
-    |
-    v
-writ-cli `compile` subcommand writes .writil binary
-    |
-    v
-writ-runtime Domain::load(module) → runs in VM
+$RESULTS_DIR/
+    raw.json
+    RESULTS.md
+    charts/
+        fib.svg
+        string_processing.svg
+        data_structures.svg
+        dispatch.svg
+        writ_compile_vs_run.svg
 ```
 
-### Key Data Flows
+### Integration with Existing writ-cli
 
-1. **`DefId` as the cross-phase currency.** After name resolution, all `String` names are replaced by `DefId` indices into the `DefMap`. Type checking and codegen never do string-based lookup — they use `DefId` to retrieve type information and emit `MetadataToken` references.
+The `writ` binary is invoked as two separate commands per suite:
 
-2. **`DefMap → MetadataToken` mapping in codegen.** Before emitting any method bodies, codegen does a first pass over all declarations to emit `TypeDef`, `FieldDef`, `MethodDef`, `ContractDef` rows (skeleton pass). This assigns `MetadataToken`s to every definition. Body emission then cross-references these tokens. This two-sub-pass structure within codegen mirrors the two-pass pattern of name resolution.
+1. `writ compile <input.writ> -o /tmp/<suite>.writc` — writes a `.writc` binary to `/tmp`
+2. `writ run /tmp/<suite>.writc` — runs the compiled binary via the VM
 
-3. **`Ty → TypeRef blob` encoding.** The `codegen/type_sig.rs` module converts the type checker's `Ty` enum into the binary TypeRef blob format required by `writ-module`. Primitive types become their `0x00`–`0x04` tags; named types emit `0x10` + `TypeDef` index; generic instantiations emit `0x11` + `TypeSpec` index; arrays emit `0x20` + element TypeRef. This is a pure function: `fn encode_ty(ty: &Ty, ctx: &mut ModuleCodegenCtx) -> Vec<u8>`.
+This matches the existing `cmd_compile` and `cmd_run` subcommands exactly. No changes to `writ-cli` are needed. The benchmark treats `writ` as a black-box CLI tool — the same way a user would invoke it.
 
-4. **Error accumulation without halting.** Each phase follows the existing `LoweringContext` error accumulation pattern: errors are collected into a `Vec<PhaseError>` and the phase continues on best-effort. The phase boundary (resolve → typecheck → codegen) does halt if the preceding phase produced errors, since a downstream phase cannot meaningfully operate on an IR with unresolved or ill-typed nodes.
+The Dockerfile's build stage uses `cargo build --release --bin writ` which produces `target/release/writ`. This is copied to `/usr/local/bin/writ` in the final image.
 
-5. **`using` imports resolved before body passes.** The namespace resolution pass (part of resolve pass 1) builds a `NamespaceMap` that flattens all `using` declarations into a set of visible `pub` `DefId`s per scope. Body resolution (pass 2) queries this map for unqualified names, which is O(1) per lookup after the map is built.
+**Important:** The Dockerfile context is the repository root (`docker build . -f benchmark/runner/Dockerfile`) so the full Cargo workspace is available to the `writ-builder` stage.
 
-## Integration Points
+---
 
-### Existing Crate Changes
+## Architectural Patterns
 
-| Crate | Change | Rationale |
-|-------|--------|-----------|
-| `writ-compiler/Cargo.toml` | Add `writ-module = { path = "../writ-module" }` dependency | Codegen phase uses `ModuleBuilder` |
-| `writ-compiler/src/lib.rs` | Add `pub mod resolve`, `pub mod typecheck`, `pub mod codegen`; add `pub fn compile(ast: Ast) -> Result<Module, CompileErrors>` | New phases are new pub modules; `compile()` is the entry point |
-| `writ-cli/Cargo.toml` | Add `writ-compiler = { path = "../writ-compiler" }` dependency | CLI needs to call `writ-compiler::compile()` |
-| `writ-cli/src/main.rs` | Add `compile` subcommand | Drives source → parse → lower → compile pipeline |
-| `writ-parser` | None | No changes needed |
-| `writ-module` | None | Consumed as-is |
-| `writ-runtime` | None | Out of scope for this milestone |
-| `writ-assembler` | None | Out of scope |
+### Pattern 1: Two-Stage Writ Measurement
 
-### New Module Boundaries
+**What:** Run `writ compile` and `writ run` as separate hyperfine invocations. Record both times in the JSON. Display `writ_run` in the language comparison chart and `writ_compile` in a separate compile-time chart.
 
-| Boundary | Communication | Notes |
-|----------|---------------|-------|
-| `lower` → `resolve` | `lower` produces `Ast`; `resolve` consumes it | `Ast` is already the boundary type; no change |
-| `resolve` → `typecheck` | `resolve` produces `NameResolved + DefMap`; `typecheck` consumes both | `NameResolved` and `DefMap` are new types defined in `resolve/` |
-| `typecheck` → `codegen` | `typecheck` produces `Typed + DefMap`; `codegen` consumes both | `Typed` is a new type defined in `typecheck/`; `DefMap` passes through unchanged |
-| `codegen` → `writ-module` | `codegen` calls `writ_module::ModuleBuilder` methods; returns `writ_module::Module` | One-way: codegen depends on `writ-module`, not vice versa |
+**When to use:** Always. Mixing compile and run time would make Writ appear slower than it is at runtime and would hide the compile cost, which is a meaningful metric for a scripting language.
 
-### Build Order
+**Trade-offs:** Requires the `.writc` file to persist between the two measurements. Use `/tmp/` — it is always writable inside a Docker container. The first hyperfine call produces the `.writc`; the second reads it.
 
-The dependency graph within the milestone forces this implementation order:
+### Pattern 2: Pre-Compiled Rust Benchmark Binaries
 
-```
-Phase 1 — resolve/ (no new crate dependency)
-  resolve/def.rs         (DefId, DefKind, DefMap — no deps other than ast/)
-  resolve/scope.rs       (Rib, SymbolTable — uses def.rs)
-  resolve/namespace.rs   (NamespaceMap — uses def.rs + ast/ namespaces)
-  resolve/ir.rs          (NameResolved IR — uses def.rs + ast/ for structure)
-  resolve/error.rs       (ResolveError — thiserror, SimpleSpan)
-  resolve/mod.rs         (resolve() — orchestrates passes using all above)
+**What:** Compile Rust benchmark sources in a Docker builder stage. The final image contains only the compiled binaries, not `rustc`. The benchmark runner invokes `/bench/bin/<suite>` directly.
 
-Phase 2 — typecheck/ (depends on resolve/)
-  typecheck/ty.rs        (Ty enum — uses DefId from resolve/def.rs)
-  typecheck/infer.rs     (InferCtx, union-find — uses ty.rs)
-  typecheck/ir.rs        (Typed IR — adds Ty to NameResolved nodes)
-  typecheck/env.rs       (TypeEnv — local variable → Ty map)
-  typecheck/error.rs     (TypeError — thiserror, Ty, SimpleSpan)
-  typecheck/contract.rs  (contract impl check — uses DefMap + Ty)
-  typecheck/coerce.rs    (implicit coercions — uses InferCtx)
-  typecheck/check.rs     (check_expr, check_stmt — uses all above)
-  typecheck/mod.rs       (typecheck() — orchestrates using all above)
+**When to use:** Always for Rust. Running `rustc` inside the benchmark container would take 30+ seconds per case and skew all time comparisons.
 
-Phase 3 — codegen/ (depends on typecheck/ and writ-module)
-  codegen/register.rs    (LinearRegisterAllocator — no external deps)
-  codegen/label.rs       (LabelMap — no external deps)
-  codegen/type_sig.rs    (Ty → TypeRef blob — uses ty.rs + writ-module table ids)
-  codegen/error.rs       (CodegenError — thiserror)
-  codegen/context.rs     (ModuleCodegenCtx, FnCodegenCtx — uses ModuleBuilder)
-  codegen/expr.rs        (emit_expr — uses context + type_sig + register)
-  codegen/stmt.rs        (emit_stmt — uses expr + context)
-  codegen/decl.rs        (emit_fn, emit_struct, emit_enum, emit_entity — uses stmt + context)
-  codegen/mod.rs         (codegen() — skeleton pass then body pass)
+**Trade-offs:** Rust binaries are specific to the container's architecture (linux/amd64). CI runs on ubuntu-24.04 which is linux/amd64 — this is fine. If arm64 CI runners are used, the builder stage must use `rust:1.85-slim` for the matching architecture.
 
-Phase 4 — wire up writ-cli
-  writ-cli/src/main.rs   (compile subcommand: parse → lower → resolve → typecheck → codegen → write)
-```
+### Pattern 3: Host-Side Chart Generation
 
-**Rationale for keeping in one crate:** The resolver needs to import `ast::AstDecl`, `ast::AstExpr`, etc. The type checker needs to import `resolve::DefId` and `resolve::NameResolved`. The codegen needs to import `typecheck::Typed` and `typecheck::Ty`. These are all natural intra-crate module imports. Splitting into three crates would make `writ-compiler::ast` a public dependency of two downstream crates, which means `ast` itself would need to live in its own crate — creating at minimum a `writ-ast`, `writ-resolver`, `writ-typeck`, `writ-codegen` split that adds complexity with no benefit at this project scale.
+**What:** The benchmark container only produces `raw.json`. Chart generation (`generate.py`) runs on the host after the container exits, reading the mounted `raw.json` file.
+
+**When to use:** Always. This separates the benchmark measurement environment (Linux container with fixed runtimes) from the visualization tooling (Python + pygal on any OS). It also means charts can be regenerated from any historical `raw.json` without re-running benchmarks.
+
+**Trade-offs:** The host must have Python 3 and pygal installed. In CI, this is handled by `setup-python` and `pip install pygal` steps before the chart generation step.
+
+### Pattern 4: JSON as Canonical Results Format
+
+**What:** `raw.json` is the single source of truth. `RESULTS.md` and SVG charts are derived outputs that can be regenerated at any time. Only `raw.json` needs to be preserved for historical analysis.
+
+**When to use:** Always. Storing derived SVG files in the repo as well allows README embedding and GitHub rendering, but they should be understood as derived artifacts.
+
+**Trade-offs:** SVG files are ~10–20 KB each. Storing them in git is reasonable for a benchmark repo. If the repo size becomes a concern, switch to git-lfs for the SVG files.
+
+---
 
 ## Anti-Patterns
 
-### Anti-Pattern 1: Mutating the Ast In-Place Across Phases
+### Anti-Pattern 1: Running Rust Compilation Inside the Benchmark Container
 
-**What people do:** Instead of defining `NameResolved` and `Typed` as separate IR types, annotate `AstExpr` nodes with `Option<DefId>` and `Option<Ty>` fields and fill them in during the respective passes.
+**What people do:** Include `rustc` in the final Docker image and compile Rust benchmark sources at benchmark time, timing the compile-and-run together.
 
-**Why it's wrong:** The AST nodes' `Option<DefId>` fields are `None` during lowering, making it impossible to distinguish "not yet resolved" from "genuinely missing." After resolution, `None` could mean either "optional in the language" or "resolution failed." This ambiguity leaks into type checking. It also breaks the error-accumulation model: if resolution stops partway, partially-resolved nodes have `Some` and `None` fields mixed, which confuses downstream passes.
+**Why it's wrong:** Rust compilation takes 10–60 seconds for even trivial programs. This would make Rust appear 100-1000x slower than every other language and would measure the compiler, not the runtime.
 
-**Do this instead:** Define `NameResolved` and `Typed` as distinct IR types where every identifier slot is a `DefId` (not `Option<DefId>`) and every expression carries a `Ty`. Conversion is explicit and testable in isolation.
+**Do this instead:** Pre-compile Rust benchmarks in a multi-stage Docker build. The benchmark runner invokes the pre-built binary directly. If Rust compile time is interesting to measure, time it separately and report it in the same way Writ compile time is reported.
 
-### Anti-Pattern 2: Calling `ModuleBuilder` Directly from `typecheck/`
+### Anti-Pattern 2: Measuring Startup + Runtime Together Without Distinction
 
-**What people do:** Start emitting IL during type checking to avoid a separate codegen pass. "Why not emit instructions as soon as we know the type of each expression?"
+**What people do:** Run all languages through the same single hyperfine invocation measuring total wall time, conflating JVM/Node.js startup overhead with actual computation.
 
-**Why it's wrong:** Type checking is a constraint-solving process. A type variable introduced at expression X may only be resolved after seeing expression Y, which is downstream. If codegen is interleaved, X's instructions must be emitted before X's type is known — requiring placeholder registers or backpatching at the type level, not just the label level. The separate `Typed` IR guarantees all types are known before any instruction is emitted.
+**Why it's wrong:** Node.js has a ~90ms startup overhead that dominates measurements for fast benchmarks. Squirrel and Lua have <5ms startup. Conflating startup and compute gives a misleading picture for short benchmarks.
 
-**Do this instead:** Type checking produces a fully-annotated `Typed` IR where every expression node carries its resolved `Ty`. Codegen then operates on this IR without needing to perform any type inference.
+**Do this instead:** For the benchmark cases, choose workloads heavy enough that startup overhead is <10% of total time (e.g., Fibonacci(40), not Fibonacci(10)). Document the benchmark parameters so readers understand what is being measured. If startup time is itself a metric of interest, measure it explicitly with a trivial program (print "hello") as a separate suite.
 
-### Anti-Pattern 3: Namespace Resolution as a String Table
+### Anti-Pattern 3: Pinning Specific hyperfine Version in apt
 
-**What people do:** Build a `HashMap<String, DefId>` at the global level and resolve all names by direct string lookup.
+**What people do:** Use `apt-get install hyperfine` assuming it is packaged in Ubuntu 24.04.
 
-**Why it's wrong:** Writ has block namespaces, `using`-scoped imports, file-local visibility, and shadow bindings in local scopes. A flat global map cannot represent any of these. A name `Guard` resolves to different `DefId`s in different scopes depending on `using` declarations and local bindings.
+**Why it's wrong:** hyperfine is not in Ubuntu's default apt repositories. It must be installed from GitHub Releases as a `.deb`. Installing via apt will fail with "package not found."
 
-**Do this instead:** The `SymbolTable` rib stack handles local scoping; the `NamespaceMap` handles `pub` cross-namespace visibility; the two are queried in order (rib stack first, then namespace map for unqualified names, then error on not found). The `DefMap` is the flat `DefId → declaration info` table, not a name lookup table.
+**Do this instead:** Download the `.deb` from the official hyperfine GitHub releases page. Pin the version in the Dockerfile so the benchmark is reproducible. The Dockerfile shown above downloads `hyperfine_1.18.0_amd64.deb` from GitHub Releases.
 
-### Anti-Pattern 4: One Register Per Writ Variable
+### Anti-Pattern 4: Committing Raw JSON and SVGs in a Flat results/ Directory
 
-**What people do:** Assign one register to each `let` binding, allocating a fixed register at the `Let` statement point and reusing it throughout the function.
+**What people do:** Write all benchmark output to `benchmark/results/raw.json` and overwrite it on each run.
 
-**Why it's wrong:** The IL spec's registers are abstract — there is no spilling, no register pressure, no calling convention register constraints. SSA-style "one fresh register per value" is simpler and correct. It produces more registers (all within the `u16` range; 65535 max), but the runtime allocates storage from type metadata regardless. The assembler already uses this model implicitly (each `.reg` directive is a flat list).
+**Why it's wrong:** Overwriting the file on each run destroys historical data. `git diff` will show the entire JSON file changed every time, making it hard to see trends.
 
-**Do this instead:** `LinearRegisterAllocator` simply increments a counter on each `alloc()` call. A `let x = expr` allocates a register for `expr`, then that register IS `x`'s register for the rest of the function. No reuse tracking needed for the reference implementation.
+**Do this instead:** Use dated subdirectories (`benchmark/results/YYYY-MM-DD/`). Each run produces a self-contained directory. Historical comparison is trivial: `diff benchmark/results/2026-03-01/raw.json benchmark/results/2026-03-20/raw.json`.
 
-### Anti-Pattern 5: Adding `writ-module` as a Dependency of `writ-parser` or `writ-runtime` Dependency on `writ-compiler`
+### Anti-Pattern 5: Using PowerShell for the Inside-Container Script
 
-**What people do:** "The CLI needs to parse and compile, so let's put everything in `writ-cli`'s deps." This leads to `writ-cli` → `writ-compiler` → `writ-module` → `writ-runtime` forming a chain where runtime is pulled into the compiler.
+**What people do:** Write a single unified script that works on both Windows and Linux.
 
-**Why it's wrong:** `writ-compiler` must never depend on `writ-runtime`. The compiler backend emits IL; it does not execute it. If `writ-runtime` is in the compiler's dependency tree, a change to the VM forces recompilation of the compiler even when the language semantics haven't changed.
+**Why it's wrong:** The benchmark container is Linux-only (ubuntu:24.04). PowerShell inside Linux containers requires installing `powershell` which adds ~300 MB to the image and is completely unnecessary.
 
-**Do this instead:** `writ-compiler` depends on `writ-module` only (the pure data layer). `writ-runtime` depends on `writ-module` only. `writ-cli` depends on all three: parser, compiler, module, runtime, assembler. The diamond dependency on `writ-module` is fine in Cargo — it is a pure data crate with no global state.
+**Do this instead:** `bench_runner.sh` is pure bash and runs inside the container. `run.ps1` is the Windows host-side launcher only — it calls `docker run` which invokes `bench_runner.sh` inside Linux. The separation is clean: PowerShell on the host, bash inside the container.
 
-## Scalability Considerations
+---
 
-| Concern | Reference Impl (v3.0) | If it becomes a bottleneck |
-|---------|----------------------|---------------------------|
-| Name resolution performance | Two-pass traversal, O(n) in declaration count | Add fingerprinting to skip unchanged files (incremental) |
-| Type inference scope | Local, rank-1, no implicit polymorphism — deliberately limited | Full HM polymorphism if the spec adds it later |
-| Register count | Linear allocation, no reuse — may produce many registers per function | Add liveness-based register coalescing in a future pass |
-| Codegen correctness | No optimization, direct emission | Add a peephole optimizer phase between `Typed` and `Module` |
-| Multi-file compilation | Not scoped for v3.0; single-file or pre-merged AST assumed | Add a module driver that parses all .writ files, merges DefMaps across files |
+## Integration Points with Existing Writ Toolchain
+
+### New Components
+
+| Component | Location | Status |
+|-----------|----------|--------|
+| `benchmark/cases/` | New top-level directory | New |
+| `benchmark/runner/Dockerfile` | Docker multi-stage build | New |
+| `benchmark/runner/bench_runner.sh` | In-container orchestrator | New |
+| `benchmark/runner/run.sh` | Host entry (Linux/macOS) | New |
+| `benchmark/runner/run.ps1` | Host entry (Windows) | New |
+| `benchmark/chart_gen/generate.py` | Chart generation | New |
+| `benchmark/chart_gen/requirements.txt` | `pygal` | New |
+| `benchmark/results/` | Output directory | New |
+| `.github/workflows/benchmark.yml` | CI workflow | New |
+
+### Existing Components — No Changes Required
+
+| Component | How Benchmark Uses It | Changes Needed |
+|-----------|----------------------|----------------|
+| `writ-cli` | `writ compile` + `writ run` invoked as black-box CLI | None |
+| `Cargo.toml` | `cargo build --release --bin writ` in Dockerfile builder stage | None |
+| `scripts/rebuild-writ.sh` | Not used by benchmark; Dockerfile handles its own build | None |
+
+### Build Order for Implementation
+
+```
+Phase 1: Benchmark case source files
+  Deliverable: cases/fib/, cases/string_processing/, cases/data_structures/, cases/dispatch/
+  Each with .writ .lua .nut .py .js .rs source files
+  Dependency: None (pure source files; writ syntax must be valid)
+  Verify: writ compile cases/fib/fib.writ succeeds on local build
+
+Phase 2: Dockerfile + bench_runner.sh
+  Deliverable: runner/Dockerfile builds successfully; bench_runner.sh runs inside container
+  Dependency: Phase 1 cases; writ-cli builds cleanly (already true)
+  Verify: docker build -t writ-benchmark . && docker run --rm writ-benchmark
+
+Phase 3: Host runner scripts (run.sh + run.ps1)
+  Deliverable: One command produces raw.json in benchmark/results/YYYY-MM-DD/
+  Dependency: Phase 2 Docker image
+  Verify: ./benchmark/runner/run.sh produces benchmark/results/2026-03-20/raw.json
+
+Phase 4: Chart generation (generate.py)
+  Deliverable: raw.json -> SVG charts + RESULTS.md
+  Dependency: Phase 3 raw.json; pygal installed
+  Verify: python benchmark/chart_gen/generate.py --input raw.json --output /tmp/test
+
+Phase 5: GitHub Actions workflow
+  Deliverable: .github/workflows/benchmark.yml; manual trigger produces committed results
+  Dependency: Phases 1-4 all working
+  Verify: workflow_dispatch run succeeds; results committed to repo
+```
+
+---
+
+## Scaling Considerations
+
+| Scale | Architecture Adjustments |
+|-------|--------------------------|
+| 4 suites, 6 languages (current) | Current design is sufficient; single container, sequential runs |
+| 10+ suites | Consider parallelizing hyperfine runs inside the container using `&` and `wait`; group by suite |
+| Adding more languages | Add apt-get line in Dockerfile and a new hyperfine invocation in bench_runner.sh; add to LANGUAGES list in generate.py |
+| Per-commit benchmarks | Change schedule trigger to `on: push: branches: [master]`; add regression detection by comparing new `mean` to previous run's `mean` |
+
+---
 
 ## Sources
 
-- Writ Language Specification §5 (type system), §21 (scoping rules), §23 (modules/namespaces), §28 (lowering reference) — HIGH confidence (authoritative)
-- Writ IL Specification §2.15 (IL type system: TypeRef blob encoding) — HIGH confidence (authoritative)
-- Existing `writ-compiler` source (`ast/`, `lower/`, `lower/context.rs`) — HIGH confidence (codebase)
-- Existing `writ-module` source (`builder.rs`, `tables.rs`, `instruction.rs`) — HIGH confidence (codebase)
-- rustc-dev-guide: Overview, HIR, Name Resolution, Type Inference — MEDIUM confidence (pattern reference; rustc is far larger but the rib-stack and HM patterns are standard)
-- rustc-dev-guide: THIR (Typed HIR) — MEDIUM confidence (confirms the "produce fully-typed IR before codegen" pattern)
-- Standard compiler literature: Hindley-Milner two-phase (constraint gen + unification) — HIGH confidence (textbook)
+- Codebase inspection: `writ-cli/src/main.rs`, `writ-cli/src/commands/compile.rs`, `writ-cli/src/commands/run.rs` (direct read)
+- hyperfine JSON schema: [sharkdp/hyperfine README](https://github.com/sharkdp/hyperfine) + [marcpaterno/hyperfiner](https://rdrr.io/github/marcpaterno/hyperfiner/man/read_hyperfine_json.html) (HIGH confidence — schema verified against multiple sources)
+- Squirrel interpreter binary name and `.nut` extension: [Ubuntu Manpage: squirrel](https://manpages.ubuntu.com/manpages/jammy/man1/squirrel.1.html) (HIGH confidence — official Ubuntu docs)
+- Squirrel apt package: `squirrel3` — [Ubuntu Packages: squirrel3](https://packages.ubuntu.com/search?keywords=squirrel3) (HIGH confidence)
+- Lua 5.4 apt package: `lua5.4`, binary `lua5.4` — [Ubuntu launchpad](https://launchpad.net/ubuntu/+source/lua5.4) (HIGH confidence)
+- hyperfine not in Ubuntu apt; install from GitHub Releases: verified by checking Ubuntu 24.04 package index (MEDIUM confidence — not directly verified; no apt package found in search results, consistent with known distribution)
+- pygal for headless SVG: [pygal PyPI](https://pypi.org/project/pygal/) — no GUI dependency, pure Python (HIGH confidence)
+- Docker multi-stage builds: [Docker Docs: Multi-stage builds](https://docs.docker.com/build/building/multi-stage/) (HIGH confidence)
+- GitHub Actions permissions for commit: [GitHub Actions docs](https://docs.github.com/en/actions/using-workflows/workflow-syntax-for-github-actions#permissions) (HIGH confidence)
+- Docker/Podman detection pattern (command -v docker || command -v podman): standard shell practice (HIGH confidence)
+- kostya/benchmarks reference suite architecture: [github.com/kostya/benchmarks](https://github.com/kostya/benchmarks) (MEDIUM confidence — inspected via WebFetch)
 
 ---
-*Architecture research for: Writ v3.0 — name resolution, type checking, IL codegen*
-*Researched: 2026-03-02*
+*Architecture research for: Writ v7.0 Cross-Language Benchmark Suite*
+*Researched: 2026-03-20*

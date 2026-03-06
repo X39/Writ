@@ -1,9 +1,13 @@
 use std::collections::HashMap;
 
 use writ_module::module::MethodBody;
+use writ_module::tables::TypeDefKind;
 use writ_module::{Instruction, MetadataToken, ModuleBuilder, Module};
 
-use crate::ast::*;
+use crate::ast::{
+    AsmModule, AsmMethod, AsmMethodSig, AsmParam, AsmStatement,
+    AsmOperand, AsmTypeRef, AsmMethodRef, AsmFieldRef, AsmTypeKind,
+};
 use crate::error::AssembleError;
 
 /// Name-resolution context built during the first pass.
@@ -51,10 +55,11 @@ pub fn assemble_module(ast: AsmModule) -> Result<Module, Vec<AssembleError>> {
     // 2. Types and their fields
     for ty in &ast.types {
         let kind = match ty.kind {
-            AsmTypeKind::Struct => 0,
-            AsmTypeKind::Enum => 1,
-            AsmTypeKind::Entity => 2,
-            AsmTypeKind::Component => 3,
+            AsmTypeKind::Struct => TypeDefKind::Struct,
+            AsmTypeKind::Enum => TypeDefKind::Enum,
+            AsmTypeKind::Entity => TypeDefKind::Entity,
+            AsmTypeKind::Component => TypeDefKind::Component,
+            AsmTypeKind::Class => TypeDefKind::Class,
         };
         let type_tok = builder.add_type_def(&ty.name, "", kind, ty.flags);
         ctx.type_map.insert(ty.name.clone(), type_tok);
@@ -408,7 +413,7 @@ fn encode_method_sig_from_params(
 
 /// Map a text mnemonic + operands to an Instruction variant.
 ///
-/// Handles all 91 opcodes. Mnemonics are matched case-insensitively.
+/// Handles all 94 opcodes. Mnemonics are matched case-insensitively.
 /// For branch instructions, label references produce a placeholder offset of 0.
 fn map_instruction(
     mnemonic: &str,
@@ -466,11 +471,10 @@ fn map_instruction(
             Some(AsmOperand::IntLit(v)) => Ok(*v as u32),
             Some(AsmOperand::Token(t)) => Ok(*t),
             Some(AsmOperand::TypeRef(tr)) => {
-                if let AsmTypeRef::Named(name) = tr {
-                    if let Some(tok) = ctx.type_map.get(name) {
+                if let AsmTypeRef::Named(name) = tr
+                    && let Some(tok) = ctx.type_map.get(name) {
                         return Ok(tok.0);
                     }
-                }
                 Ok(0)
             }
             Some(AsmOperand::MethodRef(mr)) => {
@@ -601,11 +605,11 @@ fn map_instruction(
         "GET_FIELD" => Ok(Instruction::GetField {
             r_dst: reg(0)?,
             r_obj: reg(1)?,
-            field_idx: token_val(2)?,
+            field_idx: int_lit(2)? as u32,
         }),
         "SET_FIELD" => Ok(Instruction::SetField {
             r_obj: reg(0)?,
-            field_idx: token_val(1)?,
+            field_idx: int_lit(1)? as u32,
             r_val: reg(2)?,
         }),
         "SPAWN_ENTITY" => Ok(Instruction::SpawnEntity { r_dst: reg(0)?, type_idx: token_val(1)? }),
@@ -706,6 +710,9 @@ fn map_instruction(
             r_src: reg(1)?,
             target_type: token_val(2)?,
         }),
+        "S2I" => Ok(Instruction::S2i { r_dst: reg(0)?, r_src: reg(1)? }),
+        "S2F" => Ok(Instruction::S2f { r_dst: reg(0)?, r_src: reg(1)? }),
+        "S2B" => Ok(Instruction::S2b { r_dst: reg(0)?, r_src: reg(1)? }),
 
         // ── 0x0E Strings ──
         "STR_CONCAT" => Ok(Instruction::StrConcat { r_dst: reg(0)?, r_a: reg(1)?, r_b: reg(2)? }),

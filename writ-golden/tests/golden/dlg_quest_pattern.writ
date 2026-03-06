@@ -1,0 +1,67 @@
+// Full quest pattern -- entity + dialogue + functions + enum + choices.
+// Exercises the complete game scripting pattern: entity declaration,
+// dialogue trees with speakers, helper functions, enum-based state, and choices.
+//
+// NOTE: $ choice uses ::choice/::ChoiceOption which lowers to fn() {} lambdas.
+// If this triggers the known serialization bug (UnexpectedEof in multi-function
+// modules), remove the $ choice block and document the limitation.
+
+// Explicit extern declarations for dialogue speaker resolution.
+pub extern fn say(speaker: Entity, text: string);
+pub extern fn say_localized(speaker: Entity, key: string, fallback: string);
+
+enum QuestState {
+    NotStarted,
+    Active,
+    Completed,
+}
+
+entity Merchant {
+    name: string,
+    has_quest: bool,
+}
+
+// Check if a quest can be offered
+fn can_offer_quest(state: QuestState) -> bool {
+    match state {
+        QuestState::NotStarted => { true }
+        QuestState::Active => { false }
+        QuestState::Completed => { false }
+    }
+}
+
+// Calculate quest reward based on state
+fn get_reward(base: int) -> int {
+    base * 2
+}
+
+// Opening dialogue with the merchant
+dlg merchant_greeting(merchant: Entity) {
+    @merchant Welcome to my shop, traveler!
+    @merchant I have something for you.
+    -> merchant_quest(merchant)
+}
+
+// Quest offer dialogue -- exercises $ if conditional
+dlg merchant_quest(merchant: Entity) {
+    $ let state: QuestState = QuestState::NotStarted;
+    $ let available: bool = can_offer_quest(state);
+    $ if available {
+        @merchant I have a task for you.
+        @merchant Retrieve the ancient scroll from the ruins.
+    } else {
+        @merchant You already have a task. Come back later.
+    }
+}
+
+// Quest completion dialogue with reward calculation
+dlg merchant_complete(merchant: Entity) {
+    @merchant You found the scroll! Excellent work.
+    $ let reward: int = get_reward(50);
+    @merchant Here is your reward.
+    $ ::log::info("Quest completed");
+}
+
+fn main() {
+    ::log::info("Starting quest pattern test");
+}

@@ -1,0 +1,8 @@
+pub fn greet(name: string) -> string {
+    name
+}
+
+fn main() {
+    let msg: string = greet("World");
+    ::log::info(msg);
+}

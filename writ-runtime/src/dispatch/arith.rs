@@ -20,7 +20,7 @@ pub(super) fn exec_crash(ctx: &mut ExecContext<'_>, r_msg: u16) -> ExecutionResu
 
 pub(super) fn exec_mov(ctx: &mut ExecContext<'_>, r_dst: u16, r_src: u16) -> ExecutionResult {
     let frame = ctx.task.call_stack.last_mut().unwrap();
-    frame.registers[r_dst as usize] = frame.registers[r_src as usize];
+    frame.registers[r_dst as usize] = frame.registers[r_src as usize].clone();
     ExecutionResult::Continue
 }
 
@@ -360,7 +360,7 @@ pub(super) fn exec_b2s(ctx: &mut ExecContext<'_>, r_dst: u16, r_src: u16) -> Exe
 pub(super) fn exec_convert(ctx: &mut ExecContext<'_>, r_dst: u16, r_src: u16) -> ExecutionResult {
     // Placeholder: just copy value (full conversion needs type system from Phase 19)
     let frame = ctx.task.call_stack.last_mut().unwrap();
-    frame.registers[r_dst as usize] = frame.registers[r_src as usize];
+    frame.registers[r_dst as usize] = frame.registers[r_src as usize].clone();
     ExecutionResult::Continue
 }
 
@@ -416,11 +416,60 @@ pub(super) fn exec_str_len(ctx: &mut ExecContext<'_>, r_dst: u16, r_str: u16) ->
     ExecutionResult::Continue
 }
 
+pub(super) fn exec_s2i(ctx: &mut ExecContext<'_>, r_dst: u16, r_src: u16) -> ExecutionResult {
+    let frame = ctx.task.call_stack.last().unwrap();
+    let href = helpers::extract_ref(&frame.registers[r_src as usize]);
+    let s = match ctx.heap.read_string(href) {
+        Ok(s) => s.to_string(),
+        Err(_) => return ExecutionResult::Crash("S2i: source is not a string".into()),
+    };
+    let v: i64 = match s.trim().parse() {
+        Ok(n) => n,
+        Err(_) => return ExecutionResult::Crash(format!("S2i: cannot parse '{}' as int", s)),
+    };
+    let frame = ctx.task.call_stack.last_mut().unwrap();
+    frame.registers[r_dst as usize] = Value::Int(v);
+    ExecutionResult::Continue
+}
+
+pub(super) fn exec_s2f(ctx: &mut ExecContext<'_>, r_dst: u16, r_src: u16) -> ExecutionResult {
+    let frame = ctx.task.call_stack.last().unwrap();
+    let href = helpers::extract_ref(&frame.registers[r_src as usize]);
+    let s = match ctx.heap.read_string(href) {
+        Ok(s) => s.to_string(),
+        Err(_) => return ExecutionResult::Crash("S2f: source is not a string".into()),
+    };
+    let v: f64 = match s.trim().parse() {
+        Ok(n) => n,
+        Err(_) => return ExecutionResult::Crash(format!("S2f: cannot parse '{}' as float", s)),
+    };
+    let frame = ctx.task.call_stack.last_mut().unwrap();
+    frame.registers[r_dst as usize] = Value::Float(v);
+    ExecutionResult::Continue
+}
+
+pub(super) fn exec_s2b(ctx: &mut ExecContext<'_>, r_dst: u16, r_src: u16) -> ExecutionResult {
+    let frame = ctx.task.call_stack.last().unwrap();
+    let href = helpers::extract_ref(&frame.registers[r_src as usize]);
+    let s = match ctx.heap.read_string(href) {
+        Ok(s) => s.to_string(),
+        Err(_) => return ExecutionResult::Crash("S2b: source is not a string".into()),
+    };
+    let v: bool = match s.trim() {
+        "true" => true,
+        "false" => false,
+        other => return ExecutionResult::Crash(format!("S2b: cannot parse '{}' as bool", other)),
+    };
+    let frame = ctx.task.call_stack.last_mut().unwrap();
+    frame.registers[r_dst as usize] = Value::Bool(v);
+    ExecutionResult::Continue
+}
+
 // ── Boxing ─────────────────────────────────────────────────────
 
 pub(super) fn exec_box(ctx: &mut ExecContext<'_>, r_dst: u16, r_val: u16) -> ExecutionResult {
     let frame = ctx.task.call_stack.last().unwrap();
-    let val = frame.registers[r_val as usize];
+    let val = frame.registers[r_val as usize].clone();
     let href = ctx.heap.alloc_boxed(val);
     let frame = ctx.task.call_stack.last_mut().unwrap();
     frame.registers[r_dst as usize] = Value::Ref(href);
@@ -432,7 +481,7 @@ pub(super) fn exec_unbox(ctx: &mut ExecContext<'_>, r_dst: u16, r_boxed: u16) ->
     let href = helpers::extract_ref(&frame.registers[r_boxed as usize]);
     match ctx.heap.get_object(href) {
         Ok(crate::heap::HeapObject::Boxed(val)) => {
-            let val = *val;
+            let val = val.clone();
             let frame = ctx.task.call_stack.last_mut().unwrap();
             frame.registers[r_dst as usize] = val;
             ExecutionResult::Continue

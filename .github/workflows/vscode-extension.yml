@@ -1,0 +1,93 @@
+name: VS Code Extension
+
+on:
+  push:
+    branches: [master]
+    tags: ["vscode-v*"]
+  pull_request:
+    branches: [master]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: writ-vscode/package-lock.json
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install extension dependencies
+        run: npm ci
+        working-directory: writ-vscode
+
+      - name: Compile TypeScript
+        run: npm run compile
+        working-directory: writ-vscode
+
+      - name: Run structural tests
+        run: node --test tests/structural.test.js
+        working-directory: writ-vscode
+
+      - name: Run Rust tests
+        run: cargo test --workspace
+
+      - name: Build release binaries
+        run: cargo build --release -p writ-lsp -p writ-dap
+
+      - name: Copy binaries into extension
+        run: npm run copy-binaries
+        working-directory: writ-vscode
+
+      - name: Package VSIX
+        run: npx vsce package
+        working-directory: writ-vscode
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: writ-vsix
+          path: writ-vscode/*.vsix
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/vscode-v')
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download VSIX artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: writ-vsix
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Publish to VS Code Marketplace
+        run: npx @vscode/vsce publish --packagePath *.vsix
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: "*.vsix"
+          generate_release_notes: true

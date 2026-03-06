@@ -1,0 +1,8 @@
+fn test() {
+    log::info("test");
+}
+fn main() {
+    log::info("main start");
+    test();
+    log::info("main end");
+}

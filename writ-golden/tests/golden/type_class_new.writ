@@ -1,0 +1,10 @@
+pub class Node {
+    value: int,
+    label: string
+}
+
+fn main() {
+    let n: Node = new Node { value: 42, label: "hello" };
+    let v: int = n.value;
+    let s: string = n.label;
+}

@@ -1,0 +1,35 @@
+.module "main" "0.1.0" {
+    .extern "writ-runtime" "1.0.0"
+    .method "abs" (n: int) -> int pub mut {
+        .locals {
+            r0: int "n" [0, 58)
+        }
+        .reg r0 int
+        .reg r1 int
+        .reg r2 bool
+        .reg r3 void
+        .reg r4 int
+        LOAD_INT r1, 0  ; line:1 col:34
+        CMP_LT_I r2, r0, r1
+        BR_FALSE r2, 32
+        NEG_I r4, r0  ; line:1 col:54
+        RET r4
+        MOV r3, r0
+        BR 10
+        NOP
+        RET r0  ; line:1 col:77
+    }
+    .method "main" () -> void mut {
+        .locals {
+            r0: int "x" [30, 32)
+        }
+        .reg r0 int
+        .reg r1 int
+        .reg r2 int
+        LOAD_INT r1, 5  ; line:1 col:102
+        NEG_I r2, r1
+        CALL r0, 117440513, r2, 1
+        RET_VOID
+    }
+    // .export "abs" method 117440513
+}

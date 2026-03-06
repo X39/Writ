@@ -151,6 +151,8 @@ pub struct DefEntry {
 pub enum DefKind {
     Fn,
     Struct,
+    /// Class declaration (reference type, heap-allocated).
+    Class,
     Entity,
     Enum,
     Contract,
@@ -158,6 +160,8 @@ pub enum DefKind {
     Component,
     ExternFn,
     ExternStruct,
+    /// Extern class declaration (reference type, heap-allocated).
+    ExternClass,
     ExternComponent,
     Const,
     Global,

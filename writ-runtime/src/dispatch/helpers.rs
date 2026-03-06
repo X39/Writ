@@ -36,9 +36,13 @@ pub(super) fn extract_entity(val: &Value) -> EntityId {
 }
 
 /// Get the number of fields for a type from its TypeDef.
+///
+/// `type_idx` is a MetadataToken where the high byte is the table ID (2 for TypeDef)
+/// and the low 24 bits are the 1-based row index.
 pub(super) fn get_type_field_count(module: &writ_module::Module, type_idx: u32) -> usize {
-    // type_idx is a 1-based MetadataToken index
-    let idx = type_idx.saturating_sub(1) as usize;
+    // Strip table bits to get the 1-based row, then convert to 0-based index.
+    let row = type_idx & 0x00FF_FFFF;
+    let idx = row.saturating_sub(1) as usize;
     if idx >= module.type_defs.len() {
         return 4; // default field count for unknown types
     }

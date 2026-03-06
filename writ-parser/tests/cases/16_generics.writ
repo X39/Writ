@@ -37,7 +37,7 @@ pub fn findMax<T: Ord>(items: T[]) -> T {
 pub fn printSorted<T: Ord + Into<string>>(items: T[]) {
     let sorted = items.sort(fn(a, b) { a < b });
     for item in sorted {
-        log(item.into<string>());
+        log::info(item.into<string>());
     }
 }
 
@@ -81,7 +81,7 @@ pub contract Printable {
 
 pub fn printAll<T: Printable>(items: T[]) {
     for item in items {
-        log(item.display());
+        log::info(item.display());
     }
 }
 

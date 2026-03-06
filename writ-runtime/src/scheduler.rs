@@ -6,7 +6,7 @@ use crate::frame::CallFrame;
 use crate::gc::GcHeap;
 use crate::host::RuntimeHost;
 use crate::loader::LoadedModule;
-use crate::task::{Task, TaskState};
+use crate::task::{SuspendReason, Task, TaskState};
 use crate::value::{pack_task_id, TaskId, Value};
 
 /// Task scheduler managing task lifecycle and execution.
@@ -67,6 +67,7 @@ impl Scheduler {
     }
 
     /// Run the next ready task until it completes, suspends, crashes, or hits the limit.
+    #[allow(clippy::too_many_arguments)] // scheduler passes full execution context through to dispatch
     pub(crate) fn run_one_task(
         &mut self,
         modules: &[LoadedModule],
@@ -80,10 +81,7 @@ impl Scheduler {
         let task_id = self.ready_queue.pop_front()?;
 
         {
-            let task = match self.tasks.get_mut(&task_id) {
-                Some(t) => t,
-                None => return None,
-            };
+            let task = self.tasks.get_mut(&task_id)?;
             task.state = TaskState::Running;
         }
 
@@ -122,17 +120,35 @@ impl Scheduler {
                 ExecutionResult::Completed(val) => {
                     let task = self.tasks.get_mut(&task_id).unwrap();
                     task.state = TaskState::Completed;
-                    task.return_value = Some(val);
+                    task.return_value = Some(val.clone());
                     // Wake any tasks waiting to JOIN this one
-                    self.wake_joiners(task_id, Some(val));
+                    self.wake_joiners(task_id, Some(val.clone()));
                     return Some((task_id, ExecutionResult::Completed(val)));
                 }
                 ExecutionResult::Suspended(req_id) => {
                     let task = self.tasks.get_mut(&task_id).unwrap();
                     task.state = TaskState::Suspended;
+                    task.suspend_reason = Some(SuspendReason::HostRequest(req_id));
                     return Some((task_id, ExecutionResult::Suspended(req_id)));
                 }
+                ExecutionResult::DebugSuspend => {
+                    // Task already has state=Suspended and suspend_reason set by dispatch.
+                    // Stop executing this task — the DAP server will call resume_debug() to resume it.
+                    return Some((task_id, ExecutionResult::DebugSuspend));
+                }
                 ExecutionResult::Crash(msg) => {
+                    // In debug mode, suspend BEFORE unwinding so the debugger can
+                    // inspect the live call stack and registers at the crash point.
+                    if host.debug_enabled() {
+                        let task = self.tasks.get_mut(&task_id).unwrap();
+                        task.state = TaskState::Suspended;
+                        task.suspend_reason = Some(SuspendReason::CrashPending {
+                            message: msg.clone(),
+                        });
+                        return Some((task_id, ExecutionResult::DebugSuspend));
+                    }
+
+                    // Non-debug mode: immediate crash unwind (unchanged behavior).
                     // Use the full crash unwinding engine with defer execution
                     {
                         let task = self.tasks.get_mut(&task_id).unwrap();
@@ -192,17 +208,16 @@ impl Scheduler {
                     let child_id = self.create_task(
                         method_idx, args, None, &modules[current_module_idx],
                     );
-                    if let Some(parent) = self.tasks.get_mut(&task_id) {
-                        if let Some(frame) = parent.call_stack.last_mut() {
+                    if let Some(parent) = self.tasks.get_mut(&task_id)
+                        && let Some(frame) = parent.call_stack.last_mut() {
                             frame.registers[r_dst as usize] = pack_task_id(child_id);
                         }
-                    }
                     continue;
                 }
                 ExecutionResult::JoinTask { r_dst, target } => {
                     // Check if target is already terminal
                     let target_info = self.tasks.get(&target)
-                        .map(|t| (t.state, t.return_value));
+                        .map(|t| (t.state, t.return_value.clone()));
                     match target_info {
                         Some((TaskState::Completed, ret_val)) | Some((TaskState::Cancelled, ret_val)) => {
                             let task = self.tasks.get_mut(&task_id).unwrap();
@@ -243,6 +258,7 @@ impl Scheduler {
 
     /// Cancel a task and all its scoped children recursively.
     /// Executes defer handlers at each frame level during unwinding.
+    #[allow(clippy::too_many_arguments)] // cancellation requires full context for defer handler execution
     pub(crate) fn cancel_task_tree(
         &mut self,
         task_id: TaskId,
@@ -302,19 +318,18 @@ impl Scheduler {
     }
 
     /// Wake all tasks waiting to JOIN the given task.
-    fn wake_joiners(&mut self, target_id: TaskId, return_value: Option<Value>) {
+    pub(crate) fn wake_joiners(&mut self, target_id: TaskId, return_value: Option<Value>) {
         if let Some(waiters) = self.join_waiters.remove(&target_id) {
             for (waiter_id, r_dst) in waiters {
-                if let Some(waiter) = self.tasks.get_mut(&waiter_id) {
-                    if waiter.state == TaskState::Suspended {
+                if let Some(waiter) = self.tasks.get_mut(&waiter_id)
+                    && waiter.state == TaskState::Suspended {
                         waiter.state = TaskState::Ready;
                         waiter.pending_request = None;
                         if let Some(frame) = waiter.call_stack.last_mut() {
-                            frame.registers[r_dst as usize] = return_value.unwrap_or(Value::Void);
+                            frame.registers[r_dst as usize] = return_value.clone().unwrap_or(Value::Void);
                         }
                         self.ready_queue.push_back(waiter_id);
                     }
-                }
             }
         }
     }

@@ -3,7 +3,7 @@
 
 | Mnemonic      | Shape | Operands           | Description                                                                                                    |
 |---------------|-------|--------------------|----------------------------------------------------------------------------------------------------------------|
-| `MOV`         | RR    | r_dst, r_src       | Copy register to register. Semantics depend on type: value copy for primitives, reference copy for heap types. |
+| `MOV`         | RR    | r_dst, r_src       | Copy register to register. Semantics depend on type: for value types (primitives, enums, structs), copies the full value -- for value-type structs this is a multi-word copy of all fields. For reference types (classes, strings, arrays, entities, delegates), copies the reference pointer. |
 | `LOAD_INT`    | RI64  | r_dst, value:i64   | Load 64-bit signed integer literal.                                                                            |
 | `LOAD_FLOAT`  | RI64  | r_dst, value:f64   | Load 64-bit IEEE 754 float literal. Same encoding width as LOAD_INT, different interpretation.                 |
 | `LOAD_TRUE`   | R     | r_dst              | Load boolean `true`.                                                                                           |

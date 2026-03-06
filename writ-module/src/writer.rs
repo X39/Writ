@@ -3,6 +3,8 @@ use byteorder::{LittleEndian, WriteBytesExt};
 use crate::error::EncodeError;
 use crate::module::Module;
 use crate::reader::row_size;
+// Intentional wildcard: tables module exports 23 row-struct types that form
+// the domain vocabulary for binary encoding — all are used in this file.
 use crate::tables::*;
 
 /// Serialize a Module to spec-compliant bytes.
@@ -59,8 +61,8 @@ pub fn to_bytes(module: &Module) -> Result<Vec<u8>, EncodeError> {
     let mut current_body_offset = bodies_start;
     let mut body_idx = 0usize;
     for method in &module.method_defs {
-        if method.body_size > 0 || body_idx < module.method_bodies.len() {
-            if body_idx < module.method_bodies.len() {
+        if (method.body_size > 0 || body_idx < module.method_bodies.len())
+            && body_idx < module.method_bodies.len() {
                 let body = &module.method_bodies[body_idx];
                 // Align to 4 bytes
                 let align_pad = (4 - (current_body_offset % 4)) % 4;
@@ -71,7 +73,6 @@ pub fn to_bytes(module: &Module) -> Result<Vec<u8>, EncodeError> {
                 current_body_offset += body_size;
                 body_idx += 1;
             }
-        }
     }
 
     let total_size = current_body_offset;
@@ -129,11 +130,9 @@ pub fn to_bytes(module: &Module) -> Result<Vec<u8>, EncodeError> {
     // Write method defs — patch body_offset/body_size from computed values
     let mut body_idx = 0usize;
     for row in &module.method_defs {
-        let (body_off, body_sz) = if body_idx < body_offsets.len() && row.body_size > 0 {
-            let v = body_offsets[body_idx];
-            body_idx += 1;
-            v
-        } else if body_idx < body_offsets.len() && body_idx < module.method_bodies.len() {
+        let (body_off, body_sz) = if body_idx < body_offsets.len()
+            && (row.body_size > 0 || body_idx < module.method_bodies.len())
+        {
             let v = body_offsets[body_idx];
             body_idx += 1;
             v
@@ -210,6 +209,7 @@ pub fn to_bytes(module: &Module) -> Result<Vec<u8>, EncodeError> {
             for local in &body.debug_locals {
                 out.write_u16::<LittleEndian>(local.register)?;
                 out.write_u32::<LittleEndian>(local.name)?;
+                out.write_u32::<LittleEndian>(local.type_ref)?;
                 out.write_u32::<LittleEndian>(local.start_pc)?;
                 out.write_u32::<LittleEndian>(local.end_pc)?;
             }
@@ -236,7 +236,7 @@ fn compute_body_size(body: &crate::module::MethodBody, flags: u16) -> usize {
     // debug info
     if has_debug {
         size += 2; // debug_local_count
-        size += body.debug_locals.len() * 14; // u16 + u32 + u32 + u32 = 14 bytes each
+        size += body.debug_locals.len() * 18; // u16 + u32 + u32 + u32 + u32 = 18 bytes each
         size += 4; // source_span_count
         size += body.source_spans.len() * 10; // u32 + u32 + u16 = 10 bytes each
     }

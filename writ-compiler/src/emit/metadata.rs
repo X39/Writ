@@ -101,15 +101,8 @@ impl MetadataToken {
 // TypeDef kind and hook kind enums
 // =============================================================================
 
-/// TypeDef.kind values per spec 2.16.5.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-#[repr(u8)]
-pub enum TypeDefKind {
-    Struct = 0,
-    Enum = 1,
-    Entity = 2,
-    Component = 3,
-}
+/// TypeDef kind discriminant — re-exported from writ_module for a single source of truth.
+pub use writ_module::TypeDefKind;
 
 /// MethodDef hook_kind values per spec 2.16.5.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

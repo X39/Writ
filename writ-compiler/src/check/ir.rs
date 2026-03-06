@@ -4,6 +4,7 @@
 //! No `Option<Ty>` fields exist in this IR.
 
 use chumsky::span::SimpleSpan;
+use rustc_hash::FxHashMap;
 
 use crate::ast::expr::{BinaryOp, PrefixOp};
 use crate::resolve::def_map::{DefId, DefMap};
@@ -15,6 +16,10 @@ use super::ty::Ty;
 pub struct TypedAst {
     pub decls: Vec<TypedDecl>,
     pub def_map: DefMap,
+    /// Struct field types extracted from TypeEnv after type checking.
+    /// Maps struct DefId -> ordered list of (field_name, field_ty).
+    /// Used by the emitter for field-by-field structural equality emission.
+    pub struct_field_types: FxHashMap<DefId, Vec<(String, Ty)>>,
 }
 
 /// A typed expression. Every variant carries `ty: Ty` and `span: SimpleSpan`.
@@ -158,6 +163,13 @@ pub enum TypedExpr {
         span: SimpleSpan,
         value: Option<Box<TypedExpr>>,
     },
+    /// Intentional runtime crash (e.g., force-unwrap failure on None/Err).
+    /// NOT a compilation error — this emits a Crash instruction in the IL.
+    Crash {
+        ty: Ty,
+        span: SimpleSpan,
+        message: String,
+    },
     Error {
         ty: Ty,
         span: SimpleSpan,
@@ -191,6 +203,7 @@ impl TypedExpr {
             | TypedExpr::Defer { ty, .. }
             | TypedExpr::Path { ty, .. }
             | TypedExpr::Return { ty, .. }
+            | TypedExpr::Crash { ty, .. }
             | TypedExpr::Error { ty, .. } => *ty,
         }
     }
@@ -221,6 +234,7 @@ impl TypedExpr {
             | TypedExpr::Defer { span, .. }
             | TypedExpr::Path { span, .. }
             | TypedExpr::Return { span, .. }
+            | TypedExpr::Crash { span, .. }
             | TypedExpr::Error { span, .. } => *span,
         }
     }
@@ -236,6 +250,12 @@ pub enum TypedStmt {
         mutable: bool,
         value: TypedExpr,
         span: SimpleSpan,
+        /// Span of the explicit type annotation (e.g., `MyStruct` in `let x: MyStruct = ...`).
+        /// `None` when the type was inferred.
+        type_ann_span: Option<SimpleSpan>,
+        /// DefId of the type annotation's named type (for go-to-def on type annotations).
+        /// `None` when annotation is absent or non-named (array, func, void, generic).
+        type_ann_def_id: Option<DefId>,
     },
     Expr {
         expr: TypedExpr,
@@ -281,8 +301,15 @@ pub enum TypedDecl {
     Fn {
         def_id: DefId,
         body: TypedExpr,
+        /// Spans of parameter name identifiers (in declaration order), for LSP hover on param names.
+        /// Includes spans for `self` parameters. Empty for extern functions.
+        param_name_spans: Vec<SimpleSpan>,
     },
     Struct {
+        def_id: DefId,
+    },
+    /// Class declaration (reference type, heap-allocated).
+    Class {
         def_id: DefId,
     },
     Entity {
@@ -313,6 +340,10 @@ pub enum TypedDecl {
         def_id: DefId,
     },
     ExternStruct {
+        def_id: DefId,
+    },
+    /// Extern class declaration (reference type, heap-allocated).
+    ExternClass {
         def_id: DefId,
     },
     ExternComponent {

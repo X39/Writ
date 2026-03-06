@@ -8,6 +8,7 @@ pub enum TypeDefKind {
     Enum = 1,
     Entity = 2,
     Component = 3,
+    Class = 4,
 }
 
 impl TypeDefKind {
@@ -17,12 +18,25 @@ impl TypeDefKind {
             1 => Some(Self::Enum),
             2 => Some(Self::Entity),
             3 => Some(Self::Component),
+            4 => Some(Self::Class),
             _ => None,
         }
     }
 
     pub fn as_u8(self) -> u8 {
         self as u8
+    }
+}
+
+impl std::fmt::Display for TypeDefKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TypeDefKind::Struct => write!(f, "struct"),
+            TypeDefKind::Enum => write!(f, "enum"),
+            TypeDefKind::Entity => write!(f, "entity"),
+            TypeDefKind::Component => write!(f, "component"),
+            TypeDefKind::Class => write!(f, "class"),
+        }
     }
 }
 

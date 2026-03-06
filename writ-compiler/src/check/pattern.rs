@@ -129,13 +129,11 @@ fn check_bool_coverage(
         TypedPattern::Wildcard { .. } | TypedPattern::Variable { .. } => {
             *has_wildcard = true;
         }
-        TypedPattern::Literal { value, .. } => {
-            if let super::ir::TypedLiteral::Bool(b) = value {
-                if *b {
-                    *has_true = true;
-                } else {
-                    *has_false = true;
-                }
+        TypedPattern::Literal { value: super::ir::TypedLiteral::Bool(b), .. } => {
+            if *b {
+                *has_true = true;
+            } else {
+                *has_false = true;
             }
         }
         TypedPattern::Or { patterns, .. } => {

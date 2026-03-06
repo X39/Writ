@@ -210,6 +210,294 @@
 
 ---
 
+## Milestone: v3.1 — Compiler Bug Fixes
+
+**Shipped:** 2026-03-04
+**Phases:** 10 (30-39) | **Plans:** 22 | **Commits:** ~80
+
+### What Was Built
+- Critical bug fixes for codegen emission ordering and token assignment
+- Golden test harness with BOM stripping, CRLF normalization, and bless workflow
+- 15+ golden test fixtures covering all major language features end-to-end
+- Fix for spurious void register in empty function bodies
+- Fix for CALL method token resolution in runtime
+- Extended method_defs metadata with param_count and format_version bump to 2
+
+### What Worked
+- **Golden test approach** — snapshot testing for entire compilation pipeline catches regressions across all layers simultaneously
+- **Inserted decimal phases (31.1, 31.2)** — urgent bug fixes inserted without renumbering; clean precedent for future insertions
+- **Bug-fix batching** — Phases 32-36 combined golden test creation with bug discovery; tests drove fixes naturally
+
+### What Was Inefficient
+- **Many small phases** — 10 phases for what was essentially iterative bug fixing; could have been fewer larger phases
+- **Golden test creation overlapped with bug discovery** — some tests were written, found bugs, which needed new phases to fix
+
+### Key Lessons
+1. **Golden tests are the highest-value test investment** — they exercise the entire pipeline and caught more bugs per test than unit tests
+2. **Decimal phases work well for urgent insertions** — 31.1 and 31.2 inserted cleanly without disrupting phase numbering
+
+### Cost Observations
+- Sessions: ~5 (iterative fix-test-fix cycles)
+- Notable: High iteration count but each phase was fast (most plans < 10 minutes)
+
+---
+
+## Milestone: v3.2 — Spec Corrections and Tooling
+
+**Shipped:** 2026-03-07
+**Phases:** 7 (40-46) | **Plans:** 15 | **Commits:** 91
+
+### What Was Built
+- Spec cleanup: §1.2.8 removed, §26.4 root-namespace inbuilt calls added, writ.toml field alignment
+- fn_log_say_choice golden test fix: check_path normalization, BOM handling, UTF-8 snapshot
+- ChoiceOption atomic four-layer rename (spec, lowering, virtual module, prelude)
+- Unqualified None/Some with sub-prelude injection in resolver and type checker, parser `::*` glob expansion
+- Leveled logging namespace (log::trace/debug/info/warn/error) with synthetic ExternFn DefIds
+- `writ build` subcommand with --release/--debug profiles, multi-file compilation
+- Structs-as-value-types design record (§8.4) with struct/class split decision (YES)
+
+### What Worked
+- **Synthetic DefId injection pattern** — reused from None/Some (Phase 43) to log namespace (Phase 44); the sub-prelude pattern proved composable
+- **Atomic rename approach** — ChoiceOption rename across 4 layers in a single phase prevented partial-rename inconsistency
+- **Design record as phase** — Phase 46 produced a thorough decision record without implementation pressure; clean separation of design from code
+- **FileId(u32::MAX) sentinel** — cleanly distinguishes compiler-injected entries from user-declared; no new DefKind needed
+- **run_pipeline() extraction** — shared helper between cmd_compile and cmd_build avoided code duplication
+
+### What Was Inefficient
+- **SUMMARY.md one_liner fields still empty** — 7th milestone with this issue; milestone completion tooling couldn't auto-extract accomplishments
+- **§26.4 not added to TOC** — spec section added in Phase 40 but TOC update missed; caught only by audit
+- **test_fn_optional not registered** — golden test fixture created but registration in golden_tests.rs missed; audit caught this
+
+### Patterns Established
+- **Sub-prelude injection** — inject symbols at lower priority than user definitions; used for None/Some and log:: levels
+- **Synthetic DefId with FileId sentinel** — compiler-known builtins injected without user AST
+- **ProfileConfig with serde default functions** — enables partial TOML overrides
+- **run_pipeline() shared helper** — 5-stage pipeline extracted for reuse across compile modes
+
+### Key Lessons
+1. **Sub-prelude patterns compose** — the None/Some injection pattern was directly reused for log:: levels in the next phase with minimal adaptation
+2. **Audit catches registration gaps** — test_fn_optional and §26.4 TOC were both caught only by audit
+3. **Design-only phases are valuable** — Phase 46 produced a clear decision record that defines v4.0 scope without premature implementation
+
+### Cost Observations
+- Model mix: opus (execution), sonnet (research/verification), haiku (plan-check)
+- Sessions: ~4 (across 7 phases + audit)
+- Notable: 7 phases / 15 plans in 1 day; smallest code milestone but highest spec/tooling impact
+
+---
+
+## Milestone: v4.0 — Structs as Value Types
+
+**Shipped:** 2026-03-13
+**Phases:** 5 (47-51) | **Plans:** 12 | **Commits:** 74
+
+### What Was Built
+- Language spec rewrite: §8 Structs as value types, new §9 Classes, memory model/construction model/IL type system/module format amendments across 29 spec files
+- IL format extension: TypeDefKind::Class=4, format_version=3, compile-time type safety via TypeDefKind enum at all public API boundaries
+- VM runtime restructure: Value::InlineStruct for inline struct registers, Copy derive removed, kind-dependent NEW dispatch, GC tracing through value-struct fields
+- Compiler frontend: `class` keyword through full pipeline (lexer, CST, parser, AST, lowering, name resolution, type checking), recursive struct cycle detection
+- Structural equality: field-by-field comparison emission for ==/!= on value-type structs, closure capture environments migrated to kind=4 (class)
+- Golden tests: all existing tests updated for format_version=3, new tests for struct equality, class declarations, recursive struct error
+
+### What Worked
+- **Spec-first approach** — Phase 47 (spec amendments) completed before any code; all subsequent phases had a single source of truth for behavior; zero spec-code disagreements
+- **Strict dependency ordering (spec → IL → VM → compiler → tests)** — each phase built on the previous with no circular dependencies; natural bottom-up build
+- **TypeDefKind enum at API boundaries** — catching kind errors at compile time (builder API takes TypeDefKind not u8) eliminated an entire class of runtime bugs; zero invalid-kind issues in later phases
+- **format_version=3 strict rejection** — reader rejects anything != 3; clean break from v2 modules with no backward compat complexity
+- **Separate class AST types** — ClassDecl/AstClassDecl distinct from StructDecl; prevented struct-specific logic from accidentally applying to classes
+- **DFS cycle detection with globally_visited + in_path sets** — correctly handles diamond dependencies without false positives; excludes class/entity/enum fields from cycles
+
+### What Was Inefficient
+- **No milestone audit** — skipped audit; while all 31 requirements were checked off, an audit would have verified cross-phase integration (e.g., BOX/UNBOX actually exercised end-to-end)
+- **SUMMARY.md one_liner fields still empty** — 8th milestone with this issue; remains an unsolved process gap
+- **COMP-06 resolved by decision rather than implementation** — entity→class was originally scoped but became unnecessary; requirement should have been questioned during planning
+- **Phase 47 Plan 04 (renumbering) took 45min** — mechanical file renaming and heading fixes across 33 files; could potentially be automated
+
+### Patterns Established
+- **Value::InlineStruct with Vec\<Value\> fields** — uniform representation for inline struct registers; PartialEq derived from type_idx + fields
+- **Explicit .clone() for register reads** — removing Copy from Value forces every register read to explicitly clone; prevents accidental shallow copies of multi-word InlineStruct values
+- **Kind-dependent dispatch in VM** — NEW, GET_FIELD, SET_FIELD, GC tracing all switch on TypeDefKind; extensible to future type kinds
+- **Structural equality emission** — compiler emits field-by-field GetField + CmpEq chains; no STRUCT_EQ opcode needed; nested structs handled recursively
+- **parse-and-report pattern for lifecycle hook rejection** — `class` supports on create/finalize; `struct` parses the hook then emits a diagnostic, giving better error messages than a parse failure
+
+### Key Lessons
+1. **Spec-first pays off** — having normative spec prose before code meant zero ambiguity in VM and compiler phases; the spec was the specification, not a retroactive document
+2. **TypeDefKind at API boundaries > u8** — compile-time type safety eliminated runtime invalid-kind errors; pattern should apply to all metadata enum types
+3. **Copy removal forces correct cloning** — removing Copy from Value was a large mechanical change (72 .clone() insertions) but eliminated an entire class of subtle bugs where InlineStruct fields were shared instead of copied
+4. **Decision-resolved requirements should be flagged earlier** — COMP-06 (entity→class) was unnecessary per user decision; catching this during planning would have saved scope
+
+### Cost Observations
+- Model mix: opus (execution), sonnet (research/verification), haiku (plan-check)
+- Sessions: ~5 (across 5 phases)
+- Notable: 5 phases / 12 plans / +4,282 net LOC in 1 day; average ~15 min per plan; smallest v-major milestone by phase count but touched 238 files
+
+---
+
+## Milestone: v5.0 — LSP and DAP
+
+**Shipped:** 2026-03-17
+**Phases:** 10 (52-61) | **Plans:** 20 | **Commits:** 144
+
+### What Was Built
+- Language server (writ-lsp, 5,144 LOC) — diagnostics, completions, hover, go-to-definition, find references, signature help, semantic tokens, cross-file via writ.toml
+- Debug adapter (writ-dap, 2,486 LOC) — F5 launch, source-level breakpoints, step over/into/out, local variable inspection, call stack, watch expressions, cooperative tasks as debugger threads
+- VS Code extension (writ-vscode) — TextMate grammar, bundled binary launch, default launch.json, VSIX packaging pipeline
+- Semantic highlighting with distinct token types for entities, components, dialogue speakers, types, functions
+- Debug info pipeline: SourceSpan line/column, debug locals, parser error recovery, RuntimeHost debug hooks
+- UAT-driven gap closure (phases 58-61): speaker tokens, VSIX build, query robustness, signature help
+
+### What Worked
+- **UAT-driven phases (58-61)** — user acceptance testing identified real usability gaps that phase-level verification missed; phases 58-61 were all UAT-originated
+- **Compiler preparation phase (52)** — adding debug info, source spans, and parser error recovery before LSP/DAP work prevented blocking dependencies later
+- **tower-lsp framework** — async handler pattern worked well; language server features could be added incrementally
+
+### What Was Inefficient
+- **4-day timeline** — longest milestone; LSP and DAP required learning tower-lsp and DAP protocol details
+- **Single-file DAP limitation** — compile_and_load only supports single-file, not writ.toml projects; limits real debugging scenarios
+
+### Patterns Established
+- **AnalysisHost as compilation cache** — single entry point for all LSP queries; re-compiles on change
+- **writ-vscode packaging** — esbuild + vsce, bundled binaries, VSIX artifact
+
+### Key Lessons
+1. **UAT phases are high-value** — phases 58-61 each fixed real usability issues that automated testing missed
+2. **Compiler prep phase is essential** — adding debug info to the compiler before starting LSP/DAP saved integration headaches
+3. **Protocol learning has a fixed cost** — DAP and LSP both required upfront protocol study; batching related protocol work is efficient
+
+### Cost Observations
+- Sessions: ~8 (across 10 phases + UAT iterations)
+- Notable: Largest milestone by LOC addition (+38,231 net lines); 4 days wall-clock for 20 plans
+
+---
+
+## Milestone: v6.0 — Code Cleanup
+
+**Shipped:** 2026-03-18
+**Phases:** 5 (62-66) | **Plans:** 14 | **Commits:** 18
+
+### What Was Built
+- Zero clippy warnings across 9 Rust crates (194 eliminated: 155 auto-fixed, 39 manual)
+- 12 oversized files split into focused submodules (check_expr/, collect/, expr/, parser/, queries/, server/, commands/, etc.)
+- Duplicate code consolidated (lower_dlg_text delegates to lower_fmt_string)
+- Module boundaries tightened (explicit imports, pub(crate) narrowing, module doc headers)
+- Cross-phase regression fixes (6 dead code items removed, say() 2-arg ABI restored, golden tests blessed)
+
+### What Worked
+- **cargo clippy --fix for bulk auto-apply** — 155 of 194 warnings fixed in one pass; massive time savings
+- **Folder module pattern** — consistent `file.rs` → `file/mod.rs` + subfiles pattern; parent re-exports maintain public API
+- **Delegation over deduplication** — lower_dlg_text → lower_fmt_string delegation was cleaner than extracting a shared helper
+- **Milestone audit caught cross-phase regression** — say() 1-arg regression from Phase 62 clippy auto-fix was invisible until audit checked E2E flows
+
+### What Was Inefficient
+- **Clippy --fix introduced semantic regression** — auto-renaming `speaker_ref` to `_speaker_ref` silently removed the argument from say() calls; required Phase 66 to fix
+- **Phase 66 needed as gap closure** — audit found issues that should have been caught by Phase 62 verification
+- **Golden tests not included in Phase 66 scope** — 2 golden test regressions (fn_log_say_choice, quest_system) discovered during milestone completion, not during phase execution
+
+### Patterns Established
+- **Tier 1/2/3 wildcard classification** — Tier 1 (same-crate imports): always explicit; Tier 2 (cross-crate internal): always explicit; Tier 3 (domain vocabulary like AST types): intentional wildcard with comment
+- **pub(crate) narrowing reveals dead code** — narrowing module visibility from pub to pub(crate) allows rustc dead_code analysis to detect genuinely unused items
+- **Documented 500-line exceptions** — files exceeding the target get comments explaining why (Chumsky recursive(), tightly-coupled state, etc.)
+
+### Key Lessons
+1. **cargo clippy --fix can introduce semantic regressions** — auto-fixes that rename variables (e.g., `x` → `_x`) can remove them from use sites; always review auto-fix diffs for behavioral changes
+2. **Visibility narrowing is a discovery tool** — pub(crate) narrowing found 6 genuinely dead items that were invisible as pub; the refactoring paid for itself in dead code discovery
+3. **Audit catches cross-phase regressions that per-phase verification misses** — Phase 62 verification said "zero warnings" but Phase 65 pub narrowing broke that invariant; only the milestone audit detected the gap
+4. **Golden tests need re-verification after pipeline changes** — any change to compiler output (like say() arg count) can silently invalidate golden test expectations
+
+### Cost Observations
+- Model mix: opus (execution), sonnet (research/verification/integration), haiku (plan-check)
+- Sessions: ~4 (across 5 phases + audit + gap closure)
+- Notable: 5 phases / 14 plans in 1 day; +1,752 net LOC; pure refactoring milestone — all behavioral changes were bug fixes
+
+---
+
+## Milestone: v6.1 — LSP/DAP Fixes
+
+**Shipped:** 2026-03-18
+**Phases:** 3 (67-69) | **Plans:** 5 | **Commits:** 8 feat
+
+### What Was Built
+- LSP namespace completions for `log::`, `Option::`, `Result::`, and user-defined enums via `::` trigger
+- LSP dot-completion pipeline verified end-to-end for struct and array receivers
+- SWITCH and DeferPush byte-offset encoding fixed in IL serializer (quest_system.writ runnable through DAP)
+- Multi-file writ.toml project launch through DAP debug adapter
+- Golden test coverage for dialogue/function mix patterns (dlg_fn_mix, dlg_quest_pattern)
+
+### What Worked
+- **Targeted milestone scope** — 6 requirements, 3 phases, 5 plans; no scope creep; all requirements satisfied on first pass
+- **Audit-first approach** — milestone audit ran before completion; all gaps flagged early; no gap-closure phases needed
+- **Verify-before-fix approach (Phase 67 Plan 02)** — dot-completion diagnosis confirmed pipeline worked correctly, avoiding unnecessary code changes; diagnosis was the fix
+- **Pass 4 byte-offset pattern** — consolidating all instruction-index-to-byte-offset conversions in a single serialize.rs pass kept concerns separated from the emitter
+
+### What Was Inefficient
+- **SUMMARY.md one_liner fields still empty** — 11th milestone with this issue; summary-extract tool returned null for all 5 plans; manual accomplishment extraction at milestone completion
+- **summary-extract key name mismatch** — tool looks for `requirements_completed` but YAML frontmatter uses `requirements-completed`; longstanding tool bug
+- **Nyquist validation partial** — all 3 phases have VALIDATION.md but none marked compliant; Wave 0 tests not formally stubbed before execution
+
+### Patterns Established
+- **compile_and_load_project** — DAP now supports both single-file and project-mode launch with mode detection (`is_dir` || `ends_with(writ.toml)`)
+- **source_paths Vec<(FileId, String)>** — multi-file source tracking in DAP replaces single-source Option
+- **Explicit extern say() override in dialogue golden tests** — workaround for auto-injected 1-param vs lowered 2-param say() mismatch
+
+### Key Lessons
+1. **Verify before fixing** — Phase 67 Plan 02 confirmed the dot-completion pipeline was already correct; saved implementing unnecessary changes
+2. **Serialization concerns belong in the serializer** — SWITCH/DeferPush byte-offset conversion in Pass 4 of serialize.rs was cleaner than fixing in the emitter (patterns.rs)
+3. **Known bugs constrain test patterns** — `::choice` serialization bug forced `$ if` workaround in dlg_quest_pattern golden test; test design must account for existing limitations
+
+### Cost Observations
+- Model mix: opus (execution), sonnet (research/verification/integration), haiku (plan-check)
+- Sessions: ~3 (across 3 phases + audit + completion)
+- Notable: Entire 3-phase milestone completed in <1 day; fastest complete milestone cycle (from roadmap creation through audit to completion)
+
+---
+
+## Milestone: v7.0 — Benchmark Suite
+
+**Shipped:** 2026-03-20
+**Phases:** 5 (70-74) | **Plans:** 12 | **Commits:** 66
+
+### What Was Built
+- Multi-stage Docker container with 6 language runtimes (Writ, Lua 5.4, Squirrel 3.x, Python 3.x, Node.js 22 LTS, Rust) and hyperfine-based measurement harness
+- 7 cross-language benchmarks: fibonacci, sieve, string_concat, array_sort, hash_map, oop_dispatch, object_create — all with output-checksum parity verification
+- SVG chart generation (pygal) and markdown results tables with execution time, memory usage, and startup time comparison
+- One-command host runners (run.sh + run.ps1) with Docker/Podman auto-detection and cross-platform path normalization
+- Compiler features added to support benchmarks: Array `.push()`/`.len()` methods, IMPL-METHOD fix for contract/impl dispatch
+- GitHub Actions CI workflow with manual dispatch, weekly schedule, and artifact upload
+
+### What Worked
+- **Algorithm-spec-first approach** — locking canonical algorithm parameters and expected output checksums before writing any language implementations prevented correctness drift across 6 languages
+- **Benchmark-driven compiler bug discovery** — array_sort and oop_dispatch benchmarks uncovered real compiler bugs (TyKind::Array member access, IMPL-METHOD dispatch) that were immediately fixed as part of benchmark development
+- **Host-side chart generation** — keeping pygal chart generation outside the Docker container simplified the Docker image and allowed rapid iteration on chart formatting without container rebuilds
+- **Single-day completion** — all 5 phases and 12 plans completed in one day; tight phase dependencies (70→71→72→73→74) executed cleanly in sequence
+- **Null guard pattern for missing Writ benchmarks** — hash_map has no Writ implementation (no Map type); generate.py's null guard pattern handled this gracefully across charts and tables
+
+### What Was Inefficient
+- **SUMMARY.md one_liner fields still empty** — 12th milestone with this issue; summary-extract tool returned null for all plans; manual accomplishment extraction at milestone completion
+- **stub/ suite pollution** — bench_runner.sh's glob pattern includes the stub directory, producing cosmetic noise in raw.json, RESULTS.md, and SVG charts; should have been excluded once real benchmarks were added
+- **smoke_contract.writ orphan** — development artifact left in benchmark/cases/oop_dispatch/; should have been cleaned up during Phase 73 execution
+- **Nyquist compliance partial** — only Phase 70 formally validated; Phases 71-74 have VALIDATION.md but marked non-compliant
+- **Squirrel build complexity** — cmake + shared lib copy + ldconfig required multiple Docker build iterations to get right
+
+### Patterns Established
+- **Cross-language benchmark template** — each benchmark directory contains 6 source files (`.writ`, `.lua`, `.nut`, `.py`, `.js`, `.rs`) with identical algorithm and verified matching output
+- **bench_runner.sh auto-discovery** — `/bench/cases/*/` glob pattern automatically picks up new benchmark suites without runner changes
+- **measure_anon_rss() function** — background subprocess + /proc/<pid>/status RssAnon polling; reusable for any Linux memory measurement
+- **Writ compile/run separation** — `compile_ms` and `run_ms` as separate JSON fields; distinguishes interpreter startup from compilation overhead
+- **generate.py null guard** — `writ_compile_ms`/`writ_run_ms` return None for missing writ entries; chart/table callers use if-guards to skip
+
+### Key Lessons
+1. **Benchmarks are excellent compiler integration tests** — the array_sort benchmark discovered the TyKind::Array member access gap, and oop_dispatch discovered the IMPL-METHOD dispatch bug; benchmarks stress the compiler in ways unit tests don't
+2. **Cross-platform Docker volume mounts are fragile** — MINGW path conversion, Podman WSL mount paths, and .gitattributes eol=lf were all required to make run.sh work across Windows/Linux/macOS
+3. **Algorithm-spec-first prevents 6x rework** — fixing an algorithm bug in one language after writing all six is expensive; specifying the exact algorithm upfront saved significant rework
+4. **No Map type limits benchmark coverage** — Writ's lack of a built-in Map type meant hash_map benchmark required null handling; this is the first real feature gap exposed by benchmarking
+
+### Cost Observations
+- Model mix: opus (execution), sonnet (research/planning), haiku (plan-check)
+- Sessions: ~5 (across 5 phases + audit)
+- Notable: Entire 5-phase milestone completed in ~6 hours; 12 plans producing 152 files / +11,235 net LOC; fastest multi-phase milestone by wall-clock time
+
+---
+
 ## Cross-Milestone Trends
 
 ### Process Evolution
@@ -221,6 +509,13 @@
 | v1.2 | 13 | 2 | Small focused gap closure; audit-driven fixes |
 | v2.0 | 60 | 6 | 4-crate workspace; TDD for tooling; pure-data crate sharing; no audit (risk accepted) |
 | v3.0 | 41 | 8 | Linear pipeline IR; `ena`-based type inference; audit-driven 3-phase gap closure; 66 requirements verified |
+| v3.1 | ~80 | 10 | Golden test harness; decimal phase insertion; iterative bug-fix cycles |
+| v3.2 | 91 | 7 | Sub-prelude injection pattern; synthetic DefId injection; design-only phases; spec/tooling focus |
+| v4.0 | 74 | 5 | Spec-first approach; TypeDefKind enum safety; Value Copy removal; kind-dependent VM dispatch |
+| v5.0 | 144 | 10 | UAT-driven gap closure; compiler prep phase; tower-lsp/DAP protocol; VSIX packaging |
+| v6.0 | 18 | 5 | cargo clippy --fix bulk auto-apply; folder module pattern; pub(crate) dead code discovery; audit caught clippy regression |
+| v6.1 | 8 | 3 | Targeted bug-fix milestone; verify-before-fix approach; audit-first completion; fastest milestone cycle |
+| v7.0 | 66 | 5 | Algorithm-spec-first; benchmark-driven compiler bug discovery; single-day 12-plan completion; cross-platform Docker |
 
 ### Cumulative Quality
 
@@ -231,12 +526,28 @@
 | v1.2 | ~165 | 8,826 | 0 (all v1.1 debt resolved) |
 | v2.0 | ~300+ | 13,937 | 6 (hook dispatch, generic dispatch, assembler directives, CLI arg passing, Ref deref, blob offsets) |
 | v3.0 | 1,100+ | 57,146 | 6 (TYPE-12 closure captures, RES-09 speaker validation, method_idx fallbacks, dead code, assembler directives, blob offsets) |
+| v3.1 | 1,100+ | ~58,000 | 0 (all v3.0 code debt resolved; method_defs extended) |
+| v3.2 | 1,100+ | 59,767 | 8 (all low severity: TOC gap, undocumented using log::*, test registration, CLI manual verification) |
+| v4.0 | 1,100+ | 61,853 | 8 (carried from v3.2; no new debt added) |
+| v5.0 | 1,100+ | 72,591 | 4 (hover edge cases, single-file DAP, dot-completion, TYPE-12) |
+| v6.0 | 1,100+ | 74,227 | 7 (TYPE-12 carried, choice serialization, assembler directives, TOC gap, log::* spec, test registration, orphaned re-export) |
+| v6.1 | 1,100+ | 74,997 | 6 (TYPE-12, choice serialization, hardcoded Option/Result completions, DAP source attribution, dlg string interpolation, Nyquist partial) |
+| v7.0 | 1,100+ | 79,005 | 6 (TYPE-12, choice serialization, StrLen heap bug, no Map type, stub suite noise, CI human-verification) |
 
 ### Top Lessons (Verified Across Milestones)
 
-1. **Audit before milestone completion catches integration bugs** that per-phase verification misses — verified v1.0 (speaker stack leak), v1.1 (PARSE-02 lowering bug), v3.0 (4 codegen integration bugs); v2.0 skipped without incident but risk is real
-2. **Snapshot tests compound into comprehensive coverage** — 69 in v1.0, ~165 in v1.1, ~300+ in v2.0, 1,100+ in v3.0; minimal late-stage effort each time
+1. **Audit before milestone completion catches integration bugs** that per-phase verification misses — verified v1.0 (speaker stack leak), v1.1 (PARSE-02 lowering bug), v3.0 (4 codegen integration bugs), v3.2 (test registration gap, TOC gap), v6.0 (clippy say() regression, dead code from pub narrowing); v2.0 skipped without incident but risk is real
+2. **Snapshot tests compound into comprehensive coverage** — 69 in v1.0, ~165 in v1.1, ~300+ in v2.0, 1,100+ in v3.0+; minimal late-stage effort each time
 3. **Snapshot tests can lock in wrong behavior** — review accepted snapshots carefully; wrong values accepted as correct in both v1.0 (minor) and v1.1 (critical PARSE-02)
-4. **Keep traceability tables updated during execution** — stale REQUIREMENTS.md and SUMMARY frontmatter caused confusion in v1.1, v2.0, and v3.0; remains an unsolved process gap across all 5 milestones
+4. **Keep traceability tables updated during execution** — stale REQUIREMENTS.md and SUMMARY frontmatter caused confusion in v1.1, v2.0, and v3.0; remains an unsolved process gap across all milestones
 5. **Pure-data crate separation pays dividends** — v2.0's writ-module shared cleanly between assembler, runtime, and v3.0 compiler; no coupling across 3 consumers
 6. **Run audits early, not after all code phases** — v3.0's audit after Phase 26 spawned 3 gap-closure phases (27-29); running after Phase 25 would have consolidated into 1-2 phases
+7. **Composable injection patterns scale** — v3.2's sub-prelude injection for None/Some was directly reused for log:: levels; synthetic DefId injection established as a general-purpose compiler extension pattern
+8. **Design-only phases clarify scope boundaries** — v3.2 Phase 46 produced a thorough v4.0 decision record without implementation pressure; prevents scope creep
+9. **Spec-first development eliminates ambiguity** — v4.0 wrote normative spec prose before any code; zero spec-code disagreements across 5 phases
+10. **TypeDefKind at API boundaries > raw u8** — compile-time safety eliminated an entire class of runtime invalid-kind errors; pattern generalizes to all metadata enum types
+11. **cargo clippy --fix requires manual review** — v6.0's auto-fix silently removed say() speaker argument; automated tooling can introduce semantic regressions
+12. **Visibility narrowing is a code health tool** — v6.0's pub(crate) narrowing discovered 6 genuinely dead items invisible at pub visibility; the refactoring pays for itself in dead code discovery
+13. **Verify-before-fix saves effort** — v6.1 Phase 67 diagnosed the dot-completion pipeline as already correct; "fix what's broken" beats "fix what looks broken"
+14. **Benchmarks are compiler integration tests** — v7.0 benchmark development discovered TyKind::Array member access gap and IMPL-METHOD dispatch bug; real programs stress compilers in ways unit tests don't
+15. **Algorithm-spec-first prevents N-language rework** — v7.0 locked algorithm parameters and expected output before writing implementations across 6 languages; prevented 6x rework on correctness bugs

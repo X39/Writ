@@ -1,4 +1,9 @@
-use crate::ast::*;
+use crate::ast::{
+    AsmModule, AsmExtern, AsmType, AsmTypeKind, AsmField,
+    AsmContract, AsmContractMethod, AsmImpl, AsmMethod, AsmParam,
+    AsmRegDecl, AsmStatement, AsmInstruction, AsmOperand, AsmTypeRef,
+    AsmMethodRef, AsmMethodSig, AsmGlobal,
+};
 use crate::error::AssembleError;
 use crate::lexer::{Token, TokenKind};
 
@@ -43,12 +48,11 @@ impl<'a> Parser<'a> {
 
     fn expect_directive(&mut self, name: &str) -> bool {
         self.skip_newlines();
-        if let TokenKind::Directive(d) = self.peek_kind() {
-            if d == name {
+        if let TokenKind::Directive(d) = self.peek_kind()
+            && d == name {
                 self.pos += 1;
                 return true;
             }
-        }
         let tok = self.peek();
         self.errors.push(AssembleError::new(
             format!("expected '.{}' directive", name),
@@ -232,6 +236,7 @@ impl<'a> Parser<'a> {
             "enum" => AsmTypeKind::Enum,
             "entity" => AsmTypeKind::Entity,
             "component" => AsmTypeKind::Component,
+            "class" => AsmTypeKind::Class,
             _ => {
                 let tok = &self.tokens[self.pos - 1];
                 self.errors.push(AssembleError::new(
@@ -372,11 +377,10 @@ impl<'a> Parser<'a> {
 
         // Parse slot keyword and number
         self.skip_newlines();
-        if let TokenKind::Ident(s) = self.peek_kind() {
-            if s.to_lowercase() == "slot" {
+        if let TokenKind::Ident(s) = self.peek_kind()
+            && s.to_lowercase() == "slot" {
                 self.pos += 1;
             }
-        }
         let slot = self.expect_int()? as u16;
 
         Some(AsmContractMethod { name, signature, slot })

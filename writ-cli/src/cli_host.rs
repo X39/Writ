@@ -64,6 +64,7 @@ impl CliHost {
             Value::Ref(_) => "<string>".to_string(),
             Value::Void => "void".to_string(),
             Value::Entity(e) => format!("<entity@{}>", e.index),
+            Value::InlineStruct { type_idx, .. } => format!("<struct@{}>", type_idx),
         }
     }
 
@@ -126,6 +127,32 @@ impl RuntimeHost for CliHost {
                             HostResponse::Value(Value::Int(0))
                         }
                     }
+                    // Leveled log:: namespace — compiler-injected ExternDef rows
+                    "log::trace" => {
+                        let msg = display_args.first().cloned().unwrap_or_default();
+                        self.on_log(LogLevel::Trace, &msg);
+                        HostResponse::Value(Value::Void)
+                    }
+                    "log::debug" => {
+                        let msg = display_args.first().cloned().unwrap_or_default();
+                        self.on_log(LogLevel::Debug, &msg);
+                        HostResponse::Value(Value::Void)
+                    }
+                    "log::info" => {
+                        let msg = display_args.first().cloned().unwrap_or_default();
+                        self.on_log(LogLevel::Info, &msg);
+                        HostResponse::Value(Value::Void)
+                    }
+                    "log::warn" => {
+                        let msg = display_args.first().cloned().unwrap_or_default();
+                        self.on_log(LogLevel::Warn, &msg);
+                        HostResponse::Value(Value::Void)
+                    }
+                    "log::error" => {
+                        let msg = display_args.first().cloned().unwrap_or_default();
+                        self.on_log(LogLevel::Error, &msg);
+                        HostResponse::Value(Value::Void)
+                    }
                     other => {
                         println!("[extern] {other}()");
                         HostResponse::Value(Value::Void)
@@ -153,7 +180,14 @@ impl RuntimeHost for CliHost {
     }
 
     fn on_log(&mut self, level: LogLevel, message: &str) {
-        eprintln!("[{level:?}] {message}");
+        let prefix = match level {
+            LogLevel::Trace => "TRACE",
+            LogLevel::Debug => "DEBUG",
+            LogLevel::Info  => "INFO",
+            LogLevel::Warn  => "WARN",
+            LogLevel::Error => "ERROR",
+        };
+        eprintln!("[{prefix}] {message}");
     }
 
     fn on_gc_complete(&mut self, stats: &GcStats) {
@@ -271,5 +305,33 @@ mod tests {
         let host = CliHost::new(&module, false, false);
         let extern_tok: u32 = (16u32 << 24) | 99;
         assert_eq!(host.resolve_extern_name(extern_tok), "?");
+    }
+
+    #[test]
+    fn test_on_log_uppercase_format_arms_compile() {
+        // Verify that the log::level match arms compile and call on_log with the correct variant.
+        // We test via on_request with log::* extern names registered in the module.
+        let make_host = |name: &str| -> CliHost {
+            let module = module_with_extern(name);
+            CliHost::new(&module, false, false)
+        };
+
+        let extern_tok: u32 = (16u32 << 24) | 1;
+        let make_req = |tok: u32| HostRequest::ExternCall {
+            task_id: TaskId::new(0, 0),
+            extern_idx: tok,
+            args: vec![],
+            display_args: vec!["test message".to_string()],
+        };
+
+        // Each log level extern name must return Value(Void)
+        for level_name in &["log::trace", "log::debug", "log::info", "log::warn", "log::error"] {
+            let mut host = make_host(level_name);
+            let req = make_req(extern_tok);
+            match host.on_request(RequestId(0), &req) {
+                HostResponse::Value(Value::Void) => {}
+                other => panic!("expected Value(Void) for {}, got {:?}", level_name, other),
+            }
+        }
     }
 }

@@ -1,13 +1,13 @@
 //! Declaration type checking.
 
-use crate::ast::decl::*;
+use crate::ast::decl::{AstDecl, AstFnDecl, AstFnParam, AstImplDecl, AstImplMember, AstConstDecl, AstGlobalDecl};
 use crate::ast::Ast;
 use crate::resolve::def_map::{DefId, DefKind};
 use crate::resolve::ir::ResolvedDecl;
 
 use super::check_expr::{check_block_stmts, check_expr, CheckCtx};
 use super::env::Mutability;
-use super::ir::*;
+use super::ir::{TypedDecl, TypedExpr};
 use super::ty::TyKind;
 use writ_diagnostics::FileId;
 
@@ -20,6 +20,7 @@ pub fn check_decl(
     match decl {
         ResolvedDecl::Fn { def_id } => check_fn_decl(ctx, *def_id, asts),
         ResolvedDecl::Struct { def_id } => TypedDecl::Struct { def_id: *def_id },
+        ResolvedDecl::Class { def_id } => TypedDecl::Class { def_id: *def_id },
         ResolvedDecl::Entity { def_id } => TypedDecl::Entity { def_id: *def_id },
         ResolvedDecl::Enum { def_id } => TypedDecl::Enum { def_id: *def_id },
         ResolvedDecl::Contract { def_id } => TypedDecl::Contract { def_id: *def_id },
@@ -27,6 +28,7 @@ pub fn check_decl(
         ResolvedDecl::Component { def_id } => TypedDecl::Component { def_id: *def_id },
         ResolvedDecl::ExternFn { def_id } => TypedDecl::ExternFn { def_id: *def_id },
         ResolvedDecl::ExternStruct { def_id } => TypedDecl::ExternStruct { def_id: *def_id },
+        ResolvedDecl::ExternClass { def_id } => TypedDecl::ExternClass { def_id: *def_id },
         ResolvedDecl::ExternComponent { def_id } => TypedDecl::ExternComponent { def_id: *def_id },
         ResolvedDecl::Const { def_id } => check_const_decl(ctx, *def_id, asts),
         ResolvedDecl::Global { def_id } => check_global_decl(ctx, *def_id, asts),
@@ -48,6 +50,7 @@ fn check_fn_decl(ctx: &mut CheckCtx, def_id: DefId, asts: &[(FileId, &Ast)]) -> 
                 ty: ctx.interner.error(),
                 span,
             },
+            param_name_spans: vec![],
         };
     }
     let fn_decl = fn_decl.unwrap();
@@ -59,8 +62,10 @@ fn check_fn_decl(ctx: &mut CheckCtx, def_id: DefId, asts: &[(FileId, &Ast)]) -> 
     // Set up context for checking the body
     let old_ret = ctx.current_fn_ret;
     let old_file = ctx.current_file;
+    let old_namespace = ctx.current_namespace.clone();
     ctx.current_fn_ret = Some(ret_ty);
     ctx.current_file = file_id;
+    ctx.current_namespace = entry.namespace.clone();
 
     ctx.local_env.push_scope();
 
@@ -84,8 +89,17 @@ fn check_fn_decl(ctx: &mut CheckCtx, def_id: DefId, asts: &[(FileId, &Ast)]) -> 
     // Restore context
     ctx.current_fn_ret = old_ret;
     ctx.current_file = old_file;
+    ctx.current_namespace = old_namespace;
 
-    TypedDecl::Fn { def_id, body }
+    // Collect param name spans for LSP hover support
+    let param_name_spans: Vec<chumsky::span::SimpleSpan> = fn_decl.params.iter().map(|p| {
+        match p {
+            AstFnParam::Regular(param) => param.name_span,
+            AstFnParam::SelfParam { span: self_span, .. } => *self_span,
+        }
+    }).collect();
+
+    TypedDecl::Fn { def_id, body, param_name_spans }
 }
 
 fn check_impl_decl(ctx: &mut CheckCtx, def_id: DefId, asts: &[(FileId, &Ast)]) -> TypedDecl {
@@ -111,6 +125,9 @@ fn check_impl_decl(ctx: &mut CheckCtx, def_id: DefId, asts: &[(FileId, &Ast)]) -
                     DefKind::Struct | DefKind::ExternStruct => {
                         Some(ctx.interner.intern(TyKind::Struct(target_def_id)))
                     }
+                    DefKind::Class | DefKind::ExternClass => {
+                        Some(ctx.interner.intern(TyKind::Class(target_def_id)))
+                    }
                     DefKind::Entity => {
                         Some(ctx.interner.intern(TyKind::Entity(target_def_id)))
                     }
@@ -135,9 +152,11 @@ fn check_impl_decl(ctx: &mut CheckCtx, def_id: DefId, asts: &[(FileId, &Ast)]) -
             let old_ret = ctx.current_fn_ret;
             let old_file = ctx.current_file;
             let old_self = ctx.self_type;
+            let old_namespace = ctx.current_namespace.clone();
 
             ctx.current_file = file_id;
             ctx.self_type = self_type;
+            ctx.current_namespace = entry.namespace.clone();
 
             // Find the method signature from impl_index
             let method_ret = find_impl_method_ret(ctx, def_id, &fn_decl.name);
@@ -178,6 +197,7 @@ fn check_impl_decl(ctx: &mut CheckCtx, def_id: DefId, asts: &[(FileId, &Ast)]) -
             ctx.current_fn_ret = old_ret;
             ctx.current_file = old_file;
             ctx.self_type = old_self;
+            ctx.current_namespace = old_namespace;
 
             // Use the impl_def_id as a placeholder for the method DefId
             methods.push((def_id, body));
@@ -251,11 +271,10 @@ fn find_fn_ast<'a>(
             continue;
         }
         for decl in &ast.items {
-            if let AstDecl::Fn(fn_decl) = decl {
-                if fn_decl.name == entry.name && fn_decl.name_span == entry.name_span {
+            if let AstDecl::Fn(fn_decl) = decl
+                && fn_decl.name == entry.name && fn_decl.name_span == entry.name_span {
                     return Some(fn_decl);
                 }
-            }
         }
     }
     None
@@ -270,11 +289,10 @@ fn find_impl_ast<'a>(
             continue;
         }
         for decl in &ast.items {
-            if let AstDecl::Impl(impl_decl) = decl {
-                if impl_decl.span == entry.span {
+            if let AstDecl::Impl(impl_decl) = decl
+                && impl_decl.span == entry.span {
                     return Some(impl_decl);
                 }
-            }
         }
     }
     None
@@ -289,11 +307,10 @@ fn find_const_ast<'a>(
             continue;
         }
         for decl in &ast.items {
-            if let AstDecl::Const(c) = decl {
-                if c.name == entry.name && c.name_span == entry.name_span {
+            if let AstDecl::Const(c) = decl
+                && c.name == entry.name && c.name_span == entry.name_span {
                     return Some(c);
                 }
-            }
         }
     }
     None
@@ -308,11 +325,10 @@ fn find_global_ast<'a>(
             continue;
         }
         for decl in &ast.items {
-            if let AstDecl::Global(g) = decl {
-                if g.name == entry.name && g.name_span == entry.name_span {
+            if let AstDecl::Global(g) = decl
+                && g.name == entry.name && g.name_span == entry.name_span {
                     return Some(g);
                 }
-            }
         }
     }
     None
@@ -320,7 +336,7 @@ fn find_global_ast<'a>(
 
 fn find_impl_method_ret(ctx: &CheckCtx, impl_def_id: DefId, method_name: &str) -> Option<super::ty::Ty> {
     // Look through the impl_index for the impl_def_id
-    for (_target_id, impls) in &ctx.type_env.impl_index {
+    for impls in ctx.type_env.impl_index.values() {
         for impl_entry in impls {
             if impl_entry.impl_def_id == impl_def_id {
                 for (name, sig) in &impl_entry.methods {
@@ -339,7 +355,7 @@ fn find_impl_method_sig<'a>(
     impl_def_id: DefId,
     method_name: &str,
 ) -> Option<&'a super::env::FnSig> {
-    for (_target_id, impls) in &ctx.type_env.impl_index {
+    for impls in ctx.type_env.impl_index.values() {
         for impl_entry in impls {
             if impl_entry.impl_def_id == impl_def_id {
                 for (name, sig) in &impl_entry.methods {

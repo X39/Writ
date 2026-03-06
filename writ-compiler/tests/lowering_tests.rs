@@ -996,17 +996,18 @@ fn lower_hex_binary_zero_and_decimal() {
 // DECL-01: struct lifecycle hooks lowering
 // ---------------------------------------------------------
 
-/// Struct with lifecycle hook lowers to AstStructMember::OnHook
+/// Class with lifecycle hook lowers to AstStructMember::OnHook
+/// (on create/finalize are class-only; structs are value types without lifecycle hooks)
 #[test]
 fn lower_struct_lifecycle_hook() {
-    let ast = lower_src("struct Foo { x: int, on create { let y = 1; } }");
+    let ast = lower_src("class Foo { x: int, on create { let y = 1; } }");
     insta::assert_debug_snapshot!(ast);
 }
 
-/// Struct with multiple hooks lowers correctly
+/// Class with multiple hooks lowers correctly
 #[test]
 fn lower_struct_multiple_hooks() {
-    let ast = lower_src("struct Bar { on create { }, on finalize { } }");
+    let ast = lower_src("class Bar { on create { }, on finalize { } }");
     insta::assert_debug_snapshot!(ast);
 }
 

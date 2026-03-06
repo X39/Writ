@@ -18,8 +18,8 @@ TypeRef resolution. The blob heap format, register type table, and all metadata 
 IL functions operate on a set of **typed registers**. Each register holds exactly one value of its declared type. The
 compiler emits type declarations for all registers in the method body metadata (see B3 in il-todo.md).
 
-- For **value types** (int, float, bool, enums), the register holds the value directly.
-- For **reference types** (string, structs, entities, arrays, closures/delegates), the register holds a GC-managed
+- For **value types** (int, float, bool, enums, structs), the register holds the value directly. For value-type structs, the register holds all fields inline as a single abstract typed slot. The runtime determines physical storage from the register's declared type.
+- For **reference types** (string, classes, entities, arrays, closures/delegates), the register holds a GC-managed
   reference.
 
 Registers are abstract — the spec does not mandate a physical size or layout. The runtime uses the register's declared
@@ -54,7 +54,7 @@ metadata references a type: field types, parameter types, return types, register
 | Kind (u8)     | Payload                      | Meaning                                                                                                               |
 |---------------|------------------------------|-----------------------------------------------------------------------------------------------------------------------|
 | `0x00`–`0x04` | —                            | Primitive (void, int, float, bool, string)                                                                            |
-| `0x10`        | TypeDef index (`u32`)        | Named type — struct, enum, entity, or component. The TypeDef entry carries a `kind` flag distinguishing these.        |
+| `0x10`        | TypeDef index (`u32`)        | Named type — struct, class, enum, entity, or component. The TypeDef entry carries a `kind` flag distinguishing these. |
 | `0x11`        | TypeSpec index (`u32`)       | Instantiated generic type (e.g., `List<int>`, `Option<Guard>`)                                                        |
 | `0x12`        | GenericParam ordinal (`u16`) | Open type parameter — the Nth generic param on the enclosing TypeDef or MethodDef                                     |
 | `0x20`        | element TypeRef              | `Array<T>` — recursive encoding. The element is itself a TypeRef.                                                     |
@@ -62,7 +62,7 @@ metadata references a type: field types, parameter types, return types, register
 
 **Design notes:**
 
-- **Single TypeDef table.** All named types (structs, enums, entities, components) share one TypeDef table. The TypeDef
+- **Single TypeDef table.** All named types (structs, classes, enums, entities, components) share one TypeDef table. The TypeDef
   entry's `kind` field distinguishes them. TypeRefs do not encode the kind — it is looked up from the TypeDef.
 - **Option and Result are regular generic enums** in the type system. `Option<int>` is represented as a TypeSpec entry
   pointing to the `Option` TypeDef with type argument `int`. Their specialness exists only at the instruction level

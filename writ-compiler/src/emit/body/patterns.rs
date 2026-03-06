@@ -170,6 +170,17 @@ fn is_option_propagation(arms: &[crate::check::ir::TypedArm]) -> bool {
         })
 }
 
+/// Detect if a match is a force-unwrap pattern (`expr!`):
+/// exactly 2 arms: a Variable arm (success) followed by a Wildcard+Crash arm (failure).
+fn is_option_force_unwrap(arms: &[crate::check::ir::TypedArm]) -> bool {
+    if arms.len() != 2 {
+        return false;
+    }
+    matches!(&arms[0].pattern, TypedPattern::Variable { .. })
+        && matches!(&arms[1].pattern, TypedPattern::Wildcard { .. })
+        && matches!(&arms[1].body, TypedExpr::Crash { .. })
+}
+
 /// Detect if a match is a Result try-propagation pattern.
 fn is_result_propagation(arms: &[crate::check::ir::TypedArm]) -> bool {
     if arms.len() != 2 {
@@ -213,18 +224,60 @@ fn emit_option_propagation(
 
         // Register the unwrapped value as the Some binding if present
         for arm in arms {
-            if let TypedPattern::EnumVariant { variant_name, bindings, .. } = &arm.pattern {
-                if variant_name == "Some" {
+            if let TypedPattern::EnumVariant { variant_name, bindings, .. } = &arm.pattern
+                && variant_name == "Some" {
                     for binding in bindings {
                         if let TypedPattern::Variable { name, .. } = binding {
                             emitter.locals.insert(name.clone(), r_unwrapped);
                         }
                     }
                 }
-            }
         }
 
         r_unwrapped
+    } else if is_option_force_unwrap(arms) {
+        // Force-unwrap (`expr!`): IS_NONE + BR_TRUE crash_label + UNWRAP + BR end + crash
+        //
+        // Pattern: Arm 0 = Variable (success), Arm 1 = Wildcard + Crash (failure).
+        // When the option is None, we need to execute the Crash arm.
+        // When the option is Some, we unwrap and bind the variable.
+        let bool_ty = crate::check::ty::Ty(2);
+        let r_is_none = emitter.alloc_reg(bool_ty);
+        emitter.emit(Instruction::IsNone { r_dst: r_is_none, r_opt: r_scrutinee });
+
+        // If NOT None (i.e., Some), skip to the crash label's complement: jump past crash.
+        // Equivalently: if is_none, fall through to CRASH; if !is_none, skip to UNWRAP.
+        let some_label = emitter.new_label();
+        let brf_idx = emitter.instructions.len();
+        emitter.emit(Instruction::BrFalse { r_cond: r_is_none, offset: 0 });
+        emitter.add_fixup(brf_idx, some_label);
+
+        // None branch: emit the Crash arm body
+        let r_result = emitter.alloc_reg(result_ty);
+        let r_crash = emit_expr(emitter, &arms[1].body);
+        emitter.emit(Instruction::Mov { r_dst: r_result, r_src: r_crash });
+
+        let end_label = emitter.new_label();
+        let br_idx = emitter.instructions.len();
+        emitter.emit(Instruction::Br { offset: 0 });
+        emitter.add_fixup(br_idx, end_label);
+
+        // Some branch: UNWRAP and bind the variable
+        emitter.mark_label_here(some_label);
+        let r_unwrapped = emitter.alloc_reg(result_ty);
+        emitter.emit(Instruction::Unwrap { r_dst: r_unwrapped, r_opt: r_scrutinee });
+
+        // Register the binding name from the Variable pattern
+        if let TypedPattern::Variable { name, .. } = &arms[0].pattern {
+            emitter.locals.insert(name.clone(), r_unwrapped);
+        }
+
+        // Emit the success arm body (typically just a Var reference to the binding)
+        let r_val = emit_expr(emitter, &arms[0].body);
+        emitter.emit(Instruction::Mov { r_dst: r_result, r_src: r_val });
+
+        emitter.mark_label_here(end_label);
+        r_result
     } else {
         // Fallback: treat as enum match
         emit_literal_match(emitter, result_ty, r_scrutinee, arms)
@@ -266,15 +319,14 @@ fn emit_result_propagation(
 
         // Register Ok binding if present
         for arm in arms {
-            if let TypedPattern::EnumVariant { variant_name, bindings, .. } = &arm.pattern {
-                if variant_name == "Ok" {
+            if let TypedPattern::EnumVariant { variant_name, bindings, .. } = &arm.pattern
+                && variant_name == "Ok" {
                     for binding in bindings {
                         if let TypedPattern::Variable { name, .. } = binding {
                             emitter.locals.insert(name.clone(), r_ok);
                         }
                     }
                 }
-            }
         }
 
         r_ok

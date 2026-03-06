@@ -53,7 +53,7 @@ pub entity Guard {
     }
 
     on create {
-        log($"Guard spawned: {self.name}");
+        log::info($"Guard spawned: {self.name}");
     }
 
     on interact(who: Entity) {

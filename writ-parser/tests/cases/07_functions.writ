@@ -18,12 +18,12 @@ pub fn clamp(value: int, max: int) -> int {
 
 // --- Void function ---
 pub fn logDamage(amount: int) {
-    log($"Took {amount} damage");
+    log::info($"Took {amount} damage");
 }
 
 // --- Explicit void annotation ---
 pub fn logDamageExplicit(amount: int) -> void {
-    log($"Took {amount} damage");
+    log::info($"Took {amount} damage");
 }
 
 // --- Early exit from void ---
@@ -31,7 +31,7 @@ pub fn maybeLog(amount: int, verbose: bool) {
     if !verbose {
         return;
     }
-    log($"Took {amount} damage");
+    log::info($"Took {amount} damage");
 }
 
 // --- 12.2.1 if/else as expression ---
@@ -66,11 +66,11 @@ pub fn ifStatement(damaged: bool) {
 // --- 12.2.3 for loop ---
 pub fn forLoops() {
     for item in inventory {
-        log(item.name);
+        log::info(item.name);
     }
 
     for i in 0..10 {
-        log($"Step {i}");
+        log::info($"Step {i}");
     }
 
     for member in party.members {

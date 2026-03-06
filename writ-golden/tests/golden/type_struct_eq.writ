@@ -1,0 +1,29 @@
+pub struct Point {
+    x: int,
+    y: int
+}
+
+pub struct Color {
+    r: float,
+    g: float,
+    b: float
+}
+
+fn test_eq() -> bool {
+    let a: Point = new Point { x: 1, y: 2 };
+    let b: Point = new Point { x: 1, y: 2 };
+    let result: bool = a == b;
+    result
+}
+
+fn test_neq() -> bool {
+    let a: Point = new Point { x: 1, y: 2 };
+    let b: Point = new Point { x: 3, y: 4 };
+    let result: bool = a != b;
+    result
+}
+
+fn main() {
+    let eq: bool = test_eq();
+    let neq: bool = test_neq();
+}

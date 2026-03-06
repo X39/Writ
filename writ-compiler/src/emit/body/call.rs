@@ -144,6 +144,7 @@ pub fn emit_call(
 /// Emit a CALL_INDIRECT instruction for delegate/Func typed callees.
 ///
 /// - `r_delegate`: the register holding the delegate (Func-typed) value.
+///
 /// Returns the destination register.
 pub fn emit_call_indirect(
     emitter: &mut BodyEmitter<'_>,

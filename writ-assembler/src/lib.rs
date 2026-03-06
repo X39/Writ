@@ -1,3 +1,14 @@
+//! Writ assembler: text-format .writil assembly to binary .writc modules.
+//!
+//! ## Module structure
+//!
+//! - `ast`          -- AST types for the assembly text format
+//! - `assembler`    -- AST-to-Module compilation
+//! - `disassembler` -- Module-to-text decompilation
+//! - `error`        -- AssembleError type
+//! - `lexer`        -- Tokenizer for .writil text format
+//! - `parser`       -- Token-to-AST parser for assembly directives
+
 pub mod assembler;
 pub mod ast;
 pub mod disassembler;

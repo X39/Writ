@@ -1,6 +1,23 @@
 use crate::gc::GcStats;
 use crate::value::{EntityId, TaskId, Value};
 
+/// Actions the host can request after a debug hook fires.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DebugAction {
+    /// Continue normal execution.
+    Continue,
+    /// Pause execution (breakpoint hit).
+    Break,
+    /// Step over: break when source line changes at same or lower call depth.
+    StepOver,
+    /// Step into: break when source line changes at any call depth.
+    StepInto,
+    /// Step out: break when current frame returns.
+    StepOut,
+    /// Disconnect debugger: clear all step state and resume without debug overhead.
+    Disconnect,
+}
+
 /// Unique identifier for a pending host request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RequestId(pub u32);
@@ -99,6 +116,28 @@ pub trait RuntimeHost {
 
     /// Called after a garbage collection cycle completes.
     fn on_gc_complete(&mut self, _stats: &GcStats) {}
+
+    /// Whether debug hooks should be called. Returns false by default.
+    /// When false, the VM skips all debug hook calls for zero overhead.
+    fn debug_enabled(&self) -> bool { false }
+
+    /// Called before each instruction executes (only when debug_enabled() is true).
+    /// Receives task ID, method index, program counter, and source location.
+    /// Return DebugAction to control execution flow.
+    fn before_instruction(
+        &mut self,
+        _task_id: TaskId,
+        _method_idx: u32,
+        _pc: u32,
+        _source_line: u32,
+        _source_col: u16,
+    ) -> DebugAction { DebugAction::Continue }
+
+    /// Called when a function is entered (only when debug_enabled() is true).
+    fn on_function_enter(&mut self, _task_id: TaskId, _method_idx: u32) {}
+
+    /// Called when a function is exited (only when debug_enabled() is true).
+    fn on_function_exit(&mut self, _task_id: TaskId, _method_idx: u32) {}
 }
 
 /// No-op host that auto-confirms all requests with default responses.
@@ -131,6 +170,29 @@ impl RuntimeHost for NullHost {
 mod tests {
     use super::*;
     use crate::value::TaskId;
+
+    #[test]
+    fn null_host_debug_enabled_returns_false() {
+        let host = NullHost;
+        assert!(!host.debug_enabled());
+    }
+
+    #[test]
+    fn null_host_before_instruction_returns_continue() {
+        let mut host = NullHost;
+        let task_id = TaskId::new(0, 0);
+        let action = host.before_instruction(task_id, 0, 0, 1, 0);
+        assert_eq!(action, DebugAction::Continue);
+    }
+
+    #[test]
+    fn null_host_function_hooks_are_callable() {
+        let mut host = NullHost;
+        let task_id = TaskId::new(0, 0);
+        host.on_function_enter(task_id, 0);
+        host.on_function_exit(task_id, 0);
+        // No panic == success
+    }
 
     #[test]
     fn null_host_extern_call_returns_void() {

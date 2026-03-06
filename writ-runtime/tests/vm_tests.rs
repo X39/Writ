@@ -4,6 +4,7 @@
 //! ticks to completion, and inspects the result.
 
 use writ_module::module::MethodBody;
+use writ_module::tables::TypeDefKind;
 use writ_module::Instruction;
 use writ_module::ModuleBuilder;
 use writ_runtime::{
@@ -27,7 +28,7 @@ fn encode(instrs: &[Instruction]) -> Vec<u8> {
 fn build_runtime(instructions: &[Instruction], reg_count: u16) -> Runtime<NullHost> {
     let mut builder = ModuleBuilder::new("test");
     // Add a type (required for method ownership)
-    builder.add_type_def("TestType", "", 0, 0);
+    builder.add_type_def("TestType", "", TypeDefKind::Struct, 0);
     // Add the method with body
     let body = MethodBody {
         register_types: vec![0; reg_count as usize],
@@ -72,7 +73,7 @@ fn build_two_method_runtime(
     callee_reg_count: u16,
 ) -> Runtime<NullHost> {
     let mut builder = ModuleBuilder::new("test");
-    builder.add_type_def("TestType", "", 0, 0);
+    builder.add_type_def("TestType", "", TypeDefKind::Struct, 0);
 
     let body0 = MethodBody {
         register_types: vec![0; main_reg_count as usize],
@@ -851,7 +852,7 @@ fn nested_calls_unwind_correctly() {
     //
     // We need 3 methods. Build manually.
     let mut builder = ModuleBuilder::new("test");
-    builder.add_type_def("T", "", 0, 0);
+    builder.add_type_def("T", "", TypeDefKind::Struct, 0);
 
     // Method 0: Call method 1 (MethodDef token 0x07000002 = table_id=7, row_index=2, array_index=1)
     let body0 = MethodBody {
@@ -1132,7 +1133,7 @@ fn str_len_returns_length() {
 
 #[test]
 fn new_allocates_struct() {
-    // New with type_idx=1 (our TestType), then GetField/SetField
+    // New with type_idx=1 (our TestType, kind=Struct), creates InlineStruct (value-type, no heap allocation)
     let (rt, tid) = run_simple(
         &[
             Instruction::New {
@@ -1144,10 +1145,12 @@ fn new_allocates_struct() {
         1,
     );
     assert_eq!(rt.task_state(tid), Some(TaskState::Completed));
-    // Verify it's a Ref
+    // Verify it's an InlineStruct (struct is a value-type: inline in register, no heap allocation)
     match rt.return_value(tid) {
-        Some(Value::Ref(_)) => {} // ok
-        other => panic!("expected Ref, got {:?}", other),
+        Some(Value::InlineStruct { type_idx, .. }) => {
+            assert_eq!(type_idx, 1);
+        }
+        other => panic!("expected InlineStruct, got {:?}", other),
     }
 }
 
@@ -1155,7 +1158,7 @@ fn new_allocates_struct() {
 fn get_set_field_round_trip() {
     // We need a type with at least 1 field. Add a field to the type.
     let mut builder = ModuleBuilder::new("test");
-    builder.add_type_def("MyStruct", "", 0, 0);
+    builder.add_type_def("MyStruct", "", TypeDefKind::Struct, 0);
     builder.add_field_def("x", &[0x01], 0); // one field
 
     let body = MethodBody {
@@ -1440,7 +1443,7 @@ fn box_unbox_round_trip() {
 fn load_store_global_round_trip() {
     // Need a module with a global defined
     let mut builder = ModuleBuilder::new("test");
-    builder.add_type_def("T", "", 0, 0);
+    builder.add_type_def("T", "", TypeDefKind::Struct, 0);
     builder.add_global_def("g", &[0x01], 0, &[]);
 
     let body = MethodBody {
@@ -1800,7 +1803,7 @@ fn call_virt_int_add_dispatches_intrinsic() {
     // Build a user module that uses CALL_VIRT to add two integers.
     // The contract_idx encodes a TypeRef pointing to "Add" in "writ-runtime".
     let mut builder = ModuleBuilder::new("test");
-    builder.add_type_def("TestType", "", 0, 0);
+    builder.add_type_def("TestType", "", TypeDefKind::Struct, 0);
 
     // Add ModuleRef to writ-runtime and TypeRef to "Add" contract
     let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
@@ -1841,7 +1844,7 @@ fn call_virt_int_add_dispatches_intrinsic() {
 #[test]
 fn call_virt_float_mul_dispatches_intrinsic() {
     let mut builder = ModuleBuilder::new("test");
-    builder.add_type_def("TestType", "", 0, 0);
+    builder.add_type_def("TestType", "", TypeDefKind::Struct, 0);
 
     let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
     let mul_ref = builder.add_type_ref(mod_ref, "Mul", "writ");
@@ -1878,7 +1881,7 @@ fn call_virt_float_mul_dispatches_intrinsic() {
 #[test]
 fn call_virt_bool_eq_dispatches_intrinsic() {
     let mut builder = ModuleBuilder::new("test");
-    builder.add_type_def("TestType", "", 0, 0);
+    builder.add_type_def("TestType", "", TypeDefKind::Struct, 0);
 
     let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
     let eq_ref = builder.add_type_ref(mod_ref, "Eq", "writ");
@@ -1917,7 +1920,7 @@ fn call_virt_invalid_dispatch_crashes_not_panics() {
     // CALL_VIRT with a contract that doesn't exist for the given type
     // should crash gracefully, not panic.
     let mut builder = ModuleBuilder::new("test");
-    builder.add_type_def("TestType", "", 0, 0);
+    builder.add_type_def("TestType", "", TypeDefKind::Struct, 0);
 
     // Reference "Neg" contract -- Bool doesn't implement Neg
     let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
@@ -1963,7 +1966,7 @@ fn call_virt_user_defined_contract_dispatch_table_populated() {
     // Verify the dispatch table includes the user's implementation entries
     // beyond the 36 intrinsic entries from the virtual module (post FIX-02).
     let mut builder = ModuleBuilder::new("test");
-    let my_type = builder.add_type_def("MyType", "app", 0, 0);
+    let my_type = builder.add_type_def("MyType", "app", TypeDefKind::Struct, 0);
 
     // Define a contract "MyContract" with method "compute"
     let my_contract = builder.add_contract_def("MyContract", "app");
@@ -2003,4 +2006,337 @@ fn call_virt_user_defined_contract_dispatch_table_populated() {
         dispatch_table.len(), 37,
         "dispatch table should have 36 intrinsic + 1 user entry"
     );
+}
+
+// ── InlineStruct / Kind-dispatch Tests (VM-01 through VM-06) ─────
+
+/// Helper: build a runtime with a named type of the given kind and N fields.
+/// Adds N field_defs after the type, then adds one "main" method with the
+/// provided instructions. The type will have 1-based type_idx=1 in instructions.
+fn build_runtime_with_type(
+    type_name: &str,
+    kind: TypeDefKind,
+    field_count: usize,
+    instructions: &[Instruction],
+    reg_count: u16,
+) -> Runtime<NullHost> {
+    let mut builder = ModuleBuilder::new("test");
+    let token = builder.add_type_def(type_name, "", kind, 0);
+    for i in 0..field_count {
+        builder.add_field_def(&format!("f{}", i), &[0x01], 0); // type_sig placeholder
+    }
+    let body = MethodBody {
+        register_types: vec![0; reg_count as usize],
+        code: encode(instructions),
+        debug_locals: vec![],
+        source_spans: vec![],
+    };
+    builder.add_method("main", &[0], 0, reg_count, body);
+    let module = builder.build();
+    RuntimeBuilder::new(module).build().unwrap()
+}
+
+/// VM-01: NEW on kind=0 struct creates InlineStruct in register, no heap allocation.
+#[test]
+fn test_new_struct_inline_no_heap() {
+    let mut rt = build_runtime_with_type(
+        "MyStruct",
+        TypeDefKind::Struct,
+        2,
+        &[
+            Instruction::New { r_dst: 0, type_idx: 1 },
+            Instruction::Ret { r_src: 0 },
+        ],
+        1,
+    );
+    let heap_before = rt.heap().object_count();
+    let task_id = rt.spawn_task(0, vec![]).unwrap();
+    rt.tick(0.0, ExecutionLimit::None);
+    let heap_after = rt.heap().object_count();
+
+    assert_eq!(rt.task_state(task_id), Some(TaskState::Completed));
+    // Heap count must not increase for struct NEW
+    assert_eq!(heap_before, heap_after, "struct NEW must not allocate on heap");
+
+    let ret = rt.return_value(task_id).unwrap();
+    match ret {
+        Value::InlineStruct { type_idx, fields } => {
+            assert_eq!(type_idx, 1);
+            assert_eq!(fields.len(), 2);
+            assert!(fields.iter().all(|f| *f == Value::Void));
+        }
+        other => panic!("expected InlineStruct, got {:?}", other),
+    }
+}
+
+/// VM-03/VM-06: NEW on kind=4 class allocates on heap, register holds Ref.
+#[test]
+fn test_new_class_heap_alloc() {
+    let mut rt = build_runtime_with_type(
+        "MyClass",
+        TypeDefKind::Class,
+        2,
+        &[
+            Instruction::New { r_dst: 0, type_idx: 1 },
+            Instruction::Ret { r_src: 0 },
+        ],
+        1,
+    );
+    let heap_before = rt.heap().object_count();
+    let task_id = rt.spawn_task(0, vec![]).unwrap();
+    rt.tick(0.0, ExecutionLimit::None);
+    let heap_after = rt.heap().object_count();
+
+    assert_eq!(rt.task_state(task_id), Some(TaskState::Completed));
+    assert_eq!(heap_after, heap_before + 1, "class NEW must allocate on heap");
+
+    let ret = rt.return_value(task_id).unwrap();
+    assert!(
+        matches!(ret, Value::Ref(_)),
+        "expected Ref for class, got {:?}", ret
+    );
+}
+
+/// VM-03: NEW on kind=1 (enum) crashes with descriptive message.
+#[test]
+fn test_new_enum_kind_crashes() {
+    let mut rt = build_runtime_with_type(
+        "MyEnum",
+        TypeDefKind::Enum,
+        0,
+        &[
+            Instruction::New { r_dst: 0, type_idx: 1 },
+            Instruction::Ret { r_src: 0 },
+        ],
+        1,
+    );
+    let task_id = rt.spawn_task(0, vec![]).unwrap();
+    rt.tick(0.0, ExecutionLimit::None);
+
+    assert_eq!(rt.task_state(task_id), Some(TaskState::Cancelled));
+    let crash = rt.crash_info(task_id).unwrap();
+    assert!(
+        crash.message.to_lowercase().contains("enum") || crash.message.contains("kind"),
+        "crash message should mention enum or kind, got: {}",
+        crash.message
+    );
+}
+
+/// GET_FIELD and SET_FIELD on InlineStruct reads/writes directly.
+#[test]
+fn test_get_set_field_inline_struct() {
+    let mut rt = build_runtime_with_type(
+        "MyStruct",
+        TypeDefKind::Struct,
+        2,
+        &[
+            // r0 = new MyStruct (InlineStruct{2 fields})
+            Instruction::New { r_dst: 0, type_idx: 1 },
+            // r1 = 42
+            Instruction::LoadInt { r_dst: 1, value: 42 },
+            // r0.field[0] = r1
+            Instruction::SetField { r_obj: 0, field_idx: 0, r_val: 1 },
+            // r2 = r0.field[0]
+            Instruction::GetField { r_dst: 2, r_obj: 0, field_idx: 0 },
+            Instruction::Ret { r_src: 2 },
+        ],
+        3,
+    );
+    let task_id = rt.spawn_task(0, vec![]).unwrap();
+    rt.tick(0.0, ExecutionLimit::None);
+
+    assert_eq!(rt.task_state(task_id), Some(TaskState::Completed));
+    assert_eq!(rt.return_value(task_id), Some(Value::Int(42)));
+}
+
+/// VM-06: GET_FIELD and SET_FIELD on Ref (class) still work through heap.
+#[test]
+fn test_get_set_field_class_ref() {
+    let mut rt = build_runtime_with_type(
+        "MyClass",
+        TypeDefKind::Class,
+        2,
+        &[
+            // r0 = new MyClass (Ref on heap)
+            Instruction::New { r_dst: 0, type_idx: 1 },
+            // r1 = 99
+            Instruction::LoadInt { r_dst: 1, value: 99 },
+            // r0.field[1] = r1
+            Instruction::SetField { r_obj: 0, field_idx: 1, r_val: 1 },
+            // r2 = r0.field[1]
+            Instruction::GetField { r_dst: 2, r_obj: 0, field_idx: 1 },
+            Instruction::Ret { r_src: 2 },
+        ],
+        3,
+    );
+    let task_id = rt.spawn_task(0, vec![]).unwrap();
+    rt.tick(0.0, ExecutionLimit::None);
+
+    assert_eq!(rt.task_state(task_id), Some(TaskState::Completed));
+    assert_eq!(rt.return_value(task_id), Some(Value::Int(99)));
+}
+
+/// VM-02: MOV of InlineStruct produces independent copy.
+/// Mutating the copy does not affect the original.
+#[test]
+fn test_mov_inline_struct_independent_copy() {
+    let mut rt = build_runtime_with_type(
+        "MyStruct",
+        TypeDefKind::Struct,
+        1,
+        &[
+            // r0 = new MyStruct
+            Instruction::New { r_dst: 0, type_idx: 1 },
+            // r1 = 10
+            Instruction::LoadInt { r_dst: 1, value: 10 },
+            // r0.field[0] = 10
+            Instruction::SetField { r_obj: 0, field_idx: 0, r_val: 1 },
+            // r2 = copy of r0 (MOV)
+            Instruction::Mov { r_dst: 2, r_src: 0 },
+            // r3 = 999
+            Instruction::LoadInt { r_dst: 3, value: 999 },
+            // r2.field[0] = 999 (mutate the COPY)
+            Instruction::SetField { r_obj: 2, field_idx: 0, r_val: 3 },
+            // r4 = r0.field[0] — original should still be 10
+            Instruction::GetField { r_dst: 4, r_obj: 0, field_idx: 0 },
+            Instruction::Ret { r_src: 4 },
+        ],
+        5,
+    );
+    let task_id = rt.spawn_task(0, vec![]).unwrap();
+    rt.tick(0.0, ExecutionLimit::None);
+
+    assert_eq!(rt.task_state(task_id), Some(TaskState::Completed));
+    assert_eq!(
+        rt.return_value(task_id),
+        Some(Value::Int(10)),
+        "original struct must be unchanged after mutating the copy"
+    );
+}
+
+/// VM-05: BOX on InlineStruct stores Boxed(InlineStruct) on heap.
+/// UNBOX recovers an independent copy with same type_idx and fields.
+#[test]
+fn test_box_unbox_inline_struct() {
+    let mut rt = build_runtime_with_type(
+        "MyStruct",
+        TypeDefKind::Struct,
+        1,
+        &[
+            // r0 = new MyStruct
+            Instruction::New { r_dst: 0, type_idx: 1 },
+            // r1 = 77
+            Instruction::LoadInt { r_dst: 1, value: 77 },
+            // r0.field[0] = 77
+            Instruction::SetField { r_obj: 0, field_idx: 0, r_val: 1 },
+            // r2 = Box(r0) — heap allocates Boxed(InlineStruct{...})
+            Instruction::Box { r_dst: 2, r_val: 0 },
+            // r3 = Unbox(r2) — recovers independent copy
+            Instruction::Unbox { r_dst: 3, r_boxed: 2 },
+            // r4 = r3.field[0] — should be 77
+            Instruction::GetField { r_dst: 4, r_obj: 3, field_idx: 0 },
+            Instruction::Ret { r_src: 4 },
+        ],
+        5,
+    );
+    let task_id = rt.spawn_task(0, vec![]).unwrap();
+    rt.tick(0.0, ExecutionLimit::None);
+
+    assert_eq!(rt.task_state(task_id), Some(TaskState::Completed));
+    assert_eq!(
+        rt.return_value(task_id),
+        Some(Value::Int(77)),
+        "UNBOX of InlineStruct should recover the field value"
+    );
+}
+
+// ── GC InlineStruct Tests (VM-04) ────────────────────────────────
+
+/// VM-04: GC traces InlineStruct fields in registers to find embedded Refs.
+/// An InlineStruct holding a Ref keeps the heap object alive.
+#[test]
+fn test_gc_traces_inline_struct_ref_fields() {
+    use writ_runtime::gc::{GcHeap, MarkSweepHeap};
+    let mut heap = MarkSweepHeap::new();
+
+    // Allocate a string on the heap
+    let string_href = heap.alloc_string("keep me alive");
+    assert_eq!(heap.heap_size(), 1);
+
+    // simulate: a register holds InlineStruct{ fields: [Ref(string_href)] }
+    let inline_val = Value::InlineStruct {
+        type_idx: 1,
+        fields: vec![Value::Ref(string_href)],
+    };
+
+    // collect_value_refs must find the ref
+    let mut refs = Vec::new();
+    writ_runtime::gc::collect_value_refs(&inline_val, &mut refs);
+    assert_eq!(refs, vec![string_href], "collect_value_refs must find embedded Ref");
+
+    // Run GC with the InlineStruct ref as root — string survives
+    let stats = heap.collect(&refs);
+    assert_eq!(stats.objects_freed, 0);
+    assert_eq!(heap.heap_size(), 1);
+    assert_eq!(heap.read_string(string_href).unwrap(), "keep me alive");
+
+    // Run GC with no roots — string is freed
+    let stats = heap.collect(&[]);
+    assert_eq!(stats.objects_freed, 1);
+    assert_eq!(heap.heap_size(), 0);
+}
+
+/// VM-04: GC traces nested InlineStruct fields recursively.
+#[test]
+fn test_gc_traces_nested_inline_struct_refs() {
+    use writ_runtime::gc::{GcHeap, MarkSweepHeap};
+    let mut heap = MarkSweepHeap::new();
+
+    let deep_href = heap.alloc_string("deep");
+
+    // Outer struct contains inner struct which contains a Ref
+    let inner = Value::InlineStruct {
+        type_idx: 2,
+        fields: vec![Value::Ref(deep_href)],
+    };
+    let outer = Value::InlineStruct {
+        type_idx: 1,
+        fields: vec![inner],
+    };
+
+    let mut refs = Vec::new();
+    writ_runtime::gc::collect_value_refs(&outer, &mut refs);
+    assert_eq!(refs, vec![deep_href], "nested collect_value_refs must find deep Ref");
+
+    // GC with root — deep survives
+    let stats = heap.collect(&refs);
+    assert_eq!(stats.objects_freed, 0);
+    assert_eq!(heap.heap_size(), 1);
+}
+
+/// VM-04: GC traces Boxed(InlineStruct) correctly.
+#[test]
+fn test_gc_traces_boxed_inline_struct() {
+    use writ_runtime::gc::{GcHeap, MarkSweepHeap};
+    let mut heap = MarkSweepHeap::new();
+
+    let inner_href = heap.alloc_string("inner string");
+    let inline_val = Value::InlineStruct {
+        type_idx: 1,
+        fields: vec![Value::Ref(inner_href)],
+    };
+    // Box the InlineStruct
+    let boxed_href = heap.alloc_boxed(inline_val);
+    assert_eq!(heap.heap_size(), 2);
+
+    // GC with boxed_href as root — both boxed and inner_href survive
+    let stats = heap.collect(&[boxed_href]);
+    assert_eq!(stats.objects_freed, 0, "boxed InlineStruct and its Ref target must survive GC");
+    assert_eq!(heap.heap_size(), 2);
+    assert_eq!(heap.read_string(inner_href).unwrap(), "inner string");
+
+    // GC with no roots — both freed
+    let stats = heap.collect(&[]);
+    assert_eq!(stats.objects_freed, 2);
+    assert_eq!(heap.heap_size(), 0);
 }

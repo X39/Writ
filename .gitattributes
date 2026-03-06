@@ -1,0 +1,7 @@
+# Ensure shell scripts always use LF line endings on all platforms.
+# CRLF in shell scripts breaks execution inside Docker/Linux containers.
+*.sh text eol=lf
+*.bash text eol=lf
+
+# Keep default behavior for other files
+* text=auto

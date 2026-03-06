@@ -1,30 +1,59 @@
+# Remove the `"1."2.8 Serialization Critical Sections` section
+#### ToDo
+
+The section is no longer relevant. Remove it.
+It also notes something about "Native resources" being the "host" responsibility and other, invalid things (eg. "VM is
+never serialized mid-instruction or mid-expression, which is not true; guarantee is via atomic block, not on VM
+execution boundaries)
+
+# Consider respecing structs to ValueTypes, introducing classes for reference types
+#### Potential ToDo
+Currently, there is no real "Value Type" concept in the spec. The "Value Types" are effectively just primitives and enums.
+However: It might be useful to have said concept of "Value Types", just like C# does.
+Discuss this and consider.
+
 # Implement `writ.toml` handling
+
 #### ToDo
+
 Right now, compile does not handle compilation from writ.toml. Fix that by implementing it.
-We have to support passing a  writ.toml, a directory or .writ file to modules.
-We also have to revisit how configurations work, making them more "debug" and "release" like (and encompass them into the bin/configuration/artifacts structure correctly).
+We have to support passing a writ.toml, a directory or .writ file to modules.
+We also have to revisit how configurations work, making them more "debug" and "release" like (and encompass them into
+the bin/configuration/artifacts structure correctly).
+
 # `writ-golden/tests/golden/fn_log_say_choice.writc` is severly broken
+
 #### ToDo
+
 Figure out what is broken by checking against the spec and fix it.
-After that: Check whether `tools/writ_module.hexpat` parses the artifact in ImHex again and, if not, fix the problem in said file too.
+After that: Check whether `tools/writ_module.hexpat` parses the artifact in ImHex again and, if not, fix the problem in
+said file too.
 
 # Choice options have to be renamed to not conflict with Option enum
+
 #### ToDo
+
 Right now, the spec demands the Option enum and has the Option type (or method, i am actually not sure right now).
 That is a name conflict. Add a ChoiceOption type instead to avoid this.
 Update the spec to reflect this and update the inbuilt module.
 
 # Extend log method or make it a namespace/type with sub-methods
+
 #### ToDo
+
 Right now, the log method does not allow to do a multitude of things, and works more like a "println" function.
-Log should, however, allow multiple log levels, optional categories and other things (eg. value logging), to make it useful.
+Log should, however, allow multiple log levels, optional categories and other things (eg. value logging), to make it
+useful.
 Update the spec to reflect this and fix the inbuilt log method.
 
 # Inbuilt methods need to be referenced by their full path
+
 #### ToDo
+
 Update the spec to be more clear that inbuilt methods live in no namespace and are always available.
 
 #### Works
+
 ```writ
 pub fn main() {
     ::log("saying Test");
@@ -43,6 +72,7 @@ pub fn main() {
 ```
 
 #### Does not work
+
 ```writ
 pub fn main() {
     log("saying Test");
@@ -63,8 +93,12 @@ pub fn main() {
 # Enums cannot be used as rust enums can
 
 #### ToDo
-Update spec and lowering to allow enum variants to be imported and update the spec to expose Option<T> enum members by default.
+
+Update spec and lowering to allow enum variants to be imported and update the spec to expose Option<T> enum members by
+default.
+
 #### Works
+
 ```writ
 fn main() {
     let opt_val_keyword: bool? = null;
@@ -84,6 +118,7 @@ fn produce_option_none() -> Option<bool> {
 ```
 
 #### Does not work
+
 ```writ
 fn main() {
     let opt_val_keyword: bool? = None;

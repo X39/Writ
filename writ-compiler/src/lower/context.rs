@@ -25,6 +25,12 @@ pub struct LoweringContext {
     namespace_stack: Vec<String>,
 }
 
+impl Default for LoweringContext {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LoweringContext {
     pub fn new() -> Self {
         Self {

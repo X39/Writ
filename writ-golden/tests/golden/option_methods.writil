@@ -1,0 +1,22 @@
+.module "main" "0.1.0" {
+    .extern "writ-runtime" "1.0.0"
+    .method "main" () -> void mut {
+        .locals {
+            r1: ? "opt" [18, 38)
+            r2: bool "a" [24, 38)
+            r3: bool "b" [30, 38)
+            r4: int "c" [36, 38)
+        }
+        .reg r0 int
+        .reg r1 ?
+        .reg r2 bool
+        .reg r3 bool
+        .reg r4 int
+        LOAD_INT r0, 42  ; line:1 col:18
+        WRAP_SOME r1, r0
+        IS_SOME r2, r1  ; line:1 col:57
+        IS_NONE r3, r1  ; line:1 col:91
+        UNWRAP r4, r1  ; line:1 col:125
+        RET_VOID
+    }
+}

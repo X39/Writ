@@ -13,7 +13,7 @@ pub global mut isGameOver: bool = false;
 pub fn readGlobals() {
     let gold = playerGold;
     let name = playerName;
-    log($"{name} has {gold} gold");
+    log::info($"{name} has {gold} gold");
 }
 
 // --- Writing globals ---

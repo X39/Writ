@@ -40,6 +40,9 @@ pub enum DecodeError {
 
     #[error("buffer too small")]
     BufferTooSmall,
+
+    #[error("invalid TypeDef kind: {0}")]
+    InvalidTypeDefKind(u8),
 }
 
 /// Errors encountered while encoding (writing) a binary module.

@@ -76,7 +76,7 @@ dlg conditionalDemo(player: Entity) {
     }
 
     // $ match
-    $ match player.class {
+    $ match player.job {
         Class::Warrior => {
             @Merchant I have fine weapons for you.
         }

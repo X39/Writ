@@ -1,0 +1,34 @@
+.module "main" "0.1.0" {
+    .extern "writ-runtime" "1.0.0"
+    .method "main" () -> void mut {
+        .locals {
+            r0: array<int> "arr" [48, 126)
+            r5: int "first" [68, 126)
+            r8: int "size" [106, 126)
+        }
+        .reg r0 array<int>
+        .reg r1 int
+        .reg r2 int
+        .reg r3 int
+        .reg r4 int
+        .reg r5 int
+        .reg r6 int
+        .reg r7 int
+        .reg r8 int
+        .reg r9 int
+        .reg r10 void
+        LOAD_INT r1, 1  ; line:1 col:18
+        LOAD_INT r2, 2
+        LOAD_INT r3, 3
+        ARRAY_INIT r0, 0, 3, r1
+        LOAD_INT r4, 0  ; line:1 col:55
+        ARRAY_LOAD r5, r0, r4
+        LOAD_INT r6, 42  ; line:1 col:85
+        LOAD_INT r7, 1
+        ARRAY_STORE r0, r7, r6
+        ARRAY_LEN r8, r0  ; line:1 col:103
+        LOAD_INT r9, 99  ; line:1 col:135
+        ARRAY_ADD r0, r9
+        RET_VOID
+    }
+}

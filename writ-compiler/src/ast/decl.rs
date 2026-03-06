@@ -19,6 +19,8 @@ pub enum AstDecl {
     Using(AstUsingDecl),
     Fn(AstFnDecl),
     Struct(AstStructDecl),
+    /// Class declaration (reference type, heap-allocated).
+    Class(AstClassDecl),
     Entity(AstEntityDecl),
     Enum(AstEnumDecl),
     Contract(AstContractDecl),
@@ -206,6 +208,23 @@ pub struct AstStructField {
     pub span: SimpleSpan,
 }
 
+/// Class declaration: `[attrs] [vis] class Name [<generics>] { members }` (reference type)
+///
+/// Classes are heap-allocated, GC-managed reference types. They support all lifecycle
+/// hooks (create, finalize, serialize, deserialize) and are otherwise structurally
+/// identical to structs.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AstClassDecl {
+    pub attrs: Vec<AstAttribute>,
+    pub vis: Option<AstVisibility>,
+    pub name: String,
+    pub name_span: SimpleSpan,
+    pub generics: Vec<AstGenericParam>,
+    /// Members reuse AstStructMember since class fields have the same shape.
+    pub members: Vec<AstStructMember>,
+    pub span: SimpleSpan,
+}
+
 // =========================================================
 // Entity
 // =========================================================
@@ -389,6 +408,8 @@ pub enum AstExternDecl {
     Fn(Option<AstVisibility>, AstFnSig),
     /// Extern struct: `[vis] extern struct Name { fields }`
     Struct(Option<AstVisibility>, AstStructDecl),
+    /// Extern class: `[vis] extern class Name { fields }`
+    Class(Option<AstVisibility>, AstClassDecl),
     /// Extern component: `[vis] extern component Name { fields }`
     Component(Option<AstVisibility>, AstComponentDecl),
 }

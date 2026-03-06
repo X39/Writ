@@ -13,11 +13,11 @@ pub fn ranges() {
 
     // In for loop
     for i in 0..10 {
-        log($"Step {i}");
+        log::info($"Step {i}");
     }
 
     for i in 0..=10 {
-        log($"Step {i}");
+        log::info($"Step {i}");
     }
 
     // Half-open ranges
@@ -77,6 +77,6 @@ pub fn rangeIteration() {
 
     // Float range
     for f in 0.0..5.0 {
-        log($"Value: {f}");
+        log::info($"Value: {f}");
     }
 }

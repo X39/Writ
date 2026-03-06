@@ -1,0 +1,16 @@
+pub class Point {
+    x: int,
+    y: int,
+    label: string
+}
+
+fn main() {
+    let mut sum: int = 0;
+    let mut i: int = 0;
+    while i < 1000000 {
+        let p: Point = new Point { x: i, y: i, label: "item" };
+        sum = sum + p.x;
+        i = i + 1;
+    }
+    log::info($"{sum}");
+}

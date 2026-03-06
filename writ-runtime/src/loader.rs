@@ -13,6 +13,11 @@ pub struct LoadedModule {
     /// For each method body (parallel to module.method_bodies),
     /// the decoded `Vec<Instruction>` with branch targets rewritten to instruction indices.
     pub decoded_bodies: Vec<Vec<Instruction>>,
+    /// For each method body (parallel to decoded_bodies),
+    /// maps instruction index -> byte offset in the original code stream.
+    /// Used to translate VM instruction indices back to byte offsets for
+    /// SourceSpan/breakpoint lookups.
+    pub byte_offsets: Vec<Vec<u32>>,
     /// Cross-module reference resolution results. Populated by Domain::resolve_refs().
     pub resolved_refs: ResolvedRefs,
 }
@@ -22,13 +27,16 @@ impl LoadedModule {
     /// converting branch byte offsets to instruction indices.
     pub fn from_module(module: Module) -> Result<Self, RuntimeError> {
         let mut decoded_bodies = Vec::with_capacity(module.method_bodies.len());
+        let mut byte_offsets_all = Vec::with_capacity(module.method_bodies.len());
         for (method_idx, body) in module.method_bodies.iter().enumerate() {
-            let instructions = decode_and_reindex(&body.code, method_idx)?;
+            let (instructions, byte_offsets) = decode_and_reindex(&body.code, method_idx)?;
             decoded_bodies.push(instructions);
+            byte_offsets_all.push(byte_offsets);
         }
         Ok(Self {
             module,
             decoded_bodies,
+            byte_offsets: byte_offsets_all,
             resolved_refs: ResolvedRefs::new(),
         })
     }
@@ -39,9 +47,13 @@ impl LoadedModule {
 /// Pass 1: Decode all instructions, recording the byte offset of each instruction start.
 /// Pass 2: Rewrite branch targets (Br, BrTrue, BrFalse, Switch, DeferPush)
 ///          from byte offsets to instruction indices.
-fn decode_and_reindex(raw_code: &[u8], method_idx: usize) -> Result<Vec<Instruction>, RuntimeError> {
+///
+/// Returns `(instructions, byte_offsets)` where `byte_offsets[i]` is the byte offset
+/// in `raw_code` where instruction `i` starts. Used by `LoadedModule` to map instruction
+/// indices back to byte offsets for SourceSpan and breakpoint lookups.
+fn decode_and_reindex(raw_code: &[u8], method_idx: usize) -> Result<(Vec<Instruction>, Vec<u32>), RuntimeError> {
     if raw_code.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
 
     // Pass 1: Decode all instructions and record byte offsets
@@ -157,7 +169,7 @@ fn decode_and_reindex(raw_code: &[u8], method_idx: usize) -> Result<Vec<Instruct
         }
     }
 
-    Ok(instructions)
+    Ok((instructions, byte_offsets))
 }
 
 #[cfg(test)]
@@ -175,8 +187,9 @@ mod tests {
 
     #[test]
     fn empty_body() {
-        let result = decode_and_reindex(&[], 0).unwrap();
+        let (result, offsets) = decode_and_reindex(&[], 0).unwrap();
         assert!(result.is_empty());
+        assert!(offsets.is_empty());
     }
 
     #[test]
@@ -186,10 +199,12 @@ mod tests {
             Instruction::Ret { r_src: 0 },
         ];
         let code = encode_instructions(&instrs);
-        let decoded = decode_and_reindex(&code, 0).unwrap();
+        let (decoded, offsets) = decode_and_reindex(&code, 0).unwrap();
         assert_eq!(decoded.len(), 2);
         assert_eq!(decoded[0], Instruction::LoadInt { r_dst: 0, value: 42 });
         assert_eq!(decoded[1], Instruction::Ret { r_src: 0 });
+        assert_eq!(offsets.len(), 2);
+        assert_eq!(offsets[0], 0, "first instruction starts at byte 0");
     }
 
     #[test]
@@ -214,13 +229,16 @@ mod tests {
         load2.encode(&mut buf).unwrap();
         ret.encode(&mut buf).unwrap();
 
-        let decoded = decode_and_reindex(&buf, 0).unwrap();
+        let (decoded, offsets) = decode_and_reindex(&buf, 0).unwrap();
         assert_eq!(decoded.len(), 4);
         // Br should now point to instruction index 3 (the Ret)
         match &decoded[1] {
             Instruction::Br { offset } => assert_eq!(*offset, 3),
             other => panic!("expected Br, got {:?}", other),
         }
+        // byte_offsets should record the start position of each instruction
+        assert_eq!(offsets.len(), 4);
+        assert_eq!(offsets[0], 0); // LoadInt at byte 0
     }
 
     #[test]
@@ -235,12 +253,14 @@ mod tests {
         load.encode(&mut buf).unwrap(); // position 0, 12 bytes
         br.encode(&mut buf).unwrap();   // position 12
 
-        let decoded = decode_and_reindex(&buf, 0).unwrap();
+        let (decoded, offsets) = decode_and_reindex(&buf, 0).unwrap();
         assert_eq!(decoded.len(), 2);
         match &decoded[1] {
             Instruction::Br { offset } => assert_eq!(*offset, 0), // targets instruction 0
             other => panic!("expected Br, got {:?}", other),
         }
+        assert_eq!(offsets[0], 0);
+        assert_eq!(offsets[1], 12); // Br starts at byte 12
     }
 
     #[test]
@@ -260,7 +280,7 @@ mod tests {
         load_int.encode(&mut buf).unwrap();
         ret.encode(&mut buf).unwrap();
 
-        let decoded = decode_and_reindex(&buf, 0).unwrap();
+        let (decoded, _offsets) = decode_and_reindex(&buf, 0).unwrap();
         assert_eq!(decoded.len(), 4);
         match &decoded[1] {
             Instruction::BrTrue { r_cond, offset } => {
@@ -288,7 +308,7 @@ mod tests {
         load_int.encode(&mut buf).unwrap();   // 12 bytes, at position 8
         ret.encode(&mut buf).unwrap();        // 4 bytes, at position 20
 
-        let decoded = decode_and_reindex(&buf, 0).unwrap();
+        let (decoded, offsets) = decode_and_reindex(&buf, 0).unwrap();
         assert_eq!(decoded.len(), 3);
         match &decoded[0] {
             Instruction::DeferPush { r_dst, method_idx } => {
@@ -297,6 +317,9 @@ mod tests {
             }
             other => panic!("expected DeferPush, got {:?}", other),
         }
+        assert_eq!(offsets[0], 0);
+        assert_eq!(offsets[1], 8);
+        assert_eq!(offsets[2], 20);
     }
 
     #[test]
@@ -339,5 +362,11 @@ mod tests {
             loaded.decoded_bodies[1][0],
             Instruction::LoadInt { r_dst: 0, value: 2 }
         );
+        // byte_offsets should be populated for both bodies
+        assert_eq!(loaded.byte_offsets.len(), 2);
+        assert_eq!(loaded.byte_offsets[0].len(), 2);
+        assert_eq!(loaded.byte_offsets[1].len(), 2);
+        assert_eq!(loaded.byte_offsets[0][0], 0, "first instruction of body 0 starts at byte 0");
+        assert_eq!(loaded.byte_offsets[1][0], 0, "first instruction of body 1 starts at byte 0");
     }
 }

@@ -1,0 +1,51 @@
+// Dialogue/function interplay -- exercises dlg blocks calling fn helpers
+// and fn calling dlg, with Tier 1 speaker params, code escapes, and transitions.
+// No $ choice in this test (avoids known ::choice serialization bug).
+// No string interpolation in text lines (avoids .into<string>() on string type).
+
+// Explicit extern declarations required: dialogue lowering emits
+// say(speaker, text) with 2 args, but auto-injected say has 1 param.
+pub extern fn say(speaker: Entity, text: string);
+pub extern fn say_localized(speaker: Entity, key: string, fallback: string);
+
+// Helper function called from dialogue blocks
+fn format_greeting(name: string) -> string {
+    "Welcome, " + name + "!"
+}
+
+// Helper function that computes a value
+fn quest_reward(base: int, multiplier: int) -> int {
+    base * multiplier
+}
+
+// A dialogue block that calls helper functions via $ code escape
+dlg greet(npc: Entity, player_name: string) {
+    @npc Hello, traveler.
+    $ let greeting: string = format_greeting(player_name);
+    @npc Great to meet you!
+    $ let reward: int = quest_reward(10, 3);
+    $ ::log::info("Computed reward");
+}
+
+// A dialogue block that transitions to another dialogue
+dlg intro(narrator: Entity) {
+    @narrator The adventure begins here.
+    @narrator Are you ready?
+    -> quest_start(narrator)
+}
+
+// Target of the transition
+dlg quest_start(narrator: Entity) {
+    @narrator Your quest has begun!
+    $ let progress: int = 0;
+    @narrator Good luck on your journey.
+}
+
+// A regular function that calls a dialogue function
+fn start_conversation(npc: Entity) {
+    greet(npc, "Hero");
+}
+
+fn main() {
+    ::log::info("Starting dialogue test");
+}

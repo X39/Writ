@@ -1,0 +1,30 @@
+.module "main" "0.1.0" {
+    .extern "writ-runtime" "1.0.0"
+    .method "main" () -> void mut {
+        .locals {
+            r1: ? "res" [18, 58)
+            r2: bool "a" [24, 58)
+            r3: bool "b" [30, 58)
+            r4: int "c" [36, 58)
+            r6: ? "res2" [50, 58)
+            r7: string "d" [56, 58)
+        }
+        .reg r0 int
+        .reg r1 ?
+        .reg r2 bool
+        .reg r3 bool
+        .reg r4 int
+        .reg r5 string
+        .reg r6 ?
+        .reg r7 string
+        LOAD_INT r0, 42  ; line:1 col:18
+        WRAP_OK r1, r0
+        IS_OK r2, r1  ; line:1 col:62
+        IS_ERR r3, r1  ; line:1 col:94
+        UNWRAP_OK r4, r1  ; line:1 col:127
+        LOAD_STRING r5, 56  ; line:1 col:159
+        WRAP_ERR r6, r5
+        EXTRACT_ERR r7, r6  ; line:1 col:208
+        RET_VOID
+    }
+}

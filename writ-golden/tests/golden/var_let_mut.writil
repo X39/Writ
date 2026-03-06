@@ -1,0 +1,14 @@
+.module "main" "0.1.0" {
+    .extern "writ-runtime" "1.0.0"
+    .method "main" () -> void mut {
+        .locals {
+            r0: int "x" [12, 32)
+        }
+        .reg r0 int
+        .reg r1 int
+        LOAD_INT r0, 10  ; line:1 col:18
+        LOAD_INT r1, 20  ; line:1 col:44
+        MOV r0, r1
+        RET_VOID
+    }
+}

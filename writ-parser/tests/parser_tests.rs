@@ -54,6 +54,34 @@ fn parse_ok(src: &'static str) -> Vec<Spanned<Stmt<'static>>> {
         .collect()
 }
 
+/// Parse source code that contains expression statements at top level.
+/// Asserts only that no OTHER errors (not top-level-expression errors) occur.
+/// Used by tests that test statement/expression forms using top-level parse as harness.
+fn parse_ok_stmts(src: &'static str) -> Vec<Spanned<Stmt<'static>>> {
+    let (output, errors) = parse(src);
+    let non_expr_errors: Vec<_> = errors
+        .iter()
+        .filter(|e| {
+            let msg = format!("{e:?}");
+            !msg.contains("expression statements are not allowed at the top level")
+        })
+        .collect();
+    assert!(
+        non_expr_errors.is_empty(),
+        "Parse errors for {:?}: {:?}",
+        src,
+        non_expr_errors
+    );
+    let items = output.expect("Expected parse output");
+    items
+        .into_iter()
+        .filter_map(|(item, _span)| match item {
+            Item::Stmt(s) => Some(s),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Extract the single expression from a `let x = <expr>;` statement.
 fn let_value<'a>(stmt: &'a Spanned<Stmt<'a>>) -> &'a Expr<'a> {
     match &stmt.0 {
@@ -502,7 +530,7 @@ fn join_expr() {
 
 #[test]
 fn defer_expr() {
-    let stmts = parse_ok("defer { closeFile(file); }");
+    let stmts = parse_ok_stmts("defer { closeFile(file); }");
     assert_eq!(stmts.len(), 1);
     match &stmts[0].0 {
         Stmt::Expr((Expr::Defer(inner), _)) => match &inner.0 {
@@ -564,7 +592,7 @@ fn struct_construction() {
 
 #[test]
 fn if_statement() {
-    let stmts = parse_ok("if damaged { playSound(\"hit\"); }");
+    let stmts = parse_ok_stmts("if damaged { playSound(\"hit\"); }");
     assert_eq!(stmts.len(), 1);
     match &stmts[0].0 {
         Stmt::Expr((Expr::If { condition, then_block, else_block }, _)) => {
@@ -624,7 +652,7 @@ fn if_else_if_chain() {
 
 #[test]
 fn match_enum_destructure() {
-    let stmts = parse_ok(
+    let stmts = parse_ok_stmts(
         "match result { Result::Ok(data) => { processData(data); } Result::Err(err) => { log(err); } }",
     );
     assert_eq!(stmts.len(), 1);
@@ -649,7 +677,7 @@ fn match_enum_destructure() {
 
 #[test]
 fn match_wildcard() {
-    let stmts = parse_ok("match x { 1 => { \"one\" } _ => { \"other\" } }");
+    let stmts = parse_ok_stmts("match x { 1 => { \"one\" } _ => { \"other\" } }");
     assert_eq!(stmts.len(), 1);
     match &stmts[0].0 {
         Stmt::Expr((Expr::Match { arms, .. }, _)) => {
@@ -768,7 +796,7 @@ fn continue_stmt() {
 
 #[test]
 fn if_let_pattern() {
-    let stmts = parse_ok("if let Option::Some(hp) = entity[Health] { log(hp); }");
+    let stmts = parse_ok_stmts("if let Option::Some(hp) = entity[Health] { log(hp); }");
     assert_eq!(stmts.len(), 1);
     match &stmts[0].0 {
         Stmt::Expr((
@@ -926,7 +954,7 @@ fn raw_string_basic() {
 #[test]
 fn snippet_compound_assignment() {
     // From 10_operators.writ: compound assignment
-    let stmts = parse_ok("let mut x = 10; x += 5; x -= 3; x *= 2;");
+    let stmts = parse_ok_stmts("let mut x = 10; x += 5; x -= 3; x *= 2;");
     assert_eq!(stmts.len(), 4);
     // First is let, rest are expression statements with Assign
     match &stmts[1].0 {
@@ -1014,7 +1042,7 @@ fn snippet_half_open_range() {
 
 #[test]
 fn snippet_match_with_or_pattern() {
-    let stmts = parse_ok("match status { QuestStatus::Completed | QuestStatus::Failed => { log(\"done\"); } _ => { log(\"ongoing\"); } }");
+    let stmts = parse_ok_stmts("match status { QuestStatus::Completed | QuestStatus::Failed => { log(\"done\"); } _ => { log(\"ongoing\"); } }");
     assert_eq!(stmts.len(), 1);
     match &stmts[0].0 {
         Stmt::Expr((Expr::Match { arms, .. }, _)) => {
@@ -1212,7 +1240,7 @@ fn snippet_nested_if_in_body() {
 
 #[test]
 fn snippet_cancel_expr() {
-    let stmts = parse_ok("cancel task;");
+    let stmts = parse_ok_stmts("cancel task;");
     assert_eq!(stmts.len(), 1);
     match &stmts[0].0 {
         Stmt::Expr((Expr::Cancel(inner), _)) => {
@@ -1224,7 +1252,7 @@ fn snippet_cancel_expr() {
 
 #[test]
 fn snippet_spawn_detached_expr() {
-    let stmts = parse_ok("spawn detached playSound(\"beep\");");
+    let stmts = parse_ok_stmts("spawn detached playSound(\"beep\");");
     assert_eq!(stmts.len(), 1);
     match &stmts[0].0 {
         Stmt::Expr((Expr::SpawnDetached(inner), _)) => match &inner.0 {
@@ -1253,7 +1281,7 @@ fn snippet_try_expr() {
 
 #[test]
 fn snippet_match_range_pattern() {
-    let stmts = parse_ok("match score { 1..=5 => { log(\"low\"); } _ => { log(\"high\"); } }");
+    let stmts = parse_ok_stmts("match score { 1..=5 => { log(\"low\"); } _ => { log(\"high\"); } }");
     assert_eq!(stmts.len(), 1);
     match &stmts[0].0 {
         Stmt::Expr((Expr::Match { arms, .. }, _)) => {
@@ -1310,8 +1338,8 @@ fn snippet_function_type() {
 
 #[test]
 fn snippet_multiple_stmts_no_error() {
-    // Parse multiple statements; no error tokens
-    let stmts = parse_ok(
+    // Parse multiple statements; no error tokens (expression statements allowed at top-level by this helper)
+    let stmts = parse_ok_stmts(
         "let x = 42; let y = x + 1; if y > 10 { log(y); } for i in 0..5 { log(i); }",
     );
     assert_eq!(stmts.len(), 4);
@@ -3614,72 +3642,77 @@ fn binary_literal_uppercase() {
 // DECL-01: struct lifecycle hooks
 // ---------------------------------------------------------
 
+/// Class with `on create` hook parses correctly (classes accept all lifecycle hooks)
 #[test]
 fn struct_with_on_create_hook() {
-    let items = parse_ok_items("struct Foo { on create { } }");
+    let items = parse_ok_items("class Foo { on create { } }");
     assert_eq!(items.len(), 1);
     match &items[0].0 {
-        Item::Struct(sd) => {
-            assert_eq!(sd.0.members.len(), 1);
-            match &sd.0.members[0].0 {
-                StructMember::OnHook { event, body } => {
+        Item::Class(cd) => {
+            assert_eq!(cd.0.members.len(), 1);
+            match &cd.0.members[0].0 {
+                ClassMember::OnHook { event, body } => {
                     assert_eq!(event.0, "create");
                     assert!(body.is_empty());
                 }
                 other => panic!("Expected OnHook, got {:?}", other),
             }
         }
-        other => panic!("Expected Item::Struct, got {:?}", other),
+        other => panic!("Expected Item::Class, got {:?}", other),
     }
 }
 
+/// Class with interleaved fields and hooks parses correctly
 #[test]
 fn struct_interleaved_fields_and_hooks() {
-    let items = parse_ok_items("struct Foo { x: int, on create { }, y: string }");
+    let items = parse_ok_items("class Foo { x: int, on create { }, y: string }");
     match &items[0].0 {
-        Item::Struct(sd) => {
-            assert_eq!(sd.0.members.len(), 3);
-            assert!(matches!(sd.0.members[0].0, StructMember::Field(_)));
-            assert!(matches!(sd.0.members[1].0, StructMember::OnHook { .. }));
-            assert!(matches!(sd.0.members[2].0, StructMember::Field(_)));
+        Item::Class(cd) => {
+            assert_eq!(cd.0.members.len(), 3);
+            assert!(matches!(cd.0.members[0].0, ClassMember::Field(_)));
+            assert!(matches!(cd.0.members[1].0, ClassMember::OnHook { .. }));
+            assert!(matches!(cd.0.members[2].0, ClassMember::Field(_)));
         }
-        other => panic!("Expected Item::Struct, got {:?}", other),
+        other => panic!("Expected Item::Class, got {:?}", other),
     }
 }
 
+/// Class with all four lifecycle hooks parses correctly
+/// (struct only supports serialize/deserialize; class supports all four)
 #[test]
 fn struct_all_four_lifecycle_hooks() {
     let items = parse_ok_items(
-        "struct Foo { on create { }, on finalize { }, on serialize { }, on deserialize { } }"
+        "class Foo { on create { }, on finalize { }, on serialize { }, on deserialize { } }"
     );
     match &items[0].0 {
-        Item::Struct(sd) => {
-            assert_eq!(sd.0.members.len(), 4);
-            let events: Vec<&str> = sd.0.members.iter().map(|m| {
+        Item::Class(cd) => {
+            assert_eq!(cd.0.members.len(), 4);
+            let events: Vec<&str> = cd.0.members.iter().map(|m| {
                 match &m.0 {
-                    StructMember::OnHook { event, .. } => event.0,
+                    ClassMember::OnHook { event, .. } => event.0,
                     other => panic!("Expected OnHook, got {:?}", other),
                 }
             }).collect();
             assert_eq!(events, vec!["create", "finalize", "serialize", "deserialize"]);
         }
-        other => panic!("Expected Item::Struct, got {:?}", other),
+        other => panic!("Expected Item::Class, got {:?}", other),
     }
 }
 
+/// Class with hook body parses correctly
 #[test]
 fn struct_hook_with_body() {
-    let items = parse_ok_items("struct Foo { on create { let x = 1; } }");
+    let items = parse_ok_items("class Foo { on create { let x = 1; } }");
     match &items[0].0 {
-        Item::Struct(sd) => {
-            match &sd.0.members[0].0 {
-                StructMember::OnHook { body, .. } => {
+        Item::Class(cd) => {
+            match &cd.0.members[0].0 {
+                ClassMember::OnHook { body, .. } => {
                     assert_eq!(body.len(), 1, "Hook body should have 1 statement");
                 }
                 other => panic!("Expected OnHook, got {:?}", other),
             }
         }
-        other => panic!("Expected Item::Struct, got {:?}", other),
+        other => panic!("Expected Item::Class, got {:?}", other),
     }
 }
 
@@ -4147,7 +4180,7 @@ fn test_detached_standalone_error() {
 
 #[test]
 fn test_defer_block() {
-    let stmts = parse_ok("defer { cleanup(); }");
+    let stmts = parse_ok_stmts("defer { cleanup(); }");
     match &stmts[0].0 {
         Stmt::Expr((Expr::Defer(inner), _)) => {
             assert!(matches!(&inner.0, Expr::Block(_)));

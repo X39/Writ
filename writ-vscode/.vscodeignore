@@ -1,0 +1,10 @@
+**/*.ts
+**/tsconfig.json
+**/tsconfig.tsbuildinfo
+node_modules/
+src/
+.vscode/
+*.vsix
+scripts/
+tests/
+.gitignore

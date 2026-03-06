@@ -14,7 +14,7 @@ Should `let (x, y) = getPosition();` or `let { name, gold } = merchant;` be supp
 
 **Standard library API**
 Exact API surface for `List<T>`, `Map<K,V>`, `Set<T>`, `EntityList<T>`, iterators, string utilities, math functions.
-Core array operations (`T[]`) are defined in Section 6.3. Relationship between arrays and `List<T>` (wrapper, alias, or
+Core array operations (`T[]`) are defined in Section 1.6.3. Relationship between arrays and `List<T>` (wrapper, alias, or
 distinct type) is TBD.
 
 **REPL / hot reload**

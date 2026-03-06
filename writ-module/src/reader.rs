@@ -3,6 +3,8 @@ use std::io::Cursor;
 
 use crate::error::DecodeError;
 use crate::module::{DebugLocal, MethodBody, Module, ModuleHeader, SourceSpan};
+// Intentional wildcard: tables module exports 23 row-struct types that form
+// the domain vocabulary for binary decoding — all are used in this file.
 use crate::tables::*;
 use crate::token::MetadataToken;
 
@@ -54,6 +56,9 @@ pub fn from_bytes(bytes: &[u8]) -> Result<Module, DecodeError> {
 
     // Version and flags
     let format_version = cur.read_u16::<LittleEndian>()?;
+    if format_version != 4 {
+        return Err(DecodeError::UnsupportedVersion(format_version));
+    }
     let flags = cur.read_u16::<LittleEndian>()?;
 
     // Module name/version offsets
@@ -201,6 +206,7 @@ pub fn from_bytes(bytes: &[u8]) -> Result<Module, DecodeError> {
                 debug_locals.push(DebugLocal {
                     register: c.read_u16::<LittleEndian>()?,
                     name: c.read_u32::<LittleEndian>()?,
+                    type_ref: c.read_u32::<LittleEndian>()?,
                     start_pc: c.read_u32::<LittleEndian>()?,
                     end_pc: c.read_u32::<LittleEndian>()?,
                 });
@@ -258,6 +264,9 @@ fn read_type_def(c: &mut Cursor<&[u8]>) -> Result<TypeDefRow, DecodeError> {
     let name = c.read_u32::<LittleEndian>()?;
     let namespace = c.read_u32::<LittleEndian>()?;
     let kind = c.read_u8()?;
+    if TypeDefKind::from_u8(kind).is_none() {
+        return Err(DecodeError::InvalidTypeDefKind(kind));
+    }
     let flags = c.read_u16::<LittleEndian>()?;
     let field_list = c.read_u32::<LittleEndian>()?;
     let method_list = c.read_u32::<LittleEndian>()?;

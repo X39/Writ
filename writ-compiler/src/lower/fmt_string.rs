@@ -16,7 +16,7 @@ use crate::lower::expr::lower_expr;
 /// - Empty segment list → `AstExpr::StringLit { value: "", span: outer_span }`
 /// - All synthetic `Binary` nodes carry `outer_span` (not tombstone `0..0`)
 /// - Interpolated expressions are recursively lowered via `lower_expr`
-pub fn lower_fmt_string(
+pub(crate) fn lower_fmt_string(
     segments: Vec<Spanned<StringSegment<'_>>>,
     outer_span: SimpleSpan,
     ctx: &mut LoweringContext,

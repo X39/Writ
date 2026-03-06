@@ -1,0 +1,49 @@
+.module "main" "0.1.0" {
+    .extern "writ-runtime" "1.0.0"
+    .method "compare" (a: int, b: int) -> bool pub mut {
+        .locals {
+            r0: int "a" [0, 70)
+            r1: int "b" [0, 70)
+            r2: bool "eq" [8, 70)
+            r4: bool "ne" [22, 70)
+            r5: bool "lt" [30, 70)
+            r6: bool "gt" [38, 70)
+            r8: bool "le" [52, 70)
+            r10: bool "ge" [66, 70)
+        }
+        .reg r0 int
+        .reg r1 int
+        .reg r2 bool
+        .reg r3 bool
+        .reg r4 bool
+        .reg r5 bool
+        .reg r6 bool
+        .reg r7 bool
+        .reg r8 bool
+        .reg r9 bool
+        .reg r10 bool
+        CMP_EQ_I r2, r0, r1  ; line:1 col:47
+        CMP_EQ_I r3, r0, r1  ; line:1 col:75
+        NOT r4, r3
+        CMP_LT_I r5, r0, r1  ; line:1 col:103
+        CMP_LT_I r6, r1, r0  ; line:1 col:130
+        CMP_LT_I r7, r1, r0  ; line:1 col:157
+        NOT r8, r7
+        CMP_LT_I r9, r0, r1  ; line:1 col:185
+        NOT r10, r9
+        RET r2  ; line:1 col:213
+    }
+    .method "main" () -> void mut {
+        .locals {
+            r0: bool "r" [36, 38)
+        }
+        .reg r0 bool
+        .reg r1 int
+        .reg r2 int
+        LOAD_INT r1, 3  ; line:1 col:239
+        LOAD_INT r2, 4
+        CALL r0, 117440513, r1, 2
+        RET_VOID
+    }
+    // .export "compare" method 117440513
+}

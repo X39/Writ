@@ -4,7 +4,6 @@
 namespace test_extern;
 
 // --- 24.1 Runtime-provided externals ---
-extern fn log(msg: string);
 extern fn random() -> float;
 extern fn randomRange(min: int, max: int) -> int;
 
@@ -48,7 +47,7 @@ extern struct Texture {
 
 // --- Using extern types ---
 pub fn useExterns() {
-    log("Hello from Writ!");
+    log::info("Hello from Writ!");
     let r = random();
     let n = randomRange(1, 100);
     let pos = Vec2(x: 10.0, y: 20.0);

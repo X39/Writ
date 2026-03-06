@@ -1,0 +1,50 @@
+contract Computable {
+    fn compute(self) -> int;
+}
+
+pub class TypeA {}
+pub class TypeB {}
+pub class TypeC {}
+pub class TypeD {}
+
+impl Computable for TypeA {
+    fn compute(self) -> int { 1 }
+}
+
+impl Computable for TypeB {
+    fn compute(self) -> int { 2 }
+}
+
+impl Computable for TypeC {
+    fn compute(self) -> int { 3 }
+}
+
+impl Computable for TypeD {
+    fn compute(self) -> int { 4 }
+}
+
+fn main() {
+    let mut sum: int = 0;
+    let mut i: int = 0;
+    while i < 100000 {
+        let r: int = i % 4;
+        if r == 0 {
+            let obj: TypeA = new TypeA {};
+            sum = sum + obj.compute();
+        }
+        if r == 1 {
+            let obj: TypeB = new TypeB {};
+            sum = sum + obj.compute();
+        }
+        if r == 2 {
+            let obj: TypeC = new TypeC {};
+            sum = sum + obj.compute();
+        }
+        if r == 3 {
+            let obj: TypeD = new TypeD {};
+            sum = sum + obj.compute();
+        }
+        i = i + 1;
+    }
+    log::info($"{sum}");
+}

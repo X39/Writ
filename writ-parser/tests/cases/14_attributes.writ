@@ -31,7 +31,7 @@ extern fn applyForce(entity: Entity, force: Vec2);
 // --- 16.4 Conditional compilation ---
 [Conditional("DEBUG")]
 pub fn debugLog(msg: string) {
-    log($"[DEBUG] {msg}");
+    log::info($"[DEBUG] {msg}");
 }
 
 // Non-conditional fallback (required)
@@ -52,7 +52,7 @@ pub fn drawGizmos(entity: Entity) {
 // --- Conditional with expressions ---
 [Conditional("VERBOSE_LOGGING")]
 pub fn verboseLog(category: string, msg: string) {
-    log($"[{category}] {msg}");
+    log::info($"[{category}] {msg}");
 }
 
 pub fn verboseLog(category: string, msg: string) {

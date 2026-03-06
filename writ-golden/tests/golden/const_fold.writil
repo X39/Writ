@@ -1,0 +1,11 @@
+.module "main" "0.1.0" {
+    .extern "writ-runtime" "1.0.0"
+    .global "MAX" int mut
+    .method "main" () -> void mut {
+        .locals {
+            r0: int "x" [0, 2)
+        }
+        .reg r0 int
+        RET_VOID  ; line:1 col:45
+    }
+}

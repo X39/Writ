@@ -33,8 +33,6 @@ pub struct UsingEntry {
 pub enum ScopeLayer {
     /// Generic type parameters (e.g., T, U from `fn foo<T, U>`).
     GenericParams(Vec<(String, SimpleSpan)>),
-    /// Local variable bindings (from let, for, fn params).
-    Locals(Vec<(String, SimpleSpan)>),
 }
 
 /// Result of a name lookup.
@@ -93,24 +91,6 @@ impl<'def> ScopeChain<'def> {
         self.layers.push(ScopeLayer::GenericParams(params));
     }
 
-    /// Push a locals layer.
-    pub fn push_locals(&mut self) {
-        self.layers.push(ScopeLayer::Locals(Vec::new()));
-    }
-
-    /// Add a local binding to the current locals layer.
-    pub fn add_local(&mut self, name: String, span: SimpleSpan) {
-        for layer in self.layers.iter_mut().rev() {
-            if let ScopeLayer::Locals(locals) = layer {
-                locals.push((name, span));
-                return;
-            }
-        }
-        // No locals layer -- push one
-        self.layers
-            .push(ScopeLayer::Locals(vec![(name, span)]));
-    }
-
     /// Pop the top scope layer.
     pub fn pop_layer(&mut self) {
         self.layers.pop();
@@ -120,10 +100,9 @@ impl<'def> ScopeChain<'def> {
     pub fn resolve_type(&self, name: &str) -> LookupResult {
         // 1. Check generic params (innermost first)
         for layer in self.layers.iter().rev() {
-            if let ScopeLayer::GenericParams(params) = layer {
-                if params.iter().any(|(n, _)| n == name) {
-                    return LookupResult::GenericParam(name.to_string());
-                }
+            let ScopeLayer::GenericParams(params) = layer;
+            if params.iter().any(|(n, _)| n == name) {
+                return LookupResult::GenericParam(name.to_string());
             }
         }
 
@@ -155,25 +134,44 @@ impl<'def> ScopeChain<'def> {
         }
 
         // 4b. Check file-private in current file
-        if let Some(privates) = self.def_map.file_private.get(&self.current_file) {
-            if let Some(&def_id) = privates.get(name) {
+        if let Some(privates) = self.def_map.file_private.get(&self.current_file)
+            && let Some(&def_id) = privates.get(name) {
                 return LookupResult::Def(def_id);
             }
-        }
 
         // 5. Check using imports
         let mut using_matches: Vec<(DefId, String)> = Vec::new();
         for entry in &self.active_usings {
             if let Some(ref target_fqn) = entry.target_fqn {
-                // Specific import: using survival::HealthPotion;
+                // Specific import: using survival::HealthPotion; or glob-expanded variant
                 if entry.alias == name {
-                    if let Some(def_id) = self.def_map.get(target_fqn) {
+                    // First try direct FQN lookup (most definitions)
+                    let resolved_id = if let Some(def_id) = self.def_map.get(target_fqn) {
                         let def = self.def_map.get_entry(def_id);
                         if def.vis == DefVis::Private && def.file_id != self.current_file {
-                            continue; // Skip private defs
+                            None // Skip private defs
+                        } else {
+                            Some((def_id, target_fqn.clone()))
                         }
+                    } else {
+                        // Fallback: try as a qualified path (handles enum variants like Status::Active
+                        // which resolve to the enum DefId via resolve_qualified_path)
+                        let segments: Vec<String> = target_fqn.split("::").map(|s| s.to_string()).collect();
+                        match self.resolve_qualified_path(&segments) {
+                            LookupResult::Def(def_id) => {
+                                let def = self.def_map.get_entry(def_id);
+                                if def.vis == DefVis::Private && def.file_id != self.current_file {
+                                    None
+                                } else {
+                                    Some((def_id, target_fqn.clone()))
+                                }
+                            }
+                            _ => None,
+                        }
+                    };
+                    if let Some((def_id, fqn)) = resolved_id {
                         entry.used.set(true);
-                        using_matches.push((def_id, target_fqn.clone()));
+                        using_matches.push((def_id, fqn));
                     }
                 }
             } else if let Some(ref target_ns) = entry.target_ns {
@@ -277,42 +275,15 @@ impl<'def> ScopeChain<'def> {
         LookupResult::NotFound
     }
 
-    /// Resolve a value name (variables, functions, constants).
-    pub fn resolve_value(&self, name: &str) -> LookupResult {
-        // 1. Check local bindings
-        for layer in self.layers.iter().rev() {
-            if let ScopeLayer::Locals(locals) = layer {
-                if locals.iter().any(|(n, _)| n == name) {
-                    // Local binding found -- we don't have DefIds for locals,
-                    // but we signal it's resolved
-                    return LookupResult::GenericParam(name.to_string()); // Reuse for now
-                }
-            }
-        }
-
-        // 2. Check generic params (type params can be used as values in some contexts)
-        for layer in self.layers.iter().rev() {
-            if let ScopeLayer::GenericParams(params) = layer {
-                if params.iter().any(|(n, _)| n == name) {
-                    return LookupResult::GenericParam(name.to_string());
-                }
-            }
-        }
-
-        // Fall through to type resolution (which checks def_map)
-        self.resolve_type(name)
-    }
-
     /// Collect all visible names in the current scope (for fuzzy suggestion).
     pub fn visible_names(&self) -> Vec<String> {
         let mut names = Vec::new();
 
         // Generic params
         for layer in &self.layers {
-            if let ScopeLayer::GenericParams(params) = layer {
-                for (name, _) in params {
-                    names.push(name.clone());
-                }
+            let ScopeLayer::GenericParams(params) = layer;
+            for (name, _) in params {
+                names.push(name.clone());
             }
         }
 
@@ -332,7 +303,7 @@ impl<'def> ScopeChain<'def> {
         }
 
         // Root namespace names
-        for (fqn, _) in &self.def_map.by_fqn {
+        for fqn in self.def_map.by_fqn.keys() {
             if !fqn.contains("::") {
                 names.push(fqn.clone());
             }

@@ -19,7 +19,7 @@ use super::{lower_fn, lower_param, lower_vis};
 ///
 /// This ensures that `AstImplMember::Op` does not appear in the lowered output —
 /// downstream phases only see contract impls, never raw operator declarations.
-pub fn lower_operator_impls(
+pub(crate) fn lower_operator_impls(
     i: ImplDecl<'_>,
     i_span: SimpleSpan,
     ctx: &mut LoweringContext,
@@ -53,7 +53,7 @@ pub fn lower_operator_impls(
                         has_eq = true;
                         // Capture the param type for derived Ne impl
                         if let Some((param, param_span)) = op_decl.params.first() {
-                            eq_param_type = Some(lower_type(param.ty.clone()).into());
+                            eq_param_type = Some(lower_type(param.ty.clone()));
                             let _ = param_span; // suppress unused warning
                         }
                     }
@@ -61,7 +61,7 @@ pub fn lower_operator_impls(
                         has_ord = true;
                         // Capture the param type for derived Gt/LtEq/GtEq impls
                         if let Some((param, param_span)) = op_decl.params.first() {
-                            ord_param_type = Some(lower_type(param.ty.clone()).into());
+                            ord_param_type = Some(lower_type(param.ty.clone()));
                             let _ = param_span; // suppress unused warning
                         }
                     }
@@ -332,8 +332,8 @@ fn generate_derived_operators(
     };
 
     // Ne: !(self == other)
-    if has_eq {
-        if let Some(param_ty) = eq_param_type {
+    if has_eq
+        && let Some(param_ty) = eq_param_type {
             let body = vec![AstStmt::Return {
                 value: Some(AstExpr::UnaryPrefix {
                     op: PrefixOp::Not,
@@ -350,11 +350,10 @@ fn generate_derived_operators(
             let fn_decl = make_fn("ne", make_param(param_ty), body);
             derived.push(make_impl("Ne", param_ty.clone(), fn_decl));
         }
-    }
 
     // Gt: other < self
-    if has_ord {
-        if let Some(param_ty) = ord_param_type {
+    if has_ord
+        && let Some(param_ty) = ord_param_type {
             let body = vec![AstStmt::Return {
                 value: Some(AstExpr::Binary {
                     left: Box::new(other_expr()),
@@ -367,7 +366,6 @@ fn generate_derived_operators(
             let fn_decl = make_fn("gt", make_param(param_ty), body);
             derived.push(make_impl("Gt", param_ty.clone(), fn_decl));
         }
-    }
 
     // LtEq and GtEq: only when both Eq and Ord are present
     if has_eq && has_ord {

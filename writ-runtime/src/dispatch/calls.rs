@@ -26,7 +26,7 @@ pub(super) fn exec_call(
     {
         let caller = ctx.task.call_stack.last().unwrap();
         for i in 0..argc as usize {
-            args.push(caller.registers[r_base as usize + i]);
+            args.push(caller.registers[r_base as usize + i].clone());
         }
     }
 
@@ -38,6 +38,9 @@ pub(super) fn exec_call(
     }
 
     ctx.task.call_stack.push(new_frame);
+    if ctx.host.debug_enabled() {
+        ctx.host.on_function_enter(ctx.task.id, method_idx as u32);
+    }
     ExecutionResult::Continue
 }
 
@@ -50,7 +53,7 @@ pub(super) fn exec_call_virt(
     r_base: u16,
     argc: u16,
 ) -> ExecutionResult {
-    let obj_val = ctx.task.call_stack.last().unwrap().registers[r_obj as usize];
+    let obj_val = ctx.task.call_stack.last().unwrap().registers[r_obj as usize].clone();
 
     // Determine type_key from the object value's runtime type
     let type_key = resolve_runtime_type_key(obj_val, ctx.heap, ctx.modules);
@@ -88,7 +91,7 @@ pub(super) fn exec_call_virt(
             {
                 let caller = ctx.task.call_stack.last().unwrap();
                 for i in 0..argc as usize {
-                    args.push(caller.registers[r_base as usize + i]);
+                    args.push(caller.registers[r_base as usize + i].clone());
                 }
             }
 
@@ -100,6 +103,9 @@ pub(super) fn exec_call_virt(
             }
 
             ctx.task.call_stack.push(new_frame);
+            if ctx.host.debug_enabled() {
+                ctx.host.on_function_enter(ctx.task.id, method_idx as u32);
+            }
             ExecutionResult::Continue
         }
         Some(DispatchTarget::Intrinsic(id)) => {
@@ -126,7 +132,7 @@ pub(super) fn exec_call_extern(
     {
         let frame = ctx.task.call_stack.last().unwrap();
         for i in 0..argc as usize {
-            args.push(frame.registers[r_base as usize + i]);
+            args.push(frame.registers[r_base as usize + i].clone());
         }
     }
 
@@ -140,6 +146,7 @@ pub(super) fn exec_call_extern(
             .unwrap_or_else(|_| "<ref>".to_string()),
         Value::Void => "void".to_string(),
         Value::Entity(e) => format!("<entity@{}>", e.index),
+        Value::InlineStruct { type_idx, .. } => format!("<struct@{}>", type_idx),
     }).collect();
 
     let req_id = RequestId(*ctx.next_request_id);
@@ -186,7 +193,7 @@ pub(super) fn exec_new_delegate(
         if matches!(frame.registers[r_target as usize], Value::Void) {
             None
         } else {
-            Some(frame.registers[r_target as usize])
+            Some(frame.registers[r_target as usize].clone())
         }
     };
     let decoded_idx = match super::decode_method_token(method_idx) {
@@ -209,7 +216,7 @@ pub(super) fn exec_call_indirect(
     let module = &ctx.modules[ctx.current_module_idx];
     let delegate_ref = helpers::extract_ref(&ctx.task.call_stack.last().unwrap().registers[r_delegate as usize]);
     let (method_idx, _target) = match ctx.heap.get_object(delegate_ref) {
-        Ok(HeapObject::Delegate { method_idx, target }) => (*method_idx, *target),
+        Ok(HeapObject::Delegate { method_idx, target }) => (*method_idx, target.clone()),
         _ => return ExecutionResult::Crash("CallIndirect: not a delegate".into()),
     };
 
@@ -222,7 +229,7 @@ pub(super) fn exec_call_indirect(
     {
         let frame = ctx.task.call_stack.last().unwrap();
         for i in 0..argc as usize {
-            args.push(frame.registers[r_base as usize + i]);
+            args.push(frame.registers[r_base as usize + i].clone());
         }
     }
 
@@ -234,6 +241,9 @@ pub(super) fn exec_call_indirect(
     }
 
     ctx.task.call_stack.push(new_frame);
+    if ctx.host.debug_enabled() {
+        ctx.host.on_function_enter(ctx.task.id, method_idx as u32);
+    }
     ExecutionResult::Continue
 }
 
@@ -258,7 +268,7 @@ pub(super) fn exec_tail_call(
     {
         let frame = ctx.task.call_stack.last().unwrap();
         for i in 0..argc as usize {
-            args.push(frame.registers[r_base as usize + i]);
+            args.push(frame.registers[r_base as usize + i].clone());
         }
     }
 
@@ -307,13 +317,14 @@ pub(super) fn resolve_runtime_type_key(
                 Ok(HeapObject::String(_)) => find_type_key_by_name(modules, 0, "String"),
                 Ok(HeapObject::Array { .. }) => find_type_key_by_name(modules, 0, "Array"),
                 Ok(HeapObject::Boxed(inner)) => {
-                    resolve_runtime_type_key(*inner, heap, modules)
+                    resolve_runtime_type_key(inner.clone(), heap, modules)
                 }
                 _ => u32::MAX,
             }
         }
         Value::Entity(_) => find_type_key_by_name(modules, 0, "Entity"),
         Value::Void => u32::MAX,
+        Value::InlineStruct { .. } => u32::MAX,
     }
 }
 
@@ -328,11 +339,10 @@ pub(super) fn find_type_key_by_name(
     }
     let module = &modules[mod_idx].module;
     for (idx, td) in module.type_defs.iter().enumerate() {
-        if let Ok(td_name) = writ_module::heap::read_string(&module.string_heap, td.name) {
-            if td_name == name {
+        if let Ok(td_name) = writ_module::heap::read_string(&module.string_heap, td.name)
+            && td_name == name {
                 return ((mod_idx as u32) << 16) | (idx as u32);
             }
-        }
     }
     u32::MAX
 }

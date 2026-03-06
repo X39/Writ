@@ -1,0 +1,6 @@
+fn main() {
+    let items: int[] = [10, 20, 30];
+    for x in items {
+        let y: int = x;
+    }
+}

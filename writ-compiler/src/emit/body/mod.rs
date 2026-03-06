@@ -82,11 +82,19 @@ pub struct BodyEmitter<'a> {
     /// The caller (emit_all_bodies) must intern these into the ModuleBuilder's string
     /// heap and patch the corresponding instructions after body emission completes.
     pub pending_strings: Vec<(usize, String)>,
+    /// Struct field types from the type checker.
+    /// Maps struct DefId -> ordered list of (field_name, field_ty).
+    /// Used by emit_struct_eq / emit_struct_neq for field-by-field structural equality.
+    pub struct_field_types: &'a FxHashMap<DefId, Vec<(String, crate::check::ty::Ty)>>,
 }
 
 impl<'a> BodyEmitter<'a> {
     /// Create a new BodyEmitter for a single method.
-    pub fn new(builder: &'a ModuleBuilder, interner: &'a TyInterner) -> Self {
+    pub fn new(
+        builder: &'a ModuleBuilder,
+        interner: &'a TyInterner,
+        struct_field_types: &'a FxHashMap<DefId, Vec<(String, crate::check::ty::Ty)>>,
+    ) -> Self {
         Self {
             builder,
             interner,
@@ -100,6 +108,7 @@ impl<'a> BodyEmitter<'a> {
             loop_stack: Vec::new(),
             lambda_counter: 0,
             pending_strings: Vec::new(),
+            struct_field_types,
         }
     }
 
@@ -170,8 +179,11 @@ impl<'a> BodyEmitter<'a> {
 
 /// Scan a TypedAst for any TypedExpr::Error or TypedStmt::Error nodes.
 ///
-/// Returns true if any error nodes are found. The caller should abort
-/// codegen and return only the collected diagnostics.
+/// This was previously used as a file-level abort gate in `emit_all_bodies`.
+/// It is now superseded by per-function checks using `expr_has_error` directly,
+/// but is retained as a utility function (used by tests and potentially by
+/// other callers that want a quick whole-AST check).
+#[allow(dead_code)]
 pub fn has_error_nodes(typed_ast: &TypedAst) -> bool {
     for decl in &typed_ast.decls {
         match decl {
@@ -208,21 +220,19 @@ fn expr_has_error(expr: &TypedExpr) -> bool {
                     return true;
                 }
             }
-            if let Some(t) = tail {
-                if expr_has_error(t) {
+            if let Some(t) = tail
+                && expr_has_error(t) {
                     return true;
                 }
-            }
         }
         TypedExpr::If { condition, then_branch, else_branch, .. } => {
             if expr_has_error(condition) || expr_has_error(then_branch) {
                 return true;
             }
-            if let Some(e) = else_branch {
-                if expr_has_error(e) {
+            if let Some(e) = else_branch
+                && expr_has_error(e) {
                     return true;
                 }
-            }
         }
         TypedExpr::Binary { left, right, .. } => {
             if expr_has_error(left) || expr_has_error(right) {
@@ -275,16 +285,14 @@ fn expr_has_error(expr: &TypedExpr) -> bool {
             }
         }
         TypedExpr::Range { start, end, .. } => {
-            if let Some(s) = start {
-                if expr_has_error(s) {
+            if let Some(s) = start
+                && expr_has_error(s) {
                     return true;
                 }
-            }
-            if let Some(e) = end {
-                if expr_has_error(e) {
+            if let Some(e) = end
+                && expr_has_error(e) {
                     return true;
                 }
-            }
         }
         TypedExpr::Spawn { expr: inner, .. }
         | TypedExpr::SpawnDetached { expr: inner, .. }
@@ -311,17 +319,17 @@ fn expr_has_error(expr: &TypedExpr) -> bool {
             }
         }
         TypedExpr::Return { value, .. } => {
-            if let Some(v) = value {
-                if expr_has_error(v) {
+            if let Some(v) = value
+                && expr_has_error(v) {
                     return true;
                 }
-            }
         }
         // Leaf nodes with no children to recurse into
         TypedExpr::Literal { .. }
         | TypedExpr::Var { .. }
         | TypedExpr::SelfRef { .. }
-        | TypedExpr::Path { .. } => {}
+        | TypedExpr::Path { .. }
+        | TypedExpr::Crash { .. } => {} // Crash is intentional runtime panic, not a compile error
     }
     false
 }
@@ -332,7 +340,7 @@ fn stmt_has_error(stmt: &TypedStmt) -> bool {
         TypedStmt::Error { .. } => true,
         TypedStmt::Let { value, .. } => expr_has_error(value),
         TypedStmt::Expr { expr, .. } => expr_has_error(expr),
-        TypedStmt::Return { value, .. } => value.as_ref().map_or(false, expr_has_error),
+        TypedStmt::Return { value, .. } => value.as_ref().is_some_and(expr_has_error),
         TypedStmt::For { iterable, body, .. } => {
             if expr_has_error(iterable) {
                 return true;
@@ -346,7 +354,7 @@ fn stmt_has_error(stmt: &TypedStmt) -> bool {
             body.iter().any(stmt_has_error)
         }
         TypedStmt::Atomic { body, .. } => body.iter().any(stmt_has_error),
-        TypedStmt::Break { value, .. } => value.as_ref().map_or(false, expr_has_error),
+        TypedStmt::Break { value, .. } => value.as_ref().is_some_and(expr_has_error),
         TypedStmt::Continue { .. } => false,
     }
 }
@@ -355,33 +363,43 @@ fn stmt_has_error(stmt: &TypedStmt) -> bool {
 
 /// Emit all method bodies from the TypedAst.
 ///
-/// Pre-pass: if any Error nodes exist, return empty Vec with diagnostic.
-/// Otherwise, iterate all Fn, Impl, Const, and Global decls, emit each.
-/// Lambda bodies are also emitted using the provided `lambda_infos`.
+/// Per-function: if a function body contains Error nodes it is skipped and a
+/// diagnostic (E9001) is emitted for that function.  Other functions in the
+/// same file continue to be compiled normally.  Lambda bodies are also emitted
+/// using the provided `lambda_infos`.
+///
+/// This replaces the old file-level `has_error_nodes` abort with per-function
+/// skip logic so that the LSP can still return valid bodies for unbroken
+/// functions even when sibling functions contain syntax errors.
 pub fn emit_all_bodies(
     typed_ast: &TypedAst,
     interner: &TyInterner,
     builder: &ModuleBuilder,
     lambda_infos: &[closure::LambdaInfo],
+    struct_field_types: &FxHashMap<DefId, Vec<(String, crate::check::ty::Ty)>>,
 ) -> (Vec<EmittedBody>, Vec<writ_diagnostics::Diagnostic>) {
     let mut diags = Vec::new();
-
-    if has_error_nodes(typed_ast) {
-        diags.push(
-            writ_diagnostics::Diagnostic::error(
-                "E9000",
-                "Codegen aborted: TypedAst contains error nodes",
-            ).build()
-        );
-        return (Vec::new(), diags);
-    }
-
     let mut bodies = Vec::new();
 
     for decl in &typed_ast.decls {
         match decl {
-            TypedDecl::Fn { def_id, body } => {
-                let mut emitter = BodyEmitter::new(builder, interner);
+            TypedDecl::Fn { def_id, body, .. } => {
+                // Per-function error check: skip broken bodies instead of aborting all.
+                if expr_has_error(body) {
+                    // Look up a human-readable name for the diagnostic.
+                    let fn_name = typed_ast.def_map.arena
+                        .get(*def_id)
+                        .map(|e| e.name.as_str())
+                        .unwrap_or("<unknown>");
+                    diags.push(
+                        writ_diagnostics::Diagnostic::error(
+                            "E9001",
+                            format!("Skipping function '{}' due to syntax errors in body", fn_name),
+                        ).build()
+                    );
+                    continue;
+                }
+                let mut emitter = BodyEmitter::new(builder, interner, struct_field_types);
                 emitter.current_method_def_id = Some(*def_id);
                 // Pre-allocate parameter registers r0..r(n-1) per IL spec section 2.16.2.
                 // Parameters are allocated in declaration order before any body emission,
@@ -416,7 +434,22 @@ pub fn emit_all_bodies(
             }
             TypedDecl::Impl { methods, .. } => {
                 for (def_id, body) in methods {
-                    let mut emitter = BodyEmitter::new(builder, interner);
+                    // Per-method error check: a single broken method does not skip the
+                    // entire impl block — other methods in the same impl are still emitted.
+                    if expr_has_error(body) {
+                        let method_name = typed_ast.def_map.arena
+                            .get(*def_id)
+                            .map(|e| e.name.as_str())
+                            .unwrap_or("<unknown>");
+                        diags.push(
+                            writ_diagnostics::Diagnostic::error(
+                                "E9001",
+                                format!("Skipping method '{}' due to syntax errors in body", method_name),
+                            ).build()
+                        );
+                        continue;
+                    }
+                    let mut emitter = BodyEmitter::new(builder, interner, struct_field_types);
                     emitter.current_method_def_id = Some(*def_id);
                     // Pre-allocate parameter registers r0..r(n-1) per IL spec section 2.16.2.
                     if let Some(params) = builder.get_fn_params(*def_id) {
@@ -449,7 +482,20 @@ pub fn emit_all_bodies(
                 }
             }
             TypedDecl::Const { def_id, value } => {
-                let mut emitter = BodyEmitter::new(builder, interner);
+                if expr_has_error(value) {
+                    let name = typed_ast.def_map.arena
+                        .get(*def_id)
+                        .map(|e| e.name.as_str())
+                        .unwrap_or("<unknown>");
+                    diags.push(
+                        writ_diagnostics::Diagnostic::error(
+                            "E9001",
+                            format!("Skipping const '{}' due to syntax errors in value", name),
+                        ).build()
+                    );
+                    continue;
+                }
+                let mut emitter = BodyEmitter::new(builder, interner, struct_field_types);
                 emitter.current_method_def_id = Some(*def_id);
 
                 // Try constant folding first — emit a single load instruction.
@@ -501,8 +547,21 @@ pub fn emit_all_bodies(
                 });
             }
             TypedDecl::Global { def_id, value } => {
+                if expr_has_error(value) {
+                    let name = typed_ast.def_map.arena
+                        .get(*def_id)
+                        .map(|e| e.name.as_str())
+                        .unwrap_or("<unknown>");
+                    diags.push(
+                        writ_diagnostics::Diagnostic::error(
+                            "E9001",
+                            format!("Skipping global '{}' due to syntax errors in value", name),
+                        ).build()
+                    );
+                    continue;
+                }
                 // Global initializers: emit without const folding (may be non-constant).
-                let mut emitter = BodyEmitter::new(builder, interner);
+                let mut emitter = BodyEmitter::new(builder, interner, struct_field_types);
                 emitter.current_method_def_id = Some(*def_id);
                 let r = expr::emit_expr(&mut emitter, value);
                 emitter.emit(Instruction::Ret { r_src: r });
@@ -534,7 +593,7 @@ pub fn emit_all_bodies(
             break;
         }
         let _info = &lambda_infos[i];
-        let mut emitter = BodyEmitter::new(builder, interner);
+        let mut emitter = BodyEmitter::new(builder, interner, struct_field_types);
         let r = expr::emit_expr(&mut emitter, lambda_body);
         emitter.emit(Instruction::Ret { r_src: r });
 
@@ -667,7 +726,8 @@ fn collect_lambda_bodies_from_expr<'a>(expr: &'a TypedExpr, out: &mut Vec<&'a Ty
         | TypedExpr::Var { .. }
         | TypedExpr::SelfRef { .. }
         | TypedExpr::Path { .. }
-        | TypedExpr::Error { .. } => {}
+        | TypedExpr::Error { .. }
+        | TypedExpr::Crash { .. } => {}
     }
 }
 

@@ -11,7 +11,7 @@ use crate::lower::optional::lower_type;
 /// any type annotation sub-nodes.
 ///
 /// `Stmt::Transition` lowers to `AstStmt::Return` with the target as a `Call` expression.
-pub fn lower_stmt(spanned: Spanned<Stmt<'_>>, ctx: &mut LoweringContext) -> AstStmt {
+pub(crate) fn lower_stmt(spanned: Spanned<Stmt<'_>>, ctx: &mut LoweringContext) -> AstStmt {
     let (stmt, span) = spanned;
     match stmt {
         Stmt::Let {

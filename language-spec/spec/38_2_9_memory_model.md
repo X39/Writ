@@ -7,16 +7,19 @@ do not expose manual memory management.
 
 ### 2.9.1 Value Types vs Reference Types
 
-| Type                   | Kind                     | Storage                                  | Assignment                     | GC Traced                           |
-|------------------------|--------------------------|------------------------------------------|--------------------------------|-------------------------------------|
-| `int`, `float`, `bool` | **Value**                | Register (direct bits)                   | Copy bits                      | No                                  |
-| `string`               | **Reference, immutable** | Heap (GC-managed)                        | Copy reference                 | Yes                                 |
-| Structs                | **Reference**            | Heap (GC-managed)                        | Copy reference (shared object) | Yes                                 |
-| Enums                  | **Value**                | Register/stack (tag + inline payload)    | Copy tag + payload             | Payload fields traced if references |
-| Arrays                 | **Reference**            | Heap (GC-managed)                        | Copy reference (shared)        | Yes                                 |
-| Entities               | **Reference (handle)**   | Entity runtime + GC heap                 | Copy handle                    | Yes                                 |
-| Components             | **Extern (host-owned)**  | Host-managed, accessed via entity handle | Via entity reference           | Host responsibility                 |
-| Closures/Delegates     | **Reference**            | Heap (GC-managed)                        | Copy reference                 | Yes                                 |
+| Type                   | Kind                       | Storage                                  | Assignment                                                          | GC Traced                           |
+|------------------------|----------------------------|------------------------------------------|---------------------------------------------------------------------|-------------------------------------|
+| `int`, `float`, `bool` | **Value**                  | Register (direct bits)                   | Copy bits                                                           | No                                  |
+| `string`               | **Reference, immutable**   | Heap (GC-managed)                        | Copy reference                                                      | Yes                                 |
+| Structs                | **Value**                  | Register/inline (no heap alloc)          | Shallow copy -- copies all fields; ref fields copy pointer          | Payload ref fields traced           |
+| Classes                | **Reference**              | Heap (GC-managed)                        | Copy reference (shared object)                                      | Yes                                 |
+| Enums                  | **Value**                  | Register/stack (tag + inline payload)    | Copy tag + payload                                                  | Payload fields traced if references |
+| Arrays                 | **Reference**              | Heap (GC-managed)                        | Copy reference (shared)                                             | Yes                                 |
+| Entities               | **Reference (handle)**     | Entity runtime + GC heap                 | Copy handle                                                         | Yes                                 |
+| Components             | **Extern (host-owned)**    | Host-managed, accessed via entity handle | Via entity reference                                                | Host responsibility                 |
+| Closures/Delegates     | **Reference**              | Heap (GC-managed)                        | Copy reference                                                      | Yes                                 |
+
+**Struct value semantics:** Structs are value types with inline storage. Assignment copies all fields by value. Reference-typed fields within a struct copy the pointer -- both copies share the referenced object, but the struct values themselves are independent. This is analogous to enum value semantics but with named fields instead of tagged payloads.
 
 **Enum value semantics:** Enums are value types with inline payloads. The tag is a small integer. Payload fields are
 stored inline (for value types) or as references (for reference-typed fields). `Option<int>` is just a tag + an int — no
@@ -33,7 +36,7 @@ bits/references.
 For reference types, assignment copies the reference. Both bindings point to the same object:
 
 ```
-let mut a = Merchant(name: "Tim", gold: 100);
+let mut a = new Merchant { name: "Tim", gold: 100 };  // Merchant is a class (reference type)
 let mut b = a;     // b and a point to the same object
 b.gold += 50;      // a.gold is ALSO now 150
 ```
@@ -67,15 +70,15 @@ let process = Delegate(__closure_body_0, __env);
 __env.count;       // outer scope accesses through the struct too
 ```
 
-The capture struct is a compiler-generated type, not a special runtime type:
+The capture environment is a compiler-generated class type, not a special runtime type:
 
 ```
-struct __closure_env_0 {
+class __closure_env_0 {
     count: int,   // shared mutable field
 }
 ```
 
-No special runtime types are needed — this is purely a compiler transformation using standard structs.
+No special runtime types are needed — this is purely a compiler transformation using a compiler-generated class type.
 
 ### 2.9.4 String Handling
 
@@ -138,9 +141,9 @@ at transition points.
 
 ### 2.9.8 IL Implications
 
-- `MOV` copies register contents. For references, this copies the pointer — no deep copy, no clone.
+- `MOV` copies register contents. For reference types (classes, strings, arrays, entities, delegates), this copies the pointer -- no deep copy. For value types (int, float, bool, enums, structs), this copies the full value. For value-type structs, this is a multi-word copy of all fields.
 - No `FREE` / `DEALLOC` instructions exist. The GC handles all reclamation.
-- `NEW`, `NEW_ARRAY`, `NEW_ENUM`, `SPAWN_ENTITY` are allocation points. The GC may trigger during any allocation.
+- `NEW`, `NEW_ARRAY`, `NEW_ENUM`, `SPAWN_ENTITY` are allocation points. `NEW` behavior is kind-dependent: for classes (kind=4), it allocates on the GC heap; for structs (kind=0), it initializes the value inline with no heap allocation. The GC may trigger during any heap allocation.
 - **GC safepoints** are a runtime concern, not an IL concern. The runtime can GC at any instruction boundary because
   type metadata enables precise root scanning.
 - Dead entity access requires a liveness check in the runtime on field/method access through entity handles.

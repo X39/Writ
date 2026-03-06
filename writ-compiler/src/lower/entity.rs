@@ -167,7 +167,7 @@ fn partition_entity_members<'src>(
 /// - Lifecycle hooks (all six: create, destroy, interact, finalize, serialize, deserialize)
 ///   with implicit `mut self` injected as first parameter
 /// - Optional inherent impl for methods
-pub fn lower_entity(
+pub(crate) fn lower_entity(
     entity: EntityDecl<'_>,
     entity_span: SimpleSpan,
     ctx: &mut LoweringContext,

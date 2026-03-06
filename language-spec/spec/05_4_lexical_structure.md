@@ -1,7 +1,7 @@
 # 1. Writ Language Specification
-## 4. Lexical Structure
+## 1.4 Lexical Structure
 
-### 4.1 Keywords
+### 1.4.1 Keywords
 
 | Category              | Keywords                                                                                                 |
 |-----------------------|----------------------------------------------------------------------------------------------------------|
@@ -20,7 +20,7 @@
 > (where they begin a declaration) but may be used as identifiers in expression context. For example, a local
 > variable named `use` or a function parameter named `on` is valid.
 
-### 4.2 Sigils & Delimiters
+### 1.4.2 Sigils & Delimiters
 
 | Sigil | Context       | Meaning                                                                    |
 |-------|---------------|----------------------------------------------------------------------------|
@@ -43,7 +43,7 @@
 | `..=` | expression    | Inclusive-end range (`0..=10`)                                             |
 | `^`   | inside `[]`   | From-end index (`^1` = last element)                                       |
 
-### 4.3 Comments
+### 1.4.3 Comments
 
 ```
 // Single-line comment
@@ -52,11 +52,11 @@
    comment */
 ```
 
-### 4.4 String Literals
+### 1.4.4 String Literals
 
 Writ has four string literal forms, built from two orthogonal axes: **basic vs raw** and **plain vs formattable**.
 
-#### 4.4.1 Basic Strings
+#### 1.4.4.1 Basic Strings
 
 Delimited by `"..."`. Support escape sequences but **not** interpolation.
 
@@ -79,10 +79,10 @@ let path = "C:\\Users\\data";
 | `\u{XXXX}`   | Unicode codepoint (1–6 hex digits)                                       |
 | `\` (at EOL) | Line continuation (joined with single space, leading whitespace trimmed) |
 
-#### 4.4.2 Formattable Strings
+#### 1.4.4.2 Formattable Strings
 
 Prefixed with `$`. Enables interpolation via `{expr}` inside the string. Each interpolated expression is converted to a
-string by implicitly calling `.into<string>()` (requires an `Into<string>` implementation; see Section 10.2).
+string by implicitly calling `.into<string>()` (requires an `Into<string>` implementation; see Section 1.11.2).
 
 ```
 let name = "Alice";
@@ -102,7 +102,7 @@ Interpolated expressions may be any valid expression, including nested formattab
 
 Formattable strings support all the same escape sequences as basic strings.
 
-#### 4.4.3 Raw Strings
+#### 1.4.4.3 Raw Strings
 
 Delimited by `"""..."""`. No escape sequences are processed — content is taken verbatim. May span multiple lines. The
 opening `"""` must be followed by a newline; the closing `"""` must appear on its own line. Leading common whitespace is
@@ -135,7 +135,7 @@ let deep = """""
 
 The rule: a raw string opened with N quotes (where N >= 3) is closed by exactly N consecutive quotes.
 
-#### 4.4.4 Formattable Raw Strings
+#### 1.4.4.4 Formattable Raw Strings
 
 Prefixed with `$` and delimited by `"""..."""`. Combines raw string semantics (no escape processing, multi-line,
 dedented) with interpolation.
@@ -164,11 +164,11 @@ let example = $""""
     """";
 ```
 
-#### 4.4.5 Dialogue Lines
+#### 1.4.4.5 Dialogue Lines
 
 In `dlg` blocks, text lines (after speaker attribution or as continuation lines) are implicitly formattable. They do not
 use quotes, and their boundary is end-of-line. Interpolation with `{expr}` is always available. Escape sequences from
-basic strings are recognized. See [Section 13](#13-dialogue-blocks-dlg) for full details.
+basic strings are recognized. See [Section 1.14](#114-dialogue-blocks-dlg) for full details.
 
 ```
 dlg greet(name: string) {
@@ -176,7 +176,7 @@ dlg greet(name: string) {
 }
 ```
 
-#### 4.4.6 Runtime Type
+#### 1.4.4.6 Runtime Type
 
 All four string literal forms produce values of type `string`. There is no distinct type for formattable vs basic — the
 `$` prefix and `"""` delimiters control compile-time parsing behavior only.

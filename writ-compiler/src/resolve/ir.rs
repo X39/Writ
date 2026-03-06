@@ -65,6 +65,8 @@ pub enum ResolvedDecl {
     Fn { def_id: DefId },
     /// A resolved struct declaration.
     Struct { def_id: DefId },
+    /// A resolved class declaration (reference type).
+    Class { def_id: DefId },
     /// A resolved entity declaration.
     Entity { def_id: DefId },
     /// A resolved enum declaration.
@@ -79,6 +81,8 @@ pub enum ResolvedDecl {
     ExternFn { def_id: DefId },
     /// A resolved extern struct.
     ExternStruct { def_id: DefId },
+    /// A resolved extern class (reference type).
+    ExternClass { def_id: DefId },
     /// A resolved extern component.
     ExternComponent { def_id: DefId },
     /// A resolved constant.

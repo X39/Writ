@@ -70,7 +70,7 @@ pub entity Shopkeeper {
 
     on create {
         self.restock();
-        log($"Shopkeeper {self.name} created with {self.inventory.length} items");
+        log::info($"Shopkeeper {self.name} created with {self.inventory.length} items");
     }
 
     on interact(who: Entity) {
@@ -162,9 +162,9 @@ priv dlg shopSellDialog(shop: Shopkeeper, customer: Entity) {
 // --- Conditional debug logging ---
 [Conditional("DEBUG")]
 pub fn debugShopState(shop: Shopkeeper) {
-    log($"[SHOP] {shop.name}: {shop.inventory.length} items, markup={shop.markup}");
+    log::info($"[SHOP] {shop.name}: {shop.inventory.length} items, markup={shop.markup}");
     for item in shop.inventory {
-        log($"  - {item.name}: {item.price}g (final: {shop.getPrice(item)}g)");
+        log::info($"  - {item.name}: {item.price}g (final: {shop.getPrice(item)}g)");
     }
 }
 
@@ -177,5 +177,5 @@ pub fn advanceDay() {
     atomic {
         dayCount += 1;
     }
-    log($"Day {dayCount} begins.");
+    log::info($"Day {dayCount} begins.");
 }

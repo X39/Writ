@@ -9,6 +9,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use writ_module::module::MethodBody;
+use writ_module::tables::TypeDefKind;
 use writ_module::Instruction;
 use writ_module::ModuleBuilder;
 use writ_runtime::{
@@ -66,7 +67,7 @@ impl RuntimeHost for RecordingHost {
 
 fn build_gc_runtime(instructions: &[Instruction], reg_count: u16) -> Runtime<NullHost> {
     let mut builder = ModuleBuilder::new("test");
-    builder.add_type_def("TestType", "", 0, 0);
+    builder.add_type_def("TestType", "", TypeDefKind::Struct, 0);
     let body = MethodBody {
         register_types: vec![0; reg_count as usize],
         code: encode(instructions),
@@ -84,7 +85,7 @@ fn build_gc_runtime_with_host(
     host: RecordingHost,
 ) -> Runtime<RecordingHost> {
     let mut builder = ModuleBuilder::new("test");
-    builder.add_type_def("TestType", "", 0, 0);
+    builder.add_type_def("TestType", "", TypeDefKind::Struct, 0);
     let body = MethodBody {
         register_types: vec![0; reg_count as usize],
         code: encode(instructions),
@@ -132,7 +133,7 @@ fn gc_collects_unreachable_string() {
 fn gc_preserves_reachable_global() {
     // Store a string in a global, then collect — it should survive.
     let mut builder = ModuleBuilder::new("test");
-    builder.add_type_def("TestType", "", 0, 0);
+    builder.add_type_def("TestType", "", TypeDefKind::Struct, 0);
     // Add a global
     builder.add_global_def("g", &[0x01], 0, &[]);
     let body = MethodBody {
@@ -224,7 +225,7 @@ fn gc_on_gc_complete_callback_fires() {
 #[test]
 fn gc_stats_accurate_counts() {
     let mut builder2 = ModuleBuilder::new("test2");
-    builder2.add_type_def("TestType", "", 0, 0);
+    builder2.add_type_def("TestType", "", TypeDefKind::Struct, 0);
     builder2.add_global_def("g", &[0x01], 0, &[]);
     let body = MethodBody {
         register_types: vec![0; 3],
@@ -257,7 +258,7 @@ fn gc_stats_accurate_counts() {
 fn gc_with_bump_heap_is_noop() {
     // Build without .with_gc() — uses BumpHeap
     let mut builder = ModuleBuilder::new("test");
-    builder.add_type_def("TestType", "", 0, 0);
+    builder.add_type_def("TestType", "", TypeDefKind::Struct, 0);
     let body = MethodBody {
         register_types: vec![0; 1],
         code: encode(&[
@@ -305,7 +306,7 @@ fn gc_empty_heap_collection() {
 fn gc_multiple_collections_progressive() {
     // Run multiple GC cycles, allocating and freeing progressively.
     let mut builder = ModuleBuilder::new("test");
-    builder.add_type_def("TestType", "", 0, 0);
+    builder.add_type_def("TestType", "", TypeDefKind::Struct, 0);
     builder.add_global_def("g", &[0x01], 0, &[]);
     let body = MethodBody {
         register_types: vec![0; 2],

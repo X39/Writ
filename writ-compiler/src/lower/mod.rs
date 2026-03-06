@@ -1,25 +1,25 @@
 pub mod context;
 pub mod error;
-pub mod optional;
-pub mod fmt_string;
-pub mod expr;
-pub mod stmt;
-pub mod operator;
-pub mod dialogue;
-pub mod entity;
+pub(crate) mod optional;
+pub(crate) mod fmt_string;
+pub(crate) mod expr;
+pub(crate) mod stmt;
+pub(crate) mod operator;
+pub(crate) mod dialogue;
+pub(crate) mod entity;
 
 use chumsky::span::SimpleSpan;
 use writ_parser::cst::{
-    Attribute, AttrArg, ComponentDecl, ComponentMember, ConstDecl, ContractDecl, ContractMember,
-    EnumDecl, EnumVariant, ExternDecl, FnDecl, FnParam, FnSig, GlobalDecl, Item,
-    NamespaceDecl, OpSig, OpSymbol, Param, GenericParam, Spanned, StructDecl, StructField,
-    StructMember, UsingDecl, Visibility,
+    Attribute, AttrArg, ClassDecl, ClassMember, ComponentDecl, ComponentMember, ConstDecl,
+    ContractDecl, ContractMember, EnumDecl, EnumVariant, ExternDecl, FnDecl, FnParam, FnSig,
+    GlobalDecl, Item, NamespaceDecl, OpSig, OpSymbol, Param, GenericParam, Spanned, StructDecl,
+    StructField, StructMember, UsingDecl, Visibility,
 };
 use crate::ast::{Ast, AstDecl};
 use crate::ast::decl::{
-    AstAttribute, AstAttributeArg, AstComponentDecl, AstComponentMember, AstConstDecl,
-    AstContractDecl, AstContractMember, AstEnumDecl, AstEnumVariant, AstExternDecl, AstFnDecl,
-    AstFnParam, AstFnSig, AstGenericParam, AstGlobalDecl, AstNamespaceDecl,
+    AstAttribute, AstAttributeArg, AstClassDecl, AstComponentDecl, AstComponentMember,
+    AstConstDecl, AstContractDecl, AstContractMember, AstEnumDecl, AstEnumVariant, AstExternDecl,
+    AstFnDecl, AstFnParam, AstFnSig, AstGenericParam, AstGlobalDecl, AstNamespaceDecl,
     AstOpSig, AstOpSymbol, AstParam, AstStructDecl, AstStructField, AstStructMember,
     AstUsingDecl, AstVisibility,
 };
@@ -80,6 +80,9 @@ pub fn lower(items: Vec<Spanned<Item<'_>>>) -> (Ast, Vec<LoweringError>) {
             }
             Item::Struct((s, s_span)) => {
                 decls.push(AstDecl::Struct(lower_struct(s, s_span, &mut ctx)));
+            }
+            Item::Class((c, c_span)) => {
+                decls.push(AstDecl::Class(lower_class(c, c_span, &mut ctx)));
             }
             Item::Enum((e, e_span)) => {
                 decls.push(AstDecl::Enum(lower_enum(e, e_span, &mut ctx)));
@@ -337,6 +340,9 @@ fn lower_namespace(ns: NamespaceDecl<'_>, ns_span: SimpleSpan, ctx: &mut Lowerin
                     Item::Struct((s, s_span)) => {
                         decls.push(AstDecl::Struct(lower_struct(s, s_span, ctx)));
                     }
+                    Item::Class((c, c_span)) => {
+                        decls.push(AstDecl::Class(lower_class(c, c_span, ctx)));
+                    }
                     Item::Enum((e, e_span)) => {
                         decls.push(AstDecl::Enum(lower_enum(e, e_span, ctx)));
                     }
@@ -407,6 +413,43 @@ fn lower_struct(s: StructDecl<'_>, s_span: SimpleSpan, ctx: &mut LoweringContext
             .map(|(member, member_span)| lower_struct_member(member, member_span, ctx))
             .collect(),
         span: s_span,
+    }
+}
+
+fn lower_class(c: ClassDecl<'_>, c_span: SimpleSpan, ctx: &mut LoweringContext) -> AstClassDecl {
+    AstClassDecl {
+        attrs: lower_attrs(c.attrs, ctx),
+        vis: lower_vis(c.vis),
+        name: c.name.0.to_string(),
+        name_span: c.name.1,
+        generics: c
+            .generics
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(gp, gp_span)| lower_generic_param(gp, gp_span))
+            .collect(),
+        members: c
+            .members
+            .into_iter()
+            .map(|(member, member_span)| lower_class_member(member, member_span, ctx))
+            .collect(),
+        span: c_span,
+    }
+}
+
+fn lower_class_member(
+    member: ClassMember<'_>,
+    member_span: SimpleSpan,
+    ctx: &mut LoweringContext,
+) -> AstStructMember {
+    match member {
+        ClassMember::Field(f) => AstStructMember::Field(lower_struct_field(f, member_span, ctx)),
+        ClassMember::OnHook { event, body } => AstStructMember::OnHook {
+            event: event.0.to_string(),
+            event_span: event.1,
+            body: body.into_iter().map(|s| lower_stmt(s, ctx)).collect(),
+            span: member_span,
+        },
     }
 }
 
@@ -507,6 +550,7 @@ fn lower_extern(e: ExternDecl<'_>, _e_span: SimpleSpan, ctx: &mut LoweringContex
     match e {
         ExternDecl::Fn(vis, (sig, sig_span)) => AstExternDecl::Fn(lower_vis(vis), lower_fn_sig(sig, sig_span, ctx)),
         ExternDecl::Struct(vis, (s, s_span)) => AstExternDecl::Struct(lower_vis(vis), lower_struct(s, s_span, ctx)),
+        ExternDecl::Class(vis, (c, c_span)) => AstExternDecl::Class(lower_vis(vis), lower_class(c, c_span, ctx)),
         ExternDecl::Component(vis, (c, c_span)) => {
             AstExternDecl::Component(lower_vis(vis), lower_component(c, c_span, ctx))
         }

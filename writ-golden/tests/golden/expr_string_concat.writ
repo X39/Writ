@@ -1,0 +1,5 @@
+fn main() {
+    let a: string = "hello";
+    let b: string = " world";
+    let c: string = a + b;
+}

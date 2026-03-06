@@ -13,6 +13,7 @@ use crate::check::ty::TyInterner;
 /// Returns `Some(TypedLiteral)` if the expression can be fully evaluated,
 /// or `None` if it contains any non-constant subexpressions (variables,
 /// calls, field accesses, etc.).
+#[allow(clippy::only_used_in_recursion)] // interner reserved for future type-aware folding (e.g., struct constants)
 pub fn const_fold(expr: &TypedExpr, interner: &TyInterner) -> Option<TypedLiteral> {
     match expr {
         // ── Literals are always foldable ─────────────────────────────────────

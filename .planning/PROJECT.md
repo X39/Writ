@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A multi-crate Writ language toolchain. Ships a complete compilation pipeline (name resolution, type checking, IL codegen) plus a spec-compliant IL runtime (register-based VM, cooperative task scheduler, entity system with GC, contract dispatch), a text IL assembler/disassembler, and a `writ` CLI for compiling and running Writ programs. `writ compile foo.writ` produces executable .writil modules; `writ run foo.writil` executes them.
+A multi-crate Writ language toolchain. Ships a complete compilation pipeline (name resolution, type checking, IL codegen), a spec-compliant IL runtime (register-based VM, cooperative task scheduler, entity system with GC, contract dispatch), a text IL assembler/disassembler, a `writ` CLI for compiling and running Writ programs, a language server (writ-lsp) for IntelliSense, a debug adapter (writ-dap) for source-level debugging, and a VS Code extension (writ-vscode) bundling both servers with TextMate syntax highlighting.
 
 ## Core Value
 
@@ -52,13 +52,47 @@ Correct, spec-compliant implementation at every layer — lowering matches Secti
 - ✓ Runtime gap closure (lifecycle hook dispatch, generic specialization, string display) — v3.0
 - ✓ LocaleDef emission for [Locale] dlg overrides — v3.0
 
+- ✓ Spec cleanup (§1.2.8 removal, §26.4 inbuilt calls, writ.toml field alignment) — v3.2
+- ✓ ChoiceOption rename (dialogue choice type disambiguated from Option<T>) — v3.2
+- ✓ Unqualified None/Some (sub-prelude injection, parser `::*` glob expansion) — v3.2
+- ✓ fn_log_say_choice golden test fix (check_path normalization, BOM handling) — v3.2
+- ✓ Leveled logging (`log::trace`/`debug`/`info`/`warn`/`error` replacing `log(msg)`) — v3.2
+- ✓ writ.toml project compilation (`writ build` with `--release`/`--debug` profiles) — v3.2
+- ✓ Structs-as-value-types design record (struct/class split decision: YES) — v3.2
+
+- ✓ Struct/class split — `struct`=value type (inline, copy-on-assign, structural equality), `class`=reference type (heap, GC-managed), entity remains kind=2 — v4.0
+- ✓ Spec amendments — §8 struct→value type, new §9 Classes, memory/construction/IL type/module format updated — v4.0
+- ✓ IL format — TypeDef.kind=4 (class), format_version=3, TypeDefKind enum at API boundaries — v4.0
+- ✓ VM runtime — Value::InlineStruct inline registers, kind-dependent NEW, GC tracing through value-struct fields — v4.0
+- ✓ Compiler — `class` keyword full pipeline, recursive struct detection, structural equality emission, closure→class migration — v4.0
+- ✓ Golden tests updated — format_version=3, struct equality, class declarations, recursive struct error — v4.0
+
+- ✓ VS Code extension with TextMate syntax highlighting, bundled writ-lsp and writ-dap servers — v5.0
+- ✓ Language server: diagnostics, completions, hover, go-to-definition, find references, signature help (cross-file via writ.toml) — v5.0
+- ✓ Debug adapter: source-level breakpoints, stepping, local variable inspection, call stack, watch expressions, tasks-as-threads — v5.0
+- ✓ Debug info pipeline: SourceSpan line/column numbers, debug locals, parser error recovery, RuntimeHost debug hooks — v5.0
+- ✓ Semantic highlighting: entities, components, dialogue speakers, types, functions with distinct colors — v5.0
+
+- ✓ Zero clippy warnings across all 9 Rust crates (194 warnings eliminated) — v6.0
+- ✓ 12 oversized files split into focused submodules across 6 crates — v6.0
+- ✓ Duplicate code consolidated (lower_dlg_text → lower_fmt_string delegation) — v6.0
+- ✓ Module boundaries tightened (explicit imports, pub(crate) narrowing, module doc headers) — v6.0
+- ✓ Dead code removed and cross-phase regressions fixed (say() ABI, golden tests) — v6.0
+- ✓ LSP namespace completions for log::, Option::, Result::, and user-defined enums — v6.1
+- ✓ LSP dot-completion pipeline verified for struct and array receivers — v6.1
+- ✓ SWITCH/DeferPush byte-offset encoding fixed in IL serializer — v6.1
+- ✓ Multi-file writ.toml project launch through DAP debug adapter — v6.1
+- ✓ Golden test coverage for dialogue/function mix patterns (dlg_fn_mix, dlg_quest_pattern) — v6.1
+
+- ✓ Cross-language benchmark suite (7 benchmarks across 6 languages) — v7.0
+- ✓ Docker-based reproducible benchmark runner (run.sh + run.ps1) — v7.0
+- ✓ SVG chart generation (pygal) and markdown results tables — v7.0
+- ✓ GitHub Actions CI workflow for automated benchmark runs — v7.0
+- ✓ Benchmark results committed to `benchmark/results/` — v7.0
+
 ### Active
 
-**v3.1 — Compiler Bug Fixes and Golden File Testing**
-
-- Comprehensive E2E golden file tests for every language feature (compiled .writ -> disassembled IL -> hand-validated)
-- Fix invalid IL generation (extra registers, incorrect register types, etc.)
-- Fix known tech debt: TYPE-12 closure captures, register type blob offsets, dead code
+(None — next milestone not yet planned)
 
 ### Out of Scope
 
@@ -71,24 +105,8 @@ Correct, spec-compliant implementation at every layer — lowering matches Secti
 - async/await for tasks — spec uses cooperative yielding; Rust async futures cannot be inspected or serialized
 - Script-defined components — spec says components are extern-only, data-only
 - Exception tables — spec uses crash propagation with defer unwinding, not structured exceptions
-- Standard library (writ-std) — List<T>, Map<K,V>, utilities deferred to v3.x+
-
-## Context
-
-**Shipped v3.0** with 57,146 LOC Rust (total), 1,100+ tests, 8 phases, 24 plans in 2 days. Full source-to-execution pipeline working.
-**Shipped v2.0** with 13,937 LOC Rust (src), 6 phases, 16 plans in 2 days.
-**Shipped v1.0-v1.2** with 8,826 LOC Rust (src), 15 phases, 28 plans.
-**Tech stack:** Rust 2024 edition, chumsky, logos, insta, thiserror, byteorder, clap, ena, id-arena, rustc-hash, ariadne, strsim.
-**Workspace:** `writ-parser` (lexer+CST), `writ-compiler` (lowering + resolve + typecheck + codegen), `writ-module` (IL binary format), `writ-runtime` (VM+scheduler+entities+GC), `writ-assembler` (text IL assembler+disassembler), `writ-diagnostics` (shared error codes), `writ-cli` (`writ` binary with compile+run).
-**Language spec:** `language-spec/spec/` (splatted files, v0.4) — Section 28 is the lowering reference; Sections 30-66 are the IL spec.
-
-**Known tech debt:**
-- `lower_dlg_text` duplicates `lower_fmt_string` fold logic (code duplication, not correctness)
-- TYPE-12: Closure capture list stubbed empty — closures with captured variables execute incorrectly
-- RES-09: Speaker validation stub — structure in place, full @Speaker resolution deferred
-- Assembler lacks .export/.extern_fn/.component/.locale/.attribute directives
-- Register type blob offsets stored as 0 placeholders in assembler
-- Dead code: extract_callee_def_id_opt retained after Phase 28 refactor
+- Standard library (writ-std) — List<T>, Map<K,V>, utilities deferred to future milestone
+- Language Server Protocol (LSP) / Debug Adapter Protocol (DAP) — shipped in v5.0, fixes in v6.1
 
 ## Constraints
 
@@ -127,6 +145,57 @@ Correct, spec-compliant implementation at every layer — lowering matches Secti
 | Two-pass assembler with placeholder method bodies | Forward references resolved cleanly; no second file scan needed | ✓ Good |
 | Disassembler emits unsupported directives as comments | Round-trip fidelity preserved; parser limitations documented | ✓ Good |
 | CliHost resolves extern names at construction time | No per-request heap lookups; clean separation from NullHost | ✓ Good |
+| check_path strips :: from first segment only | Matches lower/expr.rs encoding for root-qualified paths | ✓ Good |
+| ChoiceOption atomic four-layer rename | Prevents partial rename from creating inconsistent state | ✓ Good |
+| Sub-prelude injection for None/Some | User-defined symbols shadow without error; no DefKind change needed | ✓ Good |
+| FileId(u32::MAX) sentinel for synthetic entries | Distinguishes compiler-injected log DefIds from user-declared ones | ✓ Good |
+| log:: namespace via synthetic ExternFn DefIds | Reuses existing infrastructure; no new DefKind or resolver pass needed | ✓ Good |
+| run_pipeline() synchronous shared helper | Thread spawning stays in callers; clean separation of concerns | ✓ Good |
+| struct/class split (YES) for v4.0 | struct=value type, class=reference type; matches Rust/C# mental model | ✓ Good |
+| Entity remains kind=2 (not kind=4) | VM treats kind=2 and kind=4 identically for heap alloc; entity-specific features key off kind=2 | ✓ Good |
+| format_version=3 strict (no backward compat) | Pre-1.0 project; reader rejects anything else with UnsupportedVersion | ✓ Good |
+| TypeDefKind enum at API boundaries | Compile-time safety; builder takes TypeDefKind not u8; invalid kinds caught at compile time | ✓ Good |
+| Copy derive removed from Value | Explicit .clone() for multi-word copy semantics; prevents accidental shallow copies of InlineStruct | ✓ Good |
+| Folder module splits for oversized files | Each subfile gets single responsibility; parent mod.rs re-exports public API | ✓ Good |
+| Delegation pattern for lower_dlg_text | Converts DlgTextSegment→StringSegment then delegates to lower_fmt_string; eliminates fold duplication | ✓ Good |
+| pub(crate) narrowing for internal modules | Exposes dead code to compiler analysis; caught 6 genuinely unused items | ✓ Good |
+| Documented exceptions for 500-line target | parser/program.rs (Chumsky recursive()), module_builder.rs (single struct), dialogue.rs (tightly-coupled), resolver.rs (core algorithm) | ✓ Good |
+| by_fqn prefix scan for log:: namespace completions | inject_log_namespace bypasses def_map.insert(); pub_members_of returns empty | ✓ Good |
+| Hardcoded Option/Result namespace variants | Prelude types not in type_env.enum_variants; pragmatic workaround | ⚠️ Revisit |
+| Fix SWITCH offsets in serialize.rs Pass 4 | Encoding concerns belong in serializer, not emitter; instruction-index-based emitter stays clean | ✓ Good |
+| source_paths Vec replacing source_path Option | Multi-file tracking for DAP; per-frame attribution deferred (FileId not in SourceSpan) | ✓ Good |
+| Three-stage Dockerfile for benchmark container | Writ build, Rust bench build, Ubuntu runtime with 6 interpreters; clean layer separation | ✓ Good |
+| Host-side chart generation (pygal) | Container produces raw.json only; charts outside container avoids Python dep in Docker image | ✓ Good |
+| Dated result subdirectories | `benchmark/results/YYYY-MM-DD/` prevents overwrite, enables historical diff | ✓ Good |
+| Writ compile/run split as first-class metrics | `compile_ms` and `run_ms` separate JSON fields; distinguishes interpreter startup from compilation | ✓ Good |
+| CI numbers not authoritative | 15% regression threshold; publishable numbers from local Docker runs on stable machine | ✓ Good |
+| IMPL-METHOD fix for contract dispatch | Intercept Field callee on Struct/Class receiver via methoddef_token_by_type_and_name | ✓ Good |
+
+## Context
+
+**Shipped v7.0** with 79,005 LOC Rust (total), 5 phases, 12 plans in 1 day. Cross-language benchmark suite with Docker, SVG charts, CI workflow.
+**Shipped v6.1** with 74,997 LOC Rust, 3 phases, 5 plans in 1 day. LSP completions, DAP runtime fixes, dialogue golden tests.
+**Shipped v6.0** with 74,227 LOC Rust, 5 phases, 14 plans in 1 day. Structural cleanup across all crates.
+**Shipped v5.0** with 72,591 LOC Rust, 10 phases, 20 plans in 4 days. Language server, debug adapter, VS Code extension.
+**Shipped v4.0** with 61,853 LOC Rust, 5 phases, 12 plans in 1 day. Struct/class split across spec, IL format, VM, and compiler.
+**Shipped v3.0-v3.2** with 24 phases, 61 plans. Full compiler pipeline, golden tests, spec corrections, tooling.
+**Shipped v1.0-v2.0** with 21 phases, 44 plans. Lowering pipeline and IL runtime.
+**Tech stack:** Rust 2024 edition, chumsky, logos, insta, thiserror, byteorder, clap, ena, id-arena, rustc-hash, ariadne, strsim, tower-lsp, dap. TypeScript for VS Code extension. Python (pygal) for benchmark charts.
+**Workspace:** `writ-parser` (lexer+CST), `writ-compiler` (lowering + resolve + typecheck + codegen), `writ-module` (IL binary format), `writ-runtime` (VM+scheduler+entities+GC), `writ-assembler` (text IL assembler+disassembler), `writ-diagnostics` (shared error codes), `writ-cli` (`writ` binary with compile+run+build), `writ-lsp` (language server), `writ-dap` (debug adapter), `writ-vscode` (VS Code extension), `benchmark/` (Docker harness, Python charts, CI workflow).
+**Language spec:** `language-spec/spec/` (splatted files, v0.4) — Section 28 is the lowering reference; Sections 30-66 are the IL spec; §8 Structs (value types), §9 Classes (reference types).
+
+**12 milestones shipped** (v1.0-v7.0): 74 phases, 168 plans, ~23 days total.
+
+**Known tech debt:**
+- TYPE-12: Closure capture list stubbed empty — closures with captured variables execute incorrectly
+- RES-09: Speaker validation stub — structure in place, full @Speaker resolution deferred
+- Assembler lacks .export/.extern_fn/.component/.locale/.attribute directives
+- Register type blob offsets stored as 0 placeholders in assembler
+- §26.4 missing from spec table of contents
+- `using log::*;` behavior undocumented in spec
+- test_fn_optional not registered in golden_tests.rs
+- `::choice` with `fn() {}` lambdas causes serialization failure (UnexpectedEof) in multi-function modules
+- StrLen runtime bug: `s.len()` returns heap slot number not byte length
 
 ---
-*Last updated: 2026-03-03 — v3.1 milestone started*
+*Last updated: 2026-03-20 after v7.0 milestone*

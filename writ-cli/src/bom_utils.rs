@@ -61,7 +61,7 @@ pub fn strip_bom_and_decode(bytes: &[u8]) -> Result<String, String> {
 /// Add UTF-8 BOM to the beginning of a string.
 pub fn add_utf8_bom(text: &str) -> String {
     let mut result = String::with_capacity(text.len() + 3);
-    result.push_str("\u{FEFF}"); // UTF-8 BOM
+    result.push('\u{FEFF}'); // UTF-8 BOM
     result.push_str(text);
     result
 }
@@ -73,7 +73,7 @@ trait FromUtf16Le: Sized {
 
 impl FromUtf16Le for String {
     fn from_utf16le(bytes: &[u8]) -> Result<String, String> {
-        if bytes.len() % 2 != 0 {
+        if !bytes.len().is_multiple_of(2) {
             return Err("UTF-16 LE byte count not even".to_string());
         }
         let mut units = Vec::new();
@@ -92,7 +92,7 @@ trait FromUtf16Be: Sized {
 
 impl FromUtf16Be for String {
     fn from_utf16be(bytes: &[u8]) -> Result<String, String> {
-        if bytes.len() % 2 != 0 {
+        if !bytes.len().is_multiple_of(2) {
             return Err("UTF-16 BE byte count not even".to_string());
         }
         let mut units = Vec::new();

@@ -1,0 +1,8 @@
+fn main() {
+    let res: Result<int, string> = Ok(42);
+    let a: bool = res.is_ok();
+    let b: bool = res.is_err();
+    let c: int = res.unwrap();
+    let res2: Result<int, string> = Err("bad");
+    let d: string = res2.unwrap_err();
+}

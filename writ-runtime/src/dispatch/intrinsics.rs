@@ -276,7 +276,50 @@ pub(super) fn execute_intrinsic(
         IntrinsicId::StringIntoString => {
             // Identity conversion
             let frame = ctx.task.call_stack.last_mut().unwrap();
-            frame.registers[r_dst as usize] = frame.registers[r_obj as usize];
+            frame.registers[r_dst as usize] = frame.registers[r_obj as usize].clone();
+            ExecutionResult::Continue
+        }
+        IntrinsicId::StringIntoInt => {
+            let href = helpers::extract_ref(&ctx.task.call_stack.last().unwrap().registers[r_obj as usize]);
+            let s = match ctx.heap.read_string(href) {
+                Ok(s) => s.to_string(),
+                Err(_) => return ExecutionResult::Crash("string.into_int(): not a string".into()),
+            };
+            let v: i64 = match s.trim().parse() {
+                Ok(n) => n,
+                Err(_) => return ExecutionResult::Crash(format!("string.into_int(): cannot parse {:?} as int", s)),
+            };
+            let frame = ctx.task.call_stack.last_mut().unwrap();
+            frame.registers[r_dst as usize] = Value::Int(v);
+            ExecutionResult::Continue
+        }
+        IntrinsicId::StringIntoFloat => {
+            let href = helpers::extract_ref(&ctx.task.call_stack.last().unwrap().registers[r_obj as usize]);
+            let s = match ctx.heap.read_string(href) {
+                Ok(s) => s.to_string(),
+                Err(_) => return ExecutionResult::Crash("string.into_float(): not a string".into()),
+            };
+            let v: f64 = match s.trim().parse() {
+                Ok(n) => n,
+                Err(_) => return ExecutionResult::Crash(format!("string.into_float(): cannot parse {:?} as float", s)),
+            };
+            let frame = ctx.task.call_stack.last_mut().unwrap();
+            frame.registers[r_dst as usize] = Value::Float(v);
+            ExecutionResult::Continue
+        }
+        IntrinsicId::StringIntoBool => {
+            let href = helpers::extract_ref(&ctx.task.call_stack.last().unwrap().registers[r_obj as usize]);
+            let s = match ctx.heap.read_string(href) {
+                Ok(s) => s.to_string(),
+                Err(_) => return ExecutionResult::Crash("string.into_bool(): not a string".into()),
+            };
+            let v: bool = match s.trim() {
+                "true" => true,
+                "false" => false,
+                other => return ExecutionResult::Crash(format!("string.into_bool(): cannot parse {:?} as bool", other)),
+            };
+            let frame = ctx.task.call_stack.last_mut().unwrap();
+            frame.registers[r_dst as usize] = Value::Bool(v);
             ExecutionResult::Continue
         }
 
@@ -287,7 +330,7 @@ pub(super) fn execute_intrinsic(
             match ctx.heap.get_object(arr_ref) {
                 Ok(HeapObject::Array { elements, .. }) => {
                     if idx < elements.len() {
-                        let val = elements[idx];
+                        let val = elements[idx].clone();
                         let frame = ctx.task.call_stack.last_mut().unwrap();
                         frame.registers[r_dst as usize] = val;
                         ExecutionResult::Continue
@@ -301,7 +344,7 @@ pub(super) fn execute_intrinsic(
         IntrinsicId::ArrayIndexSet => {
             let arr_ref = helpers::extract_ref(&ctx.task.call_stack.last().unwrap().registers[r_obj as usize]);
             let idx = helpers::extract_int(&ctx.task.call_stack.last().unwrap().registers[r_base as usize + 1]) as usize;
-            let val = ctx.task.call_stack.last().unwrap().registers[r_base as usize + 2];
+            let val = ctx.task.call_stack.last().unwrap().registers[r_base as usize + 2].clone();
             match ctx.heap.get_object_mut(arr_ref) {
                 Ok(HeapObject::Array { elements, .. }) => {
                     if idx < elements.len() {
@@ -342,7 +385,7 @@ pub(super) fn execute_intrinsic(
         IntrinsicId::ArrayIterable => {
             // Return the array itself as its own iterator (simplified)
             let frame = ctx.task.call_stack.last_mut().unwrap();
-            frame.registers[r_dst as usize] = frame.registers[r_obj as usize];
+            frame.registers[r_dst as usize] = frame.registers[r_obj as usize].clone();
             ExecutionResult::Continue
         }
     }
