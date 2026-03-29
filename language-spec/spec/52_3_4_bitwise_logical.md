@@ -1,5 +1,4 @@
-# Writ IL Specification
-## 3.4 Bitwise & Logical
+# 3.4 Bitwise & Logical
 
 | Mnemonic  | Shape | Operands        | Description                                 |
 |-----------|-------|-----------------|---------------------------------------------|

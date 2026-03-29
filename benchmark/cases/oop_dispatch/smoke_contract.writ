@@ -1,0 +1,18 @@
+contract Computable {
+    fn compute(self) -> int;
+}
+
+pub class Foo {
+    val: int
+}
+
+impl Computable for Foo {
+    fn compute(self) -> int {
+        self.val
+    }
+}
+
+fn main() {
+    let f: Foo = new Foo { val: 42 };
+    log::info($"{f.compute()}");
+}

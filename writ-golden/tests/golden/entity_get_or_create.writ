@@ -1,0 +1,8 @@
+[Singleton]
+entity Guard {
+    health: int = 100,
+}
+
+fn main() {
+    let g = Entity.getOrCreate<Guard>();
+}

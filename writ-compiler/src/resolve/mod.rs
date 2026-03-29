@@ -12,6 +12,7 @@ pub mod collector;
 pub mod def_map;
 pub(crate) mod error;
 pub mod ir;
+pub(crate) mod inject_library;
 pub mod prelude;
 pub(crate) mod resolver;
 pub(crate) mod scope;
@@ -91,21 +92,36 @@ fn inject_dialogue_namespace(def_map: &mut def_map::DefMap) {
 /// Takes a list of parsed/lowered ASTs (one per file) with their FileIds and file paths,
 /// and produces a `NameResolvedAst` with all names resolved to `DefId`s.
 ///
+/// `library_modules` is a slice of pre-compiled module binaries whose type definitions
+/// should be available to user code. Pass `&[]` when compiling without library dependencies.
+/// Library types are injected into the DefMap BEFORE Pass 1 (collect_declarations) so
+/// they are visible during all resolution passes.
+///
 /// Performs Pass 1 (collection), Pass 2 (body resolution), and post-resolution validation.
 pub fn resolve(
     asts: &[(FileId, &Ast)],
     file_paths: &[(FileId, &str)],
+    library_modules: &[&writ_module::Module],
 ) -> (NameResolvedAst, Vec<Diagnostic>) {
-    // Pass 1: Collect declarations
-    let (mut def_map, mut diags) = collector::collect_declarations(asts, file_paths);
+    // Step 0: Create empty DefMap
+    let mut def_map = def_map::DefMap::new();
 
+    // Step 1: Inject library module types FIRST -- they must be in DefMap before
+    // collect_declarations so that Pass 2 body resolution can see them. User code
+    // re-declaring a library type will produce a duplicate-definition error (correct).
+    inject_library::inject_module_types(library_modules, &mut def_map);
+
+    // Step 2: Pass 1 -- collect user declarations into the same DefMap
+    let mut diags = collector::collect_declarations(asts, file_paths, &mut def_map);
+
+    // Step 3: Inject synthetic namespaces (log, dialogue)
     // Inject synthetic log namespace DefIds (log::trace .. log::error).
     inject_log_namespace(&mut def_map);
 
     // Inject synthetic dialogue builtin DefIds (say, say_localized, choice, ChoiceOption).
     inject_dialogue_namespace(&mut def_map);
 
-    // Pass 2: Resolve bodies
+    // Step 4: Pass 2 -- resolve bodies (DefMap now has library + user + synthetic entries)
     let (decls, mut resolve_diags) = resolver::resolve_bodies(asts, file_paths, &def_map);
     diags.append(&mut resolve_diags);
 

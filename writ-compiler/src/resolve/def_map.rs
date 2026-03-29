@@ -19,6 +19,7 @@ pub struct DefMap {
     /// Arena storing all definition entries.
     pub arena: Arena<DefEntry>,
     /// Public definitions indexed by fully-qualified name (e.g., "survival::Potion").
+    /// For overloaded functions, stores the *first* overload; use `fn_overloads` for the full set.
     pub by_fqn: FxHashMap<String, DefId>,
     /// Per-file private definitions indexed by simple name.
     pub file_private: FxHashMap<FileId, FxHashMap<String, DefId>>,
@@ -26,6 +27,8 @@ pub struct DefMap {
     pub namespace_members: FxHashMap<String, Vec<DefId>>,
     /// All impl block DefIds (for later association in Pass 2).
     pub impl_blocks: Vec<DefId>,
+    /// Function overload sets indexed by FQN. Present only when a name has 2+ overloads.
+    pub fn_overloads: FxHashMap<String, Vec<DefId>>,
 }
 
 impl DefMap {
@@ -37,12 +40,14 @@ impl DefMap {
             file_private: FxHashMap::default(),
             namespace_members: FxHashMap::default(),
             impl_blocks: Vec::new(),
+            fn_overloads: FxHashMap::default(),
         }
     }
 
     /// Insert a definition into the map.
     ///
-    /// - For `Pub` visibility: inserts into `by_fqn` by FQN. If duplicate, emits E0001 diagnostic.
+    /// - For `Pub` visibility: inserts into `by_fqn` by FQN. If duplicate, emits E0001 diagnostic
+    ///   (unless both are functions, in which case they form an overload set).
     /// - For `Private` visibility: inserts into `file_private` by simple name.
     /// - Impl blocks are also pushed onto `impl_blocks`.
     pub fn insert(
@@ -52,6 +57,7 @@ impl DefMap {
         diags: &mut Vec<Diagnostic>,
     ) -> DefId {
         let is_impl = matches!(entry.kind, DefKind::Impl);
+        let is_fn = matches!(entry.kind, DefKind::Fn | DefKind::ExternFn);
 
         // Allocate arena slot
         let id = self.arena.alloc(entry.clone());
@@ -68,16 +74,32 @@ impl DefMap {
             DefVis::Pub => {
                 if let Some(&existing_id) = self.by_fqn.get(&fqn) {
                     let existing = &self.arena[existing_id];
-                    diags.push(
-                        ResolutionError::DuplicateDefinition {
-                            name: fqn.clone(),
-                            first_file: existing.file_id,
-                            first_span: existing.name_span,
-                            second_file: entry.file_id,
-                            second_span: entry.name_span,
-                        }
-                        .into(),
-                    );
+                    let existing_is_fn =
+                        matches!(existing.kind, DefKind::Fn | DefKind::ExternFn);
+
+                    if is_fn && existing_is_fn {
+                        // Function overloading: add to overload set
+                        let overloads = self.fn_overloads
+                            .entry(fqn.clone())
+                            .or_insert_with(|| vec![existing_id]);
+                        overloads.push(id);
+                        // Track namespace membership for the new overload
+                        self.namespace_members
+                            .entry(entry.namespace.clone())
+                            .or_default()
+                            .push(id);
+                    } else {
+                        diags.push(
+                            ResolutionError::DuplicateDefinition {
+                                name: fqn.clone(),
+                                first_file: existing.file_id,
+                                first_span: existing.name_span,
+                                second_file: entry.file_id,
+                                second_span: entry.name_span,
+                            }
+                            .into(),
+                        );
+                    }
                 } else {
                     self.by_fqn.insert(fqn.clone(), id);
                     // Track namespace membership
@@ -88,10 +110,31 @@ impl DefMap {
                 }
             }
             DefVis::Private => {
-                self.file_private
-                    .entry(entry.file_id)
-                    .or_default()
-                    .insert(entry.name.clone(), id);
+                if is_fn {
+                    // For private functions, also support overloading via fn_overloads.
+                    // file_private stores one DefId per name; overloads go in fn_overloads.
+                    let privates = self.file_private
+                        .entry(entry.file_id)
+                        .or_default();
+                    if let Some(&existing_id) = privates.get(&entry.name) {
+                        let existing = &self.arena[existing_id];
+                        if matches!(existing.kind, DefKind::Fn | DefKind::ExternFn) {
+                            // Private function overload
+                            let key = format!("{}@{}", entry.name, entry.file_id.0);
+                            let overloads = self.fn_overloads
+                                .entry(key)
+                                .or_insert_with(|| vec![existing_id]);
+                            overloads.push(id);
+                        }
+                    } else {
+                        privates.insert(entry.name.clone(), id);
+                    }
+                } else {
+                    self.file_private
+                        .entry(entry.file_id)
+                        .or_default()
+                        .insert(entry.name.clone(), id);
+                }
             }
         }
 
@@ -103,9 +146,55 @@ impl DefMap {
         self.by_fqn.get(fqn).copied()
     }
 
+    /// Look up a public definition by FQN, disambiguating overloads by name_span.
+    pub fn get_by_span(&self, fqn: &str, name_span: SimpleSpan) -> Option<DefId> {
+        if let Some(overloads) = self.fn_overloads.get(fqn) {
+            for &id in overloads {
+                if self.arena[id].name_span == name_span {
+                    return Some(id);
+                }
+            }
+        }
+        if let Some(&id) = self.by_fqn.get(fqn) {
+            if self.arena[id].name_span == name_span {
+                return Some(id);
+            }
+        }
+        None
+    }
+
     /// Get the entry for a DefId.
     pub fn get_entry(&self, id: DefId) -> &DefEntry {
         &self.arena[id]
+    }
+
+    /// Get all function candidates for a given FQN (supports overloading).
+    /// Returns a single-element slice for non-overloaded functions,
+    /// or the full overload set if present.
+    pub fn get_fn_candidates(&self, fqn: &str) -> Vec<DefId> {
+        if let Some(overloads) = self.fn_overloads.get(fqn) {
+            overloads.clone()
+        } else if let Some(&id) = self.by_fqn.get(fqn) {
+            vec![id]
+        } else {
+            vec![]
+        }
+    }
+
+    /// Get all private function candidates for a given name in a file.
+    pub fn get_private_fn_candidates(&self, file_id: FileId, name: &str) -> Vec<DefId> {
+        let key = format!("{}@{}", name, file_id.0);
+        if let Some(overloads) = self.fn_overloads.get(&key) {
+            overloads.clone()
+        } else if let Some(privates) = self.file_private.get(&file_id) {
+            if let Some(&id) = privates.get(name) {
+                vec![id]
+            } else {
+                vec![]
+            }
+        } else {
+            vec![]
+        }
     }
 
     /// Get all public members of a namespace.
@@ -159,12 +248,11 @@ pub enum DefKind {
     Impl,
     Component,
     ExternFn,
-    ExternStruct,
-    /// Extern class declaration (reference type, heap-allocated).
-    ExternClass,
     ExternComponent,
     Const,
     Global,
+    /// User-defined attribute declaration.
+    AttributeDef,
 }
 
 /// Visibility of a definition.

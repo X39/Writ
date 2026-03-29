@@ -52,7 +52,7 @@ impl RuntimeHost for TestSayHost {
                         Value::Ref(_) => "<ref>".to_string(),
                         Value::Void => "void".to_string(),
                         Value::Entity(_) => "<entity>".to_string(),
-                        Value::InlineStruct { .. } => "<struct>".to_string(),
+                        Value::Struct { .. } => "<struct>".to_string(),
                     })
                     .collect();
                 self.captured

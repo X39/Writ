@@ -14,6 +14,8 @@ enum QuestType {
     Daily,
 }
 
+entity Narrator {}
+
 const MAX_QUESTS: int = 10;
 const XP_MULTIPLIER: int = 2;
 
@@ -90,19 +92,19 @@ fn process_quest_log(statuses: QuestStatus[]) -> int {
 }
 
 // Announce a quest type via say and log builtins.
-fn announce_quest(quest_type: QuestType) {
+fn announce_quest(speaker: Entity, quest_type: QuestType) {
     match quest_type {
         QuestType::MainStory => {
             ::log::info("Announcing main story quest");
-            ::say("A new chapter of the main story begins.");
+            ::say(speaker, "A new chapter of the main story begins.");
         }
         QuestType::SideQuest => {
             ::log::info("Announcing side quest");
-            ::say("A side quest has appeared.");
+            ::say(speaker, "A side quest has appeared.");
         }
         QuestType::Daily => {
             ::log::info("Announcing daily quest");
-            ::say("Your daily quest is ready.");
+            ::say(speaker, "Your daily quest is ready.");
         }
     }
 }
@@ -111,6 +113,8 @@ fn main() {
     defer {
         ::log::info("Quest system session ended.");
     }
+
+    let speaker: Entity = Entity.getOrCreate<Narrator>();
 
     // Initialise status and type arrays.
     let statuses: QuestStatus[] = [
@@ -127,7 +131,7 @@ fn main() {
 
     // Announce each quest type via dialogue and log builtins.
     for t in types {
-        announce_quest(t);
+        announce_quest(speaker, t);
     }
 
     // Find first active quest.
@@ -135,11 +139,11 @@ fn main() {
     match maybe_active {
         Option::None => {
             ::log::info("No active quest found.");
-            ::say("No quests are currently active.");
+            ::say(speaker, "No quests are currently active.");
         }
         Option::Some(idx) => {
             ::log::info("Found active quest.");
-            ::say("You have an active quest.");
+            ::say(speaker, "You have an active quest.");
             let new_status: QuestStatus = complete_quest(
                 QuestStatus::Active,
                 50,
@@ -160,7 +164,7 @@ fn main() {
     // Guard: only continue if total quests within limit.
     if active_quest_count < MAX_QUESTS {
         ::log::info("Quest log within capacity.");
-        ::say("Quest tracker is ready.");
+        ::say(speaker, "Quest tracker is ready.");
     }
 
     // Summarise session XP atomically.

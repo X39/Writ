@@ -1,0 +1,41 @@
+.module "main" "0.1.0" {
+    .extern "writ-runtime" "1.0.0"
+    .type "Dog" struct {
+        .field "name" string
+    }
+    .contract "Animal" {
+        .method "speak" () -> string slot 0
+    }
+    .impl Dog : contract_167772179 {
+    }
+    .impl ? : ? {
+        .method "get_type" () -> Type pub {
+            .reg r0 int
+            .reg r1 int
+            TYPEOF r1, 33554433
+            RET r1
+        }
+        .method "speak" () -> string pub mut {
+            .reg r0 string
+            LOAD_STRING r0, 185  ; line:1 col:139
+            RET r0
+        }
+        .method "main" () -> void mut {
+            .locals {
+                r0: ? "static_type" [8, 44)
+                r1: Dog "dog" [34, 44)
+                r3: ? "dynamic_type" [42, 44)
+            }
+            .reg r0 ?
+            .reg r1 Dog
+            .reg r2 string
+            .reg r3 ?
+            TYPEOF r0, 167772161  ; line:1 col:171
+            NEW r1, 33554433  ; line:1 col:209
+            LOAD_STRING r2, 193
+            SET_FIELD r1, 0, r2
+            TYPEOF r3, 33554433  ; line:1 col:248
+            RET_VOID
+        }
+    }
+}

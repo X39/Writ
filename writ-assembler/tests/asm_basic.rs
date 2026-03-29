@@ -131,3 +131,20 @@ fn assemble_full_module() {
     assert_eq!(module.impl_defs.len(), 1, "1 ImplDef");
     assert_eq!(module.method_defs.len(), 2, "2 MethodDefs (impl + global)");
 }
+
+#[test]
+fn test_typeof_assembles() {
+    let src = r#"
+.module "test" "1.0.0" {
+    .method "main" () -> void {
+        .reg r0 int
+        TYPEOF r0, 1
+        RET_VOID
+    }
+}
+"#;
+    let module = writ_assembler::assemble(src).unwrap();
+    assert_eq!(module.method_bodies.len(), 1);
+    // TYPEOF is 8 bytes (RI32 shape) + RET_VOID is 2 bytes = 10 bytes
+    assert_eq!(module.method_bodies[0].code.len(), 10);
+}

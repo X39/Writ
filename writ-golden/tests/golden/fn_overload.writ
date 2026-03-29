@@ -1,0 +1,12 @@
+pub fn test(value: int) {
+    log::info($"{value}");
+}
+
+pub fn test(value: string) {
+    log::info($"{value}");
+}
+
+fn main() {
+    test(42);
+    test("hello");
+}

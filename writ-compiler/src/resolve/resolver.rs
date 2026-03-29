@@ -261,7 +261,10 @@ fn resolve_decl_list(
 
             AstDecl::Fn(f) => {
                 let fqn = make_fqn(&scope.current_ns, &f.name);
-                if let Some(def_id) = scope.def_map.get(&fqn).or_else(|| {
+                // Use span-based lookup to get the correct DefId for each overload
+                if let Some(def_id) = scope.def_map.get_by_span(&fqn, f.name_span).or_else(|| {
+                    scope.def_map.get(&fqn)
+                }).or_else(|| {
                     scope.def_map.file_private
                         .get(&scope.current_file)
                         .and_then(|m| m.get(&f.name).copied())
@@ -486,7 +489,16 @@ fn resolve_decl_list(
             }
 
             AstDecl::Impl(imp) => {
-                // Resolve target type
+                // Push impl-level generic params BEFORE resolving the target type so that
+                // `impl<T> Box<T>` resolves `T` in `Box<T>` correctly.
+                let generic_names: Vec<(String, SimpleSpan)> =
+                    imp.generics.iter().map(|g| (g.name.clone(), g.name_span)).collect();
+                if !generic_names.is_empty() {
+                    check_generic_shadows(&generic_names, scope, diags);
+                    scope.push_generics(generic_names);
+                }
+
+                // Resolve target type (T must already be in scope for `impl<T> Box<T>`)
                 let target_result = resolve_ast_type(&imp.target, scope, diags);
 
                 // Resolve contract type if present
@@ -499,19 +511,12 @@ fn resolve_decl_list(
                 }).copied();
 
                 if let Some(impl_id) = impl_def_id {
-                    let generic_names: Vec<(String, SimpleSpan)> =
-                        imp.generics.iter().map(|g| (g.name.clone(), g.name_span)).collect();
-                    if !generic_names.is_empty() {
-                        check_generic_shadows(&generic_names, scope, diags);
-                        scope.push_generics(generic_names);
-                    }
-
                     // Set self type from target
                     if let ResolvedType::Named { def_id, .. } = &target_result {
                         scope.self_type = Some(*def_id);
                     }
 
-                    // Resolve member bodies
+                    // Resolve member signatures (param types and return types)
                     for member in &imp.members {
                         match member {
                             AstImplMember::Fn(f) => {
@@ -538,10 +543,10 @@ fn resolve_decl_list(
 
                     scope.self_type = None;
                     decls.push(ResolvedDecl::Impl { def_id: impl_id });
+                }
 
-                    if !imp.generics.is_empty() {
-                        scope.pop_layer();
-                    }
+                if !imp.generics.is_empty() {
+                    scope.pop_layer();
                 }
 
                 let _ = contract_type; // Used for resolution side-effects
@@ -566,7 +571,10 @@ fn resolve_decl_list(
             AstDecl::Extern(ext) => match ext {
                 AstExternDecl::Fn(_, sig) => {
                     let fqn = make_fqn(&scope.current_ns, &sig.name);
-                    if let Some(def_id) = scope.def_map.get(&fqn).or_else(|| {
+                    // Use span-based lookup to get the correct DefId for each overload
+                    if let Some(def_id) = scope.def_map.get_by_span(&fqn, sig.name_span).or_else(|| {
+                        scope.def_map.get(&fqn)
+                    }).or_else(|| {
                         scope.def_map.file_private
                             .get(&scope.current_file)
                             .and_then(|m| m.get(&sig.name).copied())
@@ -581,26 +589,6 @@ fn resolve_decl_list(
                             resolve_ast_type(ret, scope, diags);
                         }
                         decls.push(ResolvedDecl::ExternFn { def_id });
-                    }
-                }
-                AstExternDecl::Struct(_, s) => {
-                    let fqn = make_fqn(&scope.current_ns, &s.name);
-                    if let Some(def_id) = scope.def_map.get(&fqn).or_else(|| {
-                        scope.def_map.file_private
-                            .get(&scope.current_file)
-                            .and_then(|m| m.get(&s.name).copied())
-                    }) {
-                        decls.push(ResolvedDecl::ExternStruct { def_id });
-                    }
-                }
-                AstExternDecl::Class(_, c) => {
-                    let fqn = make_fqn(&scope.current_ns, &c.name);
-                    if let Some(def_id) = scope.def_map.get(&fqn).or_else(|| {
-                        scope.def_map.file_private
-                            .get(&scope.current_file)
-                            .and_then(|m| m.get(&c.name).copied())
-                    }) {
-                        decls.push(ResolvedDecl::ExternClass { def_id });
                     }
                 }
                 AstExternDecl::Component(_, c) => {
@@ -636,6 +624,17 @@ fn resolve_decl_list(
                 }) {
                     resolve_ast_type(&g.ty, scope, diags);
                     decls.push(ResolvedDecl::Global { def_id });
+                }
+            }
+
+            AstDecl::Attribute(a) => {
+                let fqn = make_fqn(&scope.current_ns, &a.name);
+                if let Some(def_id) = scope.def_map.get(&fqn).or_else(|| {
+                    scope.def_map.file_private
+                        .get(&scope.current_file)
+                        .and_then(|m| m.get(&a.name).copied())
+                }) {
+                    decls.push(ResolvedDecl::AttributeDef { def_id });
                 }
             }
         }

@@ -1,0 +1,63 @@
+.module "main" "0.1.0" {
+    .extern "writ-runtime" "1.0.0"
+    .method "main" () -> void mut {
+        .locals {
+            r2: array<string> "parts" [24, 180)
+            r3: int "_part_count" [30, 180)
+            r5: string "_trimmed" [44, 180)
+            r8: bool "_sw" [68, 180)
+            r11: bool "_ew" [92, 180)
+            r14: bool "_has" [116, 180)
+            r18: string "_replaced" [150, 180)
+            r20: string "_upper" [164, 180)
+            r22: string "_lower" [178, 180)
+        }
+        .reg r0 string
+        .reg r1 string
+        .reg r2 array<string>
+        .reg r3 int
+        .reg r4 string
+        .reg r5 string
+        .reg r6 string
+        .reg r7 string
+        .reg r8 bool
+        .reg r9 string
+        .reg r10 string
+        .reg r11 bool
+        .reg r12 string
+        .reg r13 string
+        .reg r14 bool
+        .reg r15 string
+        .reg r16 string
+        .reg r17 string
+        .reg r18 string
+        .reg r19 string
+        .reg r20 string
+        .reg r21 string
+        .reg r22 string
+        LOAD_STRING r0, 139  ; line:1 col:32
+        LOAD_STRING r1, 154
+        STR_SPLIT r2, r0, r1
+        ARRAY_LEN r3, r2  ; line:1 col:75
+        LOAD_STRING r4, 159  ; line:1 col:126
+        STR_TRIM r5, r4
+        LOAD_STRING r6, 169  ; line:1 col:197
+        LOAD_STRING r7, 178
+        STR_STARTS_WITH r8, r6, r7
+        LOAD_STRING r9, 169  ; line:1 col:240
+        LOAD_STRING r10, 185
+        STR_ENDS_WITH r11, r9, r10
+        LOAD_STRING r12, 139  ; line:1 col:300
+        LOAD_STRING r13, 192
+        STR_CONTAINS r14, r12, r13
+        LOAD_STRING r15, 169  ; line:1 col:367
+        LOAD_STRING r16, 201
+        LOAD_STRING r17, 206
+        STR_REPLACE r18, r15, r16, r17
+        LOAD_STRING r19, 169  ; line:1 col:445
+        STR_TO_UPPER r20, r19
+        LOAD_STRING r21, 211  ; line:1 col:483
+        STR_TO_LOWER r22, r21
+        RET_VOID
+    }
+}

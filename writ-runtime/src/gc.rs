@@ -21,10 +21,10 @@ pub enum GcMode {
 
 /// Abstraction over heap implementations, allowing GC to be swapped without
 /// changing the VM dispatch loop (GC-05).
-pub trait GcHeap {
+pub trait GcHeap: Send + Sync {
     // ── Allocation ────────────────────────────────────────────
     fn alloc_string(&mut self, s: &str) -> HeapRef;
-    fn alloc_struct(&mut self, field_count: usize) -> HeapRef;
+    fn alloc_struct(&mut self, type_key: u32, field_count: usize) -> HeapRef;
     fn alloc_array(&mut self, elem_type: u32) -> HeapRef;
     fn alloc_delegate(&mut self, method_idx: usize, target: Option<Value>) -> HeapRef;
     fn alloc_enum(&mut self, type_idx: u32, tag: u16, fields: Vec<Value>) -> HeapRef;
@@ -54,22 +54,18 @@ pub trait GcHeap {
     fn object_count(&self) -> usize;
 }
 
-/// Recursively collect all HeapRefs reachable from a Value.
-/// Handles nested InlineStructs (structs containing struct fields).
+/// Collect all HeapRefs directly reachable from a Value. For Struct, pushes the heap ref;
+/// GC trace_refs walks the heap object's fields transitively.
 pub fn collect_value_refs(val: &Value, refs: &mut Vec<HeapRef>) {
     match val {
         Value::Ref(href) => refs.push(*href),
-        Value::InlineStruct { fields, .. } => {
-            for field in fields {
-                collect_value_refs(field, refs);
-            }
-        }
+        Value::Struct { href, .. } => refs.push(*href),
         _ => {}
     }
 }
 
 /// Extract all HeapRef values reachable from a HeapObject.
-/// Uses collect_value_refs to recursively scan InlineStruct fields.
+/// Uses collect_value_refs to find direct heap references in each field value.
 pub fn trace_refs(obj: &HeapObject) -> Vec<HeapRef> {
     let mut refs = Vec::new();
     match obj {
@@ -177,8 +173,9 @@ impl GcHeap for MarkSweepHeap {
         self.alloc_slot(HeapObject::String(s.to_string()))
     }
 
-    fn alloc_struct(&mut self, field_count: usize) -> HeapRef {
+    fn alloc_struct(&mut self, type_key: u32, field_count: usize) -> HeapRef {
         self.alloc_slot(HeapObject::Struct {
+            type_key,
             fields: vec![Value::Void; field_count],
         })
     }
@@ -424,7 +421,7 @@ mod tests {
         assert_eq!(GcHeap::heap_size(&heap), 0);
         assert_eq!(GcHeap::object_count(&heap), 0);
         GcHeap::alloc_string(&mut heap, "hello");
-        GcHeap::alloc_struct(&mut heap, 3);
+        GcHeap::alloc_struct(&mut heap, u32::MAX, 3);
         assert_eq!(GcHeap::heap_size(&heap), 2);
         assert_eq!(GcHeap::object_count(&heap), 2);
     }
@@ -441,7 +438,7 @@ mod tests {
     #[test]
     fn ms_alloc_struct_and_fields() {
         let mut heap = MarkSweepHeap::new();
-        let href = GcHeap::alloc_struct(&mut heap, 3);
+        let href = GcHeap::alloc_struct(&mut heap, u32::MAX, 3);
         assert_eq!(GcHeap::get_field(&heap, href, 0).unwrap(), Value::Void);
         GcHeap::set_field(&mut heap, href, 1, Value::Int(42)).unwrap();
         assert_eq!(GcHeap::get_field(&heap, href, 1).unwrap(), Value::Int(42));
@@ -468,7 +465,7 @@ mod tests {
         let mut heap = MarkSweepHeap::new();
         // A struct referencing another struct
         let child = GcHeap::alloc_string(&mut heap, "child");
-        let parent = GcHeap::alloc_struct(&mut heap, 1);
+        let parent = GcHeap::alloc_struct(&mut heap, u32::MAX, 1);
         GcHeap::set_field(&mut heap, parent, 0, Value::Ref(child)).unwrap();
 
         // Only root parent — child should survive via tracing
@@ -482,9 +479,9 @@ mod tests {
     fn ms_collect_chain_a_b_c() {
         let mut heap = MarkSweepHeap::new();
         let c = GcHeap::alloc_string(&mut heap, "C");
-        let b = GcHeap::alloc_struct(&mut heap, 1);
+        let b = GcHeap::alloc_struct(&mut heap, u32::MAX, 1);
         GcHeap::set_field(&mut heap, b, 0, Value::Ref(c)).unwrap();
-        let a = GcHeap::alloc_struct(&mut heap, 1);
+        let a = GcHeap::alloc_struct(&mut heap, u32::MAX, 1);
         GcHeap::set_field(&mut heap, a, 0, Value::Ref(b)).unwrap();
 
         // Root only A — all three survive
@@ -524,7 +521,7 @@ mod tests {
     fn ms_finalization_queue_keeps_references_alive() {
         let mut heap = MarkSweepHeap::new();
         let child = GcHeap::alloc_string(&mut heap, "child");
-        let parent = GcHeap::alloc_struct(&mut heap, 1);
+        let parent = GcHeap::alloc_struct(&mut heap, u32::MAX, 1);
         GcHeap::set_field(&mut heap, parent, 0, Value::Ref(child)).unwrap();
         heap.mark_finalizable(parent);
 

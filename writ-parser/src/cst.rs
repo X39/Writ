@@ -85,6 +85,8 @@ pub enum Item<'src> {
     Const(Spanned<ConstDecl<'src>>),
     /// Global mutable: `[vis] global mut name: type = expr;`
     Global(Spanned<GlobalDecl<'src>>),
+    /// Attribute declaration: `[vis] attribute Name(name: type, ...);`
+    Attribute(Spanned<AttributeDecl<'src>>),
     /// Backward-compatible: bare statements at top level
     Stmt(Spanned<Stmt<'src>>),
 }
@@ -210,6 +212,21 @@ pub struct GlobalDecl<'src> {
     pub ty: Spanned<TypeExpr<'src>>,
     /// Initial value expression.
     pub value: Spanned<Expr<'src>>,
+}
+
+/// Attribute declaration: `[attrs] [vis] attribute Name(name: type, ...);`
+#[derive(Debug, Clone, PartialEq)]
+pub struct AttributeDecl<'src> {
+    /// Stacked attribute blocks.
+    pub attrs: Vec<Spanned<Vec<Attribute<'src>>>>,
+    /// Optional visibility modifier.
+    pub vis: Option<Visibility>,
+    /// Attribute name.
+    pub name: Spanned<&'src str>,
+    /// Parameter list (the attribute's typed arguments).
+    pub params: Vec<Spanned<Param<'src>>>,
+    /// Source span of the full declaration.
+    pub span: SimpleSpan,
 }
 
 /// Struct declaration: `[attrs] [vis] struct Name [<generics>] { fields }`
@@ -465,15 +482,11 @@ pub enum ComponentMember<'src> {
     Fn(Spanned<FnDecl<'src>>),
 }
 
-/// Extern declaration: `[vis] extern fn|struct|component ...`
+/// Extern declaration: `[vis] extern fn|component ...`
 #[derive(Debug, Clone, PartialEq)]
 pub enum ExternDecl<'src> {
     /// Extern function (signature only): `[vis] extern fn name(...) [-> type];`
     Fn(Option<Visibility>, Spanned<FnSig<'src>>),
-    /// Extern struct: `[vis] extern struct Name { fields }`
-    Struct(Option<Visibility>, Spanned<StructDecl<'src>>),
-    /// Extern class: `[vis] extern class Name { fields }`
-    Class(Option<Visibility>, Spanned<ClassDecl<'src>>),
     /// Extern component: `[vis] extern component Name { fields }`
     Component(Option<Visibility>, Spanned<ComponentDecl<'src>>),
 }
@@ -625,6 +638,8 @@ pub enum Expr<'src> {
     Defer(Box<Spanned<Expr<'src>>>),
     /// Try expression: `try expr`
     Try(Box<Spanned<Expr<'src>>>),
+    /// TypeOf expression: `typeof(expr)` — static compile-time type query
+    TypeOf(Box<Spanned<Expr<'src>>>),
 
     // Formattable strings
     /// Formattable string: `$"Hello {name}!"`

@@ -1,11 +1,10 @@
-# 1. Writ Language Specification
-## 1.9 Classes
+# 1.9 Classes
 
 Classes are reference types — named composite types with named fields, heap-allocated, GC-managed, shared-on-assign.
 They support methods and operator overloading via `impl` blocks, and lifecycle hooks directly in the class body.
 Classes are what `struct` meant in prior versions of the language.
 
-```
+```writ
 class Merchant {
     name: string,
     gold: int,
@@ -22,7 +21,7 @@ impl Merchant {
 let m = new Merchant { name: "Old Tim", gold: 100 };
 ```
 
-### 1.9.1 Construction
+## 1.9.1 Construction
 
 Classes are constructed with the `new` keyword followed by the type name and brace-enclosed field initializers. Fields
 with default values may be omitted. Fields without defaults are required at every construction site.
@@ -31,7 +30,7 @@ with default values may be omitted. Fields without defaults are required at ever
 Assigning a class value copies the reference — both variables refer to the same object. This contrasts with structs,
 where `new` initializes a value inline with no heap allocation (see Section 1.8).
 
-```
+```writ
 let m = new Merchant { name: "Old Tim", gold: 100 };   // reputation defaults to 0.5
 let m2 = new Merchant { name: "Sue", gold: 50, reputation: 0.9 };
 
@@ -43,7 +42,7 @@ The `new` keyword disambiguates construction from block expressions, making the 
 
 For convenience factories, use static methods in `impl` blocks:
 
-```
+```writ
 impl Merchant {
     fn create(name: string) -> Merchant {
         new Merchant { name: name, gold: 0 }
@@ -53,12 +52,12 @@ impl Merchant {
 let m = Merchant::create("Tim");
 ```
 
-### 1.9.2 Lifecycle Hooks
+## 1.9.2 Lifecycle Hooks
 
 Classes may define lifecycle hooks using the `on` keyword directly in the class body. All hooks receive an implicit
 `mut self` parameter.
 
-```
+```writ
 class NativeConnection {
     url: string,
     handle: int = 0,
@@ -108,11 +107,11 @@ runtime logging interface (see IL spec §1.14.7). Specific consequences by hook:
 
 Value-type structs have no lifecycle hooks. If lifecycle hooks are needed, use a `class` (or `entity` for game objects).
 
-### 1.9.3 Construction Sequence (IL)
+## 1.9.3 Construction Sequence (IL)
 
 `new Merchant { name: "Tim", gold: 100 }` compiles to the following IL:
 
-```
+```writ
 NEW           r0, Merchant_type       // allocate on GC heap
 LOAD_FLOAT    r1, 0.5
 SET_FIELD     r0, reputation_field, r1

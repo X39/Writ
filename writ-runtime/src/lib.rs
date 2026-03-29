@@ -16,6 +16,7 @@
 //! - `scheduler`      -- Multi-task round-robin scheduler
 //! - `runtime`        -- Top-level Runtime API and RuntimeBuilder
 //! - `virtual_module` -- writ-runtime built-in module (Option, Result, Range, contracts)
+//! - `extern_registry`-- ExternRegistry builder for game-engine extern dispatch
 
 pub mod value;
 pub mod heap;
@@ -32,15 +33,19 @@ pub(crate) mod dispatch;
 pub mod scheduler;
 pub mod runtime;
 pub mod virtual_module;
+pub mod extern_registry;
+pub mod reflection;
 
 pub use value::{Value, HeapRef, GenHandle, TaskId, EntityId};
 pub use heap::BumpHeap;
 pub use gc::{GcHeap, GcStats, GcMode};
 pub use entity::{EntityRegistry, EntitySlot, EntityState, PendingEntity};
-pub use frame::CallFrame;
+pub use frame::{CallFrame, RegisterPool};
 pub use task::{Task, TaskState, SuspendReason};
-pub use host::{RuntimeHost, HostRequest, HostResponse, NullHost, RequestId, LogLevel, DebugAction};
+pub use host::{RuntimeHost, HostRequest, HostResponse, NullHost, RequestId, LogLevel, DebugAction, ModuleAttributeView, AttributeMatch};
 pub use error::{RuntimeError, CrashInfo, StackFrame, HostError};
-pub use domain::{Domain, ResolvedRefs, ResolvedType, ResolvedMethod, ResolvedField};
+pub use domain::{Domain, ResolvedRefs, ResolvedType, ResolvedMethod, ResolvedField, DomainAttributeMatch};
 pub use loader::LoadedModule;
 pub use runtime::{Runtime, RuntimeBuilder, ExecutionLimit, TickResult, PendingRequest};
+pub use extern_registry::{ExternRegistry, ExternHost, ExternHandler, DeferredCall};
+pub use reflection::ReflectionIndex;

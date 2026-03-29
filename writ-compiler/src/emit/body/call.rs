@@ -243,7 +243,7 @@ pub fn analyze_callee(
     if let TypedExpr::Field { receiver, .. } = callee {
         let recv_ty = receiver.ty();
         match emitter.interner.kind(recv_ty) {
-            TyKind::Struct(_) | TyKind::Entity(_) => {
+            TyKind::Struct(_) | TyKind::Entity(_) | TyKind::Class(_) => {
                 // Concrete receiver -> EMIT-27: specialize to CALL
                 return CallKind::Direct;
             }

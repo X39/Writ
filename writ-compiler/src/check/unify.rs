@@ -107,7 +107,12 @@ impl UnifyCtx {
             (TyKind::Struct(a_id), TyKind::Struct(b_id)) if a_id == b_id => Ok(()),
             (TyKind::Class(a_id), TyKind::Class(b_id)) if a_id == b_id => Ok(()),
             (TyKind::Entity(a_id), TyKind::Entity(b_id)) if a_id == b_id => Ok(()),
+            // AnyEntity (base Entity type) accepts any specific entity type
+            (TyKind::AnyEntity, TyKind::AnyEntity) => Ok(()),
+            (TyKind::AnyEntity, TyKind::Entity(_)) | (TyKind::Entity(_), TyKind::AnyEntity) => Ok(()),
             (TyKind::Enum(a_id), TyKind::Enum(b_id)) if a_id == b_id => Ok(()),
+            // Same contract type (identity only — assignability is directional, handled in check_stmt)
+            (TyKind::Contract(a_id), TyKind::Contract(b_id)) if a_id == b_id => Ok(()),
 
             // Structural: arrays
             (TyKind::Array(a_elem), TyKind::Array(b_elem)) => {
@@ -167,6 +172,17 @@ impl UnifyCtx {
 
             // Same generic param index
             (TyKind::GenericParam(a_idx), TyKind::GenericParam(b_idx)) if a_idx == b_idx => Ok(()),
+
+            // Generic param unifies with any concrete type (treated as a wildcard).
+            // This allows `new Box<int> { value: 42 }` to type-check when `value: T` has
+            // type GenericParam(0) in the struct_fields map.
+            (TyKind::GenericParam(_), _) | (_, TyKind::GenericParam(_)) => Ok(()),
+
+            // ReflectionType unification: typeof(T) == typeof(U) is valid because at runtime
+            // both sides are `Type` objects.  The inner type carries static info used by the
+            // emitter (to select the TypeDef token); the outer `Type` is the same runtime type
+            // regardless of which concrete type was queried.
+            (TyKind::ReflectionType(_), TyKind::ReflectionType(_)) => Ok(()),
 
             // Mismatch
             _ => Err(UnifyError {

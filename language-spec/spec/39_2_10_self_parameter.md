@@ -1,5 +1,4 @@
-# Writ IL Specification
-## 2.10 Self Parameter
+# 2.10 Self Parameter
 
 **Decision:** Methods take explicit `self` or `mut self` as their first parameter. This is now specified in the language
 spec (§12.5).

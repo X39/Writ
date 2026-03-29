@@ -1,41 +1,37 @@
-# 1. Writ Language Specification
-## 1.25 External Declarations
+# 1.25 External Declarations
 
-External declarations describe types, functions, components, and other constructs not implemented in Writ. They have no
-implementation body and exist for compile-time type checking and language server support. External declarations are
-placed in regular `.writ` files. By convention, projects organize them in a `decl/` directory, but this is not required.
+External declarations describe functions and components not implemented in Writ. They have no implementation body and
+exist for compile-time type checking and language server support. External declarations are placed in regular `.writ`
+files. By convention, projects organize them in a `decl/` directory, but this is not required.
 
-There are two kinds of external declarations:
+The `extern` keyword applies to two declaration kinds:
 
-1. **Runtime-provided** — bare `extern` with no `[Import]` attribute. The host runtime supplies the implementation at
-   embedding time.
-2. **Library-imported** — `extern` with an `[Import]` attribute. The runtime loads a native library and resolves the
+1. **`extern fn`** — a function whose implementation is provided externally.
+2. **`extern component`** — a data schema whose storage is host-managed (see [Section 1.16](#116-components)).
+
+> **Note:** The `extern` keyword does not apply to types (`struct`, `class`, `enum`, `entity`). Types are always
+> defined in Writ — either in the `writ-runtime` module (§2.18) or in Writ library packages. If a runtime consumer
+> wants to expose custom types to scripts (e.g., `vec2`, `Color`), the correct approach is to ship a Writ library and
+> reference it in `writ.toml` as a dependency. The runtime understands all Writ type layouts natively.
+
+There are two kinds of extern function declarations:
+
+1. **Runtime-provided** — bare `extern fn` with no `[Import]` attribute. The host runtime supplies the implementation
+   at embedding time.
+2. **Library-imported** — `extern fn` with an `[Import]` attribute. The runtime loads a native library and resolves the
    symbol at call time.
 
-### 1.25.1 Runtime-Provided Externals
+## 1.25.1 Runtime-Provided Externals
 
 Bare `extern` declarations are provided by the host runtime. This is the common case for game scripting — the engine
 exposes core functionality to scripts.
 
-```
+```writ
 // Runtime-provided functions
 extern fn lerp(from: vec2, to: vec2, duration: float) -> vec2;
 extern fn wait(seconds: float);
 extern fn playSound(name: string);
 extern fn random(min: float, max: float) -> float;
-
-// Runtime-provided structs
-extern struct vec2 {
-    x: float,
-    y: float,
-}
-
-extern struct Entity {
-    position: vec2,
-    name: string,
-    fn moveTo(target: vec2, speed: float);
-    fn destroy();
-}
 
 // Runtime-provided components (data-only — no methods)
 extern component Sprite {
@@ -55,24 +51,37 @@ extern component Health {
     current: int,
     max: int,
 }
-
-// Entity namespace utilities
-extern fn Entity.getOrCreate<T>() -> T;
-extern fn Entity.findAll<T>() -> EntityList<T>;
-extern fn Entity.findNearest<T>(position: vec2) -> T?;
 ```
 
-### 1.25.2 Library Imports
+## 1.25.2 Overloading
+
+Extern functions participate in the same overload resolution as regular functions (§1.13.3). Multiple `extern fn`
+declarations may share the same name if they have different parameter signatures. The compiler resolves calls based on
+argument types at the call site and emits `CALL_EXTERN` with the correct `ExternDef` index.
+
+```writ
+extern fn ui_set(element_id: int, key: string, value: float);
+extern fn ui_set(element_id: int, key: string, value: string);
+
+// Resolved by argument types
+ui_set(rect_id, "x", 100.0);           // calls float overload
+ui_set(btn_id, "color", "green");       // calls string overload
+```
+
+All Writ types — primitives, structs, classes, enums, arrays, nullable types — pass transparently through extern
+function signatures. The runtime understands native Writ type layouts and can marshal them without special handling.
+
+## 1.25.3 Library Imports
 
 The `[Import]` attribute marks an extern declaration as loaded from a native library rather than provided directly by
 the runtime.
 
-```
+```writ
 [Import("physics")]
 extern fn raycast(origin: vec2, dir: vec2, dist: float) -> HitResult?;
 ```
 
-#### 1.25.2.1 Import Attribute Parameters
+### 1.25.3.1 Import Attribute Parameters
 
 The `[Import]` attribute accepts one positional argument (the logical library name) and optional named arguments for
 symbol naming and architecture-specific overrides.
@@ -101,9 +110,9 @@ symbol naming and architecture-specific overrides.
 
 These parameters form a closed set. The compiler rejects unrecognized named arguments in `[Import]`.
 
-#### 1.25.2.2 Examples
+### 1.25.3.2 Examples
 
-```
+```writ
 // Minimal — logical name only, symbol defaults to function name
 [Import("physics")]
 extern fn raycast(origin: vec2, dir: vec2, dist: float) -> HitResult?;
@@ -125,7 +134,7 @@ extern fn raycast(origin: vec2, dir: vec2, dist: float) -> HitResult?;
 extern fn playMusic(path: string, volume: float);
 ```
 
-### 1.25.3 Architecture Identifiers
+## 1.25.4 Architecture Identifiers
 
 The following architecture identifiers are recognized by the compiler:
 
@@ -142,7 +151,7 @@ Unrecognized architecture identifiers in `[Import]` named parameters are a compi
 > **Note:** Architecture identifiers refer to instruction set architecture only. Platform concerns (operating system,
 > file extensions, library search paths) are the runtime's responsibility.
 
-### 1.25.4 Library Resolution
+## 1.25.5 Library Resolution
 
 When the runtime encounters a call to an `[Import]` extern, it resolves the library in the following order:
 
@@ -155,7 +164,7 @@ When the runtime encounters a call to an `[Import]` extern, it resolves the libr
 The runtime appends platform-specific file extensions (`.dll`, `.so`, `.dylib`) and applies its own search path
 conventions. The Writ language does not specify file extensions or search paths — these are runtime concerns.
 
-### 1.25.5 Symbol Resolution
+## 1.25.6 Symbol Resolution
 
 Symbol resolution follows the same precedence:
 
@@ -164,7 +173,7 @@ Symbol resolution follows the same precedence:
 2. **Attribute symbol parameter** — if `symbol` is specified, use that name.
 3. **Function name** — default to the Writ function name as declared.
 
-### 1.25.6 Crash Semantics
+## 1.25.7 Crash Semantics
 
 Library loading and symbol resolution are **not recoverable operations**. If the runtime cannot load a library or
 resolve a symbol:

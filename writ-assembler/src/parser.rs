@@ -2,7 +2,8 @@ use crate::ast::{
     AsmModule, AsmExtern, AsmType, AsmTypeKind, AsmField,
     AsmContract, AsmContractMethod, AsmImpl, AsmMethod, AsmParam,
     AsmRegDecl, AsmStatement, AsmInstruction, AsmOperand, AsmTypeRef,
-    AsmMethodRef, AsmMethodSig, AsmGlobal,
+    AsmMethodRef, AsmMethodSig, AsmGlobal, AsmExternFn,
+    AsmExport, AsmComponentSlot, AsmLocaleDef, AsmAttributeDef,
 };
 use crate::error::AssembleError;
 use crate::lexer::{Token, TokenKind};
@@ -140,6 +141,10 @@ impl<'a> Parser<'a> {
             globals: Vec::new(),
             extern_fns: Vec::new(),
             methods: Vec::new(),
+            exports: Vec::new(),
+            component_slots: Vec::new(),
+            locale_defs: Vec::new(),
+            attribute_defs: Vec::new(),
         };
 
         if !self.expect_directive("module") {
@@ -197,6 +202,31 @@ impl<'a> Parser<'a> {
                     "global" => {
                         if let Some(g) = self.parse_global() {
                             module.globals.push(g);
+                        }
+                    }
+                    "extern_fn" => {
+                        if let Some(ef) = self.parse_extern_fn() {
+                            module.extern_fns.push(ef);
+                        }
+                    }
+                    "export" => {
+                        if let Some(e) = self.parse_export() {
+                            module.exports.push(e);
+                        }
+                    }
+                    "component_slot" => {
+                        if let Some(cs) = self.parse_component_slot() {
+                            module.component_slots.push(cs);
+                        }
+                    }
+                    "locale" => {
+                        if let Some(ld) = self.parse_locale() {
+                            module.locale_defs.push(ld);
+                        }
+                    }
+                    "attribute" => {
+                        if let Some(ad) = self.parse_attribute() {
+                            module.attribute_defs.push(ad);
                         }
                     }
                     other => {
@@ -914,6 +944,60 @@ impl<'a> Parser<'a> {
         let type_ref = self.parse_type_ref()?;
         let flags = self.parse_flags();
         Some(AsmGlobal { name, type_ref, flags, init_value: None })
+    }
+
+    fn parse_extern_fn(&mut self) -> Option<AsmExternFn> {
+        self.pos += 1; // consume .extern_fn
+        let name = self.expect_string()?;
+        let signature = self.parse_method_sig()?;
+        let import_name = self.expect_string()?;
+        let flags = self.parse_flags();
+        Some(AsmExternFn { name, signature, import_name, flags })
+    }
+
+    fn parse_export(&mut self) -> Option<AsmExport> {
+        self.pos += 1; // consume .export
+        let name = self.expect_string()?;
+        let kind_str = self.expect_ident()?;
+        let item_kind = match kind_str.to_lowercase().as_str() {
+            "method" => 0u8,
+            "type" => 1u8,
+            "global" => 2u8,
+            _ => {
+                let tok = &self.tokens[self.pos - 1];
+                self.errors.push(AssembleError::new(
+                    format!("unknown export kind '{}', expected method|type|global", kind_str),
+                    tok.line,
+                    tok.col,
+                ));
+                0u8
+            }
+        };
+        let item_token = self.expect_int()? as u32;
+        Some(AsmExport { name, item_kind, item_token })
+    }
+
+    fn parse_component_slot(&mut self) -> Option<AsmComponentSlot> {
+        self.pos += 1; // consume .component_slot
+        let owner_entity = self.expect_int()? as u32;
+        let component_type = self.expect_int()? as u32;
+        Some(AsmComponentSlot { owner_entity, component_type })
+    }
+
+    fn parse_locale(&mut self) -> Option<AsmLocaleDef> {
+        self.pos += 1; // consume .locale
+        let dlg_method = self.expect_int()? as u32;
+        let locale = self.expect_string()?;
+        let loc_method = self.expect_int()? as u32;
+        Some(AsmLocaleDef { dlg_method, locale, loc_method })
+    }
+
+    fn parse_attribute(&mut self) -> Option<AsmAttributeDef> {
+        self.pos += 1; // consume .attribute
+        let owner = self.expect_int()? as u32;
+        let owner_kind = self.expect_int()? as u8;
+        let name = self.expect_string()?;
+        Some(AsmAttributeDef { owner, owner_kind, name })
     }
 }
 

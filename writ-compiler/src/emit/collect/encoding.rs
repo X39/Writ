@@ -3,7 +3,10 @@
 use rustc_hash::FxHashMap;
 use writ_diagnostics::FileId;
 
-use crate::ast::decl::{AstFnParam, AstParam};
+use writ_module::attr::{AttrValue, encode_attr_args, ATTR_TAG_STRING, ATTR_TAG_INT, ATTR_TAG_BOOL};
+use writ_module::tables::ATTR_OWNER_KIND_DECL;
+
+use crate::ast::decl::{AstDecl, AstFnParam, AstParam};
 use crate::ast::expr::AstExpr;
 use crate::ast::decl::AstAttributeArg;
 use crate::ast::Ast;
@@ -21,7 +24,14 @@ use super::lookup::find_attrs_for_entry;
 // =============================================================================
 
 pub(super) fn collect_exports(def_map: &DefMap, builder: &mut ModuleBuilder) {
-    for &def_id in def_map.by_fqn.values() {
+    // Collect all public DefIds, including overloaded functions.
+    // by_fqn has the first overload; fn_overloads has all overloads for overloaded names.
+    let mut seen = rustc_hash::FxHashSet::default();
+    let all_ids: Vec<_> = def_map.by_fqn.values().copied()
+        .chain(def_map.fn_overloads.values().flat_map(|ids| ids.iter().copied()))
+        .filter(|id| seen.insert(*id))
+        .collect();
+    for def_id in all_ids {
         let entry = def_map.get_entry(def_id);
         if !matches!(entry.vis, DefVis::Pub) {
             continue;
@@ -34,16 +44,17 @@ pub(super) fn collect_exports(def_map: &DefMap, builder: &mut ModuleBuilder) {
         // Determine item_kind and get token.
         // item_kind encoding (matches disassembler and cmd_run):
         //   0 = method (Fn, ExternFn)
-        //   1 = type   (Struct, Entity, Enum, Component, Contract, ExternStruct, ExternComponent)
+        //   1 = type   (Struct, Entity, Enum, Component, Contract, ExternComponent)
         //   2 = global (Const, Global)
         if let Some(token) = builder.token_for_def(def_id) {
             let item_kind = match entry.kind {
                 DefKind::Fn | DefKind::ExternFn => 0, // method
                 DefKind::Struct | DefKind::Class | DefKind::Entity | DefKind::Enum
-                | DefKind::Component | DefKind::ExternStruct | DefKind::ExternClass
+                | DefKind::Component
                 | DefKind::ExternComponent | DefKind::Contract => 1, // type
                 DefKind::Const | DefKind::Global => 2, // global
                 DefKind::Impl => continue, // impls aren't exported directly
+                DefKind::AttributeDef => continue, // attribute decls are not exports
             };
             builder.add_export_def(&entry.name, item_kind, token);
         }
@@ -53,6 +64,29 @@ pub(super) fn collect_exports(def_map: &DefMap, builder: &mut ModuleBuilder) {
 // =============================================================================
 // Attribute collection
 // =============================================================================
+
+/// Map an AstAttributeArg to an AttrValue for blob encoding.
+fn map_attr_arg(arg: &AstAttributeArg) -> Option<AttrValue> {
+    match arg {
+        AstAttributeArg::Positional(expr) => map_attr_expr(expr),
+        AstAttributeArg::Named { name, value, .. } => {
+            map_attr_expr(value).map(|v| AttrValue::Named {
+                name: name.clone(),
+                value: Box::new(v),
+            })
+        }
+    }
+}
+
+/// Map an AstExpr to an AttrValue. Returns None for unsupported expression types.
+fn map_attr_expr(expr: &AstExpr) -> Option<AttrValue> {
+    match expr {
+        AstExpr::StringLit { value, .. } => Some(AttrValue::String(value.clone())),
+        AstExpr::IntLit { value, .. } => Some(AttrValue::Int(*value)),
+        AstExpr::BoolLit { value, .. } => Some(AttrValue::Bool(*value)),
+        _ => None, // Unsupported expr types silently skipped in Phase 93
+    }
+}
 
 pub(super) fn collect_attributes(typed_ast: &TypedAst, asts: &[(FileId, &Ast)], builder: &mut ModuleBuilder) {
     let def_map = &typed_ast.def_map;
@@ -65,14 +99,14 @@ pub(super) fn collect_attributes(typed_ast: &TypedAst, asts: &[(FileId, &Ast)], 
             | TypedDecl::Enum { def_id }
             | TypedDecl::Contract { def_id }
             | TypedDecl::Component { def_id }
-            | TypedDecl::ExternStruct { def_id }
-            | TypedDecl::ExternClass { def_id }
             | TypedDecl::ExternComponent { def_id } => *def_id,
             TypedDecl::Fn { def_id, .. }
             | TypedDecl::ExternFn { def_id }
             | TypedDecl::Const { def_id, .. }
             | TypedDecl::Global { def_id, .. } => *def_id,
             TypedDecl::Impl { .. } => continue,
+            // Attribute declarations do not produce attribute rows themselves.
+            TypedDecl::AttributeDef { .. } => continue,
         };
 
         let entry = def_map.get_entry(def_id);
@@ -83,18 +117,99 @@ pub(super) fn collect_attributes(typed_ast: &TypedAst, asts: &[(FileId, &Ast)], 
             continue;
         }
 
-        let owner_token = builder.token_for_def(def_id).unwrap_or(MetadataToken::NULL);
+        let owner_token = match builder.token_for_def(def_id) {
+            Some(t) => t,
+            None => continue,
+        };
         let owner_kind: u8 = match entry.kind {
             DefKind::Struct | DefKind::Entity | DefKind::Enum | DefKind::Component
-            | DefKind::Contract | DefKind::ExternStruct | DefKind::ExternComponent => 0, // type
+            | DefKind::Contract | DefKind::ExternComponent => 0, // type
             DefKind::Fn | DefKind::ExternFn => 1, // method
             _ => 2, // field/global
         };
 
         for attr in &attrs {
-            // Value blob: empty for now (args encoding deferred).
-            builder.add_attribute_def(owner_token, owner_kind, &attr.name, 0);
+            let values: Vec<AttrValue> = attr.args.iter()
+                .filter_map(map_attr_arg)
+                .collect();
+            let blob_offset = if values.is_empty() {
+                0u32
+            } else {
+                let bytes = encode_attr_args(&values);
+                builder.blob_heap.intern(&bytes)
+            };
+            builder.add_attribute_def(owner_token, owner_kind, &attr.name, blob_offset);
         }
+    }
+}
+
+// =============================================================================
+// Attribute declaration collection (UATTR-02)
+// =============================================================================
+
+/// Collect AttributeDef rows for user-defined attribute declarations.
+///
+/// Each `attribute Name(params...);` declaration produces one AttributeDef row
+/// with owner_kind = ATTR_OWNER_KIND_DECL (3) and owner = MetadataToken::NULL.
+/// The blob value encodes the parameter type signature: u16 count + one tag byte
+/// per parameter (ATTR_TAG_STRING / ATTR_TAG_INT / ATTR_TAG_BOOL).
+pub(super) fn collect_attribute_decl_defs(
+    typed_ast: &TypedAst,
+    asts: &[(FileId, &Ast)],
+    builder: &mut ModuleBuilder,
+) {
+    let def_map = &typed_ast.def_map;
+
+    for decl in &typed_ast.decls {
+        let def_id = match decl {
+            TypedDecl::AttributeDef { def_id } => *def_id,
+            _ => continue,
+        };
+
+        let entry = def_map.get_entry(def_id);
+
+        // Find the AstAttributeDecl to get param types.
+        let mut param_tags: Vec<u8> = Vec::new();
+        'outer: for (fid, ast) in asts {
+            if *fid != entry.file_id {
+                continue;
+            }
+            for d in &ast.items {
+                if let AstDecl::Attribute(a) = d {
+                    if a.name == entry.name && a.name_span == entry.name_span {
+                        for param in &a.params {
+                            let tag = match &param.ty {
+                                crate::ast::types::AstType::Named { name, .. } => {
+                                    match name.as_str() {
+                                        "string" => ATTR_TAG_STRING,
+                                        "int" => ATTR_TAG_INT,
+                                        "bool" => ATTR_TAG_BOOL,
+                                        _ => continue, // unsupported type, already caught by checker
+                                    }
+                                }
+                                _ => continue, // unsupported type
+                            };
+                            param_tags.push(tag);
+                        }
+                        break 'outer;
+                    }
+                }
+            }
+        }
+
+        // Encode param type signature: u16 param count + one tag byte per param.
+        let mut sig_buf = Vec::new();
+        sig_buf.extend_from_slice(&(param_tags.len() as u16).to_le_bytes());
+        sig_buf.extend_from_slice(&param_tags);
+
+        let blob_offset = builder.blob_heap.intern(&sig_buf);
+
+        builder.add_attribute_def(
+            MetadataToken::NULL,
+            ATTR_OWNER_KIND_DECL,
+            &entry.name,
+            blob_offset,
+        );
     }
 }
 
@@ -464,9 +579,12 @@ pub(super) fn resolve_type_handle(
     def_map: &DefMap,
     typedef_handles: &FxHashMap<DefId, TypeDefHandle>,
 ) -> Option<TypeDefHandle> {
-    if let crate::ast::types::AstType::Named { name, .. } = ast_type
-        && let Some(def_id) = def_map.get(name) {
-            return typedef_handles.get(&def_id).copied();
-        }
-    None
+    // Handle both `impl Foo` (Named) and `impl<T> Foo<T>` (Generic).
+    let name = match ast_type {
+        crate::ast::types::AstType::Named { name, .. } => name.as_str(),
+        crate::ast::types::AstType::Generic { name, .. } => name.as_str(),
+        _ => return None,
+    };
+    let def_id = def_map.get(name)?;
+    typedef_handles.get(&def_id).copied()
 }

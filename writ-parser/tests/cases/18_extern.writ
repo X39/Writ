@@ -1,22 +1,11 @@
 // === Test: External Declarations ===
-// Validates extern fn, extern struct, extern component, imports (Section 24)
+// Validates extern fn, extern component, imports (Section 25)
 
 namespace test_extern;
 
-// --- 24.1 Runtime-provided externals ---
+// --- 25.1 Runtime-provided externals ---
 extern fn random() -> float;
 extern fn randomRange(min: int, max: int) -> int;
-
-extern struct Vec2 {
-    x: float,
-    y: float,
-}
-
-extern struct Vec3 {
-    x: float,
-    y: float,
-    z: float,
-}
 
 extern component Transform {
     position: Vec2,
@@ -29,7 +18,7 @@ extern component RigidBody {
     mass: float,
 }
 
-// --- 24.2 Library imports ---
+// --- 25.3 Library imports ---
 [Import(lib = "physics")]
 extern fn applyForce(entity: Entity, force: Vec2);
 
@@ -39,13 +28,7 @@ extern fn raycast(origin: Vec2, direction: Vec2, distance: float) -> Entity?;
 [Import(lib = "audio", arch = "x64")]
 extern fn playSoundNative(path: string, volume: float);
 
-[Import(lib = "render")]
-extern struct Texture {
-    width: int,
-    height: int,
-}
-
-// --- Using extern types ---
+// --- Using extern functions ---
 pub fn useExterns() {
     log::info("Hello from Writ!");
     let r = random();

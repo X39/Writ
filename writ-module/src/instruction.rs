@@ -3,7 +3,7 @@ use std::io::{Read, Write};
 
 use crate::error::{DecodeError, EncodeError};
 
-/// All 91 IL opcodes, grouped by category.
+/// All 93 IL opcodes, grouped by category.
 ///
 /// Operand field names match the spec. Shape comments reference section 4.1.
 #[derive(Debug, Clone)]
@@ -146,13 +146,15 @@ pub enum Instruction {
     /// 0x0904 — Shape RR (6B)
     ArrayLen { r_dst: u16, r_arr: u16 },
     /// 0x0905 — Shape RR (6B)
-    ArrayAdd { r_arr: u16, r_val: u16 },
-    /// 0x0906 — Shape RR (6B)
-    ArrayRemove { r_arr: u16, r_idx: u16 },
-    /// 0x0907 — Shape RRR (8B)
-    ArrayInsert { r_arr: u16, r_idx: u16, r_val: u16 },
-    /// 0x0908 — var (10B): u16(op) u16(r_dst) u16(r_arr) u16(r_start) u16(r_end)
+    ArrayResize { r_arr: u16, r_new_len: u16 },
+    /// 0x0906 — var (12B): u16(op) u16(r_dst_arr) u16(r_dst_idx) u16(r_src_arr) u16(r_src_idx) u16(r_len)
+    ArrayCopy { r_dst_arr: u16, r_dst_idx: u16, r_src_arr: u16, r_src_idx: u16, r_len: u16 },
+    /// 0x0907 — var (10B): u16(op) u16(r_dst) u16(r_arr) u16(r_start) u16(r_end)
     ArraySlice { r_dst: u16, r_arr: u16, r_start: u16, r_end: u16 },
+    /// 0x0908 — var (10B): u16(op) u16(r_dst) u32(elem_type) u16(r_len)
+    NewArraySized { r_dst: u16, elem_type: u32, r_len: u16 },
+    /// 0x0909 — var (12B): u16(op) u16(r_dst) u32(elem_type) u16(r_len) u16(r_fill)
+    NewArrayFilled { r_dst: u16, elem_type: u32, r_len: u16, r_fill: u16 },
 
     // ── 0x0A Type Operations ───────────────────────────────────
     // Option
@@ -186,6 +188,10 @@ pub enum Instruction {
     GetTag { r_dst: u16, r_enum: u16 },
     /// 0x0A22 — var (8B): u16(op) u16(r_dst) u16(r_enum) u16(field_idx)
     ExtractField { r_dst: u16, r_enum: u16, field_idx: u16 },
+
+    // Reflection
+    /// 0x0A30 — Shape RI32 (8B)
+    TypeOf { r_dst: u16, type_idx: u32 },
 
     // ── 0x0B Concurrency ───────────────────────────────────────
     /// 0x0B00 — Shape CALL (12B)
@@ -240,6 +246,22 @@ pub enum Instruction {
     StrBuild { r_dst: u16, count: u16, r_base: u16 },
     /// 0x0E02 — Shape RR (6B)
     StrLen { r_dst: u16, r_str: u16 },
+    /// 0x0E03 — Shape RR (6B): trim whitespace from both ends
+    StrTrim { r_dst: u16, r_src: u16 },
+    /// 0x0E04 — Shape RR (6B): to_ascii_uppercase
+    StrToUpper { r_dst: u16, r_src: u16 },
+    /// 0x0E05 — Shape RR (6B): to_ascii_lowercase
+    StrToLower { r_dst: u16, r_src: u16 },
+    /// 0x0E06 — Shape RRR (8B): starts_with(prefix) -> bool
+    StrStartsWith { r_dst: u16, r_str: u16, r_prefix: u16 },
+    /// 0x0E07 — Shape RRR (8B): ends_with(suffix) -> bool
+    StrEndsWith { r_dst: u16, r_str: u16, r_suffix: u16 },
+    /// 0x0E08 — Shape RRR (8B): contains(substr) -> bool
+    StrContains { r_dst: u16, r_str: u16, r_sub: u16 },
+    /// 0x0E09 — Shape RRR (8B): split(sep) -> string[]
+    StrSplit { r_dst: u16, r_str: u16, r_sep: u16 },
+    /// 0x0E0A — Shape RRRR (10B): replace(from, to) -> string
+    StrReplace { r_dst: u16, r_str: u16, r_from: u16, r_to: u16 },
 
     // ── 0x0F Boxing ────────────────────────────────────────────
     /// 0x0F00 — Shape RR (6B)
@@ -321,10 +343,11 @@ impl Instruction {
             Instruction::ArrayLoad { .. } => 0x0902,
             Instruction::ArrayStore { .. } => 0x0903,
             Instruction::ArrayLen { .. } => 0x0904,
-            Instruction::ArrayAdd { .. } => 0x0905,
-            Instruction::ArrayRemove { .. } => 0x0906,
-            Instruction::ArrayInsert { .. } => 0x0907,
-            Instruction::ArraySlice { .. } => 0x0908,
+            Instruction::ArrayResize { .. } => 0x0905,
+            Instruction::ArrayCopy { .. } => 0x0906,
+            Instruction::ArraySlice { .. } => 0x0907,
+            Instruction::NewArraySized { .. } => 0x0908,
+            Instruction::NewArrayFilled { .. } => 0x0909,
             // 0x0A Type Operations — Option
             Instruction::WrapSome { .. } => 0x0A00,
             Instruction::Unwrap { .. } => 0x0A01,
@@ -341,6 +364,8 @@ impl Instruction {
             Instruction::NewEnum { .. } => 0x0A20,
             Instruction::GetTag { .. } => 0x0A21,
             Instruction::ExtractField { .. } => 0x0A22,
+            // 0x0A Type Operations — Reflection
+            Instruction::TypeOf { .. } => 0x0A30,
             // 0x0B Concurrency
             Instruction::SpawnTask { .. } => 0x0B00,
             Instruction::SpawnDetached { .. } => 0x0B01,
@@ -368,6 +393,14 @@ impl Instruction {
             Instruction::StrConcat { .. } => 0x0E00,
             Instruction::StrBuild { .. } => 0x0E01,
             Instruction::StrLen { .. } => 0x0E02,
+            Instruction::StrTrim { .. } => 0x0E03,
+            Instruction::StrToUpper { .. } => 0x0E04,
+            Instruction::StrToLower { .. } => 0x0E05,
+            Instruction::StrStartsWith { .. } => 0x0E06,
+            Instruction::StrEndsWith { .. } => 0x0E07,
+            Instruction::StrContains { .. } => 0x0E08,
+            Instruction::StrSplit { .. } => 0x0E09,
+            Instruction::StrReplace { .. } => 0x0E0A,
             // 0x0F Boxing
             Instruction::Box { .. } => 0x0F00,
             Instruction::Unbox { .. } => 0x0F01,
@@ -417,13 +450,9 @@ impl Instruction {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u16::<LittleEndian>(*r_arr)?;
             }
-            Instruction::ArrayAdd { r_arr, r_val } => {
+            Instruction::ArrayResize { r_arr, r_new_len } => {
                 w.write_u16::<LittleEndian>(*r_arr)?;
-                w.write_u16::<LittleEndian>(*r_val)?;
-            }
-            Instruction::ArrayRemove { r_arr, r_idx } => {
-                w.write_u16::<LittleEndian>(*r_arr)?;
-                w.write_u16::<LittleEndian>(*r_idx)?;
+                w.write_u16::<LittleEndian>(*r_new_len)?;
             }
             Instruction::WrapSome { r_dst, r_val } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
@@ -477,6 +506,44 @@ impl Instruction {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u16::<LittleEndian>(*r_str)?;
             }
+            Instruction::StrTrim { r_dst, r_src } => {
+                w.write_u16::<LittleEndian>(*r_dst)?;
+                w.write_u16::<LittleEndian>(*r_src)?;
+            }
+            Instruction::StrToUpper { r_dst, r_src } => {
+                w.write_u16::<LittleEndian>(*r_dst)?;
+                w.write_u16::<LittleEndian>(*r_src)?;
+            }
+            Instruction::StrToLower { r_dst, r_src } => {
+                w.write_u16::<LittleEndian>(*r_dst)?;
+                w.write_u16::<LittleEndian>(*r_src)?;
+            }
+            Instruction::StrStartsWith { r_dst, r_str, r_prefix } => {
+                w.write_u16::<LittleEndian>(*r_dst)?;
+                w.write_u16::<LittleEndian>(*r_str)?;
+                w.write_u16::<LittleEndian>(*r_prefix)?;
+            }
+            Instruction::StrEndsWith { r_dst, r_str, r_suffix } => {
+                w.write_u16::<LittleEndian>(*r_dst)?;
+                w.write_u16::<LittleEndian>(*r_str)?;
+                w.write_u16::<LittleEndian>(*r_suffix)?;
+            }
+            Instruction::StrContains { r_dst, r_str, r_sub } => {
+                w.write_u16::<LittleEndian>(*r_dst)?;
+                w.write_u16::<LittleEndian>(*r_str)?;
+                w.write_u16::<LittleEndian>(*r_sub)?;
+            }
+            Instruction::StrSplit { r_dst, r_str, r_sep } => {
+                w.write_u16::<LittleEndian>(*r_dst)?;
+                w.write_u16::<LittleEndian>(*r_str)?;
+                w.write_u16::<LittleEndian>(*r_sep)?;
+            }
+            Instruction::StrReplace { r_dst, r_str, r_from, r_to } => {
+                w.write_u16::<LittleEndian>(*r_dst)?;
+                w.write_u16::<LittleEndian>(*r_str)?;
+                w.write_u16::<LittleEndian>(*r_from)?;
+                w.write_u16::<LittleEndian>(*r_to)?;
+            }
             Instruction::Box { r_dst, r_val } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u16::<LittleEndian>(*r_val)?;
@@ -526,12 +593,6 @@ impl Instruction {
                 w.write_u16::<LittleEndian>(*r_idx)?;
                 w.write_u16::<LittleEndian>(*r_val)?;
             }
-            Instruction::ArrayInsert { r_arr, r_idx, r_val } => {
-                w.write_u16::<LittleEndian>(*r_arr)?;
-                w.write_u16::<LittleEndian>(*r_idx)?;
-                w.write_u16::<LittleEndian>(*r_val)?;
-            }
-
             // ── Shape RI32 (u16, u32) ──────────────────────────
             Instruction::LoadString { r_dst, string_idx } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
@@ -564,6 +625,10 @@ impl Instruction {
             Instruction::LoadGlobal { r_dst, global_idx } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u32::<LittleEndian>(*global_idx)?;
+            }
+            Instruction::TypeOf { r_dst, type_idx } => {
+                w.write_u16::<LittleEndian>(*r_dst)?;
+                w.write_u32::<LittleEndian>(*type_idx)?;
             }
             Instruction::BrTrue { r_cond, offset } => {
                 w.write_u16::<LittleEndian>(*r_cond)?;
@@ -669,11 +734,29 @@ impl Instruction {
                 w.write_u16::<LittleEndian>(*count)?;
                 w.write_u16::<LittleEndian>(*r_base)?;
             }
+            Instruction::ArrayCopy { r_dst_arr, r_dst_idx, r_src_arr, r_src_idx, r_len } => {
+                w.write_u16::<LittleEndian>(*r_dst_arr)?;
+                w.write_u16::<LittleEndian>(*r_dst_idx)?;
+                w.write_u16::<LittleEndian>(*r_src_arr)?;
+                w.write_u16::<LittleEndian>(*r_src_idx)?;
+                w.write_u16::<LittleEndian>(*r_len)?;
+            }
             Instruction::ArraySlice { r_dst, r_arr, r_start, r_end } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u16::<LittleEndian>(*r_arr)?;
                 w.write_u16::<LittleEndian>(*r_start)?;
                 w.write_u16::<LittleEndian>(*r_end)?;
+            }
+            Instruction::NewArraySized { r_dst, elem_type, r_len } => {
+                w.write_u16::<LittleEndian>(*r_dst)?;
+                w.write_u32::<LittleEndian>(*elem_type)?;
+                w.write_u16::<LittleEndian>(*r_len)?;
+            }
+            Instruction::NewArrayFilled { r_dst, elem_type, r_len, r_fill } => {
+                w.write_u16::<LittleEndian>(*r_dst)?;
+                w.write_u32::<LittleEndian>(*elem_type)?;
+                w.write_u16::<LittleEndian>(*r_len)?;
+                w.write_u16::<LittleEndian>(*r_fill)?;
             }
             Instruction::NewEnum { r_dst, type_idx, tag, field_count, r_base } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
@@ -898,15 +981,34 @@ impl Instruction {
             0x0902 => read_rrr(r).map(|(d, a, i)| Instruction::ArrayLoad { r_dst: d, r_arr: a, r_idx: i }),
             0x0903 => read_rrr(r).map(|(a, i, v)| Instruction::ArrayStore { r_arr: a, r_idx: i, r_val: v }),
             0x0904 => read_rr(r).map(|(d, a)| Instruction::ArrayLen { r_dst: d, r_arr: a }),
-            0x0905 => read_rr(r).map(|(a, v)| Instruction::ArrayAdd { r_arr: a, r_val: v }),
-            0x0906 => read_rr(r).map(|(a, i)| Instruction::ArrayRemove { r_arr: a, r_idx: i }),
-            0x0907 => read_rrr(r).map(|(a, i, v)| Instruction::ArrayInsert { r_arr: a, r_idx: i, r_val: v }),
-            0x0908 => {
+            0x0905 => read_rr(r).map(|(a, n)| Instruction::ArrayResize { r_arr: a, r_new_len: n }),
+            0x0906 => {
+                let r_dst_arr = r.read_u16::<LittleEndian>()?;
+                let r_dst_idx = r.read_u16::<LittleEndian>()?;
+                let r_src_arr = r.read_u16::<LittleEndian>()?;
+                let r_src_idx = r.read_u16::<LittleEndian>()?;
+                let r_len = r.read_u16::<LittleEndian>()?;
+                Ok(Instruction::ArrayCopy { r_dst_arr, r_dst_idx, r_src_arr, r_src_idx, r_len })
+            }
+            0x0907 => {
                 let r_dst = r.read_u16::<LittleEndian>()?;
                 let r_arr = r.read_u16::<LittleEndian>()?;
                 let r_start = r.read_u16::<LittleEndian>()?;
                 let r_end = r.read_u16::<LittleEndian>()?;
                 Ok(Instruction::ArraySlice { r_dst, r_arr, r_start, r_end })
+            }
+            0x0908 => {
+                let r_dst = r.read_u16::<LittleEndian>()?;
+                let elem_type = r.read_u32::<LittleEndian>()?;
+                let r_len = r.read_u16::<LittleEndian>()?;
+                Ok(Instruction::NewArraySized { r_dst, elem_type, r_len })
+            }
+            0x0909 => {
+                let r_dst = r.read_u16::<LittleEndian>()?;
+                let elem_type = r.read_u32::<LittleEndian>()?;
+                let r_len = r.read_u16::<LittleEndian>()?;
+                let r_fill = r.read_u16::<LittleEndian>()?;
+                Ok(Instruction::NewArrayFilled { r_dst, elem_type, r_len, r_fill })
             }
 
             // ── 0x0A Type Operations — Option ──────────────────
@@ -938,6 +1040,13 @@ impl Instruction {
                 let r_enum = r.read_u16::<LittleEndian>()?;
                 let field_idx = r.read_u16::<LittleEndian>()?;
                 Ok(Instruction::ExtractField { r_dst, r_enum, field_idx })
+            }
+
+            // ── 0x0A Type Operations — Reflection ─────────────────
+            0x0A30 => {
+                let r_dst = r.read_u16::<LittleEndian>()?;
+                let type_idx = r.read_u32::<LittleEndian>()?;
+                Ok(Instruction::TypeOf { r_dst, type_idx })
             }
 
             // ── 0x0B Concurrency ───────────────────────────────
@@ -1004,6 +1113,20 @@ impl Instruction {
                 Ok(Instruction::StrBuild { r_dst, count, r_base })
             }
             0x0E02 => read_rr(r).map(|(d, s)| Instruction::StrLen { r_dst: d, r_str: s }),
+            0x0E03 => read_rr(r).map(|(d, s)| Instruction::StrTrim { r_dst: d, r_src: s }),
+            0x0E04 => read_rr(r).map(|(d, s)| Instruction::StrToUpper { r_dst: d, r_src: s }),
+            0x0E05 => read_rr(r).map(|(d, s)| Instruction::StrToLower { r_dst: d, r_src: s }),
+            0x0E06 => read_rrr(r).map(|(d, s, p)| Instruction::StrStartsWith { r_dst: d, r_str: s, r_prefix: p }),
+            0x0E07 => read_rrr(r).map(|(d, s, sf)| Instruction::StrEndsWith { r_dst: d, r_str: s, r_suffix: sf }),
+            0x0E08 => read_rrr(r).map(|(d, s, sub)| Instruction::StrContains { r_dst: d, r_str: s, r_sub: sub }),
+            0x0E09 => read_rrr(r).map(|(d, s, sep)| Instruction::StrSplit { r_dst: d, r_str: s, r_sep: sep }),
+            0x0E0A => {
+                let r_dst = r.read_u16::<LittleEndian>()?;
+                let r_str = r.read_u16::<LittleEndian>()?;
+                let r_from = r.read_u16::<LittleEndian>()?;
+                let r_to = r.read_u16::<LittleEndian>()?;
+                Ok(Instruction::StrReplace { r_dst, r_str, r_from, r_to })
+            }
 
             // ── 0x0F Boxing ────────────────────────────────────
             0x0F00 => read_rr(r).map(|(d, v)| Instruction::Box { r_dst: d, r_val: v }),

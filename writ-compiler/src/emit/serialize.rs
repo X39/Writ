@@ -122,11 +122,17 @@ pub fn translate(
         .collect();
     let mut orphan_cursor = 0usize;
 
+    // Track which body indices have been consumed to handle multiple methods
+    // sharing the same DefId (all impl methods share the impl block's DefId).
+    let mut consumed_body_indices: std::collections::HashSet<usize> = std::collections::HashSet::new();
+
     for (def_id, md) in builder.finalized_method_def_entries() {
         // Find the body for this method (by DefId for named methods,
         // by position order for lambda methods with def_id == None).
+        // When multiple bodies share a DefId (impl methods), skip already-consumed indices.
         let body_idx = if let Some(did) = def_id {
-            bodies.iter().position(|b| b.method_def_id == Some(did))
+            bodies.iter().enumerate()
+                .position(|(i, b)| b.method_def_id == Some(did) && !consumed_body_indices.contains(&i))
         } else {
             // Lambda MethodDef: match to the next orphaned body in order.
             let idx = orphaned_body_indices.get(orphan_cursor).copied();
@@ -135,6 +141,9 @@ pub fn translate(
             }
             idx
         };
+        if let Some(idx) = body_idx {
+            consumed_body_indices.insert(idx);
+        }
         method_def_body_indices.push(body_idx);
 
         module.method_defs.push(MethodDefRow {
@@ -406,8 +415,8 @@ pub fn translate(
     // past the end of module.string_heap and read_string would fail (BUG-15 fix).
     module.string_heap = builder.string_heap.data().to_vec();
 
-    // Format version 4: DebugLocal extended with type_ref field (PREP-05)
-    module.header.format_version = 4;
+    // Format version 5: array opcode overhaul (Phase 120 — ArrayResize/Copy/NewArraySized/NewArrayFilled)
+    module.header.format_version = 5;
     module.header.flags = if emit_debug_info { 1 } else { 0 };
 
     module

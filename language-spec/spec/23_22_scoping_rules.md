@@ -1,12 +1,11 @@
-# 1. Writ Language Specification
-## 1.22 Scoping Rules
+# 1.22 Scoping Rules
 
 Writ uses lexical (static) scoping. Every `{ }` block introduces a new scope. Variables are visible from their
 declaration point to the end of their enclosing block.
 
-### 1.22.1 Scope Hierarchy
+## 1.22.1 Scope Hierarchy
 
-```
+```writ
 // Global scope — top-level declarations
 namespace game;
 const MAX_LEVEL: int = 50;
@@ -25,7 +24,7 @@ fn example(param: int) {          // param is in function scope
 }
 ```
 
-### 1.22.2 Scope Rules
+## 1.22.2 Scope Rules
 
 1. **Block scoping:** Every `{ }` creates a new scope. Variables declared inside are not visible outside.
 2. **Shadowing:** A `let` declaration can shadow an outer variable of the same name. The outer binding is restored at
@@ -39,12 +38,12 @@ fn example(param: int) {          // param is in function scope
 6. **`using` scoping:** A `using` declaration is scoped to its enclosing context — file-level `using` is visible
    throughout the file; `using` inside a namespace block is visible only within that block and its nested blocks.
 
-### 1.22.3 Dialogue Scope
+## 1.22.3 Dialogue Scope
 
 In `dlg` blocks, the entire block is a single scope. Variables declared via `$` escapes are visible for the remainder of
 the `dlg` block (including in subsequent dialogue lines for interpolation). Choice branches create nested scopes.
 
-```
+```writ
 dlg example {
     $ let name = getPlayerName();    // visible for rest of dlg
     @Narrator Hello, {name}.

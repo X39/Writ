@@ -3,5 +3,5 @@ fn main() {
     let first: int = arr[0];
     arr[1] = 42;
     let size: int = arr.len();
-    arr.push(99);
+    arr.resize(5);
 }

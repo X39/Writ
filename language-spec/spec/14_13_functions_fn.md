@@ -1,9 +1,8 @@
-# 1. Writ Language Specification
-## 1.13 Functions (fn)
+# 1.13 Functions (fn)
 
 Functions are the primary code construct. They follow C-style syntax with explicit type annotations.
 
-```
+```writ
 fn calculateDamage(base: int, modifier: float, crit: bool) -> int {
     let damage = base * modifier;
     if crit {
@@ -13,12 +12,12 @@ fn calculateDamage(base: int, modifier: float, crit: bool) -> int {
 }
 ```
 
-### 1.13.1 Return Semantics
+## 1.13.1 Return Semantics
 
 The last expression in a block is its return value. If the last item in a block is a statement (terminated by `;`), the
 block evaluates to void. Explicit `return` is also available for early exits.
 
-```
+```writ
 // Implicit return — last expression is the return value
 fn add(a: int, b: int) -> int {
     a + b
@@ -59,14 +58,14 @@ block's value is always the last expression. If the block ends with a `;`, it ev
 > anywhere an expression is valid, including the right-hand side of `let`. `for` and `while` are statements.
 > In `let x = if ... { } else { };`, the `;` terminates the `let` statement, not the `if` expression.
 
-### 1.13.2 Expressions and Blocks
+## 1.13.2 Expressions and Blocks
 
-#### 1.13.2.1 if / else
+### 1.13.2.1 if / else
 
 `if`/`else` is an expression. Each branch is a block, and the block's last expression is the branch's value. When used
 as an expression, the `else` branch is required (otherwise the type of the non-taken path is ambiguous).
 
-```
+```writ
 // As expression — returns a value
 let msg = if health > 50 {
     "Healthy"
@@ -89,12 +88,12 @@ if damaged {
 }
 ```
 
-#### 1.13.2.2 match
+### 1.13.2.2 match
 
 `match` is an expression. It is exhaustive for enums — the compiler enforces that all variants are handled. Each arm's
 block evaluates to a value. When used as an expression, all arms must evaluate to the same type.
 
-```
+```writ
 // As expression — each arm returns a value
 let msg = match status {
     QuestStatus::NotStarted => { "Not yet begun" }
@@ -121,13 +120,13 @@ match event {
 }
 ```
 
-#### 1.13.2.3 for Loops
+### 1.13.2.3 for Loops
 
 `for` iterates over any type that implements `Iterable<T>` (see [Section 1.11.3](#1113-iterablet--for-loop-support)). The
 loop variable is immutable by default. Arrays, ranges, and user-defined types that implement `Iterable<T>` are all
 supported.
 
-```
+```writ
 for item in inventory {
     log(item.name);
 }
@@ -143,20 +142,20 @@ for member in party.members {
 }
 ```
 
-#### 1.13.2.4 while Loops
+### 1.13.2.4 while Loops
 
-```
+```writ
 while enemy[Health]!.current > 0 {
     attack(enemy);
 }
 ```
 
-#### 1.13.2.5 break and continue
+### 1.13.2.5 break and continue
 
 `break` exits the innermost enclosing loop. `continue` skips to the next iteration of the innermost enclosing loop.
 Neither carries a value. There are no labeled loops.
 
-```
+```writ
 for item in inventory {
     if item.name == "Key" {
         useKey(item);
@@ -174,12 +173,12 @@ for member in party.members {
 }
 ```
 
-### 1.13.3 Function Overloading
+## 1.13.3 Function Overloading
 
 Functions can be overloaded — multiple functions may share the same name if they have different parameter signatures.
 The compiler resolves calls based on argument types at the call site.
 
-```
+```writ
 fn damage(target: Entity, amount: int) {
     target[Health]!.current -= amount;
 }
@@ -205,12 +204,15 @@ Overload resolution rules:
 > **Note:** Return type alone does not distinguish overloads. Two functions with identical parameter signatures but
 > different return types are a compile error.
 
-### 1.13.4 Lambdas (Anonymous Functions)
+> **Note:** Extern functions (`extern fn`) participate in overload resolution with the same rules. See
+> [Section 1.25.2](#1252-overloading) for details.
+
+## 1.13.4 Lambdas (Anonymous Functions)
 
 Anonymous functions use the `fn` keyword without a name. Parameter types and return type are inferred from context when
 omitted. Lambda bodies follow the same return rules as named functions — the last expression is the return value.
 
-```
+```writ
 // Minimal — types inferred from context
 let sorted = items.sort(fn(a, b) { a.gold > b.gold });
 
@@ -232,7 +234,7 @@ let clamp = fn(value: int, max: int) -> int {
 };
 ```
 
-#### 1.13.4.1 Disambiguation
+### 1.13.4.1 Disambiguation
 
 The parser distinguishes lambdas from named function declarations by the token following `fn`:
 
@@ -241,13 +243,13 @@ The parser distinguishes lambdas from named function declarations by the token f
 
 This requires one token of lookahead.
 
-#### 1.13.4.2 Type Inference
+### 1.13.4.2 Type Inference
 
 When a lambda is used in a context with a known expected type (function parameter, typed variable, contract method), the
 compiler infers parameter types and return type from that context. When there is no inference context, all parameter
 types and the return type must be explicitly annotated.
 
-```
+```writ
 // Inference from function parameter type
 fn applyToAll(items: List<int>, transform: fn(int) -> int) { ... }
 applyToAll(scores, fn(x) { x * 2 });    // int inferred from parameter type
@@ -259,22 +261,22 @@ let f: fn(int) -> bool = fn(x) { x > 10 };
 let f = fn(x: int) -> bool { x > 10 };
 ```
 
-#### 1.13.4.3 Function Types
+### 1.13.4.3 Function Types
 
 Function types are written as `fn(ParamTypes) -> ReturnType`. Functions that return nothing omit the return type.
 
-```
+```writ
 let predicate: fn(int) -> bool = fn(x) { x > 0 };
 let action: fn(Entity) = fn(e) { Entity.destroy(e); };
 let combine: fn(int, int) -> int = fn(a, b) { a + b };
 ```
 
-#### 1.13.4.4 Capture Semantics
+### 1.13.4.4 Capture Semantics
 
 Lambdas capture variables from enclosing scopes. Immutable bindings (`let`) are captured by value. Mutable bindings (
 `let mut`) are captured by reference.
 
-```
+```writ
 let bonus = 10;                  // captured by value
 let mut count = 0;               // captured by reference
 
@@ -284,18 +286,18 @@ let process = fn(x: int) -> int {
 };
 ```
 
-### 1.13.5 Methods and the `self` Parameter
+## 1.13.5 Methods and the `self` Parameter
 
 Methods declared inside `impl` blocks, entity bodies, or component bodies take an explicit `self` or `mut self`
 parameter as their first argument. The `self` keyword refers to the instance the method is called on.
 
-#### 1.13.5.1 Immutable and Mutable Receivers
+### 1.13.5.1 Immutable and Mutable Receivers
 
 - `self` — immutable receiver. The method can read fields and call other `self` methods, but cannot modify fields
   or call `mut self` methods through `self`.
 - `mut self` — mutable receiver. The method can read and modify fields, and call any method through `self`.
 
-```
+```writ
 fn greet(self) -> string {
     $"Welcome! I am {self.name}"     // OK — reading a field
 }
@@ -307,7 +309,7 @@ fn damage(mut self, amount: int) {
 
 The caller's binding must be mutable to call a `mut self` method:
 
-```
+```writ
 let guard = new Guard {};
 guard.greet();          // OK — greet takes self (immutable)
 guard.damage(10);       // ERROR — damage takes mut self, but guard is not mut
@@ -316,12 +318,12 @@ let mut guard2 = new Guard {};
 guard2.damage(10);      // OK — guard2 is mutable
 ```
 
-#### 1.13.5.2 Static Functions
+### 1.13.5.2 Static Functions
 
 Functions in `impl` blocks that do not take `self` are static functions. They are called on the type, not on an
 instance:
 
-```
+```writ
 impl Merchant {
     fn create(name: string) -> Merchant {
         new Merchant { name: name, gold: 0, reputation: 0.8 }
@@ -331,7 +333,7 @@ impl Merchant {
 let m = Merchant::create("Tim");
 ```
 
-#### 1.13.5.3 Operators
+### 1.13.5.3 Operators
 
 Operator declarations use the `operator` keyword and have an implicit `self` receiver — the left operand (or sole
 operand for unary operators). Mutability is determined by the operator kind:
@@ -339,7 +341,7 @@ operand for unary operators). Mutability is determined by the operator kind:
 - Read operators (`+`, `-`, `*`, `/`, `%`, `==`, `<`, `[]`, unary `-`, `!`): implicit immutable `self`.
 - Write operators (`[]=`): implicit mutable `self`.
 
-```
+```writ
 impl vec2 {
     operator +(other: vec2) -> vec2 {          // implicit self (immutable)
         vec2(self.x + other.x, self.y + other.y)
@@ -354,7 +356,7 @@ impl vec2 {
 }
 ```
 
-#### 1.13.5.4 Lifecycle Hooks
+### 1.13.5.4 Lifecycle Hooks
 
 Lifecycle hooks use the `on` keyword and have an implicit `mut self` receiver. They do not use explicit `self` in their
 syntax because their signature is fixed by the runtime.
@@ -375,7 +377,7 @@ syntax because their signature is fixed by the runtime.
 | `on destroy`               | Deterministic cleanup when `Entity.destroy(entity)` is called |
 | `on interact(who: Entity)` | Host-triggered interaction event                              |
 
-```
+```writ
 on create {
     log($"Spawned: {self.name}");   // self is implicitly available and mutable
 }

@@ -39,6 +39,10 @@ pub struct Task {
     pub parent_id: Option<TaskId>,
     pub scoped_children: Vec<TaskId>,
     pub pending_request: Option<(RequestId, HostRequest)>,
+    /// Destination register for the pending request's return value.
+    /// Set when a task suspends on a `HostResponse::Suspend`; used by `confirm()`
+    /// to write the result into the correct register.
+    pub pending_r_dst: u16,
     /// Why this task is currently suspended. Set when entering Suspended state,
     /// cleared when the task is resumed. Used by the DAP server to distinguish
     /// breakpoint pauses from host-request suspensions.
@@ -61,6 +65,7 @@ impl Task {
             parent_id: None,
             scoped_children: Vec::new(),
             pending_request: None,
+            pending_r_dst: 0,
             return_value: None,
             crash_info: None,
             atomic_depth: 0,

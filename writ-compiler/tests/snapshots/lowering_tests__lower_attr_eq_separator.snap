@@ -17,7 +17,7 @@ Ast {
                                     name: "lib",
                                     name_span: 8..11,
                                     value: StringLit {
-                                        value: "\"physics\"",
+                                        value: "physics",
                                         span: 14..23,
                                     },
                                 },

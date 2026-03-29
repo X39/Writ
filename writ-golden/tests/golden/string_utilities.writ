@@ -1,0 +1,22 @@
+fn main() {
+    // split
+    let parts = "hello world".split(" ");
+    let _part_count = parts.len();
+
+    // trim
+    let _trimmed = "  hi  ".trim();
+
+    // starts_with / ends_with
+    let _sw = "hello".starts_with("hel");
+    let _ew = "hello".ends_with("xyz");
+
+    // contains
+    let _has = "hello world".contains("world");
+
+    // replace
+    let _replaced = "hello".replace("l", "r");
+
+    // to_upper / to_lower
+    let _upper = "hello".to_upper();
+    let _lower = "HELLO".to_lower();
+}

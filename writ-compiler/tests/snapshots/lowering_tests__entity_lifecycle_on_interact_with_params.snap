@@ -52,7 +52,7 @@ Ast {
                                         },
                                     ),
                                     value: StringLit {
-                                        value: "\"hello\"",
+                                        value: "hello",
                                         span: 60..67,
                                     },
                                     span: 42..68,

@@ -27,7 +27,7 @@ Ast {
                                     AstArg {
                                         name: None,
                                         value: StringLit {
-                                            value: "\"beep\"",
+                                            value: "beep",
                                             span: 41..47,
                                         },
                                         span: 41..47,

@@ -1,0 +1,47 @@
+.module "main" "0.1.0" {
+    .extern "writ-runtime" "1.0.0"
+    .type "Box" class pub {
+        .field "value" ?
+    }
+    .impl Box : contract_167772179 {
+    }
+    .impl Box : ? {
+        .method "get_type" () -> Type pub {
+            .reg r0 int
+            .reg r1 int
+            TYPEOF r1, 33554433
+            RET r1
+        }
+        .method "get" () -> ? pub {
+            .locals {
+                r0: ? "self" [0, 14)
+            }
+            .reg r0 int
+            .reg r1 ?
+            GET_FIELD r1, r0, 0  ; line:1 col:95
+            RET r1
+        }
+        .method "set" (v: ?) -> void pub static {
+            .locals {
+                r0: ? "self" [0, 12)
+                r1: ? "v" [0, 12)
+            }
+            .reg r0 int
+            .reg r1 int
+            SET_FIELD r0, 0, r1  ; line:1 col:158
+            RET_VOID
+        }
+        .method "main" () -> void mut {
+            .locals {
+                r0: Box "b" [30, 32)
+            }
+            .reg r0 Box
+            .reg r1 int
+            NEW r0, 33554433  ; line:1 col:204
+            LOAD_INT r1, 42
+            SET_FIELD r0, 0, r1
+            RET_VOID
+        }
+    }
+    .export "Box" type 33554433
+}

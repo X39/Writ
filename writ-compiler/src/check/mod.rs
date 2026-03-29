@@ -7,6 +7,7 @@ pub mod ty;
 pub mod ir;
 pub mod env;
 pub(crate) mod env_build;
+pub(crate) mod library_sigs;
 pub mod unify;
 pub(crate) mod infer;
 pub(crate) mod check_expr;
@@ -33,18 +34,34 @@ use writ_diagnostics::{Diagnostic, FileId};
 /// Takes ownership of `NameResolvedAst` (moves def_map into output) and
 /// borrows the original ASTs (needed for declaration bodies and field types).
 ///
+/// `library_modules` is a slice of pre-compiled module binaries. Their method
+/// signatures are injected into `TypeEnv` after `TypeEnv::build` so that method
+/// calls on library types resolve correctly. Pass `&[]` when compiling without
+/// library dependencies.
+///
 /// Returns a 4-element tuple: `(TypedAst, TyInterner, TypeEnv, Vec<Diagnostic>)`.
 /// The `TypeEnv` carries function signatures, struct/entity/enum fields, impl
 /// associations, and other type-level metadata needed by LSP handlers.
 pub fn typecheck(
-    resolved: NameResolvedAst,
+    mut resolved: NameResolvedAst,
     asts: &[(FileId, &Ast)],
+    library_modules: &[&writ_module::Module],
 ) -> (TypedAst, ty::TyInterner, env::TypeEnv, Vec<Diagnostic>) {
     // 1. Build TyInterner with primitives pre-interned
     let mut interner = ty::TyInterner::new();
 
     // 2. Build TypeEnv from resolved decls + original ASTs
-    let (type_env, env_diags) = env::TypeEnv::build(&resolved, asts, &mut interner);
+    let (mut type_env, env_diags) = env::TypeEnv::build(&resolved, asts, &mut interner);
+
+    // 2b. Inject library method signatures into TypeEnv.
+    // This must happen AFTER TypeEnv::build so user-source sigs are already present.
+    // resolved is owned (mut) and TypeEnv::build has returned; no outstanding borrows exist.
+    library_sigs::inject_library_sigs(
+        library_modules,
+        &mut resolved.def_map,
+        &mut type_env,
+        &mut interner,
+    );
 
     let mut all_diags = env_diags;
 
@@ -97,6 +114,8 @@ pub fn typecheck(
         decls: typed_decls,
         def_map: resolved.def_map,
         struct_field_types,
+        conditional_fns: type_env.conditional_fns.clone(),
+        fallback_for_conditional: type_env.fallback_for_conditional.clone(),
     };
 
     (typed_ast, interner, type_env, all_diags)

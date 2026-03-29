@@ -1,0 +1,73 @@
+pub class HashMap<K: Hashable, V> {
+    keys: K[],
+    values: V[]
+}
+
+impl<K: Hashable, V> HashMap<K, V> {
+    pub fn len(self) -> int {
+        self.keys.len()
+    }
+
+    pub fn has(self, key: K) -> bool {
+        let mut i: int = 0;
+        while i < self.keys.len() {
+            if self.keys[i] == key { return true; }
+            i = i + 1;
+        }
+        false
+    }
+
+    pub fn get(self, key: K) -> V {
+        let mut i: int = 0;
+        while i < self.keys.len() {
+            if self.keys[i] == key { return self.values[i]; }
+            i = i + 1;
+        }
+        self.values[0]
+    }
+
+    pub fn set(mut self, key: K, value: V) {
+        let mut i: int = 0;
+        while i < self.keys.len() {
+            if self.keys[i] == key {
+                self.values[i] = value;
+                return;
+            }
+            i = i + 1;
+        }
+        let old_len: int = self.keys.len();
+        self.keys.resize(old_len + 1);
+        self.values.resize(old_len + 1);
+        self.keys[old_len] = key;
+        self.values[old_len] = value;
+    }
+
+    pub fn remove(mut self, key: K) {
+        let mut i: int = 0;
+        while i < self.keys.len() {
+            if self.keys[i] == key {
+                let old_len: int = self.keys.len();
+                let mut j: int = i;
+                while j < old_len - 1 {
+                    self.keys[j] = self.keys[j + 1];
+                    self.values[j] = self.values[j + 1];
+                    j = j + 1;
+                }
+                self.keys.resize(old_len - 1);
+                self.values.resize(old_len - 1);
+                return;
+            }
+            i = i + 1;
+        }
+    }
+}
+
+fn main() {
+    let hm: HashMap<string, int> = new HashMap<string, int> { keys: [], values: [] };
+    hm.set("x", 10);
+    hm.set("y", 20);
+    let _v: int = hm.get("x");
+    let _has: bool = hm.has("y");
+    let _len: int = hm.len();
+    hm.remove("x");
+}

@@ -464,16 +464,9 @@ impl<I: Read, O: Write> DapServer<I, O> {
             Some(m) => m,
             None => return vec![],
         };
-        // Use the first source file path as fallback for all frames.
-        // True per-frame source file attribution requires FileId in SourceSpan
-        // (not available in current module format -- deferred to future phase).
-        let source_path = self.source_paths.first()
-            .map(|(_, p)| p.as_str())
-            .unwrap_or("");
-        let filename = std::path::Path::new(source_path)
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or(source_path);
+        // Per-frame source file attribution via method_file_ids.
+        // method_file_ids is indexed in parallel to module.method_defs.
+        // Falls back to source_paths.first() for synthetic/unknown methods.
 
         // Determine which frames to display and whether they are already in
         // top-to-bottom order (crash frames) or bottom-to-top (call stack frames).
@@ -529,9 +522,22 @@ impl<I: Read, O: Write> DapServer<I, O> {
                     })
                     .unwrap_or((0, 0));
 
+                // Resolve per-frame source path using method_file_ids.
+                let frame_source = self.method_file_ids
+                    .get(method_idx)
+                    .and_then(|opt| *opt)
+                    .and_then(|fid| self.source_paths.iter().find(|(id, _)| *id == fid))
+                    .or_else(|| self.source_paths.first())
+                    .map(|(_, p)| p.as_str())
+                    .unwrap_or("");
+                let frame_filename = std::path::Path::new(frame_source)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(frame_source);
+
                 let source = types::Source {
-                    path: Some(source_path.to_string()),
-                    name: Some(filename.to_string()),
+                    path: Some(frame_source.to_string()),
+                    name: Some(frame_filename.to_string()),
                     ..Default::default()
                 };
 

@@ -129,7 +129,7 @@ impl<I: Read, O: Write> DapServer<I, O> {
         let is_project = path.is_dir()
             || program_path.ends_with("writ.toml");
 
-        let (module, source_paths) = if is_project {
+        let (module, source_paths, method_file_ids) = if is_project {
             // Project mode: compile all .writ files discovered via writ.toml.
             let project_root = if program_path.ends_with("writ.toml") {
                 path.parent().unwrap_or(path).to_path_buf()
@@ -137,7 +137,7 @@ impl<I: Read, O: Write> DapServer<I, O> {
                 path.to_path_buf()
             };
             match compile_and_load_project(&project_root) {
-                Ok((module, file_id_paths)) => (module, file_id_paths),
+                Ok((module, file_id_paths, method_file_ids)) => (module, file_id_paths, method_file_ids),
                 Err(e) => {
                     let err = req.error(&format!("compile error: {}", e));
                     let _ = self.server.respond(err);
@@ -145,11 +145,11 @@ impl<I: Read, O: Write> DapServer<I, O> {
                 }
             }
         } else {
-            // Single-file mode: existing behavior.
+            // Single-file mode.
             match compile_and_load(&program_path) {
-                Ok((module, _src)) => {
+                Ok((module, _src, method_file_ids)) => {
                     let file_id_paths = vec![(writ_diagnostics::FileId(0), program_path.clone())];
-                    (module, file_id_paths)
+                    (module, file_id_paths, method_file_ids)
                 }
                 Err(e) => {
                     let err = req.error(&format!("compile error: {}", e));
@@ -218,9 +218,10 @@ impl<I: Read, O: Write> DapServer<I, O> {
             }
         };
 
-        // Set source_paths before resolving breakpoints so events
+        // Set source_paths and method_file_ids before resolving breakpoints so events
         // include the correct source reference.
         self.source_paths = source_paths;
+        self.method_file_ids = method_file_ids;
 
         // Resolve pending breakpoints now that the module is loaded.
         for (_, lines) in &self.pending_breakpoints.clone() {

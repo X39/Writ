@@ -1,0 +1,37 @@
+.module "main" "0.1.0" {
+    .extern "writ-runtime" "1.0.0"
+    .extern_fn "log::info" (string) -> void "log::info"
+    .method "test" (value: int) -> void pub mut {
+        .locals {
+            r0: int "value" [0, 20)
+        }
+        .reg r0 int
+        .reg r1 void
+        .reg r2 string
+        I2S r2, r0  ; line:1 col:32
+        CALL_EXTERN r1, 268435457, r2, 1
+        RET_VOID
+    }
+    .method "test" (value: string) -> void pub mut {
+        .locals {
+            r0: string "value" [0, 14)
+        }
+        .reg r0 string
+        .reg r1 void
+        CALL_EXTERN r1, 268435457, r0, 1  ; line:1 col:95
+        RET_VOID
+    }
+    .method "main" () -> void mut {
+        .reg r0 void
+        .reg r1 int
+        .reg r2 void
+        .reg r3 string
+        LOAD_INT r1, 42  ; line:1 col:141
+        CALL r0, 117440513, r1, 1
+        LOAD_STRING r3, 169  ; line:1 col:156
+        CALL r2, 117440514, r3, 1
+        RET_VOID
+    }
+    .export "test" method 117440513
+    .export "test" method 117440514
+}

@@ -325,7 +325,7 @@ pub fn check_expr(ctx: &mut CheckCtx, expr: &AstExpr) -> TypedExpr {
                 value: Box::new(typed_value),
             }
         }
-        AstExpr::Range { start, kind: _, end, span } => {
+        AstExpr::Range { start, kind, end, span } => {
             let typed_start = start.as_ref().map(|s| check_expr(ctx, s));
             let typed_end = end.as_ref().map(|e| check_expr(ctx, e));
 
@@ -346,7 +346,7 @@ pub fn check_expr(ctx: &mut CheckCtx, expr: &AstExpr) -> TypedExpr {
                 span: *span,
                 start: typed_start.map(Box::new),
                 end: typed_end.map(Box::new),
-                inclusive: false,
+                inclusive: matches!(kind, crate::ast::expr::RangeKind::Inclusive),
             }
         },
         AstExpr::FromEnd { expr: inner, span } => {
@@ -369,6 +369,63 @@ pub fn check_expr(ctx: &mut CheckCtx, expr: &AstExpr) -> TypedExpr {
                 span: *span,
                 op: PrefixOp::FromEnd,
                 expr: Box::new(typed_inner),
+            }
+        },
+
+        AstExpr::TypeOf { expr: inner_expr, span } => {
+            // typeof(Expr) — resolve the static type of the inner expression.
+            //
+            // Special case: when the inner expression is a bare identifier that names a
+            // type declaration (struct, class, entity, enum, contract), resolve it as a
+            // type rather than as a variable.  Without this, `typeof(Point)` would fail
+            // with "undefined variable `Point`" because `check_ident` only recognises
+            // functions, constants, and globals.
+            let static_ty = match inner_expr.as_ref() {
+                AstExpr::Ident { name, .. } => {
+                    // Attempt to resolve the name as a type definition.
+                    let def_id = ctx
+                        .def_map
+                        .get(name)
+                        .or_else(|| {
+                            ctx.def_map
+                                .file_private
+                                .values()
+                                .find_map(|m| m.get(name.as_str()).copied())
+                        });
+                    if let Some(did) = def_id {
+                        let entry = ctx.def_map.get_entry(did);
+                        match entry.kind {
+                            DefKind::Struct => ctx.interner.intern(TyKind::Struct(did)),
+                            DefKind::Class => ctx.interner.intern(TyKind::Class(did)),
+                            DefKind::Entity => ctx.interner.intern(TyKind::Entity(did)),
+                            DefKind::Enum => ctx.interner.intern(TyKind::Enum(did)),
+                            DefKind::Contract => ctx.interner.intern(TyKind::Contract(did)),
+                            // Not a type definition — fall through to regular expression checking.
+                            _ => {
+                                let typed_inner = check_expr(ctx, inner_expr);
+                                typed_inner.ty()
+                            }
+                        }
+                    } else {
+                        // Name not in def map — fall through to regular expression checking.
+                        let typed_inner = check_expr(ctx, inner_expr);
+                        typed_inner.ty()
+                    }
+                }
+                _ => {
+                    // Non-ident inner expression (e.g. `typeof(x)` for a variable) — check normally.
+                    let typed_inner = check_expr(ctx, inner_expr);
+                    typed_inner.ty()
+                }
+            };
+            if ctx.is_error(static_ty) {
+                return TypedExpr::Error { ty: ctx.interner.error(), span: *span };
+            }
+            let reflection_ty = ctx.interner.reflection_type(static_ty);
+            TypedExpr::TypeOf {
+                ty: reflection_ty,
+                span: *span,
+                static_ty,
             }
         },
 
@@ -482,35 +539,67 @@ fn find_root_binding(expr: &TypedExpr, local_env: &LocalEnv) -> Option<(String, 
     }
 }
 
-/// Find a function DefId by name, checking both FQN and file-private scopes.
+/// Find a single function DefId by name (non-overloaded fast path).
+/// For overload resolution, use `find_fn_candidates` instead.
 pub(super) fn find_fn_def_id(ctx: &CheckCtx, name: &str) -> Option<DefId> {
-    // Check by simple name in by_fqn (for single-namespace programs)
-    if let Some(def_id) = ctx.def_map.get(name) {
-        let entry = ctx.def_map.get_entry(def_id);
-        if matches!(entry.kind, DefKind::Fn | DefKind::ExternFn) {
-            return Some(def_id);
-        }
+    let candidates = find_fn_candidates(ctx, name);
+    candidates.first().copied()
+}
+
+/// Find all function DefId candidates by name, supporting overloaded functions.
+///
+/// Conditional fn DefIds are filtered out so the checker always resolves calls
+/// to the non-conditional fallback (COND-04: args still type-check when call is elided).
+pub(super) fn find_fn_candidates(ctx: &CheckCtx, name: &str) -> Vec<DefId> {
+    // Check by simple name in by_fqn / fn_overloads
+    let candidates = ctx.def_map.get_fn_candidates(name);
+    let fn_candidates: Vec<DefId> = candidates.into_iter()
+        .filter(|&id| {
+            let entry = ctx.def_map.get_entry(id);
+            matches!(entry.kind, DefKind::Fn | DefKind::ExternFn)
+        })
+        .filter(|id| !ctx.type_env.conditional_fns.contains_key(id))
+        .collect();
+    if !fn_candidates.is_empty() {
+        return fn_candidates;
     }
 
-    // Check file-private
-    for privates in ctx.def_map.file_private.values() {
-        if let Some(&def_id) = privates.get(name) {
-            let entry = ctx.def_map.get_entry(def_id);
-            if matches!(entry.kind, DefKind::Fn | DefKind::ExternFn) {
-                return Some(def_id);
-            }
+    // Check file-private (including overloads)
+    for &file_id in ctx.def_map.file_private.keys() {
+        let candidates = ctx.def_map.get_private_fn_candidates(file_id, name);
+        let fn_candidates: Vec<DefId> = candidates.into_iter()
+            .filter(|&id| {
+                let entry = ctx.def_map.get_entry(id);
+                matches!(entry.kind, DefKind::Fn | DefKind::ExternFn)
+            })
+            .filter(|id| !ctx.type_env.conditional_fns.contains_key(id))
+            .collect();
+        if !fn_candidates.is_empty() {
+            return fn_candidates;
         }
     }
 
     // Check all FQN entries that end with this name
+    let suffix = format!("::{}", name);
     for (fqn, &def_id) in &ctx.def_map.by_fqn {
-        if fqn.ends_with(&format!("::{}", name)) || fqn == name {
+        if fqn.ends_with(&suffix) || fqn == name {
             let entry = ctx.def_map.get_entry(def_id);
             if matches!(entry.kind, DefKind::Fn | DefKind::ExternFn) {
-                return Some(def_id);
+                // Check for overloads on this FQN
+                if let Some(overloads) = ctx.def_map.fn_overloads.get(fqn.as_str()) {
+                    let filtered: Vec<DefId> = overloads.iter().copied()
+                        .filter(|id| !ctx.type_env.conditional_fns.contains_key(id))
+                        .collect();
+                    return filtered;
+                }
+                // Single fn: skip if it is a conditional fn
+                if ctx.type_env.conditional_fns.contains_key(&def_id) {
+                    continue;
+                }
+                return vec![def_id];
             }
         }
     }
 
-    None
+    vec![]
 }

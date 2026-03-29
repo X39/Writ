@@ -8,8 +8,19 @@
     "plan_check": true,
     "verifier": true,
     "auto_advance": true,
-    "_auto_chain_active": true
+    "nyquist_validation": true,
+    "ui_phase": true,
+    "ui_safety_gate": true,
+    "research_before_questions": false,
+    "skip_discuss": true,
+    "_auto_chain_active": false
   },
   "milestone": "v1.0",
-  "granularity": "standard"
+  "granularity": "standard",
+  "git": {
+    "branching_strategy": "milestone"
+  },
+  "hooks": {
+    "context_warnings": true
+  }
 }

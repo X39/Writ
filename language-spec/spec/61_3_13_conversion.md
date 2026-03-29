@@ -1,5 +1,4 @@
-# Writ IL Specification
-## 3.13 Conversion
+# 3.13 Conversion
 
 **Primitive-to-primitive (specialized, no dispatch):**
 

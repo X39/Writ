@@ -32,7 +32,9 @@ fn collect_src_with_path(src: &'static str, path: &str) -> (DefMap, Vec<Diagnost
     let file_id = FileId(0);
     let asts: Vec<(FileId, &Ast)> = vec![(file_id, &ast)];
     let file_paths: Vec<(FileId, &str)> = vec![(file_id, path)];
-    collect_declarations(&asts, &file_paths)
+    let mut def_map = DefMap::new();
+    let diags = collect_declarations(&asts, &file_paths, &mut def_map);
+    (def_map, diags)
 }
 
 /// Parse and lower multiple source files, then collect declarations.
@@ -51,7 +53,9 @@ fn collect_multi(files: &[(&str, &'static str, &str)]) -> (DefMap, Vec<Diagnosti
         .map(|(i, (path, _, _))| (FileId(i as u32), *path))
         .collect();
 
-    collect_declarations(&asts, &file_paths)
+    let mut def_map = DefMap::new();
+    let diags = collect_declarations(&asts, &file_paths, &mut def_map);
+    (def_map, diags)
 }
 
 fn has_error_code(diags: &[Diagnostic], code: &str) -> bool {
@@ -380,16 +384,17 @@ fn prelude_coverage() {
     assert!(is_prelude_name("Array"));
     assert!(is_prelude_name("Entity"));
 
-    // All 17 contracts
+    // All 18 contracts
     for name in PRELUDE_CONTRACT_NAMES {
         assert!(is_prelude_name(name), "contract {name} should be in prelude");
     }
+    assert!(is_prelude_name("Speaker"), "Speaker contract should be in prelude");
 
-    // 27 total
+    // 28 total
     let total = PRELUDE_PRIMITIVE_NAMES.len()
         + PRELUDE_TYPE_NAMES.len()
         + PRELUDE_CONTRACT_NAMES.len();
-    assert_eq!(total, 27, "prelude should have 27 names total");
+    assert_eq!(total, 28, "prelude should have 28 names total");
 
     // Non-prelude
     assert!(!is_prelude_name("Foo"));
@@ -415,7 +420,7 @@ fn resolve_src_with_path(src: &'static str, path: &str) -> (resolve::ir::NameRes
     let file_id = FileId(0);
     let asts: Vec<(FileId, &writ_compiler::ast::Ast)> = vec![(file_id, &ast)];
     let file_paths: Vec<(FileId, &str)> = vec![(file_id, path)];
-    resolve::resolve(&asts, &file_paths)
+    resolve::resolve(&asts, &file_paths, &[])
 }
 
 fn resolve_multi(files: &[(&str, &'static str, &str)]) -> (resolve::ir::NameResolvedAst, Vec<Diagnostic>) {
@@ -432,7 +437,7 @@ fn resolve_multi(files: &[(&str, &'static str, &str)]) -> (resolve::ir::NameReso
         .map(|(i, (path, _, _))| (FileId(i as u32), *path))
         .collect();
 
-    resolve::resolve(&asts, &file_paths)
+    resolve::resolve(&asts, &file_paths, &[])
 }
 
 #[test]
@@ -885,5 +890,215 @@ pub fn f() {}
         !diags.iter().any(|d| d.severity == Severity::Error),
         "LANG-02-I: using Option::*; should be valid (redundant but no error), got: {:?}",
         diags
+    );
+}
+
+// =========================================================
+// Function overloading
+// =========================================================
+
+/// Two pub functions with the same name but different param types should NOT produce E0001.
+#[test]
+fn fn_overload_no_duplicate_error() {
+    let (def_map, diags) = collect_src(
+        r#"
+pub fn test(value: int) {}
+pub fn test(value: string) {}
+"#,
+    );
+    let errors: Vec<_> = diags.iter().filter(|d| d.severity == Severity::Error).collect();
+    assert!(errors.is_empty(), "overloaded functions should not produce errors, got: {:?}", errors);
+    // Should have overload set with 2 candidates
+    let candidates = def_map.get_fn_candidates("test");
+    assert_eq!(candidates.len(), 2, "expected 2 overload candidates, got {}", candidates.len());
+}
+
+/// Non-function duplicate (e.g., two structs) should still produce E0001.
+#[test]
+fn fn_overload_struct_still_errors() {
+    let (_, diags) = collect_src(
+        r#"
+pub struct Foo {}
+pub struct Foo {}
+"#,
+    );
+    let errors: Vec<_> = diags.iter().filter(|d| d.severity == Severity::Error).collect();
+    assert_eq!(errors.len(), 1, "duplicate struct should still produce E0001");
+}
+
+/// Mixed function + struct with same name should produce E0001.
+#[test]
+fn fn_overload_mixed_fn_struct_errors() {
+    let (_, diags) = collect_src(
+        r#"
+pub fn Foo() {}
+pub struct Foo {}
+"#,
+    );
+    let errors: Vec<_> = diags.iter().filter(|d| d.severity == Severity::Error).collect();
+    assert_eq!(errors.len(), 1, "fn + struct with same name should produce E0001");
+}
+
+/// Overloaded functions resolve to distinct DefIds.
+#[test]
+fn fn_overload_distinct_def_ids() {
+    let (def_map, diags) = collect_src(
+        r#"
+pub fn greet(name: string) {}
+pub fn greet(age: int) {}
+"#,
+    );
+    let errors: Vec<_> = diags.iter().filter(|d| d.severity == Severity::Error).collect();
+    assert!(errors.is_empty(), "should not error: {:?}", errors);
+    let candidates = def_map.get_fn_candidates("greet");
+    assert_eq!(candidates.len(), 2);
+    assert_ne!(candidates[0], candidates[1], "overloads should have distinct DefIds");
+}
+
+/// Overloaded functions should each resolve to their correct DefId during full resolution.
+#[test]
+fn fn_overload_resolves_both() {
+    let (resolved, diags) = resolve_src(
+        r#"
+pub fn test(value: int) {}
+pub fn test(value: string) {}
+fn main() {
+    test(42);
+    test("hello");
+}
+"#,
+    );
+    let errors: Vec<_> = diags.iter().filter(|d| d.severity == Severity::Error).collect();
+    assert!(errors.is_empty(), "overloaded fn resolution should not error: {:?}", errors);
+    // Should have 3 Fn decls resolved (test(int), test(string), main)
+    let fn_count = resolved.decls.iter().filter(|d| {
+        matches!(d, resolve::ir::ResolvedDecl::Fn { .. })
+    }).count();
+    assert_eq!(fn_count, 3, "expected 3 resolved Fn decls, got {}", fn_count);
+}
+
+// =========================================================
+// Attribute declaration collection (UATTR-01, UATTR-04)
+// =========================================================
+
+#[test]
+fn attribute_decl_collected() {
+    let (def_map, diags) = collect_src(
+        r#"
+pub attribute Quest(name: string, level: int);
+"#,
+    );
+
+    let errors: Vec<_> = diags.iter().filter(|d| d.severity == Severity::Error).collect();
+    assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
+
+    let id = def_map.get("Quest");
+    assert!(id.is_some(), "Quest should be in DefMap as pub");
+    let entry = def_map.get_entry(id.unwrap());
+    assert_eq!(entry.kind, DefKind::AttributeDef, "Quest should be DefKind::AttributeDef");
+}
+
+#[test]
+fn builtin_attribute_shadow() {
+    let (def_map, diags) = collect_src(
+        r#"
+attribute Deprecated(msg: string);
+"#,
+    );
+
+    let has_e0008 = has_error_code(&diags, "E0008");
+    assert!(has_e0008, "shadowing builtin attribute should produce E0008, got: {:?}", diags);
+
+    // Deprecated must NOT be inserted into the def map
+    assert!(
+        def_map.get("Deprecated").is_none(),
+        "Deprecated should NOT be in DefMap after E0008"
+    );
+}
+
+// === Speaker validation (Phase 97) ===
+
+#[test]
+fn singleton_speaker_valid() {
+    let (_, diags) = resolve_src(
+        r#"
+[Singleton]
+pub entity Merchant {}
+
+dlg greet() {
+    @Merchant Hello there.
+}
+"#,
+    );
+    let e0007: Vec<_> = diags.iter().filter(|d| d.code == "E0007").collect();
+    assert!(
+        e0007.is_empty(),
+        "[Singleton] entity speaker should produce no E0007 diagnostics, got: {:?}",
+        e0007
+    );
+}
+
+#[test]
+fn non_singleton_speaker_emits_e0007() {
+    let (_, diags) = resolve_src(
+        r#"
+pub entity Merchant {}
+
+dlg greet() {
+    @Merchant Hello there.
+}
+"#,
+    );
+    let e0007: Vec<_> = diags.iter().filter(|d| d.code == "E0007").collect();
+    assert_eq!(
+        e0007.len(),
+        1,
+        "non-[Singleton] entity speaker should produce exactly one E0007, got: {:?}",
+        diags
+    );
+    assert!(
+        e0007[0].message.contains("Merchant"),
+        "E0007 message should contain entity name 'Merchant', got: {}",
+        e0007[0].message
+    );
+}
+
+#[test]
+fn nonexistent_speaker_emits_error() {
+    let (_, diags) = resolve_src(
+        r#"
+dlg greet() {
+    @Ghost Hello there.
+}
+"#,
+    );
+    let e0003: Vec<_> = diags.iter().filter(|d| d.code == "E0003").collect();
+    assert_eq!(
+        e0003.len(),
+        1,
+        "non-existent entity speaker should produce exactly one E0003, got: {:?}",
+        diags
+    );
+    assert!(
+        e0003[0].message.contains("Ghost"),
+        "E0003 message should contain entity name 'Ghost', got: {}",
+        e0003[0].message
+    );
+}
+
+#[test]
+fn contract_speaker_no_false_e0007() {
+    let (_, diags) = resolve_src(
+        r#"
+dlg greet(npc: Entity) {
+    @npc Hello there.
+}
+"#,
+    );
+    let e0007: Vec<_> = diags.iter().filter(|d| d.code == "E0007").collect();
+    assert!(
+        e0007.is_empty(),
+        "contract-typed param speaker should produce no E0007 diagnostics, got: {:?}",
+        e0007
     );
 }

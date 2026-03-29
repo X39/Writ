@@ -1,0 +1,150 @@
+.module "main" "0.1.0" {
+    .extern "writ-runtime" "1.0.0"
+    .type "List" class pub {
+    }
+    .type "__closure_0" class {
+        .field "items" array<?>
+    }
+    .impl List : contract_167772179 {
+    }
+    .impl List : ? {
+        .method "get_type" () -> Type pub {
+            .reg r0 int
+            .reg r1 int
+            TYPEOF r1, 33554433
+            RET r1
+        }
+        .method "add" (item: ?) -> void pub static {
+            .locals {
+                r0: ? "self" [0, 72)
+                r1: ? "item" [0, 72)
+                r3: int "old_len" [16, 72)
+            }
+            .reg r0 int
+            .reg r1 int
+            .reg r2 array<?>
+            .reg r3 int
+            .reg r4 array<?>
+            .reg r5 int
+            .reg r6 int
+            .reg r7 void
+            .reg r8 array<?>
+            GET_FIELD r2, r0, 0  ; line:1 col:101
+            ARRAY_LEN r3, r2
+            GET_FIELD r4, r0, 0  ; line:1 col:146
+            LOAD_INT r5, 1
+            ADD_I r6, r3, r5
+            ARRAY_RESIZE r4, r6
+            GET_FIELD r8, r0, 0  ; line:1 col:186
+            ARRAY_STORE r8, r3, r1
+            RET_VOID
+        }
+        .method "len" () -> int pub {
+            .locals {
+                r0: ? "self" [0, 20)
+            }
+            .reg r0 int
+            .reg r1 array<?>
+            .reg r2 int
+            GET_FIELD r1, r0, 0  ; line:1 col:259
+            ARRAY_LEN r2, r1
+            RET r2
+        }
+        .method "reduce" (initial: ?) -> void pub {
+            .locals {
+                r0: ? "self" [0, 128)
+                r1: ? "initial" [0, 128)
+                r2: ? "f" [0, 128)
+                r3: int "i" [12, 128)
+            }
+            .reg r0 int
+            .reg r1 int
+            .reg r2 int
+            .reg r3 int
+            .reg r4 array<?>
+            .reg r5 int
+            .reg r6 bool
+            .reg r7 ?
+            .reg r8 array<?>
+            .reg r9 ?
+            .reg r10 int
+            .reg r11 ?
+            .reg r12 int
+            .reg r13 int
+            LOAD_INT r3, 0  ; line:1 col:386
+            GET_FIELD r4, r0, 0  ; line:1 col:414
+            ARRAY_LEN r5, r4
+            CMP_LT_I r6, r3, r5
+            BR_FALSE r6, 88
+            GET_FIELD r8, r0, 0  ; line:1 col:455
+            ARRAY_LOAD r9, r8, r3
+            MOV r10, r1
+            MOV r11, r9
+            CALL_INDIRECT r7, r2, r10, 2
+            MOV r1, r7
+            LOAD_INT r12, 1  ; line:1 col:496
+            ADD_I r13, r3, r12
+            MOV r3, r13
+            BR -104
+            RET r1  ; line:1 col:525
+        }
+        .method "__invoke_0" () -> void {
+            .reg r0 int
+            .reg r1 int
+            .reg r2 int
+            ADD_I r2, r0, r1  ; line:1 col:721
+            RET r2
+        }
+        .method "main" () -> void mut {
+            .locals {
+                r0: List "list" [26, 192)
+                r14: ? "_sum" [190, 192)
+            }
+            .reg r0 List
+            .reg r1 array<void>
+            .reg r2 void
+            .reg r3 int
+            .reg r4 List
+            .reg r5 int
+            .reg r6 void
+            .reg r7 int
+            .reg r8 List
+            .reg r9 int
+            .reg r10 void
+            .reg r11 int
+            .reg r12 List
+            .reg r13 int
+            .reg r14 ?
+            .reg r15 int
+            .reg r16 ?
+            .reg r17 void
+            .reg r18 List
+            .reg r19 int
+            .reg r20 ?
+            NEW r0, 33554433  ; line:1 col:554
+            NEW_ARRAY r1, 0
+            SET_FIELD r0, 0, r1
+            LOAD_INT r3, 1  ; line:1 col:609
+            MOV r4, r0
+            MOV r5, r3
+            CALL r2, 117440514, r4, 2
+            LOAD_INT r7, 2  ; line:1 col:626
+            MOV r8, r0
+            MOV r9, r7
+            CALL r6, 117440514, r8, 2
+            LOAD_INT r11, 3  ; line:1 col:643
+            MOV r12, r0
+            MOV r13, r11
+            CALL r10, 117440514, r12, 2
+            LOAD_INT r15, 0  ; line:1 col:660
+            LOAD_NULL r17
+            NEW_DELEGATE r16, 117440517, r17
+            MOV r18, r0
+            MOV r19, r15
+            MOV r20, r16
+            CALL r14, 117440516, r18, 3
+            RET_VOID
+        }
+    }
+    .export "List" type 33554433
+}

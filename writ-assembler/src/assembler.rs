@@ -4,6 +4,8 @@ use writ_module::module::MethodBody;
 use writ_module::tables::TypeDefKind;
 use writ_module::{Instruction, MetadataToken, ModuleBuilder, Module};
 
+use writ_module::heap::write_blob;
+
 use crate::ast::{
     AsmModule, AsmMethod, AsmMethodSig, AsmParam, AsmStatement,
     AsmOperand, AsmTypeRef, AsmMethodRef, AsmFieldRef, AsmTypeKind,
@@ -137,6 +139,26 @@ pub fn assemble_module(ast: AsmModule) -> Result<Module, Vec<AssembleError>> {
         builder.add_extern_def(&ext_fn.name, &sig, &ext_fn.import_name, ext_fn.flags);
     }
 
+    // 8. Export definitions
+    for exp in &ast.exports {
+        builder.add_export_def(&exp.name, exp.item_kind, MetadataToken(exp.item_token));
+    }
+
+    // 9. Component slots
+    for cs in &ast.component_slots {
+        builder.add_component_slot(MetadataToken(cs.owner_entity), MetadataToken(cs.component_type));
+    }
+
+    // 10. Locale definitions
+    for ld in &ast.locale_defs {
+        builder.add_locale_def(MetadataToken(ld.dlg_method), &ld.locale, MetadataToken(ld.loc_method));
+    }
+
+    // 11. Attribute definitions
+    for ad in &ast.attribute_defs {
+        builder.add_attribute_def(MetadataToken(ad.owner), ad.owner_kind, &ad.name, &[]);
+    }
+
     // 7. Top-level methods: pre-register with placeholder bodies
     for method in &ast.methods {
         let sig = encode_method_sig_from_params(&method.params, &method.return_type, &ctx);
@@ -181,11 +203,22 @@ pub fn assemble_module(ast: AsmModule) -> Result<Module, Vec<AssembleError>> {
     // Build the module, then patch method bodies into it
     let mut module = builder.build();
 
-    // Replace placeholder method bodies with assembled ones
-    // The method_bodies vec in Module corresponds 1:1 to method_defs
-    for (i, body) in assembled_bodies.into_iter().enumerate() {
+    // Replace placeholder method bodies with assembled ones and intern register types.
+    // The method_bodies vec in Module corresponds 1:1 to method_defs.
+    for (i, (method_and_owner, body)) in all_methods.iter().zip(assembled_bodies.into_iter()).enumerate() {
+        let (method, _owner) = method_and_owner;
         if i < module.method_bodies.len() {
-            module.method_bodies[i] = body;
+            // Intern register types into the blob heap (ASM-02: real offsets, not 0)
+            let register_types: Vec<u32> = method.registers.iter()
+                .map(|reg| {
+                    let encoded = encode_type_ref(&reg.type_ref, &ctx);
+                    write_blob(&mut module.blob_heap, &encoded)
+                })
+                .collect();
+            module.method_bodies[i] = MethodBody {
+                register_types,
+                ..body
+            };
         }
     }
 
@@ -270,9 +303,8 @@ fn assemble_method_body(
         return Err(errors);
     }
 
-    // Register types: store 0 as placeholder blob heap offsets.
-    // ModuleBuilder doesn't expose blob heap for external interning of register types.
-    let register_types = vec![0u32; method.registers.len()];
+    // Register types: placeholder (will be replaced post-build with real blob offsets).
+    let register_types = Vec::new();
 
     Ok(MethodBody {
         register_types,
@@ -413,7 +445,7 @@ fn encode_method_sig_from_params(
 
 /// Map a text mnemonic + operands to an Instruction variant.
 ///
-/// Handles all 94 opcodes. Mnemonics are matched case-insensitively.
+/// Handles all 92 opcodes. Mnemonics are matched case-insensitively.
 /// For branch instructions, label references produce a placeholder offset of 0.
 fn map_instruction(
     mnemonic: &str,
@@ -635,15 +667,22 @@ fn map_instruction(
         "ARRAY_LOAD" => Ok(Instruction::ArrayLoad { r_dst: reg(0)?, r_arr: reg(1)?, r_idx: reg(2)? }),
         "ARRAY_STORE" => Ok(Instruction::ArrayStore { r_arr: reg(0)?, r_idx: reg(1)?, r_val: reg(2)? }),
         "ARRAY_LEN" => Ok(Instruction::ArrayLen { r_dst: reg(0)?, r_arr: reg(1)? }),
-        "ARRAY_ADD" => Ok(Instruction::ArrayAdd { r_arr: reg(0)?, r_val: reg(1)? }),
-        "ARRAY_REMOVE" => Ok(Instruction::ArrayRemove { r_arr: reg(0)?, r_idx: reg(1)? }),
-        "ARRAY_INSERT" => Ok(Instruction::ArrayInsert { r_arr: reg(0)?, r_idx: reg(1)?, r_val: reg(2)? }),
+        "ARRAY_RESIZE" => Ok(Instruction::ArrayResize { r_arr: reg(0)?, r_new_len: reg(1)? }),
+        "ARRAY_COPY" => Ok(Instruction::ArrayCopy {
+            r_dst_arr: reg(0)?,
+            r_dst_idx: reg(1)?,
+            r_src_arr: reg(2)?,
+            r_src_idx: reg(3)?,
+            r_len: reg(4)?,
+        }),
         "ARRAY_SLICE" => Ok(Instruction::ArraySlice {
             r_dst: reg(0)?,
             r_arr: reg(1)?,
             r_start: reg(2)?,
             r_end: reg(3)?,
         }),
+        "NEW_ARRAY_SIZED" => Ok(Instruction::NewArraySized { r_dst: reg(0)?, elem_type: token_val(1)?, r_len: reg(2)? }),
+        "NEW_ARRAY_FILLED" => Ok(Instruction::NewArrayFilled { r_dst: reg(0)?, elem_type: token_val(1)?, r_len: reg(2)?, r_fill: reg(3)? }),
 
         // ── 0x0A Type Operations — Option ──
         "WRAP_SOME" => Ok(Instruction::WrapSome { r_dst: reg(0)?, r_val: reg(1)? }),
@@ -673,6 +712,9 @@ fn map_instruction(
             r_enum: reg(1)?,
             field_idx: int_lit(2)? as u16,
         }),
+
+        // ── 0x0A Type Operations — Reflection ──
+        "TYPEOF" => Ok(Instruction::TypeOf { r_dst: reg(0)?, type_idx: token_val(1)? }),
 
         // ── 0x0B Concurrency ──
         "SPAWN_TASK" => Ok(Instruction::SpawnTask {

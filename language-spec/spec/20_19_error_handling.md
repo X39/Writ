@@ -1,5 +1,4 @@
-# 1. Writ Language Specification
-## 1.19 Error Handling
+# 1.19 Error Handling
 
 Writ separates error handling into distinct, non-overlapping mechanisms:
 
@@ -10,31 +9,31 @@ Writ separates error handling into distinct, non-overlapping mechanisms:
 | `try`    | `Result<T, E>`     | Propagates `Err`, unwraps `Ok`    | Bubbling errors up in `fn` |
 | `match`  | Both               | Explicit pattern matching         | Need to handle both paths  |
 
-### 1.19.1 The ? Operator (Null Propagation)
+## 1.19.1 The ? Operator (Null Propagation)
 
 Works exclusively on `Option<T>`. The containing function must return an `Option` type. Does NOT work on `Result`.
 
-```
+```writ
 fn getHealerName(p: Party) -> string? {
     p.healer?.name   // if healer is None, returns None
 }
 ```
 
-### 1.19.2 The ! Operator (Unwrap or Crash)
+## 1.19.2 The ! Operator (Unwrap or Crash)
 
 Works on both Option and Result. Extracts the value or terminates the current task with a runtime error. In `dlg`
 blocks, the runtime catches the crash and handles it (logging, fallback dialogue, etc.).
 
-```
+```writ
 let healer = party.healer!;      // crash if None
 let quest = loadQuest(id)!;      // crash if Err
 ```
 
-### 1.19.3 The try Keyword (Error Propagation)
+## 1.19.3 The try Keyword (Error Propagation)
 
 Works exclusively on `Result<T, E>`. The containing function must return a compatible Result. Does NOT work on Option.
 
-```
+```writ
 fn loadBothQuests() -> Result<QuestPair, Error> {
     let a = try loadQuest("main_01");   // propagates Err
     let b = try loadQuest("side_03");   // propagates Err
@@ -42,9 +41,9 @@ fn loadBothQuests() -> Result<QuestPair, Error> {
 }
 ```
 
-### 1.19.4 The Error Contract
+## 1.19.4 The Error Contract
 
-```
+```writ
 contract Error {
     fn message(self) -> string;
 }
@@ -61,7 +60,7 @@ impl Error for QuestError {
 }
 ```
 
-### 1.19.5 Separation Summary
+## 1.19.5 Separation Summary
 
 The `?` and `try` operators occupy entirely separate domains. There is no implicit conversion between Option and Result.
 This eliminates a class of subtle bugs and keeps the mental model simple: `?` is for null, `try` is for errors, `!` is

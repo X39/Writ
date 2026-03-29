@@ -36,7 +36,7 @@ pub fn format_value(val: &Value, module: &Module, heap: &dyn GcHeap) -> String {
         Value::Ref(href) => match heap.get_object(*href) {
             Ok(obj) => match obj {
                 HeapObject::String(s) => format!("{:?}", s),
-                HeapObject::Struct { fields } => format!("struct({})", fields.len()),
+                HeapObject::Struct { fields, .. } => format!("struct({})", fields.len()),
                 HeapObject::Array { elements, .. } => format!("[{} elements]", elements.len()),
                 HeapObject::Delegate { method_idx, .. } => format!("fn@{}", method_idx),
                 HeapObject::Enum { tag, .. } => format!("enum(tag={})", tag),
@@ -47,8 +47,13 @@ pub fn format_value(val: &Value, module: &Module, heap: &dyn GcHeap) -> String {
             Err(_) => "<invalid ref>".to_string(),
         },
         Value::Entity(eid) => format!("entity#{}", eid.index),
-        Value::InlineStruct { type_idx, fields } => {
-            format!("struct{}({})", type_idx, fields.len())
+        Value::Struct { type_idx, href } => {
+            match heap.get_object(*href) {
+                Ok(HeapObject::Struct { fields, .. }) => {
+                    format!("struct{}({})", type_idx, fields.len())
+                }
+                _ => format!("struct{}(<invalid>)", type_idx),
+            }
         }
     }
 }
@@ -197,7 +202,7 @@ mod tests {
     fn test_format_value_ref_struct() {
         let m = empty_module();
         let mut heap = BumpHeap::new();
-        let href = heap.alloc_struct(3);
+        let href = heap.alloc_struct(u32::MAX, 3);
         let result = format_value(&Value::Ref(href), &m, &heap);
         assert_eq!(result, "struct(3)");
     }
@@ -233,13 +238,13 @@ mod tests {
     }
 
     #[test]
-    fn test_format_value_inline_struct() {
+    fn test_format_value_struct() {
         let m = empty_module();
-        let heap = BumpHeap::new();
-        let val = Value::InlineStruct {
-            type_idx: 2,
-            fields: vec![Value::Int(1), Value::Int(2)],
-        };
+        let mut heap = BumpHeap::new();
+        let href = heap.alloc_struct(u32::MAX, 2);
+        heap.set_field(href, 0, Value::Int(1)).unwrap();
+        heap.set_field(href, 1, Value::Int(2)).unwrap();
+        let val = Value::Struct { type_idx: 2, href };
         let result = format_value(&val, &m, &heap);
         assert_eq!(result, "struct2(2)");
     }

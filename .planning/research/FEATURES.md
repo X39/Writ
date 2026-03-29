@@ -1,23 +1,27 @@
-# Feature Research
+# Feature Landscape
 
-**Domain:** Cross-language benchmark suite — performance comparison tooling for scripting and compiled languages
-**Researched:** 2026-03-20
-**Confidence:** HIGH (prior art is abundant: kostya/benchmarks, Are-We-Fast-Yet, drujensen/fib, Computer Language Benchmarks Game; methodology is well-established)
+**Domain:** Standard library and language ergonomics for an existing Writ game scripting toolchain (v13.0 milestone)
+**Researched:** 2026-03-29
+**Confidence:** HIGH — primary sources are the Writ codebase (direct inspection), official C#/.NET docs, Kotlin docs, Swift docs, and ariadne crate docs; WebSearch used for ecosystem cross-checks.
 
 ---
 
-## Overview
+## Context: What Already Exists
 
-This milestone adds a standalone benchmark suite under `benchmark/` that compares Writ against five peer languages. The suite is not a Rust crate — it is a collection of benchmark programs, a runner script, and a reporting layer. It lives inside the existing Writ repository.
+These capabilities are already shipped and form the hard dependency foundation for all v13.0 features.
 
-**The audience is two groups:**
-
-1. **Writ language developers** — need regression detection when the VM or compiler changes.
-2. **Evaluators** (game teams, hobbyists) — need a publishable, credible comparison that answers "how fast is Writ vs. Lua/Python/etc.?"
-
-Both groups have different requirements. Developers need reproducibility and precision. Evaluators need readable charts and honest methodology disclosure.
-
-**The fundamental challenge** of a cross-language benchmark suite is keeping the comparison fair. Algorithms must be semantically equivalent across all six languages, written idiomatically in each language (not literally transliterated), and run in a controlled environment. Every well-regarded suite (kostya/benchmarks, Are-We-Fast-Yet, drujensen/fib) follows this same discipline.
+| Existing Capability | Relevance to v13.0 |
+|---|---|
+| `T[]` fixed-size array with NewArray / ArrayInit / ArrayLen / ArrayAdd / ArrayRemove / ArrayInsert / ArraySlice instructions (v2.0) | Array primitives are the backing store for List; no alloc/copy instructions are missing — the VM instruction set is already sufficient |
+| `Iterable<T>` and `Iterator<T>` contracts declared in virtual module with `iterator()` and `next()` methods (v2.0) | `for x in collection` desugaring requires these to be in the dispatch table with concrete implementations; the contracts exist but no user-facing collection type implements them yet |
+| `for … in` loop parsed by CST, `AstStmt::For` lowered, type-checked for `TyKind::Array` and `Range` (v3.0) | The for-in path already compiles; extending it to user-defined `Iterable<T>` is a type-checker + emitter change, not a parser change |
+| C-style `for` loop works; `for x in array` and `for x in range` work (v3.0) | Iterator protocol for `List<T>` is a pure extension to the existing for-in path |
+| Generics with type parameters, no bounds (v3.0) | Generic constraints require adding bound-checking to resolver and type-checker; the generic parameter table already exists |
+| Contract system with CALL_VIRT O(1) dispatch (v2.0) | `<T: Contract>` bounds enforce this existing dispatch mechanism at a new point in the pipeline |
+| `string.len()` intrinsic (v12.0 fix) | Other string utilities (split, trim, etc.) extend the same IntrinsicId pattern |
+| `writ-diagnostics` Diagnostic struct with `secondary_labels`, `help`, `notes` fields — struct fully supports multi-span (v5.0–v12.0 incremental) | The data model is complete; gaps are in which errors actually use secondary labels and in LSP partial-parse recovery |
+| ariadne crate — multi-span rendering already wired up in `render.rs` | ariadne supports arbitrary multi-span, multi-file labels; the render path already calls `with_label()` for secondary labels |
+| Reflection runtime (typeof, FieldInfo, MethodInfo, dynamic invocation) (v11.0) | Iterator intrinsics follow the same IntrinsicId extension pattern established for reflection |
 
 ---
 
@@ -25,237 +29,200 @@ Both groups have different requirements. Developers need reproducibility and pre
 
 ### Table Stakes (Users Expect These)
 
-Features any credible benchmark suite must provide. Missing these means the results cannot be trusted or compared externally.
+Features a developer reasonably expects in a scripting language that has generics and a contract system. Missing any of these makes the language feel incomplete for writing real programs.
 
-| Feature | Why Expected | Complexity | Notes |
-|---------|--------------|------------|-------|
-| **4 benchmark categories with concrete algorithms** | A suite with only one algorithm is unconvincing. Each category reveals different VM characteristics. | MEDIUM | Compute: fib(40) recursive, prime sieve, 500x500 matrix multiply. String: concat loop, word count, template expansion. Data structures: linked-list ops, hash map insert/lookup, sorted insert. OOP/dispatch: virtual method call chain, polymorphic dispatch loop. |
-| **6 language implementations per benchmark** | Comparisons are meaningless without peer languages. Lua and Python are the canonical scripting references; Rust is the native-speed ceiling; Node.js represents JIT-optimized scripting; Squirrel is the most direct architectural peer. | HIGH | Each language needs its own implementation under `benchmark/<category>/<lang>/`. Squirrel is the highest implementation risk — smaller community, fewer examples. |
-| **Execution time measurement** | The primary metric users care about. Every benchmark suite reports this. | LOW | Measured in milliseconds. Report as median ± MAD (median absolute deviation) over N=5 runs minimum. Use `hyperfine` or `/usr/bin/time` depending on precision needed. Exclude startup from execution time where possible. |
-| **Memory usage measurement** | The second metric users care about for embedded/game contexts. | MEDIUM | Report peak RSS (Resident Set Size) in megabytes using `/usr/bin/time -v` on Linux. Separate baseline RSS (empty process) from benchmark increase. This is the kostya/benchmarks approach and is well-understood. |
-| **Startup time measurement** | Critical for Writ because the compile step is a separate phase. Evaluators want to know "how long until my script runs?" | MEDIUM | Measured separately from benchmark execution. For Writ: `writ compile` duration + `writ run` initialization time. For others: process spawn to first instruction. Use 1000-run average to reduce noise (bdrung/startup-time methodology). |
-| **Writ compile time reported separately** | Writ is the only language with an explicit ahead-of-time compile step. Bundling compile time into runtime time is misleading — Lua/Python don't have this cost. | LOW | Report three numbers for Writ: compile_ms, runtime_ms, total_ms. For all other languages: runtime_ms only. drujensen/fib already does this pattern for compiled vs. interpreted languages. |
-| **Reproducible Docker environment** | Without a fixed environment, results vary by machine, OS version, language runtime version, and background load. Professional benchmark suites use containers. | MEDIUM | Single Dockerfile with pinned versions: Lua 5.4, Squirrel 3.2, Python 3.12, Node.js 22 LTS, Rust (release build), Writ (built from source). One-command runner: `docker run writ-bench`. |
-| **Markdown table output** | The primary artifact for README embedding. Every benchmark in this domain produces a table. | LOW | Generated by the reporter script. Columns: language, median_ms, memory_mb, relative_to_rust (ratio). One table per benchmark. Committed to `benchmark/results/`. |
-| **SVG bar chart output** | Visual comparison for README and documentation. Evaluators do not read tables; they read charts. | MEDIUM | One chart per benchmark category, one bar per language per metric. Generated from JSON results. Bar heights are median values; error bars are MAD. SVG is preferred over PNG for crisp README rendering on HiDPI screens. Use a simple SVG generator (hand-rolled or Python matplotlib with SVG backend) — no JavaScript build tooling required. |
-| **Results committed to repository** | Benchmark results must be versioned so regressions are visible in git history. | LOW | `benchmark/results/` directory with one subdirectory per run (timestamped). Latest results symlinked or referenced from README. GitHub Actions workflow commits updated results on demand (not on every CI run — that creates noise). |
-| **Methodology disclosure** | Any benchmark without methodology disclosure is distrusted. Credibility requires stating: hardware, OS, language versions, run count, warmup approach, what is and is not measured. | LOW | `benchmark/README.md` with: environment spec, algorithm descriptions, what each metric measures, why algorithms were chosen, known limitations. |
-
----
+| Feature | Why Expected | Complexity | Depends On |
+|---------|--------------|------------|------------|
+| `<T: Contract>` generic bounds — enforced at call sites and instantiation sites | Every language with both generics and contracts/interfaces uses bound syntax: C# `where T : IComparable`, Kotlin `: Comparable<T>`, Swift `: Equatable`; without it, generic functions cannot call any methods on `T` | MEDIUM | Existing GenericParam table; resolver/typechecker changes only — no IL format changes |
+| Multiple bounds `<T: ContractA + ContractB>` | C# multi-constraint (`where T : IComparable, IDisposable`), Kotlin intersection bounds — any user who writes a sort function will want `Eq + Ord` simultaneously | LOW (incremental once single-bound works) | Single-bound constraint pass |
+| `List<T>` — ordered growable collection written in Writ | Table stakes in every scripting language: GDScript `Array`, Lua tables, Kotlin `MutableList`, C# `List<T>`, Swift `Array` (value-type) — absence forces users to hand-roll all collection logic | MEDIUM | Array primitives (all exist); `Iterable<T>` contract impl; `Eq` bound for contains() |
+| `Map<K, V>` — key-value associative collection written in Writ | Lua tables, GDScript `Dictionary`, Kotlin `HashMap`, C# `Dictionary<K,V>` — the second collection users always reach for | HIGH | `Eq` + `Ord` bounds on `K`; Array primitives for bucket storage; or a Rust-backed extern approach |
+| `Set<T>` — unordered unique collection written in Writ | Kotlin `HashSet`, Swift `Set`, C# `HashSet<T>` — deduplication is a fundamental game data pattern (unique inventory, faction membership) | HIGH | `Eq` bound on `T`; relies on the same backing strategy as Map |
+| `for x in list` — `Iterable<T>` desugaring in the type-checker | Every scripting language that has a for-in loop and a list type makes them work together; the contracts (`Iterable<T>`, `Iterator<T>`) already exist in the virtual module — wiring them up is what users expect | MEDIUM | Iterable/Iterator contracts (exist); type-checker for-in path extension; CALL_VIRT dispatch |
+| String `split(sep: string) -> string[]` | C# `String.Split`, Kotlin `String.split`, GDScript `String.split` — first thing users need for any text processing | LOW | StringSplit intrinsic |
+| String `trim() -> string` | C# `String.Trim`, Kotlin `String.trim`, GDScript `String.strip_edges` — universal expectation | LOW | StringTrim intrinsic |
+| String `starts_with(prefix: string) -> bool` | C# `StartsWith`, Kotlin `startsWith`, Swift `hasPrefix` | LOW | StringStartsWith intrinsic |
+| String `ends_with(suffix: string) -> bool` | C# `EndsWith`, Kotlin `endsWith`, Swift `hasSuffix` | LOW | StringEndsWith intrinsic |
+| String `contains(substr: string) -> bool` | C# `Contains`, Kotlin `contains`, Lua `string.find` | LOW | StringContains intrinsic |
+| String `replace(from: string, to: string) -> string` | C# `Replace`, Kotlin `replace`, GDScript `replace` | LOW | StringReplace intrinsic |
+| String `to_upper() -> string` and `to_lower() -> string` | C# `ToUpper/ToLower`, Kotlin `uppercase/lowercase` — expected for any NPC name display or command normalization | LOW | StringToUpper / StringToLower intrinsics |
+| Multi-span diagnostics used consistently on constraint violations | Rust's compiler sets the standard — "T doesn't implement Eq" should show the call site AND the constraint declaration; rustc, C# Roslyn, and Kotlin both do this; users reading error messages expect it | LOW (data model exists, gaps are in which errors fire secondary labels) | writ-diagnostics SecondaryLabel (already shipped); just requires consistent use at new constraint-check sites |
 
 ### Differentiators (Competitive Advantage)
 
-Features that make this benchmark suite more trustworthy or useful than a minimal implementation.
+Features that go beyond baseline expectations and give Writ a distinct advantage in its game scripting niche.
 
-| Feature | Value Proposition | Complexity | Notes |
-|---------|-------------------|------------|-------|
-| **Statistical rigor: median + MAD over N=5 runs** | Mean is distorted by outliers (GC pauses, OS scheduler interrupts). Median ± MAD is what kostya/benchmarks uses and what benchmark methodology literature recommends. Shows stability, not just central tendency. | LOW | Report both median and MAD in JSON output. In markdown tables, show `median ± MAD`. In SVG charts, draw error bars. The drujensen/fib suite runs 5 times; kostya recommends more. 5 runs is the minimum; 10 is better for stable results. |
-| **Per-category subchart (not one giant comparison)** | A chart with 24 bars (6 languages × 4 categories) is unreadable. Grouping by category lets each category tell its own story. | LOW | Four separate SVG charts, one per category. Plus one summary chart for the README header. |
-| **GitHub Actions CI workflow** | Automated regression detection when VM changes. The github-action-benchmark action can compare against a stored baseline and fail CI if performance degrades beyond a threshold. | MEDIUM | `benchmark.yml` workflow: build Docker image, run benchmarks, export JSON, compare to baseline, comment on PR with results. Do not commit results on every push — only on manual dispatch or release tag. |
-| **Writ runtime-only vs. total time breakdown** | For Writ, showing compile_ms vs. runtime_ms separately answers a common question: "Is Writ's startup slow, or is its execution fast?" This cannot be shown for Lua/Python, so it is a Writ-specific column in the Writ rows. | LOW | Already in the "compile time reported separately" table-stakes feature. Elevated here because it is a differentiator in presentation: the table explicitly calls out that Writ's runtime is being measured fairly against already-running interpreters. |
-| **Squirrel inclusion** | Squirrel is the least common benchmark participant. Most suites omit it. Including it differentiates this suite for the game scripting audience that actually considers Squirrel vs. Writ. | MEDIUM | Squirrel 3.2 is the current stable release. Implementation complexity: Squirrel has limited standard library vs. Lua. Some algorithms (e.g., matrix multiply) need manual array handling. |
-| **JSON intermediate output** | Machine-readable results allow external consumers (CI tools, custom dashboards) to process results without parsing markdown. Also makes SVG and markdown generation a separate idempotent step. | LOW | Runner outputs `results.json` per benchmark per run. Reporter reads JSON, generates SVG and MD. Two-step pipeline. |
-| **Cross-platform runner scripts** | Benchmark suite should be runnable on Linux (CI/Docker), macOS (developer laptops), and optionally Windows. | MEDIUM | Shell script for Linux/macOS Docker invocation. PowerShell wrapper for Windows. Docker abstracts the actual execution environment, so host OS variability is contained to the Docker invocation layer. |
-
----
+| Feature | Value Proposition | Complexity | Depends On |
+|---------|-------------------|------------|------------|
+| Chainable `.map<U>()`, `.filter()`, `.reduce<U>()` on `List<T>` | Kotlin/Swift/C# LINQ-style chaining is not found in GDScript or Lua — game designers scripting quest logic naturally reach for "filter inventory items then map to names"; this is the single highest user-experience differentiator for the standard library | HIGH | `<T: …>` bounds; closures (already work); `List<T>`; for-in protocol |
+| `List<T>` implements `Iterable<T>` — works in `for x in` with zero extra syntax | Swift/Kotlin collections "just work" in for loops; GDScript `for x in array` works but does NOT work on user-defined collection types (GDScript limitation); Writ can do better by making the protocol first-class | MEDIUM | for-in Iterable desugaring; List Iterable impl |
+| `Eq` and `Ord` auto-constraint checking — `map.get(key)` requires `K: Eq` verified at the call site with a clear error | C# and Kotlin both enforce this at compile time; GDScript and Lua are dynamic and silently fail or do pointer equality; Writ's static verification is the correct model | MEDIUM | Generic constraint enforcement pass |
+| Fix suggestions in constraint errors ("add `impl Eq for Foo`") | Rust's "help: consider implementing…" text dramatically improves developer experience; the `help` field on `Diagnostic` exists and is already rendered by ariadne; paying for this at constraint-violation sites costs almost nothing extra | LOW | Constraint error messages with help text |
+| `string.split_on(sep: string) -> List<string>` returning `List<T>` rather than `string[]` | Once List<T> exists, split should return the growable type for chaining; C# in modern usage prefers LINQ `Split` chains over raw arrays | LOW (incremental after List) | `List<T>`; StringSplitList intrinsic or writ-std method |
 
 ### Anti-Features (Commonly Requested, Often Problematic)
 
-| Feature | Why Requested | Why Problematic | Alternative |
-|---------|---------------|-----------------|-------------|
-| **JIT warmup runs for Python/Node** | JIT languages perform better after warmup. Feels unfair not to warmup. | Warmup time is startup cost for long-running workloads. Game scripts typically run cold (short-lived NPC scripts, dialogue trees). Including warmup favors JIT languages in a way that does not reflect actual game use. More importantly: warmup methodology is complex and varies per benchmark — wrong warmup choices invalidate results. | Run benchmarks cold (as game scripts run). Disclose this clearly in methodology. If warmup is important, add it as a separate "warmed" variant explicitly. |
-| **Microbenchmark suites (nanosecond-level)** | Users sometimes want to benchmark individual operations (array access, method call). | Nanosecond benchmarks require hardware counters, CPU pinning, cache isolation, and careful barrier insertion. The tools (perf, RDTSC) are platform-specific and fragile in Docker. Microbenchmarks also do not represent scripting language real workloads. | Keep benchmarks at the millisecond scale (1ms–10s range). Choose algorithm parameters that achieve this range on modern hardware. |
-| **Memory allocation rate (allocations/sec)** | Some users want allocator pressure metrics. | Requires language-specific profiling hooks (Lua's collectgarbage("count"), Python's tracemalloc, Rust's custom allocator). These hooks introduce measurement overhead and are not consistently available across all 6 languages. | Report peak RSS only. It is consistent, available on all platforms via `/usr/bin/time`, and what evaluators actually care about. |
-| **Benchmark web dashboard (live)** | A live web dashboard with historical charts looks impressive. | Maintaining a live dashboard requires a server, domain, and continuous deployment pipeline. This is out of scope for a language toolchain project. The dashboard becomes stale when the server is not maintained. | Commit static SVG charts to the repository. GitHub renders SVG in README. This is zero-maintenance and always current with the committed results. |
-| **Automated result commits on every CI run** | "Always fresh results" sounds good. | CI machines vary in load, OS scheduler behavior, and Docker image state. Committing results on every push makes the benchmark history noisy — results fluctuate based on CI machine load, not code changes. | Run benchmarks manually (workflow_dispatch) or on release tags only. Keep a `benchmark/results/latest/` with results from the most recent manual run. |
-| **Per-language "best implementation" variants** | "We should use LuaJIT instead of Lua" or "use PyPy for Python". | Selecting the fastest variant for competitor languages inflates their scores and makes Writ look worse. Selecting stock implementations keeps the comparison honest. JIT variants also require separate Docker images and methodology sections. | Use stock interpreters with release optimization flags: `lua` 5.4, `python3` (CPython), `node` (V8 with --optimize-for-size off). Document that LuaJIT and PyPy would score higher — do not include them in the primary suite. |
-| **Writ source code size comparison** | Users sometimes want "lines of code" comparison for readability metrics. | LOC is not a performance metric and opens a separate debate about language expressiveness. Not in scope. | Focus on performance metrics only: time, memory. Leave expressiveness claims to documentation. |
+| Feature | Why Requested | Why Problematic for Writ | What to Do Instead |
+|---------|---------------|--------------------------|-------------------|
+| HashMap / BTreeMap backed by Rust foreign-function calls | "Performance — write the hash table in Rust, not Writ" | Creates a hard host boundary that blocks the reflection system, serialization, and pure-Writ tooling from inspecting Map internals; also forces a non-trivial extern registration story for generic types | Write Map/Set in pure Writ backed by the existing Array primitives; use a sorted array with binary search for O(log n) lookup if hash is unavailable, or accept a Writ-side open-addressing hash table once Eq/Ord constraints work |
+| `any` typed collection (`List` without `<T>`) | "I want a heterogeneous list like Lua tables" | Destroys all type safety; every element access requires a type check or crash; the reflection system already provides the heterogeneous object model via `any[]` at reflection boundaries | Use `any[]` (boxed Array) for heterogeneous data at reflection API boundaries; keep List<T> strictly typed |
+| `.sort()` on `List<T>` in v13.0 | "Sort is a basic collection operation" | Sort requires `Ord` bound which requires generic constraint enforcement being complete; sort also requires an O(n log n) algorithm (quicksort/mergesort) that is non-trivial to write in Writ until the standard library matures | Defer sort to v14.0 or later; users can sort via a host-side extern until then |
+| Warning suppression pragmas (`#suppress W0006 on line X`) | "Too many false positives" | Introduces a new pragma parsing path and a second opt-out mechanism alongside `[Conditional]`; false positives should be fixed at the source, not suppressed | Fix false-positive warnings at the source; use `[Conditional]` for intentional conditional compilation; defer suppression syntax to a future milestone |
+| `Iterator<T>` as a user-subclassable class | "I want custom lazy iterators" | Custom iterators require heap-allocated iterator state objects (like Java's `ListIterator`) which complicates GC lifetime; lazy iterator chains (like Kotlin Sequences or Java Streams) require coroutine suspension or closures — the cooperative yielding model complicates lazy iteration | Provide eager `.map()` / `.filter()` on List<T> that return new List<T>; defer lazy iterators to post-v13.0; the for-in protocol supports custom Iterable<T> impls without requiring lazy chains |
+| LSP autocomplete for partially-typed generic type arguments (`List<T` mid-edit) | "IDE should autocomplete the type arg" | Partial parse of generic type arguments is ambiguous in the CST at `<` — the parser sees it as a comparison; this is a known issue (parser disambiguation for `f<T>()` is already solved for complete expressions, not partial edits) | Handle existing complete-expression completions correctly first; partial generic type arg completion requires a recovery parser pass deferred to v14.0+ |
 
 ---
 
 ## Feature Dependencies
 
 ```
-[Docker environment]
-    └──required by──> [All language benchmark runners]
-    └──required by──> [Memory measurement (RSS via /usr/bin/time)]
-    └──required by──> [Reproducible CI results]
+[Generic bounds — <T: Contract>]
+    └──required by──> [Map<K, V>] (K: Eq, K: Ord for key comparison)
+    └──required by──> [Set<T>] (T: Eq)
+    └──required by──> [List<T>.contains()] (T: Eq)
+    └──required by──> [List<T>.map/filter/reduce] (correct bound propagation)
+    └──required by──> [Fix suggestions in constraint errors]
+    └──builds on──> [GenericParam table (already exists v2.0)]
+    └──builds on──> [Contract CALL_VIRT dispatch (already exists v2.0)]
+    └──requires──> [Resolver: bound collection on GenericParam nodes]
+    └──requires──> [Type-checker: bound satisfaction check at call sites]
 
-[Benchmark programs (all 6 languages × 4 categories)]
-    └──required by──> [Runner script]
-    └──required by──> [JSON output]
+[Array primitives — alloc/copy/shrink]
+    └──note──> ALL needed array primitives already exist in the VM:
+               NewArray, ArrayInit, ArrayLen, ArrayAdd, ArrayRemove,
+               ArrayInsert, ArraySlice — no new IL instructions needed
+    └──required by──> [List<T> backing store]
+    └──required by──> [Map<K, V> bucket array]
+    └──required by──> [Set<T> slot array]
 
-[Runner script]
-    └──required by──> [JSON intermediate output]
+[List<T>]
+    └──requires──> [Array primitives (all exist)]
+    └──requires──> [Iterable<T> contract impl on List<T>]
+    └──requires──> [Generic bounds (for contains, map, filter, reduce)]
+    └──enables──> [for x in list]
+    └──enables──> [map/filter/reduce chains]
+    └──enables──> [Map<K, V> and Set<T>] (share the same backing pattern)
 
-[JSON intermediate output]
-    └──required by──> [Markdown table generation]
-    └──required by──> [SVG chart generation]
-    └──required by──> [CI baseline comparison]
+[Map<K, V>]
+    └──requires──> [List<T> or Array primitives for bucket storage]
+    └──requires──> [Generic bounds: K: Eq (at minimum), K: Ord for sorted variant]
 
-[Markdown table generation]
-    └──enhances──> [README display]
+[Set<T>]
+    └──requires──> [List<T> or Array primitives]
+    └──requires──> [Generic bounds: T: Eq]
 
-[SVG chart generation]
-    └──enhances──> [README display]
-    └──requires──> [JSON intermediate output]
+[for x in collection — Iterable<T> desugaring]
+    └──requires──> [Iterable<T> / Iterator<T> contracts (already in virtual module)]
+    └──requires──> [Type-checker: for-in path extended from Array-only to Iterable<T>]
+    └──requires──> [Emitter: CALL_VIRT to iterator() + next() instead of direct ArrayLoad loop]
+    └──enables──> [for x in List<T>]
+    └──builds on──> [AstStmt::For already lowered and checked for Array/Range (v3.0)]
 
-[GitHub Actions CI workflow]
-    └──requires──> [Docker environment]
-    └──requires──> [JSON intermediate output]
-    └──enhances──> [CI baseline comparison]
+[String utilities — split/trim/starts_with/ends_with/contains/replace/to_upper/to_lower]
+    └──no new dependencies — each is a new IntrinsicId variant + virtual module method entry]
+    └──builds on──> [String intrinsics pattern: StringAdd, StringLen, StringEq, etc. (v2.0–v12.0)]
 
-[Writ compile time measurement]
-    └──requires──> [writ-cli compile subcommand (already exists)]
-    └──enhances──> [Runtime-only comparison (fair against interpreters)]
-
-[Statistical rigor (median + MAD)]
-    └──requires──> [N>=5 runs per benchmark]
-    └──requires──> [JSON output with per-run raw data]
+[Multi-span diagnostics — consistent use on constraint violations]
+    └──data model already complete: SecondaryLabel, help, notes all in Diagnostic (v5.0)]
+    └──ariadne render path already wires secondary labels (v5.0)]
+    └──requires──> [Generic constraint check sites to use with_secondary() and with_help()]
+    └──no new infrastructure — discipline, not capability]
 ```
-
-### Dependency Notes
-
-- **JSON output is the hub.** Markdown and SVG generation are both downstream of JSON. Building JSON output correctly enables all reporting features independently.
-- **Docker must come first.** All benchmark programs depend on the Docker environment for reproducibility. The Docker build also pins language versions, which determines algorithm constraints (e.g., which Squirrel 3.2 APIs are available).
-- **Squirrel implementation is the highest risk.** Squirrel has weaker standard library than Lua. Some benchmark algorithms may require hand-rolled data structure support in Squirrel that Lua gets from its standard library. Plan extra time.
-- **Writ benchmarks depend on writ-cli being feature-complete.** The `writ compile` and `writ run` subcommands already exist (v3.0). The benchmarks simply call them. No new Writ runtime features are needed — this is pure measurement infrastructure.
-- **SVG generation has no dependency on Rust.** Use Python (available in the Docker image already for Python benchmarks) or a small standalone Rust binary. Python matplotlib with SVG backend is the lowest-friction option given Python is already in the container.
 
 ---
 
 ## MVP Definition
 
-### Launch With (v1 — initial release)
+### Launch With (v13.0 core)
 
-Minimum viable benchmark suite that produces credible, publishable results.
+The minimum coherent set that makes v13.0 genuinely useful for real Writ programs.
 
-- [ ] Docker image with all 6 language runtimes at pinned versions — without this, nothing is reproducible
-- [ ] Compute-heavy category: fib(40) recursive in all 6 languages — simplest to implement, most well-understood benchmark
-- [ ] Prime sieve (Eratosthenes, N=1,000,000) in all 6 languages — exercises array/allocation patterns
-- [ ] Runner shell script producing JSON output for these 2 compute benchmarks
-- [ ] Markdown table reporter reading JSON → produces `benchmark/results/compute.md`
-- [ ] SVG bar chart for compute category
-- [ ] Methodology README documenting what is measured and what is not
-- [ ] Writ compile time + runtime reported separately in output
+- [ ] `<T: Contract>` single bound and multi-bound (`T: A + B`) — enforced at resolver and type-checker; fix suggestion in errors
+- [ ] Array primitives: confirm no gaps; spec §3.9 passes for alloc/copy/shrink patterns
+- [ ] `List<T>` — push, pop, get(i), set(i, v), len(), contains(v: T) (requires `T: Eq`), written in pure Writ backed by Array
+- [ ] `List<T>` implements `Iterable<T>` — `for x in list` works
+- [ ] `Map<K, V>` — get(k), set(k, v), contains_key(k), remove(k), keys() -> List<K>, written in Writ
+- [ ] `Set<T>` — add(v), remove(v), contains(v), written in Writ
+- [ ] String utilities: `split`, `trim`, `starts_with`, `ends_with`, `contains`, `replace`, `to_upper`, `to_lower` — all as intrinsics on `string`
+- [ ] Multi-span diagnostics used at all new constraint-violation sites (bound not satisfied, Iterable not implemented)
 
-### Add After Validation (v1.x)
+### Add After Core Validates (within v13.0 later phases)
 
-Once compute benchmarks are working and the pipeline is validated:
+- [ ] `List<T>.map<U>(fn(T) -> U) -> List<U>` — requires closure + bounds propagation
+- [ ] `List<T>.filter(fn(T) -> bool) -> List<T>`
+- [ ] `List<T>.reduce<U>(initial: U, fn(U, T) -> U) -> U`
+- [ ] LSP: completions for List/Map/Set methods
+- [ ] LSP: hover shows inferred element type of `List<T>` variables
+- [ ] Diagnostics polish: `for x in expr` where expr is not Iterable shows helpful secondary label pointing to the non-implementing type
 
-- [ ] String processing category (concat loop, word count) — add once runner pipeline is proven
-- [ ] Data structures category (linked list, hash map) — moderate implementation complexity; skip for MVP
-- [ ] Matrix multiply — heavier algorithm; add after simpler compute benchmarks are stable
-- [ ] OOP/dispatch category — hardest to keep fair across languages; add last
-- [ ] GitHub Actions CI workflow — add after local results are trusted
-- [ ] Memory measurement (RSS) — add once timing measurement is solid; adds `/usr/bin/time -v` wrapper
+### Future Consideration (v14+)
 
-### Future Consideration (v2+)
-
-Features to defer until the suite has been run and results are published:
-
-- [ ] CI baseline comparison with regression alerts — useful only after historical baseline exists
-- [ ] Per-run archival with timestamps — useful for tracking regression over time
-- [ ] Squirrel OOP variants — Squirrel's OOP model is complex; safe to defer detailed OOP benchmarks
+- [ ] `List<T>.sort()` — requires `Ord` bound enforcement complete and a sort algorithm in Writ
+- [ ] `EntityList<T>` — typed entity reference collection with component query support (mentioned in spec §1.27.3 but out of scope for v13.0)
+- [ ] Lazy iterator chains (Sequence protocol like Kotlin/Swift) — requires coroutine or closure-based approach
+- [ ] Warning suppression pragmas
+- [ ] Partial generic type arg LSP completion
 
 ---
 
 ## Feature Prioritization Matrix
 
-| Feature | User Value | Implementation Cost | Priority |
-|---------|------------|---------------------|----------|
-| Docker environment with pinned versions | HIGH | MEDIUM | P1 — foundation for everything |
-| Compute benchmarks (fib, sieve) × 6 languages | HIGH | MEDIUM | P1 — minimum viable comparison |
-| Runner script → JSON output | HIGH | LOW | P1 — pipeline hub |
-| Writ compile-time separation | HIGH | LOW | P1 — fairness requirement |
-| Markdown table reporter | HIGH | LOW | P1 — primary publishable artifact |
-| SVG bar chart (compute category) | HIGH | MEDIUM | P1 — visual proof for README |
-| Methodology README | HIGH | LOW | P1 — credibility requirement |
-| Statistical rigor (median + MAD, N=5) | HIGH | LOW | P1 — without this, results are untrustworthy |
-| Matrix multiply benchmark | MEDIUM | MEDIUM | P2 — add after pipeline proven |
-| String processing category | MEDIUM | MEDIUM | P2 — second most representative category |
-| Data structures category | MEDIUM | HIGH | P2 — linked list/hashmap complexity across 6 langs |
-| Memory measurement (RSS) | MEDIUM | MEDIUM | P2 — important for game context |
-| OOP/dispatch category | MEDIUM | HIGH | P2 — hardest to keep fair |
-| GitHub Actions CI workflow | MEDIUM | MEDIUM | P2 — CI value only after results trusted |
-| JSON per-run archival | LOW | LOW | P2 — versioning value |
-| CI baseline comparison | LOW | MEDIUM | P3 — only useful after historical baseline |
-| Cross-platform runner (PowerShell) | LOW | LOW | P3 — Docker abstracts most of this |
+| Feature | User Value | Implementation Cost | Phase Priority |
+|---------|------------|---------------------|----------------|
+| `<T: Contract>` bounds | HIGH | MEDIUM | P1 — blocks Map/Set/List.contains |
+| Array primitive gap analysis (spec audit) | HIGH | LOW | P1 — must confirm no VM gaps before writing List |
+| `List<T>` | HIGH | MEDIUM | P1 |
+| `List<T>` implements `Iterable<T>` / for-in | HIGH | MEDIUM | P1 |
+| String utilities (8 methods) | HIGH | LOW | P1 — independent, high payoff |
+| Multi-span diagnostics at constraint sites | MEDIUM | LOW | P1 — discipline not capability |
+| `Map<K, V>` | HIGH | HIGH | P2 |
+| `Set<T>` | MEDIUM | HIGH | P2 |
+| `List<T>.map/filter/reduce` | HIGH | MEDIUM | P2 — after List validated |
+| LSP completions for List/Map/Set | MEDIUM | LOW | P2 |
+| Diagnostics: non-Iterable for-in error | MEDIUM | LOW | P2 |
+| `List<T>.sort()` | LOW | MEDIUM | P3 |
+| Lazy iterators | LOW | HIGH | P3 — defer post-v13.0 |
 
 **Priority key:**
-- P1: Must have for launch
-- P2: Should have, add when possible
-- P3: Nice to have, future consideration
+- P1: Must have for v13.0 launch — forms the coherent standard library foundation
+- P2: Should have — add within v13.0 phases once P1 is validated
+- P3: Nice to have — defer to future milestone
 
 ---
 
-## Benchmark Algorithm Specifications
+## Comparable System Analysis
 
-The algorithms must be semantically equivalent across all languages. Specific parameters are chosen to produce 100ms–5000ms runtimes on modern hardware (Docker container, 4 vCPU), which is the reliable measurement range for `/usr/bin/time` and `hyperfine`.
+| Feature | C# (.NET) | Kotlin | Swift | GDScript (Godot 4) | Lua | Writ v13.0 Approach |
+|---------|-----------|--------|-------|--------------------|-----|---------------------|
+| Generic bounds syntax | `where T : IComparable<T>` | `<T : Comparable<T>>` | `<T: Comparable>` | No generics | No generics | `<T: Contract>` (already in spec §1.12, not yet enforced) |
+| Multiple bounds | `where T : IA, IB` | `<T> where T : IA, T : IB` | `<T: IA & IB>` | N/A | N/A | `<T: A + B>` (spec §1.12) |
+| Growable list | `List<T>` (class) | `MutableList<T>` | `Array<T>` (value) | `Array` (dynamic) | table | `List<T>` in writ-std, backed by Writ Array primitives |
+| Map | `Dictionary<K,V>` | `HashMap<K,V>` | `Dictionary<K,V>` | `Dictionary` | table | `Map<K,V>` in writ-std |
+| Set | `HashSet<T>` | `HashSet<T>` | `Set<T>` | No built-in Set | No built-in Set | `Set<T>` in writ-std |
+| for-in protocol | `IEnumerable<T>` / `GetEnumerator()` | `Iterable<T>` / `iterator()` → `hasNext()` + `next()` | `Sequence` / `makeIterator()` → `next() -> T?` | `for x in array` (array only) | `for k,v in pairs(t)` | `Iterable<T>` / `iterator() -> Iterator<T>` / `next() -> T?` — contracts already in virtual module |
+| String split | `String.Split(sep)` → `string[]` | `String.split(sep)` → `List<String>` | `String.components(separatedBy:)` → `[String]` | `String.split(delimiter)` → `Array` | `string.gmatch` (pattern-based) | `string.split(sep) -> string[]` as intrinsic |
+| String trim | `String.Trim()` | `String.trim()` | `String.trimmingCharacters(in:)` | `String.strip_edges()` | No built-in | `string.trim() -> string` as intrinsic |
+| String contains | `String.Contains(s)` | `String.contains(s)` | `String.contains(s)` | `String.contains(s)` | `string.find` | `string.contains(sub) -> bool` as intrinsic |
+| Multi-span errors | Roslyn: primary + "related information" spans | Kotlin: primary + secondary spans | Swift: primary + secondary spans | No secondary spans | No diagnostics | ariadne `with_label()` secondary already works — use consistently |
 
-### Compute-Heavy
+**Key GDScript gap Writ can fill:** GDScript's `for x in` only works on built-in Array and Dictionary — user-defined types cannot implement iteration. Writ's `Iterable<T>` contract-based desugaring makes any type iterable if it implements the two-method protocol.
 
-| Algorithm | Parameters | Expected Range | Why This Algorithm |
-|-----------|-----------|----------------|--------------------|
-| Recursive Fibonacci | fib(40) | 100ms–30s depending on language | CPU-bound, no I/O, no allocation. Pure interpreter dispatch overhead. drujensen/fib uses fib(47) but that is too long for slow languages. fib(40) = 102,334,155 calls. |
-| Prime Sieve (Eratosthenes) | N = 1,000,000 | 10ms–2000ms | Array-heavy, tests sequential memory access and boolean array manipulation. Are-We-Fast-Yet includes Sieve as a micro benchmark. |
-| Matrix Multiply | 500×500 | 500ms–60s | Nested loop, float arithmetic, 2D array access. Tests numeric performance and array indexing. kostya/benchmarks includes matmul. |
-
-### String Processing
-
-| Algorithm | Parameters | Expected Range | Why This Algorithm |
-|-----------|-----------|----------------|--------------------|
-| String concatenation loop | 100,000 iterations building a string | 50ms–5000ms | Tests string immutability cost and allocator pressure. Exposes Python/Java-like quadratic behavior vs. languages with mutable string builders. |
-| Word count | 10MB text blob, count word frequencies | 100ms–3000ms | Tests string splitting, hash map insertion, and iteration. Similar to kostya/benchmarks base64/json style — realistic string workload. |
-
-### Data Structures
-
-| Algorithm | Parameters | Expected Range | Why This Algorithm |
-|-----------|-----------|----------------|--------------------|
-| Linked list construction and traversal | 100,000 nodes | 50ms–2000ms | Tests object allocation, GC pressure, pointer chasing. Are-We-Fast-Yet List benchmark does recursive list ops. |
-| Hash map insert/lookup | 1,000,000 insertions + 1,000,000 lookups | 100ms–5000ms | Tests language's native map/table/dict performance. Every scripting language has a native hash map (Lua table, Python dict, etc.). |
-
-### OOP / Dispatch
-
-| Algorithm | Parameters | Expected Range | Why This Algorithm |
-|-----------|-----------|----------------|--------------------|
-| Virtual method call chain | 1,000,000 iterations, 3-level class hierarchy, polymorphic dispatch | 50ms–5000ms | Tests virtual dispatch overhead. Are-We-Fast-Yet Richards and DeltaBlue benchmarks exercise this heavily. |
-| Closure/callback chain | 500,000 iterations, function values passed as arguments | 50ms–3000ms | Tests function value overhead. Important for Writ because closures are compiled to C# delegate model (CALL_VIRT through contract dispatch). |
-
----
-
-## Prior Art Analysis
-
-| Suite | Languages | Metrics | Reproducibility | What to Borrow |
-|-------|-----------|---------|-----------------|----------------|
-| [kostya/benchmarks](https://github.com/kostya/benchmarks) | 40+ | time, memory, energy | Docker | Median ± MAD reporting; base + increase memory; idiomatic implementation requirement |
-| [Are-We-Fast-Yet](https://github.com/smarr/are-we-fast-yet) | 10 | execution time | Manual | Identical algorithm across languages; idiomatic code; micro + macro benchmark split |
-| [drujensen/fib](https://github.com/drujensen/fib) | 60+ | compile time, runtime, total | Docker | Compile-time / runtime separation; 5-run average; Dockerfile per language |
-| [Computer Language Benchmarks Game](https://benchmarksgame-team.pages.debian.net/) | 30+ | time, memory | CI | Problem framing with allowed variants; detailed methodology disclosure |
-| [bdrung/startup-time](https://github.com/bdrung/startup-time) | 24 | startup time | Manual | 1000-run averaging for startup; C wrapper for invocation overhead elimination |
-
-**Key methodology decisions from prior art:**
-- Median over mean: kostya/benchmarks, benchmark methodology literature consensus
-- 5+ runs minimum: drujensen/fib (5 runs), kostya (semi-manual, many runs), hyperfine default (10 runs)
-- Docker for reproducibility: kostya/benchmarks, drujensen/fib both use Docker
-- Idiomatic implementations: Are-We-Fast-Yet explicit design principle; kostya requires reference implementation exists
+**Key Lua gap Writ can fill:** Lua has no type-safe collections and no bounds checking. All generics enforcement is at runtime (or absent). Writ's compile-time `<T: Eq>` bounds make `Map<K,V>` and `Set<T>` robust without runtime overhead at call sites.
 
 ---
 
 ## Sources
 
-- [kostya/benchmarks](https://github.com/kostya/benchmarks) — methodology, Docker approach, memory measurement (HIGH confidence — official repo)
-- [Are-We-Fast-Yet paper](https://stefan-marr.de/papers/dls-marr-et-al-cross-language-compiler-benchmarking-are-we-fast-yet/) — cross-language benchmarking methodology, OOP benchmark design (HIGH confidence — peer-reviewed)
-- [drujensen/fib](https://github.com/drujensen/fib) — compile time vs. runtime separation, Docker approach (HIGH confidence — official repo, widely cited)
-- [bdrung/startup-time](https://github.com/bdrung/startup-time) — startup time measurement methodology (HIGH confidence — official repo)
-- [hyperfine](https://github.com/sharkdp/hyperfine) — command-line timing tool with statistical output (HIGH confidence — official repo)
-- [Laurence Tratt: What Metric to Use When Benchmarking](https://tratt.net/laurie/blog/2022/what_metric_to_use_when_benchmarking.html) — median vs. mean analysis (MEDIUM confidence — expert blog, well-cited)
-- [Computer Language Benchmarks Game](https://benchmarksgame-team.pages.debian.net/) — benchmark problem framing (HIGH confidence — long-running reference project)
-- [github-action-benchmark](https://github.com/benchmark-action/github-action-benchmark) — CI benchmark regression detection (HIGH confidence — official repo)
-- [String performance across languages study](https://oulurepo.oulu.fi/bitstream/handle/10024/15059/nbnfioulu-202001201035.pdf) — string concatenation benchmark methodology (MEDIUM confidence — academic paper)
-- Writ PROJECT.md — existing CLI capabilities (writ compile, writ run, writ build), v7.0 target spec (HIGH confidence — source of truth)
+- Writ codebase direct inspection: `writ-runtime/src/virtual_module.rs` (Iterable/Iterator contracts), `writ-module/src/instruction.rs` (array instruction set), `writ-compiler/src/check/check_stmt.rs` (for-in type-check path), `writ-diagnostics/src/diagnostic.rs` (Diagnostic struct), `writ-diagnostics/src/render.rs` (ariadne multi-span rendering), `writ-compiler/src/check/ty.rs` (TyKind enum), `language-spec/spec/13_12_generics.md`, `language-spec/spec/28_27_standard_library_builtins.md`, `.planning/PROJECT.md` — HIGH confidence
+- [Microsoft Docs: Constraints on type parameters — C#](https://learn.microsoft.com/en-us/dotnet/csharp/programming-guide/generics/constraints-on-type-parameters) — HIGH confidence (official Microsoft docs)
+- [Kotlin Docs: Iterators](https://kotlinlang.org/docs/iterators.html) — HIGH confidence (official Kotlin docs)
+- [Swift: IteratorProtocol — Apple Developer Documentation](https://developer.apple.com/documentation/swift/iteratorprotocol) — HIGH confidence (official Apple docs)
+- [Swift's Sequence inside the compiler: how for loops work internally](https://swiftrocks.com/swift-sequence-inside-the-compiler-how-for-loops-work) — MEDIUM confidence (community, cross-checks with official docs)
+- [ariadne — Rust crate docs](https://docs.rs/ariadne/latest/ariadne/) — HIGH confidence (official crate docs; multi-span and secondary labels confirmed)
+- [GDScript reference — Godot Engine stable](https://docs.godotengine.org/en/stable/tutorials/scripting/gdscript/gdscript_basics.html) — HIGH confidence (official Godot docs)
+- [Microsoft Docs: String.Split](https://learn.microsoft.com/en-us/dotnet/api/system.string.split?view=net-10.0) — HIGH confidence (official Microsoft docs)
 
 ---
 
-*Feature research for: Cross-language benchmark suite (v7.0)*
-*Researched: 2026-03-20*
+*Feature research for: Writ v13.0 Standard Library & Language Ergonomics*
+*Researched: 2026-03-29*

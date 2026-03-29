@@ -73,10 +73,10 @@ pub fn inject_dialogue_extern_defs(
 
     // Build sig blobs for each dialogue builtin.
     let builtins: &[(&str, Vec<u8>)] = &[
-        // say(text: string) -> void: 1 param, string, void return
-        ("say", vec![0x01, 0x00, 0x04, 0x00]),
-        // say_localized(key: string, locale: string) -> void: 2 params, string, string, void return
-        ("say_localized", vec![0x02, 0x00, 0x04, 0x04, 0x00]),
+        // say(speaker: Entity, text: string) -> void: 2 params, entity, string, void return
+        ("say", vec![0x02, 0x00, 0x05, 0x04, 0x00]),
+        // say_localized(speaker: Entity, key: string, fallback: string) -> void: 3 params, entity, string, string, void return
+        ("say_localized", vec![0x03, 0x00, 0x05, 0x04, 0x04, 0x00]),
         // choice(options: Array<int>) -> int: 1 param, Array<int>, int return
         ("choice", vec![0x01, 0x00, 0x20, 0x01, 0x01]),
         // ChoiceOption(label: string, key: string, body: fn() -> void) -> int:

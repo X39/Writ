@@ -241,6 +241,8 @@ pub enum Token<'src> {
     KwEntity,
     #[token("component")]
     KwComponent,
+    #[token("attribute")]
+    KwAttribute,
     #[token("namespace")]
     KwNamespace,
     #[token("extern")]
@@ -317,6 +319,12 @@ pub enum Token<'src> {
     // =========================================================
     #[token("void")]
     KwVoid,
+
+    // =========================================================
+    // Keywords — Reflection
+    // =========================================================
+    #[token("typeof")]
+    KwTypeof,
 
     // =========================================================
     // Keywords — Values

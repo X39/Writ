@@ -1,12 +1,7 @@
 // Dialogue/function interplay -- exercises dlg blocks calling fn helpers
 // and fn calling dlg, with Tier 1 speaker params, code escapes, and transitions.
-// No $ choice in this test (avoids known ::choice serialization bug).
+// No $ choice in this test (choice serialization tested in fn_multi_choice.writ).
 // No string interpolation in text lines (avoids .into<string>() on string type).
-
-// Explicit extern declarations required: dialogue lowering emits
-// say(speaker, text) with 2 args, but auto-injected say has 1 param.
-pub extern fn say(speaker: Entity, text: string);
-pub extern fn say_localized(speaker: Entity, key: string, fallback: string);
 
 // Helper function called from dialogue blocks
 fn format_greeting(name: string) -> string {

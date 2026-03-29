@@ -53,10 +53,18 @@ pub(crate) fn lower_expr(spanned: Spanned<Expr<'_>>, ctx: &mut LoweringContext) 
             span,
         },
 
-        Expr::StringLit(s) => AstExpr::StringLit {
-            value: s.to_string(),
-            span,
-        },
+        Expr::StringLit(s) => {
+            // Strip surrounding quotes and process escape sequences.
+            // Basic strings: `"..."` — strip quotes, process escapes.
+            // Raw strings: `"""..."""` — strip triple-quotes, dedent, no escape processing.
+            let value = if s.starts_with("\"\"\"") {
+                writ_parser::dedent_raw_string(&s[3..s.len() - 3])
+            } else {
+                let inner = &s[1..s.len() - 1];
+                writ_parser::process_escapes(inner).unwrap_or_else(|_| inner.to_string())
+            };
+            AstExpr::StringLit { value, span }
+        }
 
         Expr::BoolLit(b) => AstExpr::BoolLit { value: b, span },
 
@@ -255,13 +263,16 @@ pub(crate) fn lower_expr(spanned: Spanned<Expr<'_>>, ctx: &mut LoweringContext) 
             span,
         },
 
+        Expr::TypeOf(e) => AstExpr::TypeOf {
+            expr: Box::new(lower_expr(*e, ctx)),
+            span,
+        },
+
         // --- R4: Formattable strings → left-associative Add chain ---
 
-        Expr::FormattableString(segs) => lower_fmt_string(segs, span, ctx),
+        Expr::FormattableString(segs) => lower_fmt_string(segs, span, false, ctx),
 
-        // Identical lowering to FormattableString — raw vs. non-raw distinction
-        // is resolved by the lexer before the CST is constructed.
-        Expr::FormattableRawString(segs) => lower_fmt_string(segs, span, ctx),
+        Expr::FormattableRawString(segs) => lower_fmt_string(segs, span, true, ctx),
 
         // --- New construction ---
 

@@ -1,0 +1,4 @@
+fn main() {
+    let mut arr: int[] = [1, 2, 3];
+    arr.add(4);
+}

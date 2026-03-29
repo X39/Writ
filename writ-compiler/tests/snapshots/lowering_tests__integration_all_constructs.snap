@@ -40,7 +40,7 @@ Ast {
                     Return {
                         value: Some(
                             StringLit {
-                                value: "\"unknown\"",
+                                value: "unknown",
                                 span: 50..59,
                             },
                         ),
@@ -466,7 +466,7 @@ Ast {
                         },
                         default: Some(
                             StringLit {
-                                value: "\"Narrator\"",
+                                value: "Narrator",
                                 span: 351..361,
                             },
                         ),

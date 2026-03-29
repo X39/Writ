@@ -12,7 +12,7 @@ pub const PRELUDE_TYPE_NAMES: &[&str] = &["Option", "Result", "Range", "Array", 
 /// Standard contract names from `writ-runtime`.
 pub const PRELUDE_CONTRACT_NAMES: &[&str] = &[
     "Add", "Sub", "Mul", "Div", "Mod", "Neg", "Not", "Eq", "Ord", "Index", "IndexSet", "BitAnd",
-    "BitOr", "Iterable", "Iterator", "Into", "Error",
+    "BitOr", "Iterable", "Iterator", "Into", "Error", "Speaker",
 ];
 
 /// Sub-prelude variant constructors -- injected below all user-defined names.
@@ -26,6 +26,14 @@ pub const LOG_NAMESPACE_LEVELS: &[&str] = &["trace", "debug", "info", "warn", "e
 /// Dialogue builtin function names injected as synthetic ExternFn DefIds.
 /// These are root-level (no namespace prefix) — registered as FQN `"say"`, `"choice"`, etc.
 pub const DIALOGUE_BUILTINS: &[&str] = &["say", "say_localized", "choice", "ChoiceOption"];
+
+/// Attribute names reserved for builtins. These cannot be used as user-defined attribute names.
+pub const BUILTIN_ATTRIBUTE_NAMES: &[&str] = &["Deprecated", "Conditional", "Singleton", "Locale"];
+
+/// Returns true if `name` is a builtin attribute name that cannot be shadowed.
+pub fn is_builtin_attribute_name(name: &str) -> bool {
+    BUILTIN_ATTRIBUTE_NAMES.contains(&name)
+}
 
 /// Check if a name is any prelude name (primitive, type, or contract).
 pub fn is_prelude_name(name: &str) -> bool {

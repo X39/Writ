@@ -4,6 +4,7 @@ use rustc_hash::FxHashMap;
 use writ_diagnostics::{Diagnostic, FileId};
 
 use crate::ast::decl::{AstComponentMember, AstFnParam, AstVisibility};
+use crate::ast::types::AstType;
 use crate::ast::Ast;
 use crate::check::ty::TyInterner;
 use crate::resolve::def_map::{DefId, DefMap, DefVis};
@@ -54,9 +55,17 @@ pub(super) fn collect_fn(
             .collect();
         builder.fn_param_map.insert(def_id, fn_params);
 
-        // GenericParam
-        for (i, g) in entry.generics.iter().enumerate() {
-            builder.add_generic_param(TableId::MethodDef, method_handle.0, i as u16, g);
+        // GenericParam + GenericConstraint
+        for (i, (g, ast_gp)) in entry.generics.iter().zip(fn_decl.generics.iter()).enumerate() {
+            let param_idx = builder.add_generic_param(TableId::MethodDef, method_handle.0, i as u16, g);
+            // Emit GenericConstraint rows for each bound on this param.
+            for bound_ast_ty in &ast_gp.bounds {
+                if let AstType::Named { name, .. } = bound_ast_ty {
+                    if let Some(contract_def_id) = def_map.get(name) {
+                        builder.add_generic_constraint(param_idx, contract_def_id);
+                    }
+                }
+            }
         }
     }
 }

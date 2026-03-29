@@ -1,5 +1,4 @@
-# Writ IL Specification
-## 2.5 Instruction Encoding
+# 2.5 Instruction Encoding
 
 **Decision:**
 

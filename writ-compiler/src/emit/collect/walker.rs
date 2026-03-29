@@ -108,7 +108,8 @@ fn walk_expr(expr: &TypedExpr, ids: &mut FxHashSet<DefId>) {
         | TypedExpr::SelfRef { .. }
         | TypedExpr::Path { .. }
         | TypedExpr::Error { .. }
-        | TypedExpr::Crash { .. } => {}
+        | TypedExpr::Crash { .. }
+        | TypedExpr::TypeOf { .. } => {}
     }
 }
 

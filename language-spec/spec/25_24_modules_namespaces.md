@@ -1,14 +1,13 @@
-# 1. Writ Language Specification
-## 1.24 Modules & Namespaces
+# 1.24 Modules & Namespaces
 
 Every Writ source file belongs to a namespace. Namespaces organize declarations into logical groups and prevent name
 collisions. Multiple files may contribute to the same namespace. Access across namespaces uses the `::` operator.
 
-### 1.24.1 Declarative Namespace
+## 1.24.1 Declarative Namespace
 
 The declarative form assigns the entire file to a single namespace:
 
-```
+```writ
 // file: survival/potions.writ
 namespace survival;
 
@@ -31,11 +30,11 @@ pub fn heal(target: Entity, amount: int) {
    namespace.
 5. Does not support defining sub-namespaces within the file — for that, use block form (Section 1.24.2).
 
-### 1.24.2 Block Namespace
+## 1.24.2 Block Namespace
 
 The block form wraps declarations in a `namespace name { }` block and supports nesting:
 
-```
+```writ
 namespace survival {
     pub struct HealthPotion {
         charges: int,
@@ -64,12 +63,12 @@ namespace survival {
 4. A namespace may span multiple files. Two files both contributing `namespace survival { ... }` merge their
    declarations into the same namespace.
 
-### 1.24.3 Root Namespace
+## 1.24.3 Root Namespace
 
 If a file contains no `namespace` declaration (neither declarative nor block), its declarations are in the **root
 namespace**. Root namespace declarations are accessible without any `::` prefix from all other namespaces:
 
-```
+```writ
 // file: globals.writ
 // (no namespace declaration)
 
@@ -86,11 +85,11 @@ fn example() {
 > **Note:** The root namespace is intended for small projects or truly global declarations. Larger projects should
 > namespace everything.
 
-### 1.24.4 `using` Declarations
+## 1.24.4 `using` Declarations
 
 The `using` keyword brings names from another namespace into scope, eliminating the need for `::` qualification:
 
-```
+```writ
 // file: game/combat.writ
 namespace game;
 
@@ -105,11 +104,11 @@ fn example() {
 Without the `using`, these would require `survival::HealthPotion` and `survival::heal`. Only `pub` declarations from
 the target namespace are brought into scope.
 
-#### 1.24.4.1 Alias Form
+### 1.24.4.1 Alias Form
 
 The alias form binds a namespace to a shorter name:
 
-```
+```writ
 using items = survival::items;
 
 fn example() {
@@ -120,7 +119,7 @@ fn example() {
 The alias does **not** bring individual names into scope — it only shortens the namespace prefix. `Bread` alone would
 not resolve; `items::Bread` is required.
 
-#### 1.24.4.2 Placement Rules
+### 1.24.4.2 Placement Rules
 
 - In **declarative-form files**: `using` may appear before or after the `namespace` declaration, but must appear before
   any other declarations.
@@ -128,7 +127,7 @@ not resolve; `items::Bread` is required.
   scoped to that block).
 - In **files with no namespace**: `using` must appear before any declarations.
 
-```
+```writ
 // Declarative — using before or after namespace
 using combat;
 namespace survival;
@@ -137,7 +136,7 @@ using quest_system;
 // ... declarations ...
 ```
 
-```
+```writ
 // Block — using inside a namespace block
 namespace game {
     using survival;
@@ -149,7 +148,7 @@ namespace game {
 }
 ```
 
-#### 1.24.4.3 Scope of `using`
+### 1.24.4.3 Scope of `using`
 
 A `using` declaration is scoped to its enclosing context:
 
@@ -159,7 +158,7 @@ A `using` declaration is scoped to its enclosing context:
 `using` does **not** re-export. A file that does `using survival;` makes `survival`'s names available locally, but
 consumers of that file's namespace must add their own `using` or use `::` qualification.
 
-#### 1.24.4.4 Glob Enum Imports and Sub-Prelude Builtins
+### 1.24.4.4 Glob Enum Imports and Sub-Prelude Builtins
 
 A `using` declaration may end with `::*` to import all variants of an enum into scope without requiring the enum name as a prefix:
 
@@ -187,6 +186,10 @@ Without `using Direction::*;`, the pattern arms would require `Direction::North`
 3. The qualified form (`Direction::North`) always continues to work regardless of glob imports.
 4. `using Option::*;` is valid but has no visible effect — `None` and `Some` are already available as sub-prelude builtins (see below).
 
+> **Note:** `using log::*;` is invalid — `log` is not an enum but a namespace alias for inbuilt
+> functions (see section 1.27.4). The `::*` glob form only applies to enum types. Attempting to
+> glob-import a non-enum name produces **E0003 UnresolvedName**.
+
 **`None` and `Some` as sub-prelude builtins:**
 
 `None` and `Some` are injected into every scope automatically, without any `using` declaration:
@@ -206,12 +209,12 @@ fn f(x: bool?) -> bool? {
 - `Option::None` and `Option::Some(value)` qualified forms still work alongside the unqualified forms.
 - A user-defined symbol named `None` or `Some` (e.g., `fn None() -> int { 0 }`) silently shadows the builtin.
 
-### 1.24.5 Same-Namespace Visibility
+## 1.24.5 Same-Namespace Visibility
 
 `pub` declarations within the same namespace are visible to each other without `::` qualification, regardless of which
 file they are defined in:
 
-```
+```writ
 // file: survival/potions.writ
 namespace survival;
 
@@ -231,7 +234,7 @@ fn brewPotion() -> HealthPotion {
 
 Non-`pub` top-level declarations are file-local and not visible from other files, even within the same namespace.
 
-### 1.24.6 Visibility Modifiers
+## 1.24.6 Visibility Modifiers
 
 Writ has two visibility keywords: `pub` and `priv`. Declarations default to **private**.
 
@@ -241,13 +244,13 @@ Writ has two visibility keywords: `pub` and `priv`. Declarations default to **pr
 | `priv`   | **Private** (explicit) — same as no modifier, for when the author wants to be intentional |
 | `pub`    | **Public** — visible outside the file/type, accessible via `::` or `using`                |
 
-#### 1.24.6.1 Top-Level Declarations
+### 1.24.6.1 Top-Level Declarations
 
 Top-level declarations (`fn`, `struct`, `enum`, `contract`, `entity`, `component`, `const`, `global`) default to
 **private**, meaning they are visible only within the declaring file. `pub` makes them visible to all files and
 namespaces.
 
-```
+```writ
 namespace survival;
 
 // Private (default) — only visible within this file
@@ -280,7 +283,7 @@ priv fn internalHelper() {
 
 From another file in the same namespace:
 
-```
+```writ
 // file: survival/crafting.writ
 namespace survival;
 
@@ -293,7 +296,7 @@ fn example() {
 
 From another namespace:
 
-```
+```writ
 namespace game;
 using survival;
 
@@ -308,7 +311,7 @@ fn example() {
 **Exception — `dlg` declarations default to `pub`.** Dialogue blocks are intended to be called from other files and
 namespaces (via transitions, entity hooks, or direct invocation). A `dlg` can be made private with an explicit `priv`:
 
-```
+```writ
 namespace quest;
 
 // Public by default — can be called from other files and namespaces
@@ -322,12 +325,12 @@ priv dlg internalBranch() {
 }
 ```
 
-#### 1.24.6.2 Type Members
+### 1.24.6.2 Type Members
 
 Members of structs, entities, and components (fields, properties, and methods) default to **type-private** — only the
 type's own methods can access them. `pub` makes members visible wherever the type itself is visible.
 
-```
+```writ
 pub struct Merchant {
     pub name: string,             // public — accessible wherever Merchant is visible
     gold: int,                    // private — only Merchant's own methods can access
@@ -346,7 +349,7 @@ impl Merchant {
 }
 ```
 
-```
+```writ
 namespace survival;
 
 fn example(m: Merchant) {
@@ -356,11 +359,11 @@ fn example(m: Merchant) {
 }
 ```
 
-#### 1.24.6.3 Entity and Component Members
+### 1.24.6.3 Entity and Component Members
 
 Entities and components follow the same rules as structs:
 
-```
+```writ
 pub entity Guard {
     pub name: string = "Guard",
     alertLevel: int = 0,
@@ -394,12 +397,12 @@ called by user code).
 Component `use` declarations do not take visibility modifiers — component attachment is visible wherever the entity is
 visible. Component field visibility is governed by the component's own declarations.
 
-#### 1.24.6.4 Contracts and Implementations
+### 1.24.6.4 Contracts and Implementations
 
 Contract method signatures do not take visibility modifiers. Contract methods define a public interface — any type
 implementing the contract must expose those methods publicly:
 
-```
+```writ
 contract Tradeable {
     fn getInventory(self) -> List<Item>;    // no modifier — always part of the public interface
     fn trade(mut self, item: Item, with: Entity);
@@ -408,7 +411,7 @@ contract Tradeable {
 
 Methods in `impl` blocks that fulfill a contract requirement are implicitly `pub` and cannot be made private:
 
-```
+```writ
 impl Tradeable for Merchant {
     fn getInventory(self) -> List<Item> { ... }   // OK — implicitly pub
     fn trade(mut self, item: Item, with: Entity) { ... }
@@ -419,18 +422,18 @@ impl Tradeable for Merchant {
 
 Additional non-contract methods in an `impl` block follow normal visibility rules:
 
-```
+```writ
 impl Merchant {
     pub fn greet(self) -> string { ... }
     fn calculateMarkup(self) -> float { ... }    // private — only Merchant can call this
 }
 ```
 
-#### 1.24.6.5 Enum Variants
+### 1.24.6.5 Enum Variants
 
 Enum variants do not take individual visibility modifiers. All variants share the visibility of the enum itself:
 
-```
+```writ
 pub enum QuestStatus {
     NotStarted,                    // all variants are pub because the enum is pub
     InProgress(currentStep: int),
@@ -439,7 +442,7 @@ pub enum QuestStatus {
 }
 ```
 
-#### 1.24.6.6 Visibility Summary
+### 1.24.6.6 Visibility Summary
 
 | Declaration context           | `pub`  | (none) / `priv` |
 |-------------------------------|--------|-----------------|
@@ -457,12 +460,12 @@ pub enum QuestStatus {
 
 *`dlg` defaults to `pub`; an explicit `priv` makes it file-local. All other declarations default to private.
 
-### 1.24.7 Name Conflicts
+## 1.24.7 Name Conflicts
 
 If two namespaces define a type or function with the same name, and both are brought into scope via `using`, any
 **unqualified** reference to that name is a compile error:
 
-```
+```writ
 namespace ns_a;
 pub struct Item { name: string }
 
@@ -470,7 +473,7 @@ namespace ns_b;
 pub struct Item { id: int }
 ```
 
-```
+```writ
 // file: main.writ
 namespace main;
 
@@ -490,11 +493,11 @@ conflict is legal as long as no ambiguous name is actually used without qualific
 > **Note:** Only `pub` declarations are visible outside their declaring file. A `using` only brings `pub` declarations
 > into scope. Private declarations are never accessible from other files, even with `::` qualification.
 
-### 1.24.8 Cross-Namespace Access
+## 1.24.8 Cross-Namespace Access
 
 The `::` operator accesses `pub` names within a namespace:
 
-```
+```writ
 let pot = new survival::HealthPotion { charges: 3, healAmount: 50 };
 let bread = new survival::items::Bread { freshness: 1.0 };
 survival::heal(player, 25);
@@ -504,12 +507,12 @@ Fully qualified names always work for `pub` declarations, regardless of `using` 
 ambiguity when multiple `using` statements bring conflicting names into scope. Private declarations cannot be accessed
 via `::` from outside their file.
 
-### 1.24.9 Root Namespace Prefix (`::`)
+## 1.24.9 Root Namespace Prefix (`::`)
 
 A leading `::` with no left-hand side refers to the root namespace. This resolves ambiguity when a nested namespace
 shadows an outer one:
 
-```
+```writ
 namespace engine {
     namespace audio {
         pub struct Mixer { channels: int }
@@ -521,7 +524,7 @@ namespace audio {
 }
 ```
 
-```
+```writ
 namespace engine::audio;
 
 fn example() {
@@ -539,13 +542,13 @@ root.
 
 The leading `::` works in all expression and type contexts:
 
-```
+```writ
 let x = new ::survival::HealthPotion { charges: 3, healAmount: 50 };
 let y: ::survival::HealthPotion = x;
 ::survival::heal(player, 25);
 ```
 
-### 1.24.10 `::` Resolution
+## 1.24.10 `::` Resolution
 
 The `::` operator is used in three contexts:
 
@@ -558,7 +561,7 @@ namespace lookup is performed. If it names an enum type, variant lookup is perfo
 always starts from the root namespace. This is always unambiguous because namespaces and types occupy separate name
 spaces — a namespace `Option` and an enum `Option` cannot coexist (this would be a name conflict).
 
-### 1.24.11 File Path Convention
+## 1.24.11 File Path Convention
 
 Namespace structure **should** mirror the directory structure. This is a recommended convention, not a compiler-enforced
 rule:

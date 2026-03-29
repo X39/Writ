@@ -10,6 +10,10 @@ pub struct AsmModule {
     pub globals: Vec<AsmGlobal>,
     pub extern_fns: Vec<AsmExternFn>,
     pub methods: Vec<AsmMethod>,
+    pub exports: Vec<AsmExport>,
+    pub component_slots: Vec<AsmComponentSlot>,
+    pub locale_defs: Vec<AsmLocaleDef>,
+    pub attribute_defs: Vec<AsmAttributeDef>,
 }
 
 /// External module reference: `.extern "name" "min_version"`.
@@ -178,4 +182,35 @@ pub struct AsmExternFn {
 pub struct AsmMethodSig {
     pub params: Vec<AsmTypeRef>,
     pub return_type: AsmTypeRef,
+}
+
+/// Export def: `.export "name" method|type|global TokenInt`
+#[derive(Debug, Clone)]
+pub struct AsmExport {
+    pub name: String,
+    pub item_kind: u8,   // 0=method, 1=type, 2=global
+    pub item_token: u32, // raw MetadataToken integer
+}
+
+/// Component slot: `.component_slot EntityTokenInt ComponentTokenInt`
+#[derive(Debug, Clone)]
+pub struct AsmComponentSlot {
+    pub owner_entity: u32,
+    pub component_type: u32,
+}
+
+/// Locale def: `.locale DlgMethodTokenInt "locale" LocMethodTokenInt`
+#[derive(Debug, Clone)]
+pub struct AsmLocaleDef {
+    pub dlg_method: u32,
+    pub locale: String,
+    pub loc_method: u32,
+}
+
+/// Attribute def: `.attribute OwnerTokenInt OwnerKindInt "name"`
+#[derive(Debug, Clone)]
+pub struct AsmAttributeDef {
+    pub owner: u32,
+    pub owner_kind: u8,
+    pub name: String,
 }

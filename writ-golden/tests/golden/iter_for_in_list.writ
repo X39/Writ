@@ -1,0 +1,60 @@
+pub class ListIterator<T> {
+    source: T[],
+    index: int
+}
+
+impl<T> ListIterator<T> {
+    pub fn next(mut self) -> T? {
+        if self.index >= self.source.len() {
+            return null;
+        }
+        let item: T = self.source[self.index];
+        self.index = self.index + 1;
+        item
+    }
+}
+
+impl<T> Iterator<T> for ListIterator<T> {
+    pub fn next(mut self) -> T? {
+        if self.index >= self.source.len() {
+            return null;
+        }
+        let item: T = self.source[self.index];
+        self.index = self.index + 1;
+        item
+    }
+}
+
+pub class List<T> {
+    items: T[]
+}
+
+impl<T> List<T> {
+    pub fn add(mut self, item: T) {
+        let old_len: int = self.items.len();
+        self.items.resize(old_len + 1);
+        self.items[old_len] = item;
+    }
+
+    pub fn len(self) -> int {
+        self.items.len()
+    }
+}
+
+impl<T> Iterable<T> for List<T> {
+    pub fn iterator(self) -> Iterator<T> {
+        new ListIterator<T> { source: self.items, index: 0 }
+    }
+}
+
+fn main() {
+    let list: List<int> = new List<int> { items: [] };
+    list.add(10);
+    list.add(20);
+    list.add(30);
+    let mut sum: int = 0;
+    for x in list {
+        sum = sum + x;
+    }
+    let _result: int = sum;
+}

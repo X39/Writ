@@ -267,6 +267,48 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
             // direct/extern/virtual dispatch path below regardless of callee type.
             let is_static_call = callee_def_id.is_some();
 
+            // EMIT-01/EMIT-02: Contract-typed receiver dispatch.
+            // Must come BEFORE the !is_static_call + Func-typed Branch A check because:
+            // - callee_def_id is None for contract method calls (Branch A intercepts)
+            // - callee type IS TyKind::Func (Branch A matches! check passes)
+            // - extract_type_def_id returns None for TyKind::Contract (falls to CALL_INDIRECT)
+            if !is_static_call {
+                if let TypedExpr::Field { receiver, field, .. } = callee.as_ref() {
+                    if let TyKind::Contract(contract_def_id) = emitter.interner.kind(receiver.ty()).clone() {
+                        let TypedExpr::Call { ty, args, .. } = expr else { unreachable!() };
+                        let r_dst_call = emitter.alloc_reg(*ty);
+
+                        // Emit self (receiver) first, then remaining args
+                        let r_self = emit_expr(emitter, receiver);
+                        let arg_regs: Vec<u16> = std::iter::once(r_self)
+                            .chain(args.iter().map(|arg| emit_expr(emitter, arg)))
+                            .collect();
+                        let r_base = pack_args_consecutive(emitter, &arg_regs);
+
+                        // Resolve contract token and slot by name (callee_def_id is None on this path)
+                        let contract_token = emitter.builder.token_for_def(contract_def_id)
+                            .map(|t| t.0)
+                            .unwrap_or(0);
+                        let slot = emitter.builder.contract_method_slot_by_name(contract_def_id, field)
+                            .unwrap_or(0);
+
+                        // CALL_VIRT layout: r_obj = receiver, r_base = first extra arg, argc = n-1
+                        let r_obj = r_base;
+                        let r_args_base = if arg_regs.len() > 1 { r_base + 1 } else { r_base };
+                        let n_args = (arg_regs.len() as u16).saturating_sub(1);
+                        emitter.emit(Instruction::CallVirt {
+                            r_dst: r_dst_call,
+                            r_obj,
+                            contract_idx: contract_token,
+                            slot,
+                            r_base: r_args_base,
+                            argc: n_args,
+                        });
+                        return r_dst_call;
+                    }
+                }
+            }
+
             // IMPL-METHOD fix: when callee_def_id is None but the callee is a
             // Field access on a concrete Struct/Class receiver (e.g. `f.compute()`
             // from `impl Contract for Foo`), look up the MethodDef by type+name
@@ -336,10 +378,42 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
                 let argc = arg_regs.len() as u16;
                 let r_base = pack_args_consecutive(emitter, &arg_regs);
 
-                let method_idx = maybe_def_id
-                    .and_then(|id| emitter.builder.token_for_def(id))
-                    .map(|t| t.0)
-                    .unwrap_or(0);
+                // IMPL-METHOD-TOKEN fix: impl methods share the impl_def_id as their callee_def_id
+                // (all methods in an impl block have the same DefId — the impl block's DefId).
+                // token_for_def(impl_def_id) always returns the LAST method's token because
+                // collect_impl overwrites the same key on each iteration. This causes all intra-impl
+                // calls to target the wrong method (the last one registered).
+                //
+                // Fix: for Field-on-Class/Struct/Entity callee, resolve the method token by
+                // (receiver_type_def_id, method_name) which is always unique and correct.
+                // Fall back to token_for_def only for free-function calls where the def_id
+                // uniquely identifies a single method.
+                let method_idx = if let TypedExpr::Field { receiver, field, .. } = callee.as_ref() {
+                    match emitter.interner.kind(receiver.ty()) {
+                        TyKind::Struct(rdid) | TyKind::Class(rdid) | TyKind::Entity(rdid) => {
+                            let rdid = *rdid;
+                            emitter.builder.methoddef_token_by_type_and_name(rdid, field)
+                                .unwrap_or_else(|| {
+                                    // Fallback: token_for_def (works for non-impl methods)
+                                    maybe_def_id
+                                        .and_then(|id| emitter.builder.token_for_def(id))
+                                        .map(|t| t.0)
+                                        .unwrap_or(0)
+                                })
+                        }
+                        _ => {
+                            maybe_def_id
+                                .and_then(|id| emitter.builder.token_for_def(id))
+                                .map(|t| t.0)
+                                .unwrap_or(0)
+                        }
+                    }
+                } else {
+                    maybe_def_id
+                        .and_then(|id| emitter.builder.token_for_def(id))
+                        .map(|t| t.0)
+                        .unwrap_or(0)
+                };
 
                 match kind {
                     super::call::CallKind::Direct => {
@@ -451,6 +525,44 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
         TypedExpr::Defer { expr: inner, .. } => {
             emit_defer(emitter, inner)
         }
+        // ── TypeOf — emit TypeOf instruction with baked-in type_idx ─────────
+        TypedExpr::TypeOf { ty, static_ty, .. } => {
+            let r_dst = emitter.alloc_reg(*ty);
+            let type_idx = resolve_typeof_type_idx(emitter, *static_ty);
+            emitter.emit(Instruction::TypeOf { r_dst, type_idx });
+            r_dst
+        }
+    }
+}
+
+// ─── typeof type_idx resolution ──────────────────────────────────────────────
+
+/// Resolve the type_idx token for a TypeOf instruction.
+///
+/// For user-defined types (struct, class, entity, enum, contract): uses `token_for_def`
+/// to look up the TypeDef MetadataToken for the type's DefId.
+///
+/// For primitive types (int, float, bool, string): uses `type_ref_token_by_name` to look
+/// up the writ-runtime pseudo-TypeDef TypeRef token registered in collect_defs.
+///
+/// Returns 0 for unsupported types (e.g. generic params, infer) — the runtime handles
+/// a 0 type_idx gracefully.
+fn resolve_typeof_type_idx(emitter: &BodyEmitter<'_>, static_ty: Ty) -> u32 {
+    match emitter.interner.kind(static_ty) {
+        TyKind::Struct(def_id)
+        | TyKind::Class(def_id)
+        | TyKind::Entity(def_id)
+        | TyKind::Enum(def_id)
+        | TyKind::Contract(def_id) => {
+            emitter.builder.token_for_def(*def_id)
+                .map(|t| t.0)
+                .unwrap_or(0)
+        }
+        TyKind::Int => emitter.builder.type_ref_token_by_name("Int"),
+        TyKind::Float => emitter.builder.type_ref_token_by_name("Float"),
+        TyKind::Bool => emitter.builder.type_ref_token_by_name("Bool"),
+        TyKind::String => emitter.builder.type_ref_token_by_name("String"),
+        _ => 0, // Unsupported types get 0 (runtime handles gracefully)
     }
 }
 

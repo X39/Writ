@@ -1,0 +1,17 @@
+pub class Box<T> {
+    value: T
+}
+
+impl<T> Box<T> {
+    pub fn get(self) -> T {
+        self.value
+    }
+
+    pub fn set(mut self, v: T) {
+        self.value = v;
+    }
+}
+
+fn main() {
+    let b: Box<int> = new Box<int> { value: 42 };
+}

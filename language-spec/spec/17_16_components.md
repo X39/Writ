@@ -1,13 +1,12 @@
-# 1. Writ Language Specification
-## 1.16 Components
+# 1.16 Components
 
 Components are data schemas for composable behaviors that can be attached to entities via `use`. Components are always
 engine-provided (`extern`) and contain only field declarations — no methods. The host engine owns component storage and
 behavior; the script language defines the schema for compile-time type checking and field access.
 
-### 1.16.1 Component Declarations
+## 1.16.1 Component Declarations
 
-```
+```writ
 extern component Sprite {
     texture: string,
     scale: float = 1.0,
@@ -34,12 +33,12 @@ extern component Health {
 }
 ```
 
-### 1.16.2 Component Access
+## 1.16.2 Component Access
 
 Script code reads and writes component fields directly. Components have no script-defined methods — any logic involving
 component data is written as entity methods or free functions.
 
-```
+```writ
 // Direct field access
 guard[Health].current -= 10;
 if guard[Health].current <= 0 {
@@ -51,7 +50,7 @@ let isVisible = guard[Sprite].visible;
 guard[Sprite].texture = "res://sprites/guard_alert.png";
 ```
 
-### 1.16.3 Runtime Behavior
+## 1.16.3 Runtime Behavior
 
 Component field reads and writes on extern components are proxied through the host API. When script code writes
 `guard[Sprite].visible = false`, the runtime sends the field change to the host engine, which updates the native

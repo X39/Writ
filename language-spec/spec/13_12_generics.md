@@ -1,9 +1,8 @@
-# 1. Writ Language Specification
-## 1.12 Generics
+# 1.12 Generics
 
 Type parameters can be unbounded or bounded by one or more contracts.
 
-```
+```writ
 // Unbounded generic
 fn first<T>(items: List<T>) -> T {
     items[0]
@@ -35,7 +34,7 @@ impl Consumable<HealEffect> for HealthPotion {
 }
 ```
 
-### 1.12.1 Compiler and Runtime Notes
+## 1.12.1 Compiler and Runtime Notes
 
 The compiler performs generic validation at declaration sites (ensuring bounded type parameters are used correctly) and
 at call sites (verifying concrete types satisfy bounds). Value types passed through generic parameters are **boxed** —
@@ -45,11 +44,11 @@ At runtime, generic dispatch resolves through the **contract dispatch table**: a
 `(concrete_type_tag, contract_id, method_slot)` to a method entry point. The spec does not mandate a specific dispatch
 strategy — runtimes may use hash tables, vtable arrays, inline caches, or monomorphization as they see fit.
 
-### 1.12.2 Generic Call Syntax
+## 1.12.2 Generic Call Syntax
 
 At call sites, type arguments are provided with `<T>` directly after the function or type name.
 
-```
+```writ
 let item = first<Item>(inventory);
 let result = parse<int>("42");
 

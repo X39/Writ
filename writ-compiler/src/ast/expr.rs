@@ -132,6 +132,13 @@ pub enum AstExpr {
         span: SimpleSpan,
     },
 
+    // --- Reflection ---
+
+    /// typeof expression: `typeof(expr)` — static compile-time type query.
+    /// NOT a function call — lowers directly from CST::TypeOf.
+    /// Result type: TyKind::ReflectionType(static type of inner expr).
+    TypeOf { expr: Box<AstExpr>, span: SimpleSpan },
+
     // --- Assignment ---
 
     /// Plain assignment only (`=`).

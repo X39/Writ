@@ -457,6 +457,7 @@ mod tests {
         let (resolved, resolve_diags) = writ_compiler::resolve::resolve(
             &[(file_id, &ast)],
             &[(file_id, "test.writ")],
+            &[],
         );
         let resolve_errors: Vec<_> = resolve_diags
             .iter()
@@ -465,7 +466,7 @@ mod tests {
         assert!(resolve_errors.is_empty(), "resolve errors: {:?}", resolve_errors);
 
         let (typed_ast, _interner, _type_env, type_diags) =
-            writ_compiler::check::typecheck(resolved, &[(file_id, &ast)]);
+            writ_compiler::check::typecheck(resolved, &[(file_id, &ast)], &[]);
         let type_errors: Vec<_> = type_diags
             .iter()
             .filter(|d| d.severity == Severity::Error)
@@ -491,6 +492,7 @@ mod tests {
         let (resolved, resolve_diags) = writ_compiler::resolve::resolve(
             &[(file_id, &ast)],
             &[(file_id, "test.writ")],
+            &[],
         );
         let resolve_errors: Vec<_> = resolve_diags
             .iter()
@@ -499,7 +501,7 @@ mod tests {
         assert!(resolve_errors.is_empty(), "resolve errors: {:?}", resolve_errors);
 
         let (typed_ast, interner, type_env, type_diags) =
-            writ_compiler::check::typecheck(resolved, &[(file_id, &ast)]);
+            writ_compiler::check::typecheck(resolved, &[(file_id, &ast)], &[]);
         let type_errors: Vec<_> = type_diags
             .iter()
             .filter(|d| d.severity == Severity::Error)

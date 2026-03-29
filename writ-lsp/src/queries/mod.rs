@@ -3,6 +3,7 @@
 //! Provides position-to-node walking over the TypedAst and helper functions
 //! used by hover, goto-def, find-refs, completions, and signature help.
 
+pub mod code_actions;
 pub mod completion;
 pub mod hover;
 pub mod references;
@@ -37,5 +38,6 @@ pub use completion::build_new_keyword_completions;
 pub use completion::is_after_new_keyword;
 
 pub use semantic::collect_semantic_tokens;
-pub use semantic::collect_dialogue_speaker_tokens;
 pub use semantic::RawSemanticToken;
+
+pub use code_actions::build_code_actions;

@@ -1,0 +1,34 @@
+fn main() {
+    let mut arr: int[] = [1, 2, 3];
+
+    // len (retained — ARR-04)
+    let _len = arr.len();
+
+    // indexed access (retained — ARR-04)
+    let _first = arr[0];
+    arr[1] = 42;
+
+    // resize grow — new slots filled with default (0 for int) (ARR-02)
+    arr.resize(5);
+    let _len_after_grow = arr.len();
+    let _new_slot = arr[3];
+
+    // resize shrink — truncation (ARR-02)
+    arr.resize(2);
+    let _len_after_shrink = arr.len();
+
+    // slice (retained — ARR-04)
+    let sub = arr.slice(0, 2);
+    let _sub_len = sub.len();
+
+    // copy_from — cross-array copy (ARR-03)
+    let mut dst: int[] = [0, 0, 0, 0, 0];
+    let src: int[] = [10, 20, 30];
+    dst.copy_from(src, 0, 1, 3);
+    let _copied = dst[1];
+
+    // copy_from — same array overlap (memmove semantics, D-09)
+    let mut overlap: int[] = [1, 2, 3, 4, 5];
+    overlap.copy_from(overlap, 0, 1, 3);
+    let _shifted = overlap[1];
+}

@@ -1,0 +1,17 @@
+// Dialogue text interpolation -- exercises {expr} inline syntax in speaker lines.
+// Tests lower_dlg_text -> lower_fmt_string pipeline with DlgTextSegment::Expr nodes.
+// Covers string-typed and int-typed interpolation in dialogue text.
+
+[Singleton]
+entity Narrator {}
+
+dlg greet(npc: Entity, name: string, count: int) {
+    @npc Hello {name}!
+    @npc Visit number {count} for you.
+    @npc Welcome back, {name}, on visit {count}.
+}
+
+fn main() {
+    let e: Entity = Entity.getOrCreate<Narrator>();
+    greet(e, "World", 3);
+}

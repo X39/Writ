@@ -1,0 +1,8 @@
+// String length returns byte count (RT-02 regression anchor).
+// Validates that s.len() compiles through the full pipeline and
+// the StrLen instruction returns the correct byte length.
+
+pub fn main() -> int {
+    let s: string = "hello";
+    s.len()
+}

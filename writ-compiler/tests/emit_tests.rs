@@ -29,7 +29,7 @@ fn emit_src(src: &'static str) -> (ModuleBuilder, Vec<Diagnostic>) {
     let file_id = FileId(0);
     let asts: Vec<(FileId, &Ast)> = vec![(file_id, &ast)];
     let file_paths: Vec<(FileId, &str)> = vec![(file_id, "src/test.writ")];
-    let (resolved, resolve_diags) = resolve::resolve(&asts, &file_paths);
+    let (resolved, resolve_diags) = resolve::resolve(&asts, &file_paths, &[]);
 
     let resolve_errors: Vec<&Diagnostic> = resolve_diags
         .iter()
@@ -41,7 +41,7 @@ fn emit_src(src: &'static str) -> (ModuleBuilder, Vec<Diagnostic>) {
         resolve_errors
     );
 
-    let (typed_ast, interner, _type_env, type_diags) = typecheck(resolved, &asts);
+    let (typed_ast, interner, _type_env, type_diags) = typecheck(resolved, &asts, &[]);
     let type_errors: Vec<&Diagnostic> = type_diags
         .iter()
         .filter(|d| d.severity == Severity::Error)
@@ -201,9 +201,50 @@ fn impl_emits_impldef() {
         "#,
     );
     assert!(diags.is_empty(), "unexpected emit diags: {:?}", diags);
-    // ImplDef row should be emitted even if the type checker
-    // doesn't fully populate impl methods yet.
-    assert_eq!(builder.impl_def_count(), 1, "should have 1 ImplDef");
+    // ImplDef rows: 1 user impl + 1 Reflectable auto-impl for struct Foo = 2
+    assert_eq!(builder.impl_def_count(), 2, "should have 2 ImplDefs (1 user + 1 Reflectable auto-impl)");
+}
+
+// =========================================================
+// Reflectable auto-impl tests
+// =========================================================
+
+#[test]
+fn reflectable_auto_impl_three_types() {
+    let (builder, diags) = emit_src(
+        r#"
+        struct Point { x: int, y: int }
+        enum Color { Red, Blue }
+        entity Guard { name: string }
+        "#,
+    );
+    assert!(diags.is_empty(), "unexpected emit diags: {:?}", diags);
+    // 3 user types -> 3 Reflectable auto-impls (no user impls in this source)
+    assert_eq!(builder.impl_def_count(), 3, "should have 3 Reflectable auto-impls");
+    // 3 synthetic get_type() MethodDefs (one per user type)
+    assert_eq!(builder.method_def_count(), 3, "should have 3 get_type() MethodDefs");
+}
+
+#[test]
+fn method_list_invariant_holds() {
+    // After Phase 105, each user TypeDef's Reflectable ImplDef.method_list must be
+    // non-zero (pointing to the get_type() MethodDef row in the finalized table).
+    // Verified at the metadata level: impl_def_count() == type_def_count() == 2,
+    // method_defs have get_type() before any user impl methods.
+    let (builder, diags) = emit_src(
+        r#"
+        struct Foo { x: int }
+        struct Bar { y: float }
+        "#,
+    );
+    assert!(diags.is_empty(), "unexpected emit diags: {:?}", diags);
+    assert_eq!(builder.impl_def_count(), 2, "2 Reflectable auto-impls");
+    assert_eq!(builder.type_def_count(), 2, "2 TypeDefs");
+    // method_list values are non-zero (tested indirectly: golden tests verify correct
+    // TYPEOF emission in disassembled output; domain_dispatch.rs uses method_list).
+    // Structural check: each TypeDef has a method_list pointing into the MethodDef table.
+    assert!(builder.typedef_method_list(0) > 0, "Foo.method_list must be non-zero after finalize");
+    assert!(builder.typedef_method_list(1) > 0, "Bar.method_list must be non-zero after finalize");
 }
 
 // =========================================================
@@ -250,10 +291,6 @@ fn extern_fn_emits_externdef() {
 fn choice_option_emits_externdef() {
     let (builder, diags) = emit_src(
         r#"
-        pub extern fn say(speaker: Entity, text: string);
-        pub extern fn choice(options: Array<ChoiceOption>);
-        pub extern fn ChoiceOption(label: string, key: string, body: fn());
-
         dlg ask(narrator: Entity) {
             @narrator What do you think?
             $ choice {
@@ -372,7 +409,8 @@ fn combined_struct_fn_const() {
     assert!(diags.is_empty(), "unexpected emit diags: {:?}", diags);
     assert_eq!(builder.type_def_count(), 1, "1 TypeDef (Circle)");
     assert_eq!(builder.field_def_count(), 1, "1 FieldDef (radius)");
-    assert_eq!(builder.method_def_count(), 1, "1 MethodDef (area)");
+    // 2 MethodDefs: 1 user fn (area) + 1 Reflectable get_type() for Circle
+    assert_eq!(builder.method_def_count(), 2, "2 MethodDefs (area + Circle.get_type)");
     assert_eq!(builder.param_def_count(), 1, "1 ParamDef (r)");
     assert_eq!(builder.global_def_count(), 1, "1 GlobalDef (PI)");
 }
@@ -580,4 +618,50 @@ fn hello() -> int {
         0,
         "no Locale attrs means 0 LocaleDef rows"
     );
+}
+
+// =========================================================
+// GenericConstraint tests
+// =========================================================
+
+/// A function with a single bound `<T: Equivalent>` produces exactly 1 GenericConstraint row.
+#[test]
+fn emit_generic_constraint_table() {
+    let (builder, diags) = emit_src(
+        r#"pub contract Equivalent { fn is_eq(self) -> bool; }
+           pub struct Bar { pub x: int }
+           impl Equivalent for Bar { fn is_eq(self) -> bool { true } }
+           pub fn check_eq<T: Equivalent>(a: T, b: T) -> bool { true }
+           pub fn test() {
+               let a = new Bar { x: 1 };
+               let b = new Bar { x: 2 };
+               check_eq(a, b);
+           }"#,
+    );
+    assert!(diags.is_empty(), "unexpected diags: {:?}", diags);
+    let constraints: Vec<_> = builder.finalized_generic_constraints().to_vec();
+    assert_eq!(constraints.len(), 1, "expected 1 GenericConstraint row, got {}", constraints.len());
+    assert_eq!(constraints[0].param_row, 1, "param_row should be 1-based");
+    assert_ne!(constraints[0].constraint, MetadataToken::NULL, "constraint token should be resolved");
+}
+
+/// A function with two bounds `<T: Equivalent + Comparable>` produces exactly 2 GenericConstraint rows.
+#[test]
+fn emit_generic_multi_constraint() {
+    let (builder, diags) = emit_src(
+        r#"pub contract Equivalent { fn is_eq(self) -> bool; }
+           pub contract Comparable { fn cmp(self) -> int; }
+           pub struct Pair { pub x: int }
+           impl Equivalent for Pair { fn is_eq(self) -> bool { true } }
+           impl Comparable for Pair { fn cmp(self) -> int { 0 } }
+           pub fn compare<T: Equivalent + Comparable>(a: T, b: T) -> bool { true }
+           pub fn test() {
+               let a = new Pair { x: 1 };
+               let b = new Pair { x: 2 };
+               compare(a, b);
+           }"#,
+    );
+    assert!(diags.is_empty(), "unexpected diags: {:?}", diags);
+    let constraints: Vec<_> = builder.finalized_generic_constraints().to_vec();
+    assert_eq!(constraints.len(), 2, "expected 2 GenericConstraint rows for Equivalent + Comparable, got {}", constraints.len());
 }

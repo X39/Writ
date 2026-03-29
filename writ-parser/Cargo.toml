@@ -10,3 +10,6 @@ logos = "0.16"
 [dev-dependencies]
 ariadne = "0.6"
 insta = { version = "1", features = ["ron"] }
+
+[lints]
+workspace = true

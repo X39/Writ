@@ -118,13 +118,13 @@ fn test_array_len_round_trip() {
 }
 
 #[test]
-fn test_array_add_round_trip() {
-    round_trip(&Instruction::ArrayAdd { r_arr: 2, r_val: 3 });
+fn test_array_resize_round_trip() {
+    round_trip(&Instruction::ArrayResize { r_arr: 2, r_new_len: 3 });
 }
 
 #[test]
-fn test_array_remove_round_trip() {
-    round_trip(&Instruction::ArrayRemove { r_arr: 4, r_idx: 5 });
+fn test_array_copy_round_trip() {
+    round_trip(&Instruction::ArrayCopy { r_dst_arr: 0, r_dst_idx: 1, r_src_arr: 2, r_src_idx: 3, r_len: 4 });
 }
 
 // ── Shape RRR ──────────────────────────────────────────────────
@@ -150,8 +150,13 @@ fn test_array_store_round_trip() {
 }
 
 #[test]
-fn test_array_insert_round_trip() {
-    round_trip(&Instruction::ArrayInsert { r_arr: 6, r_idx: 7, r_val: 8 });
+fn test_new_array_sized_round_trip() {
+    round_trip(&Instruction::NewArraySized { r_dst: 0, elem_type: 0x04_000001, r_len: 5 });
+}
+
+#[test]
+fn test_new_array_filled_round_trip() {
+    round_trip(&Instruction::NewArrayFilled { r_dst: 0, elem_type: 0x04_000001, r_len: 5, r_fill: 3 });
 }
 
 // ── Shape RI32 ─────────────────────────────────────────────────
@@ -409,16 +414,17 @@ fn test_all_91_opcodes_round_trip() {
         Instruction::FindAll { r_dst: 0, type_idx: 700 },
         Instruction::DestroyEntity { r_entity: 0 },
         Instruction::EntityIsAlive { r_dst: 0, r_entity: 1 },
-        // 0x09 Arrays (9)
+        // 0x09 Arrays (10)
         Instruction::NewArray { r_dst: 0, elem_type: 100 },
         Instruction::ArrayInit { r_dst: 0, elem_type: 200, count: 5, r_base: 1 },
         Instruction::ArrayLoad { r_dst: 0, r_arr: 1, r_idx: 2 },
         Instruction::ArrayStore { r_arr: 0, r_idx: 1, r_val: 2 },
         Instruction::ArrayLen { r_dst: 0, r_arr: 1 },
-        Instruction::ArrayAdd { r_arr: 0, r_val: 1 },
-        Instruction::ArrayRemove { r_arr: 0, r_idx: 1 },
-        Instruction::ArrayInsert { r_arr: 0, r_idx: 1, r_val: 2 },
+        Instruction::ArrayResize { r_arr: 0, r_new_len: 1 },
+        Instruction::ArrayCopy { r_dst_arr: 0, r_dst_idx: 1, r_src_arr: 2, r_src_idx: 3, r_len: 4 },
         Instruction::ArraySlice { r_dst: 0, r_arr: 1, r_start: 2, r_end: 3 },
+        Instruction::NewArraySized { r_dst: 0, elem_type: 100, r_len: 5 },
+        Instruction::NewArrayFilled { r_dst: 0, elem_type: 100, r_len: 5, r_fill: 3 },
         // 0x0A Option (4)
         Instruction::WrapSome { r_dst: 0, r_val: 1 },
         Instruction::Unwrap { r_dst: 0, r_opt: 1 },
@@ -435,6 +441,8 @@ fn test_all_91_opcodes_round_trip() {
         Instruction::NewEnum { r_dst: 0, type_idx: 100, tag: 1, field_count: 2, r_base: 1 },
         Instruction::GetTag { r_dst: 0, r_enum: 1 },
         Instruction::ExtractField { r_dst: 0, r_enum: 1, field_idx: 0 },
+        // 0x0A Reflection (1)
+        Instruction::TypeOf { r_dst: 0, type_idx: 42 },
         // 0x0B Concurrency (7)
         Instruction::SpawnTask { r_dst: 0, method_idx: 100, r_base: 1, argc: 2 },
         Instruction::SpawnDetached { r_dst: 0, method_idx: 200, r_base: 1, argc: 0 },
@@ -464,13 +472,21 @@ fn test_all_91_opcodes_round_trip() {
         Instruction::Unbox { r_dst: 0, r_boxed: 1 },
     ];
 
-    // The plan references "91 opcodes" but the actual opcode assignment table (spec section 4.2)
-    // defines 98 distinct opcodes when fully counted across all categories.
-    assert_eq!(instructions.len(), 98, "expected exactly 98 instructions (all opcodes from spec section 4.2)");
+    // The plan references "93 opcodes" in the doc comment. The actual opcode assignment table
+    // (spec section 4.2) defines 100 distinct opcodes when fully counted across all categories
+    // (array group now has 10 opcodes: 0x0900-0x0909).
+    assert_eq!(instructions.len(), 100, "expected exactly 100 instructions (all opcodes from spec section 4.2)");
 
     for instr in &instructions {
         round_trip(instr);
     }
+}
+
+// ── Reflection ─────────────────────────────────────────────────
+
+#[test]
+fn test_typeof_round_trip() {
+    round_trip(&Instruction::TypeOf { r_dst: 3, type_idx: 42 });
 }
 
 // ── Error cases ────────────────────────────────────────────────

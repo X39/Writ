@@ -1,0 +1,29 @@
+.module "main" "0.1.0" {
+    .extern "writ-runtime" "1.0.0"
+    .type "__closure_0" class {
+        .field "x" ?
+    }
+    .method "__invoke_0" () -> void {
+        .reg r0 void
+        .reg r1 int
+        GET_FIELD r1, r0, 0
+        RET r1  ; line:1 col:84
+    }
+    .method "main" () -> int pub mut {
+        .locals {
+            r0: int "x" [12, 54)
+            r1: ? "f" [40, 54)
+        }
+        .reg r0 int
+        .reg r1 ?
+        .reg r2 ?
+        .reg r3 int
+        LOAD_INT r0, 42  ; line:1 col:28
+        NEW r2, 33554433  ; line:1 col:49
+        SET_FIELD r2, 0, r0
+        NEW_DELEGATE r1, 117440513, r2
+        CALL_INDIRECT r3, r1, r4, 0  ; line:1 col:93
+        RET r3
+    }
+    .export "main" method 117440514
+}

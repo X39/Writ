@@ -1,5 +1,4 @@
-# Writ IL Specification
-## 4.1 Instruction Shape Reference
+# 4.1 Instruction Shape Reference
 
 | Shape  | Layout           | Size   | Byte Breakdown                                      |
 |--------|------------------|--------|-----------------------------------------------------|

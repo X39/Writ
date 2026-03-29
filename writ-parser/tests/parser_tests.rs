@@ -3122,21 +3122,6 @@ fn test_extern_fn_return() {
 }
 
 #[test]
-fn test_extern_struct() {
-    let items = parse_ok_items("extern struct Vec2 { x: float, y: float, }");
-    assert_eq!(items.len(), 1);
-    match &items[0].0 {
-        Item::Extern((ExternDecl::Struct(_vis, (sd, _)), _)) => {
-            assert_eq!(sd.name.0, "Vec2");
-            assert_eq!(sd.members.len(), 2);
-            assert_eq!(unwrap_struct_field(&sd.members[0]).name.0, "x");
-            assert_eq!(unwrap_struct_field(&sd.members[1]).name.0, "y");
-        }
-        other => panic!("Expected Item::Extern(ExternDecl::Struct), got {:?}", other),
-    }
-}
-
-#[test]
 fn test_extern_component() {
     let items = parse_ok_items("extern component Transform { position: Vec2, rotation: float, }");
     assert_eq!(items.len(), 1);
@@ -4071,17 +4056,6 @@ fn test_extern_fn_pub() {
 }
 
 #[test]
-fn test_extern_struct_pub() {
-    let items = parse_ok_items("pub extern struct Vec2 { x: float, y: float, }");
-    match &items[0].0 {
-        Item::Extern((ExternDecl::Struct(vis, _), _)) => {
-            assert_eq!(*vis, Some(Visibility::Pub));
-        }
-        _ => panic!("expected pub extern struct"),
-    }
-}
-
-#[test]
 fn test_extern_component_pub() {
     let items = parse_ok_items("pub extern component Transform { position: Vec2, }");
     match &items[0].0 {
@@ -4245,5 +4219,54 @@ fn test_attr_positional_still_works() {
             assert!(matches!(&decl.attrs[0].0[0].args[0].0, AttrArg::Positional(_)));
         }
         _ => panic!("expected fn with attr"),
+    }
+}
+
+// ---------------------------------------------------------
+// attribute declarations
+// ---------------------------------------------------------
+
+#[test]
+fn attribute_decl_with_params() {
+    let items = parse_ok_items("attribute Quest(name: string, level: int);");
+    assert_eq!(items.len(), 1);
+    match &items[0].0 {
+        Item::Attribute((ad, _)) => {
+            assert_eq!(ad.name.0, "Quest");
+            assert_eq!(ad.params.len(), 2);
+            assert_eq!(ad.params[0].0.name.0, "name");
+            assert!(matches!(ad.params[0].0.ty.0, TypeExpr::Named("string")));
+            assert_eq!(ad.params[1].0.name.0, "level");
+            assert!(matches!(ad.params[1].0.ty.0, TypeExpr::Named("int")));
+            assert!(ad.vis.is_none());
+            assert!(ad.attrs.is_empty());
+        }
+        other => panic!("Expected Item::Attribute, got {:?}", other),
+    }
+}
+
+#[test]
+fn attribute_decl_no_params() {
+    let items = parse_ok_items("attribute Singleton;");
+    assert_eq!(items.len(), 1);
+    match &items[0].0 {
+        Item::Attribute((ad, _)) => {
+            assert_eq!(ad.name.0, "Singleton");
+            assert!(ad.params.is_empty());
+        }
+        other => panic!("Expected Item::Attribute, got {:?}", other),
+    }
+}
+
+#[test]
+fn attribute_decl_with_vis() {
+    let items = parse_ok_items("pub attribute Tag;");
+    assert_eq!(items.len(), 1);
+    match &items[0].0 {
+        Item::Attribute((ad, _)) => {
+            assert_eq!(ad.name.0, "Tag");
+            assert!(matches!(ad.vis, Some(Visibility::Pub)));
+        }
+        other => panic!("Expected Item::Attribute, got {:?}", other),
     }
 }

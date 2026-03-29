@@ -1,0 +1,120 @@
+.module "main" "0.1.0" {
+    .extern "writ-runtime" "1.0.0"
+    .method "main" () -> void mut {
+        .locals {
+            r0: array<int> "arr" [48, 544)
+            r4: int "_len" [54, 544)
+            r6: int "_first" [74, 544)
+            r11: int "_len_after_grow" [130, 544)
+            r13: int "_new_slot" [150, 544)
+            r16: int "_len_after_shrink" [174, 544)
+            r19: array<int> "sub" [208, 544)
+            r20: int "_sub_len" [214, 544)
+            r21: array<int> "dst" [286, 544)
+            r27: array<int> "src" [334, 544)
+            r36: int "_copied" [402, 544)
+            r37: array<int> "overlap" [474, 544)
+            r48: int "_shifted" [542, 544)
+        }
+        .reg r0 array<int>
+        .reg r1 int
+        .reg r2 int
+        .reg r3 int
+        .reg r4 int
+        .reg r5 int
+        .reg r6 int
+        .reg r7 int
+        .reg r8 int
+        .reg r9 int
+        .reg r10 void
+        .reg r11 int
+        .reg r12 int
+        .reg r13 int
+        .reg r14 int
+        .reg r15 void
+        .reg r16 int
+        .reg r17 int
+        .reg r18 int
+        .reg r19 array<int>
+        .reg r20 int
+        .reg r21 array<int>
+        .reg r22 int
+        .reg r23 int
+        .reg r24 int
+        .reg r25 int
+        .reg r26 int
+        .reg r27 array<int>
+        .reg r28 int
+        .reg r29 int
+        .reg r30 int
+        .reg r31 int
+        .reg r32 int
+        .reg r33 int
+        .reg r34 void
+        .reg r35 int
+        .reg r36 int
+        .reg r37 array<int>
+        .reg r38 int
+        .reg r39 int
+        .reg r40 int
+        .reg r41 int
+        .reg r42 int
+        .reg r43 int
+        .reg r44 int
+        .reg r45 int
+        .reg r46 void
+        .reg r47 int
+        .reg r48 int
+        LOAD_INT r1, 1  ; line:1 col:18
+        LOAD_INT r2, 2
+        LOAD_INT r3, 3
+        ARRAY_INIT r0, 0, 3, r1
+        ARRAY_LEN r4, r0  ; line:1 col:91
+        LOAD_INT r5, 0  ; line:1 col:165
+        ARRAY_LOAD r6, r0, r5
+        LOAD_INT r7, 42  ; line:1 col:191
+        LOAD_INT r8, 1
+        ARRAY_STORE r0, r8, r7
+        LOAD_INT r9, 5  ; line:1 col:286
+        ARRAY_RESIZE r0, r9
+        ARRAY_LEN r11, r0  ; line:1 col:306
+        LOAD_INT r12, 3  ; line:1 col:344
+        ARRAY_LOAD r13, r0, r12
+        LOAD_INT r14, 2  ; line:1 col:421
+        ARRAY_RESIZE r0, r14
+        ARRAY_LEN r16, r0  ; line:1 col:441
+        LOAD_INT r17, 0  ; line:1 col:519
+        LOAD_INT r18, 2
+        ARRAY_SLICE r19, r0, r17, r18
+        ARRAY_LEN r20, r19  ; line:1 col:551
+        LOAD_INT r22, 0  ; line:1 col:632
+        LOAD_INT r23, 0
+        LOAD_INT r24, 0
+        LOAD_INT r25, 0
+        LOAD_INT r26, 0
+        ARRAY_INIT r21, 0, 5, r22
+        LOAD_INT r28, 10  ; line:1 col:675
+        LOAD_INT r29, 20
+        LOAD_INT r30, 30
+        ARRAY_INIT r27, 0, 3, r28
+        LOAD_INT r31, 0  ; line:1 col:711
+        LOAD_INT r32, 1
+        LOAD_INT r33, 3
+        ARRAY_COPY r21, r32, r27, r31, r33
+        LOAD_INT r35, 1  ; line:1 col:745
+        ARRAY_LOAD r36, r21, r35
+        LOAD_INT r38, 1  ; line:1 col:841
+        LOAD_INT r39, 2
+        LOAD_INT r40, 3
+        LOAD_INT r41, 4
+        LOAD_INT r42, 5
+        ARRAY_INIT r37, 0, 5, r38
+        LOAD_INT r43, 0  ; line:1 col:888
+        LOAD_INT r44, 1
+        LOAD_INT r45, 3
+        ARRAY_COPY r37, r44, r37, r43, r45
+        LOAD_INT r47, 1  ; line:1 col:930
+        ARRAY_LOAD r48, r37, r47
+        RET_VOID
+    }
+}

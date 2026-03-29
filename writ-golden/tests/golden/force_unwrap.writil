@@ -23,7 +23,7 @@
         UNWRAP r2, r1  ; line:1 col:50
         IS_NONE r3, r1  ; line:1 col:75
         BR_FALSE r3, 34
-        LOAD_STRING r5, 56
+        LOAD_STRING r5, 139
         CRASH r5
         MOV r4, r6
         BR 20
@@ -33,5 +33,5 @@
         IS_SOME r9, r1  ; line:1 col:118
         RET_VOID
     }
-    // .export "main" method 117440513
+    .export "main" method 117440513
 }

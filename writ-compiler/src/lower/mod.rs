@@ -10,18 +10,18 @@ pub(crate) mod entity;
 
 use chumsky::span::SimpleSpan;
 use writ_parser::cst::{
-    Attribute, AttrArg, ClassDecl, ClassMember, ComponentDecl, ComponentMember, ConstDecl,
-    ContractDecl, ContractMember, EnumDecl, EnumVariant, ExternDecl, FnDecl, FnParam, FnSig,
-    GlobalDecl, Item, NamespaceDecl, OpSig, OpSymbol, Param, GenericParam, Spanned, StructDecl,
-    StructField, StructMember, UsingDecl, Visibility,
+    Attribute, AttrArg, AttributeDecl, ClassDecl, ClassMember, ComponentDecl, ComponentMember,
+    ConstDecl, ContractDecl, ContractMember, EnumDecl, EnumVariant, ExternDecl, FnDecl, FnParam,
+    FnSig, GlobalDecl, Item, NamespaceDecl, OpSig, OpSymbol, Param, GenericParam, Spanned,
+    StructDecl, StructField, StructMember, UsingDecl, Visibility,
 };
 use crate::ast::{Ast, AstDecl};
 use crate::ast::decl::{
-    AstAttribute, AstAttributeArg, AstClassDecl, AstComponentDecl, AstComponentMember,
-    AstConstDecl, AstContractDecl, AstContractMember, AstEnumDecl, AstEnumVariant, AstExternDecl,
-    AstFnDecl, AstFnParam, AstFnSig, AstGenericParam, AstGlobalDecl, AstNamespaceDecl,
-    AstOpSig, AstOpSymbol, AstParam, AstStructDecl, AstStructField, AstStructMember,
-    AstUsingDecl, AstVisibility,
+    AstAttribute, AstAttributeArg, AstAttributeDecl, AstClassDecl, AstComponentDecl,
+    AstComponentMember, AstConstDecl, AstContractDecl, AstContractMember, AstEnumDecl,
+    AstEnumVariant, AstExternDecl, AstFnDecl, AstFnParam, AstFnSig, AstGenericParam,
+    AstGlobalDecl, AstNamespaceDecl, AstOpSig, AstOpSymbol, AstParam, AstStructDecl,
+    AstStructField, AstStructMember, AstUsingDecl, AstVisibility,
 };
 use crate::lower::context::LoweringContext;
 use crate::lower::error::LoweringError;
@@ -104,6 +104,9 @@ pub fn lower(items: Vec<Spanned<Item<'_>>>) -> (Ast, Vec<LoweringError>) {
             }
             Item::Global((g, g_span)) => {
                 decls.push(AstDecl::Global(lower_global(g, g_span, &mut ctx)));
+            }
+            Item::Attribute((a, a_span)) => {
+                decls.push(AstDecl::Attribute(lower_attribute(a, a_span, &mut ctx)));
             }
             Item::Stmt((s, s_span)) => {
                 decls.push(AstDecl::Stmt(lower_stmt((s, s_span), &mut ctx)));
@@ -364,6 +367,9 @@ fn lower_namespace(ns: NamespaceDecl<'_>, ns_span: SimpleSpan, ctx: &mut Lowerin
                     Item::Global((g, g_span)) => {
                         decls.push(AstDecl::Global(lower_global(g, g_span, ctx)));
                     }
+                    Item::Attribute((a, a_span)) => {
+                        decls.push(AstDecl::Attribute(lower_attribute(a, a_span, ctx)));
+                    }
                     Item::Stmt((s, s_span)) => {
                         decls.push(AstDecl::Stmt(lower_stmt((s, s_span), ctx)));
                     }
@@ -549,8 +555,6 @@ fn lower_component(
 fn lower_extern(e: ExternDecl<'_>, _e_span: SimpleSpan, ctx: &mut LoweringContext) -> AstExternDecl {
     match e {
         ExternDecl::Fn(vis, (sig, sig_span)) => AstExternDecl::Fn(lower_vis(vis), lower_fn_sig(sig, sig_span, ctx)),
-        ExternDecl::Struct(vis, (s, s_span)) => AstExternDecl::Struct(lower_vis(vis), lower_struct(s, s_span, ctx)),
-        ExternDecl::Class(vis, (c, c_span)) => AstExternDecl::Class(lower_vis(vis), lower_class(c, c_span, ctx)),
         ExternDecl::Component(vis, (c, c_span)) => {
             AstExternDecl::Component(lower_vis(vis), lower_component(c, c_span, ctx))
         }
@@ -578,5 +582,24 @@ fn lower_global(g: GlobalDecl<'_>, g_span: SimpleSpan, ctx: &mut LoweringContext
         ty: lower_type(g.ty),
         value: lower_expr(g.value, ctx),
         span: g_span,
+    }
+}
+
+fn lower_attribute(
+    a: AttributeDecl<'_>,
+    a_span: SimpleSpan,
+    ctx: &mut LoweringContext,
+) -> AstAttributeDecl {
+    AstAttributeDecl {
+        attrs: lower_attrs(a.attrs, ctx),
+        vis: lower_vis(a.vis),
+        name: a.name.0.to_string(),
+        name_span: a.name.1,
+        params: a
+            .params
+            .into_iter()
+            .map(|(param, param_span)| lower_param(param, param_span))
+            .collect(),
+        span: a_span,
     }
 }

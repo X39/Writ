@@ -7,6 +7,36 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+/// A library dependency entry in `writ.toml`.
+///
+/// Supports both the short path string form:
+/// ```toml
+/// writ-std = "path/to/writ-std.writc"
+/// ```
+/// and the detailed table form:
+/// ```toml
+/// [dependencies.writ-std]
+/// path = "path/to/writ-std.writc"
+/// ```
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum DependencyConfig {
+    /// Short-form: `name = "path/to/file.writc"`
+    Path(String),
+    /// Long-form: `[dependencies.name]\npath = "path/to/file.writc"`
+    Detailed { path: String },
+}
+
+impl DependencyConfig {
+    /// Return the file path for this dependency.
+    pub fn path(&self) -> &str {
+        match self {
+            DependencyConfig::Path(p) => p,
+            DependencyConfig::Detailed { path } => path,
+        }
+    }
+}
+
 /// Top-level Writ project configuration, loaded from `writ.toml`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct WritConfig {
@@ -23,6 +53,9 @@ pub struct WritConfig {
     /// Build profile settings (debug and release).
     #[serde(default)]
     pub profile: ProfilesConfig,
+    /// External library dependencies (`.writc` files).
+    #[serde(default)]
+    pub dependencies: HashMap<String, DependencyConfig>,
 }
 
 /// Project metadata section.
@@ -321,5 +354,49 @@ debug_info = true
         assert!(matches!(result, Err(ConfigError::MissingToml(_))));
 
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn parse_dependencies_config() {
+        let toml_str = r#"
+[project]
+name = "test"
+version = "0.1.0"
+
+[dependencies]
+writ-std = "path/to/writ-std.writc"
+"#;
+        let config: WritConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.dependencies.len(), 1);
+        assert_eq!(
+            config.dependencies["writ-std"].path(),
+            "path/to/writ-std.writc"
+        );
+    }
+
+    #[test]
+    fn parse_detailed_dependency_config() {
+        let toml_str = r#"
+[project]
+name = "test"
+version = "0.1.0"
+
+[dependencies.writ-std]
+path = "libs/writ-std.writc"
+"#;
+        let config: WritConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.dependencies.len(), 1);
+        assert_eq!(config.dependencies["writ-std"].path(), "libs/writ-std.writc");
+    }
+
+    #[test]
+    fn dependencies_default_empty() {
+        let toml_str = r#"
+[project]
+name = "test"
+version = "0.1.0"
+"#;
+        let config: WritConfig = toml::from_str(toml_str).unwrap();
+        assert!(config.dependencies.is_empty());
     }
 }

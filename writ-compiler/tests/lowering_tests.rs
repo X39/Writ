@@ -1103,3 +1103,25 @@ fn lower_contract_with_op_sigs() {
     let ast = lower_src("contract Addable<T> { operator +(other: T) -> T; }");
     insta::assert_debug_snapshot!(ast);
 }
+
+// =========================================================
+// Reflection — typeof lowering
+// =========================================================
+
+/// typeof(x) lowers to AstExpr::TypeOf, not a Call node
+#[test]
+fn lower_typeof_basic() {
+    let ast = lower_src("fn test(x: int) { typeof(x); }");
+    let debug_str = format!("{ast:?}");
+    assert!(
+        debug_str.contains("TypeOf"),
+        "Expected AstExpr::TypeOf in lowered AST, got: {debug_str}"
+    );
+}
+
+/// typeof(x) lowered AST snapshot
+#[test]
+fn lower_typeof_snapshot() {
+    let ast = lower_src("fn test(x: int) { typeof(x); }");
+    insta::assert_debug_snapshot!(ast);
+}

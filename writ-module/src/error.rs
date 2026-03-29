@@ -43,6 +43,9 @@ pub enum DecodeError {
 
     #[error("invalid TypeDef kind: {0}")]
     InvalidTypeDefKind(u8),
+
+    #[error("invalid attribute tag: 0x{0:02X}")]
+    InvalidAttrTag(u8),
 }
 
 /// Errors encountered while encoding (writing) a binary module.

@@ -98,6 +98,7 @@ impl LanguageServer for Backend {
                     trigger_characters: Some(vec!["(".to_string(), ",".to_string()]),
                     ..Default::default()
                 }),
+                code_action_provider: Some(CodeActionProviderCapability::Simple(true)),
                 semantic_tokens_provider: Some(
                     SemanticTokensServerCapabilities::SemanticTokensOptions(
                         SemanticTokensOptions {
@@ -695,6 +696,51 @@ impl LanguageServer for Backend {
             result_id: None,
             data,
         })))
+    }
+
+    async fn code_action(
+        &self,
+        params: CodeActionParams,
+    ) -> jsonrpc::Result<Option<CodeActionResponse>> {
+        let uri = params.text_document.uri;
+        let uri_str = uri.to_string();
+
+        let source = match self.document_map.get(&uri_str) {
+            Some(s) => s.clone(),
+            None => return Ok(None),
+        };
+        let cache_entry = match self.analysis_cache.get(&uri_str) {
+            Some(e) => e.clone(),
+            None => return Ok(None),
+        };
+        let (typed_ast, interner, type_env) = match (
+            &cache_entry.typed_ast,
+            &cache_entry.ty_interner,
+            &cache_entry.type_env,
+        ) {
+            (Some(t), Some(i), Some(e)) => (t, i, e),
+            _ => return Ok(None),
+        };
+
+        let actions = crate::queries::build_code_actions(
+            &params.context.diagnostics,
+            &uri,
+            &source,
+            type_env,
+            interner,
+            &typed_ast.def_map,
+        );
+
+        if actions.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(
+                actions
+                    .into_iter()
+                    .map(CodeActionOrCommand::CodeAction)
+                    .collect(),
+            ))
+        }
     }
 }
 

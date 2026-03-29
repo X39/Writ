@@ -1,5 +1,105 @@
 # Milestones
 
+## v14.0 Array Semantics & Cross-Module Resolution (Shipped: 2026-03-29)
+
+**Phases completed:** 3 phases, 8 plans, 13 tasks
+
+**Key accomplishments:**
+
+- Replaced four growth opcodes (ArrayAdd/Remove/Insert/Contains) with four allocation-explicit opcodes (ArrayResize/ArrayCopy/NewArraySized/NewArrayFilled), renumbered ArraySlice from 0x0908 to 0x0907, and bumped format_version to 5 in writ-module
+- One-liner:
+- Array golden tests rewritten to exercise resize/copy_from/len/slice API; collection tests ignored for Phase 121; language and IL specs rewritten to describe arrays as allocation-explicit with 10 opcodes (0x0900-0x0909)
+- All four collection classes rewritten to use only resize/indexed-assignment/len on backing arrays — zero calls to the Phase 120-removed add/remove_at/contains primitives
+- 8 collection and iterator golden tests un-ignored and re-blessed — all pass with ARRAY_RESIZE in IL snapshots; full suite 72 passed, 0 failed
+- One-liner:
+- One-liner:
+- Added writ.toml [dependencies] documentation, cross-module type resolution semantics, and virtual module built-ins to the language spec (sections 1.2.8–1.2.10).
+
+---
+
+## v12.0 Tech Debt Cleanup (Shipped: 2026-03-29)
+
+**Phases completed:** 6 phases, 6 plans, 14 tasks
+
+**Key accomplishments:**
+
+- 1. [Rule 1 - Bug] Fixed void-return lambda emitting `RET r_src` instead of `RET_VOID`
+- One-liner:
+- Full directive parity between disassembler and assembler for .export, .extern_fn, .component_slot, .locale, .attribute, plus real register type blob offsets replacing 0 placeholders
+- Option:: and Result:: completions now driven by TypeEnv.prelude_enum_variants, eliminating hardcoded if-blocks in build_namespace_completions
+- Per-frame source attribution in DAP via method_file_ids map from compile pipeline, plus dlg_interp.writ golden fixture proving {expr} dialogue text interpolation compiles correctly
+
+---
+
+## v11.0 Runtime Reflection (Shipped: 2026-03-28)
+
+**Phases completed:** 9 phases, 17 plans, 33 tasks
+
+**Key accomplishments:**
+
+- Section 1.28 Reflection language spec with 6 reflection types, typeof/get_type divergence semantics, Reflectable auto-impl contract, BOX/UNBOX dynamic invocation boundaries, and section renumbering of grammar (1.29) and lowering (1.30)
+- One-liner:
+- TypeOf instruction (opcode 0x0A30, RI32 shape) added to writ-module binary format and writ-assembler text format with full round-trip, version rejection, and disassembler tests
+- 15 TypeDefs (9 existing + 6 reflection classes), 24 ContractDefs (Reflectable at index 18), 4 primitive get_type intrinsics, and TypeOf dispatch stub all wired end-to-end with 8 TYPE-01-08 verification tests
+- Lazy singleton ReflectionIndex replacing Value::Int(1) stubs with real Type heap objects — TypeOf opcode and all 4 primitive GetType intrinsics now return Value::Ref(href)
+- All 22 reflection IntrinsicId arms implemented — Type.fields(), Type.attributes(), FieldInfo.get(), and all accessor methods dispatch correctly via CALL_VIRT; AttributeInfo population uses unified Domain::query_attributes_on path (RT-05)
+- typeof(expr) threaded through full compiler frontend: KwTypeof keyword, CST Expr::TypeOf, AstExpr::TypeOf lowering, TyKind::ReflectionType type system, TypedExpr::TypeOf checker output, with 7 tests all passing
+- TypeOf instruction emission wired end-to-end: TypeRef rows for writ-runtime Type class and all 4 primitive pseudo-TypeDefs registered, type_ref_token_by_name() lookup method added, real TypeOf IL emission arm replaces stub, 2 TDD tests confirm correctness, full workspace green after golden re-bless
+- Compiler auto-generates Reflectable ImplDef + TYPEOF+RET get_type() body for every user-defined TypeDef, satisfying COMP-03 and REFL-02 with interleaved metadata emission and correct post-finalize method_list wiring
+- 6 new runtime integration tests for TypeMethods, TypeContracts, TypeImplements, and Type equality interning, bringing total reflection test coverage to 12 tests spanning all REFL-03 through REFL-09 requirements
+- 1. [Rule 1 - Bug] typeof(TypeName) failed with "undefined variable"
+- Three typeof golden tests (enum/entity/class) and REFL-05 tracker fix close VERIFICATION gaps 1 and 3 with 6 passing golden tests total
+- Golden test locking static-vs-dynamic typeof distinction: typeof(Animal) emits TYPEOF with contract token 167772161, Dog::get_type() body emits TYPEOF with struct token 33554433 — different tokens prove the invariant
+- FieldInfo.set() with readonly enforcement and MethodInfo.invoke() with scheduler-driven frame dispatch, completing the P2 dynamic mutation path for writ-runtime reflection
+- 6 integration tests proving FieldInfo.set() mutability enforcement and MethodInfo.invoke() cooperative dispatch — plus critical bug fix wiring FieldInfoSet/MethodInfoInvoke to the intrinsic dispatch resolver
+- Type.is_generic from GenericParam scan, Type.type_args() Array field, MethodInfo/FieldInfo.attributes() intrinsics, and TypeOf TypeSpec token dispatch — 51 virtual module contracts, 90/90 runtime tests pass.
+- 7 integration tests for GEN-01/GEN-02/GEN-03 added and passing; GEN-04 verified — spec sections 1.28.7 and 1.28.8 fully document the type_args() limitation. All 90 writ-runtime tests pass.
+
+---
+
+## v10.0 Attribute System (Shipped: 2026-03-28)
+
+**Phases completed:** 7 phases, 13 plans
+
+**Key accomplishments:**
+
+- Attribute argument blob encoding (AttrValue enum, ATTR_TAG_* constants, round-trip encoder/decoder) in writ-module shared by compiler and runtime
+- User-defined attribute declarations (`attribute Name(args);`) through full pipeline: parser KwAttribute → DefKind::AttributeDef → type validation → AttributeDef table with serialized args
+- [Deprecated("msg")] semantic effects: W0006 compiler warning with same-file suppression, LSP Warning diagnostic + hover deprecation notice
+- [Conditional("name")] emit-time function elision via --condition CLI flag, with fallback verification (E0009) and ambiguous condition detection (E0010)
+- Speaker validation: validate_speakers() completes long-standing RES-09 stub — E0007 for non-[Singleton] speakers, E0003 for non-existent
+- Runtime query API: ModuleAttributeView pre-load callback + Domain.query_attributes/query_attributes_on/query_attribute_value with DomainAttributeMatch struct
+- LSP E2E tests for W0006 deprecated warnings and E0007 speaker validation; language spec sections 1.17.5-1.17.7 documenting user-defined attributes, blob encoding, and query API
+
+**Archives:** `milestones/v10.0-ROADMAP.md`, `milestones/v10.0-REQUIREMENTS.md`, `milestones/v10.0-MILESTONE-AUDIT.md`
+
+---
+
+## v9.0 gh-pages Documentation (Shipped: 2026-03-27)
+
+**Phases completed:** 10 phases, 13 plans, 19 tasks
+
+**Key accomplishments:**
+
+- mdBook 0.4.51 scaffold with 68 chapter wrapper files, site-url=/Writ/ config, and all 70 spec files H1-stripped and heading-promoted so every chapter shows its own title in the sidebar
+- mdbook-admonish 1.20.0 installed and configured with note/warning/tip callout boxes rendering in the introduction page; mdbook build exits 0
+- Custom highlight.js 10.1.1 language definition for Writ with 144 code fences updated across 25 spec files, giving purple keywords, orange modifiers, green strings, and gray comments in the mdBook site
+- 5 mdBook cross-reference links added to spec source files; all 68 chapters verified browsable with clean build
+- Workspace rustdoc lint suppression via [workspace.lints.rustdoc] across 10 crates, validated zero-warning cargo doc build, and meta-refresh redirect template at docs/api-redirect.html pointing to writ_compiler/index.html for Phase 92 CI injection
+- Two-job GitHub Pages workflow deploying mdBook 0.4.51 + cargo doc to /Writ/ on push to master, with pre-built binary downloads and merged artifact at docs/target/book/api/
+
+---
+
+## v8.0 Contract-as-Type (Shipped: 2026-03-24)
+
+**Phases completed:** 4 phases, 5 plans, 5 tasks
+
+**Key accomplishments:**
+
+- (none recorded)
+
+---
+
 ## v7.0 Benchmark Suite (Shipped: 2026-03-20)
 
 **Delivered:** Reproducible cross-language benchmark suite comparing Writ against Lua, Squirrel, Python, Node.js, and native Rust — with Docker containerization, SVG chart generation, and GitHub Actions CI workflow.
@@ -11,6 +111,7 @@
 **Requirements:** 24/24 satisfied (BENCH x8, INFRA x8, REPORT x5, CI x3)
 
 **Key accomplishments:**
+
 1. Multi-stage Docker container with 6 language runtimes (Writ, Lua 5.4, Squirrel 3.x, Python 3.x, Node.js 22 LTS, Rust) and hyperfine-based measurement harness with median/MAD timing and anonymous RSS memory tracking
 2. 7 cross-language benchmarks: fibonacci, sieve, string_concat, array_sort, hash_map, oop_dispatch, object_create — all with output-checksum parity verification across languages
 3. Compiler feature additions during benchmark development: Array `.push()`/`.len()` methods, contract dispatch IMPL-METHOD fix for struct/class receivers
@@ -19,6 +120,7 @@
 6. GitHub Actions CI workflow with manual dispatch, weekly schedule, and artifact upload for `raw.json` + SVG charts
 
 ### Known Gaps
+
 - Pre-existing: TYPE-12 closure capture list still stubbed empty (carried from v3.0)
 - Pre-existing: `::choice` serialization failure with `fn() {}` lambdas (carried from v4.0)
 - StrLen runtime bug: `s.len()` returns heap slot number not byte length (Writ string_concat uses constant fallback)

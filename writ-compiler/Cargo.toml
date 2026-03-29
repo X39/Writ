@@ -19,3 +19,6 @@ ena = "0.14.4"
 
 [dev-dependencies]
 insta = { version = "1", features = ["ron"] }
+
+[lints]
+workspace = true

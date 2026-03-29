@@ -1,0 +1,8 @@
+pub class Stub {
+    value: int
+}
+
+fn main() {
+    let s: Stub = new Stub { value: 42 };
+    let v: int = s.value;
+}

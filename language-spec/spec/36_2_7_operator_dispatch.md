@@ -1,5 +1,4 @@
-# Writ IL Specification
-## 2.7 Operator Dispatch
+# 2.7 Operator Dispatch
 
 Operators on primitive types use dedicated IL instructions (`ADD_I`, `CMP_LT_F`, etc.) — these are the fast path with no
 dispatch overhead.

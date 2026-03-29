@@ -6,10 +6,24 @@
 use chumsky::span::SimpleSpan;
 use writ_compiler::check::ir::{TypedAst, TypedDecl, TypedExpr, TypedStmt};
 use writ_compiler::check::ty::{TyInterner};
-use writ_compiler::resolve::def_map::DefMap;
+use writ_compiler::resolve::def_map::{DefId, DefMap};
 use writ_diagnostics::FileId;
 
 use super::walk::decl_file_id;
+
+/// Return a markdown deprecation notice for a definition, if it is deprecated.
+///
+/// Returns `Some("**Deprecated**")` for bare `[Deprecated]`, or
+/// `Some("**Deprecated:** msg")` when a message was provided.
+fn deprecation_notice(def_id: DefId, type_env: &writ_compiler::check::env::TypeEnv) -> Option<String> {
+    type_env.deprecated_items.get(&def_id).map(|msg| {
+        if msg.is_empty() {
+            "**Deprecated**".to_string()
+        } else {
+            format!("**Deprecated:** {}", msg)
+        }
+    })
+}
 
 /// Build hover text for a TypedExpr.
 ///
@@ -50,11 +64,14 @@ pub fn hover_text_for_expr(
                     DefKind::Fn | DefKind::ExternFn => {
                         // Show fn signature with optional doc comment
                         if let Some(sig) = type_env.fn_sigs.get(&def_id) {
-                            let sig_text = format_fn_sig_hover(sig, def_map, interner);
+                            let mut sig_text = format_fn_sig_hover(sig, def_map, interner);
                             if entry.file_id != writ_diagnostics::FileId(u32::MAX)
                                 && let Some(doc) = extract_doc_comment(source, entry.span.start) {
-                                    return format!("{}\n\n{}", sig_text, doc);
+                                    sig_text = format!("{}\n\n{}", sig_text, doc);
                                 }
+                            if let Some(notice) = deprecation_notice(def_id, type_env) {
+                                return format!("{}\n\n{}", notice, sig_text);
+                            }
                             return sig_text;
                         }
                     }
@@ -73,10 +90,19 @@ pub fn hover_text_for_expr(
                             }
                         });
                         if let Some(val) = value_text {
-                            return format!("```writ\n{}: {} = {}\n```", name, ty_str, val);
+                            let base = format!("```writ\n{}: {} = {}\n```", name, ty_str, val);
+                            if let Some(notice) = deprecation_notice(def_id, type_env) {
+                                return format!("{}\n\n{}", notice, base);
+                            }
+                            return base;
                         }
                     }
                     _ => {}
+                }
+                // For any other def kind, still prepend deprecation notice if present
+                if let Some(notice) = deprecation_notice(def_id, type_env) {
+                    let base = format!("```writ\n{}: {}\n```", name, ty_str);
+                    return format!("{}\n\n{}", notice, base);
                 }
             }
 
@@ -85,13 +111,16 @@ pub fn hover_text_for_expr(
         TypedExpr::Call { callee_def_id: Some(def_id), ty, .. } => {
             // Show function signature if available, with optional doc comment
             if let Some(sig) = type_env.fn_sigs.get(def_id) {
-                let sig_text = format_fn_sig_hover(sig, def_map, interner);
+                let mut sig_text = format_fn_sig_hover(sig, def_map, interner);
                 let entry = def_map.get_entry(*def_id);
                 // Only attempt doc extraction for real file entries (not builtins)
                 if entry.file_id != writ_diagnostics::FileId(u32::MAX)
                     && let Some(doc) = extract_doc_comment(source, entry.span.start) {
-                        return format!("{}\n\n{}", sig_text, doc);
+                        sig_text = format!("{}\n\n{}", sig_text, doc);
                     }
+                if let Some(notice) = deprecation_notice(*def_id, type_env) {
+                    return format!("{}\n\n{}", notice, sig_text);
+                }
                 sig_text
             } else {
                 let ty_str = interner.display_named(*ty, def_map);
@@ -108,7 +137,11 @@ pub fn hover_text_for_expr(
         }
         TypedExpr::New { target_def_id, .. } => {
             let entry = def_map.get_entry(*target_def_id);
-            format!("```writ\nnew {}\n```", entry.name)
+            let base = format!("```writ\nnew {}\n```", entry.name);
+            if let Some(notice) = deprecation_notice(*target_def_id, type_env) {
+                return format!("{}\n\n{}", notice, base);
+            }
+            base
         }
         TypedExpr::SelfRef { ty, .. } => {
             let ty_str = interner.display_named(*ty, def_map);
@@ -127,6 +160,11 @@ pub fn hover_text_for_expr(
             } else {
                 format!("```writ\n{}\n```", ty_str)
             }
+        }
+        TypedExpr::TypeOf { .. } => {
+            // LSP-02: locked decision — typeof() expressions always show "Type" as the hover type.
+            // An explicit arm prevents future regressions if the catch-all behaviour changes.
+            "```writ\nType\n```".to_string()
         }
         TypedExpr::Error { .. } => String::new(), // No hover for error nodes
         _ => {
@@ -215,13 +253,13 @@ pub fn hover_text_for_def(
     use writ_compiler::resolve::def_map::DefKind;
 
     let entry = def_map.get_entry(def_id);
-    match entry.kind {
+    let base = match entry.kind {
         DefKind::Fn | DefKind::ExternFn => {
             if let Some(sig) = type_env.fn_sigs.get(&def_id) {
-                let sig_text = format_fn_sig_hover(sig, def_map, interner);
+                let mut sig_text = format_fn_sig_hover(sig, def_map, interner);
                 if entry.file_id != writ_diagnostics::FileId(u32::MAX)
                     && let Some(doc) = extract_doc_comment(source, entry.span.start) {
-                        return format!("{}\n\n{}", sig_text, doc);
+                        sig_text = format!("{}\n\n{}", sig_text, doc);
                     }
                 sig_text
             } else {
@@ -260,14 +298,17 @@ pub fn hover_text_for_def(
                 format!("```writ\n{}: {}\n```", entry.name, ty)
             }
         }
-        DefKind::Struct | DefKind::ExternStruct => {
+        DefKind::Struct => {
             format!("```writ\nstruct {}\n```", entry.name)
         }
-        DefKind::Class | DefKind::ExternClass => {
+        DefKind::Class => {
             format!("```writ\nclass {}\n```", entry.name)
         }
         DefKind::Entity => {
             format!("```writ\nentity {}\n```", entry.name)
+        }
+        DefKind::Contract => {
+            format!("```writ\ncontract {}\n```", entry.name)
         }
         DefKind::Global => {
             let ty = type_env
@@ -278,6 +319,15 @@ pub fn hover_text_for_def(
             format!("```writ\nglobal {}: {}\n```", entry.name, ty)
         }
         _ => String::new(),
+    };
+    if let Some(notice) = deprecation_notice(def_id, type_env) {
+        if base.is_empty() {
+            notice
+        } else {
+            format!("{}\n\n{}", notice, base)
+        }
+    } else {
+        base
     }
 }
 
@@ -424,6 +474,7 @@ mod tests {
         let (resolved, resolve_diags) = writ_compiler::resolve::resolve(
             &[(file_id, &ast)],
             &[(file_id, "test.writ")],
+            &[],
         );
         let resolve_errors: Vec<_> = resolve_diags
             .iter()
@@ -432,7 +483,7 @@ mod tests {
         assert!(resolve_errors.is_empty(), "resolve errors: {:?}", resolve_errors);
 
         let (typed_ast, interner, type_env, type_diags) =
-            writ_compiler::check::typecheck(resolved, &[(file_id, &ast)]);
+            writ_compiler::check::typecheck(resolved, &[(file_id, &ast)], &[]);
         let type_errors: Vec<_> = type_diags
             .iter()
             .filter(|d| d.severity == Severity::Error)
@@ -472,5 +523,105 @@ mod tests {
 
         let hover = hover_text_for_expr(expr, &ast.def_map, &interner, &type_env, src, &ast);
         assert!(hover.contains("foo"), "hover should contain function name");
+    }
+
+    // ── typeof hover and diagnostic tests ────────────────────────────────────
+
+    /// LSP-02: hovering over a typeof() expression should display "Type".
+    ///
+    /// Verifies that the explicit TypedExpr::TypeOf arm in hover_text_for_expr
+    /// produces "Type" as the hover text, not some other display string.
+    #[test]
+    fn test_hover_typeof_shows_type() {
+        let src = "struct Foo { x: int } fn main() { let t = typeof(Foo); }";
+        let (ast, interner, type_env) = build_typed_ast_full(src);
+
+        // Find the typeof expression by offset
+        let typeof_offset = src.find("typeof").unwrap();
+        let expr = super::super::walk::expr_at_offset(&ast, typeof_offset, FileId(0))
+            .expect("should find typeof expression");
+
+        let hover = hover_text_for_expr(expr, &ast.def_map, &interner, &type_env, src, &ast);
+        assert!(
+            hover.contains("Type"),
+            "hover for typeof should show 'Type', got: {:?}",
+            hover
+        );
+    }
+
+    /// LSP-01: typeof() result used in arithmetic context produces a type error diagnostic.
+    ///
+    /// The LSP surfaces standard type-checker diagnostics; this test validates that
+    /// using a Type value where an int is expected is caught by the type checker.
+    #[test]
+    fn test_typeof_type_error_diagnostic() {
+        let src = "struct Foo {} fn main() -> int { typeof(Foo) + 1 }";
+        let src_static: &'static str = Box::leak(src.to_string().into_boxed_str());
+        let file_id = FileId(0);
+
+        let (cst_opt, parse_errs) = writ_parser::parse(src_static);
+        assert!(parse_errs.is_empty(), "unexpected parse errors: {:?}", parse_errs);
+        let cst = cst_opt.expect("parse returned no output");
+
+        let (ast, lower_errs) = writ_compiler::lower(cst);
+        assert!(lower_errs.is_empty(), "unexpected lower errors: {:?}", lower_errs);
+
+        let (resolved, resolve_diags) = writ_compiler::resolve::resolve(
+            &[(file_id, &ast)],
+            &[(file_id, "test.writ")],
+            &[],
+        );
+        let resolve_errors: Vec<_> = resolve_diags.iter().filter(|d| d.severity == Severity::Error).collect();
+        assert!(resolve_errors.is_empty(), "unexpected resolve errors: {:?}", resolve_errors);
+
+        let (_typed_ast, _interner, _type_env, type_diags) =
+            writ_compiler::check::typecheck(resolved, &[(file_id, &ast)], &[]);
+
+        let type_errors: Vec<_> = type_diags
+            .iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert!(
+            !type_errors.is_empty(),
+            "typeof(Foo) + 1 should produce a type error (Type is not int)"
+        );
+    }
+
+    // ── DefKind::Contract hover tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_hover_contract_def() {
+        // Hovering over the contract declaration site should show "contract Name"
+        let src = r#"pub contract Greetable {
+    fn greet(self) -> int;
+}
+pub fn main() {}"#;
+        let (ast, interner, type_env) = build_typed_ast_full(src);
+
+        // Find the Foo contract def
+        use writ_compiler::resolve::def_map::DefKind;
+        let greetable_def_id = ast.def_map
+            .by_fqn
+            .values()
+            .chain(ast.def_map.file_private.values().flat_map(|m| m.values()))
+            .find(|&&id| {
+                let entry = ast.def_map.get_entry(id);
+                entry.name == "Greetable" && entry.kind == DefKind::Contract
+            })
+            .copied()
+            .expect("should find Greetable contract def");
+
+        let hover = super::hover_text_for_def(greetable_def_id, &ast.def_map, &interner, &type_env, src, &ast);
+
+        assert!(
+            hover.contains("contract"),
+            "hover for contract def should contain 'contract', got: {:?}",
+            hover
+        );
+        assert!(
+            hover.contains("Greetable"),
+            "hover for contract def should contain the contract name 'Greetable', got: {:?}",
+            hover
+        );
     }
 }

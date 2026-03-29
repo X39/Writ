@@ -55,9 +55,8 @@ pub struct HeapRef(pub(crate) u32);
 
 /// Runtime value representation.
 ///
-/// Clone-only. InlineStruct holds fields inline (value-type struct semantics).
-#[derive(Debug, Clone)]
-#[derive(Default)]
+/// Copy-semantic. Struct fields live on the GC heap via HeapRef.
+#[derive(Debug, Clone, Copy, Default)]
 pub enum Value {
     #[default]
     Void,
@@ -66,7 +65,7 @@ pub enum Value {
     Bool(bool),
     Ref(HeapRef),
     Entity(EntityId),
-    InlineStruct { type_idx: u32, fields: Vec<Value> },
+    Struct { type_idx: u32, href: HeapRef },
 }
 
 
@@ -79,7 +78,7 @@ impl PartialEq for Value {
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Ref(a), Value::Ref(b)) => a == b,
             (Value::Entity(a), Value::Entity(b)) => a == b,
-            (Value::InlineStruct { type_idx: a, fields: fa }, Value::InlineStruct { type_idx: b, fields: fb }) => a == b && fa == fb,
+            (Value::Struct { type_idx: a, href: ha }, Value::Struct { type_idx: b, href: hb }) => a == b && ha == hb,
             _ => false,
         }
     }

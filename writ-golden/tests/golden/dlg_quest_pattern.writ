@@ -6,10 +6,6 @@
 // If this triggers the known serialization bug (UnexpectedEof in multi-function
 // modules), remove the $ choice block and document the limitation.
 
-// Explicit extern declarations for dialogue speaker resolution.
-pub extern fn say(speaker: Entity, text: string);
-pub extern fn say_localized(speaker: Entity, key: string, fallback: string);
-
 enum QuestState {
     NotStarted,
     Active,

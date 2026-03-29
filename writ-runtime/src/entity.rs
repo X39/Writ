@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use crate::error::RuntimeError;
 use crate::value::{EntityId, HeapRef, Value};
@@ -44,8 +44,8 @@ pub struct PendingEntity {
 pub struct EntityRegistry {
     slots: Vec<EntitySlot>,
     free_list: Vec<u32>,
-    singletons: HashMap<u32, EntityId>,
-    pending: HashMap<u32, PendingEntity>, // keyed by slot index
+    singletons: FxHashMap<u32, EntityId>,
+    pending: FxHashMap<u32, PendingEntity>, // keyed by slot index
 }
 
 impl EntityRegistry {
@@ -54,8 +54,8 @@ impl EntityRegistry {
         Self {
             slots: Vec::new(),
             free_list: Vec::new(),
-            singletons: HashMap::new(),
-            pending: HashMap::new(),
+            singletons: FxHashMap::default(),
+            pending: FxHashMap::default(),
         }
     }
 

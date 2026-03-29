@@ -182,6 +182,7 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, Vec<AssembleError>> {
                 let known_directives = [
                     "module", "type", "field", "method", "contract", "impl",
                     "reg", "extern", "global", "regs",
+                    "extern_fn", "export", "component_slot", "locale", "attribute",
                 ];
                 let lower = name.to_lowercase();
                 if known_directives.contains(&lower.as_str()) {

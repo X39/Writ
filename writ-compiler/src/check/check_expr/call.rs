@@ -7,12 +7,13 @@ use crate::ast::types::AstType;
 use crate::resolve::def_map::DefId;
 use super::CheckCtx;
 use super::check_expr;
-use super::find_fn_def_id;
+use super::{find_fn_def_id, find_fn_candidates};
 use super::super::env::FnSig;
 use super::super::error::TypeError;
 use super::super::infer::instantiate_generic_fn;
 use super::super::ir::TypedExpr;
 use super::super::ty::{InferVar, TyKind};
+use writ_diagnostics::{Diagnostic, code};
 
 pub(super) fn check_call(
     ctx: &mut CheckCtx,
@@ -22,15 +23,14 @@ pub(super) fn check_call(
 ) -> TypedExpr {
     // Special case: callee is an Ident that resolves to a function in type_env
     if let AstExpr::Ident { name, span: name_span } = callee {
-        // Check if it's a known function by name
-        if let Some(def_id) = find_fn_def_id(ctx, name)
-            && let Some(sig) = ctx.type_env.fn_sigs.get(&def_id) {
-                return check_call_with_sig(ctx, name, def_id, sig.clone(), args, span, *name_span);
-            }
+        // Check if it's a known function by name (with overload resolution)
+        if let Some(result) = resolve_overloaded_call(ctx, name, args, span, *name_span) {
+            return result;
+        }
 
         // Sub-prelude builtin: `Some(expr)` constructs Option<T> from the argument.
         // Only fires when `Some` is not shadowed by a user-defined function (which is
-        // handled above by the find_fn_def_id fast-path and early return).
+        // handled above by the overload resolution and early return).
         if name == "Some" {
             let typed_args: Vec<TypedExpr> =
                 args.iter().map(|a| check_expr(ctx, &a.value)).collect();
@@ -80,18 +80,9 @@ pub(super) fn check_call(
         && segments.len() == 1 {
             let raw = &segments[0];
             let normalized = raw.strip_prefix("::").unwrap_or(raw.as_str());
-            if let Some(def_id) = find_fn_def_id(ctx, normalized)
-                && let Some(sig) = ctx.type_env.fn_sigs.get(&def_id) {
-                    return check_call_with_sig(
-                        ctx,
-                        normalized,
-                        def_id,
-                        sig.clone(),
-                        args,
-                        span,
-                        *path_span,
-                    );
-                }
+            if let Some(result) = resolve_overloaded_call(ctx, normalized, args, span, *path_span) {
+                return result;
+            }
         }
 
     // Special case: two-segment log namespace call — `log::debug(msg)` or `::log::debug(msg)`.
@@ -201,6 +192,139 @@ pub(super) fn check_call(
     }
 }
 
+/// Resolve an overloaded function call by name. Checks all candidates and picks
+/// the one whose parameter count and types match the call-site arguments.
+///
+/// Returns `None` if no candidates are found (so the caller can fall through).
+fn resolve_overloaded_call(
+    ctx: &mut CheckCtx,
+    name: &str,
+    args: &[AstArg],
+    span: SimpleSpan,
+    name_span: SimpleSpan,
+) -> Option<TypedExpr> {
+    let candidates = find_fn_candidates(ctx, name);
+    if candidates.is_empty() {
+        return None;
+    }
+
+    // Single candidate — fast path (no overload resolution needed)
+    if candidates.len() == 1 {
+        let def_id = candidates[0];
+        if let Some(sig) = ctx.type_env.fn_sigs.get(&def_id) {
+            return Some(check_call_with_sig(ctx, name, def_id, sig.clone(), args, span, name_span));
+        }
+        return None;
+    }
+
+    // Multiple candidates — overload resolution.
+    // Type-check args once, then match against each candidate's signature.
+    let typed_args: Vec<TypedExpr> = args.iter().map(|a| check_expr(ctx, &a.value)).collect();
+    let arg_count = typed_args.len();
+
+    let mut matching: Vec<(DefId, FnSig)> = Vec::new();
+
+    for &def_id in &candidates {
+        if let Some(sig) = ctx.type_env.fn_sigs.get(&def_id) {
+            // Check arity
+            if sig.params.len() != arg_count {
+                continue;
+            }
+
+            // Check argument type compatibility via structural comparison.
+            // For overload resolution we use direct Ty equality (interned indices).
+            // Error types are treated as wildcards (match anything).
+            let mut all_match = true;
+            for (arg, (_, param_ty)) in typed_args.iter().zip(sig.params.iter()) {
+                let arg_ty = arg.ty();
+                if ctx.is_error(arg_ty) || ctx.is_error(*param_ty) {
+                    continue;
+                }
+                if arg_ty != *param_ty {
+                    all_match = false;
+                    break;
+                }
+            }
+
+            if all_match {
+                matching.push((def_id, sig.clone()));
+            }
+        }
+    }
+
+    match matching.len() {
+        0 => {
+            // No matching overload — emit error with the first candidate
+            if let Some(sig) = ctx.type_env.fn_sigs.get(&candidates[0]) {
+                return Some(check_call_with_sig(ctx, name, candidates[0], sig.clone(), args, span, name_span));
+            }
+            None
+        }
+        1 => {
+            // Exactly one match — call it (re-check with proper unification)
+            let (def_id, sig) = matching.into_iter().next().unwrap();
+            let entry = ctx.def_map.get_entry(def_id);
+            let def_span = entry.name_span;
+            let (param_tys, ret_ty, infer_vars) =
+                instantiate_generic_fn(&sig, &mut ctx.interner, &mut ctx.unify);
+
+            // Unify argument types for real
+            for (i, (arg, &param_ty)) in typed_args.iter().zip(param_tys.iter()).enumerate() {
+                let arg_ty = arg.ty();
+                if !ctx.is_error(arg_ty) && !ctx.is_error(param_ty)
+                    && ctx.unify.unify(param_ty, arg_ty, &mut ctx.interner).is_err() {
+                        ctx.emit_error(TypeError::TypeMismatch {
+                            expected: ctx.display_ty(param_ty),
+                            found: ctx.display_ty(arg_ty),
+                            expected_span: def_span,
+                            found_span: arg.span(),
+                            file: ctx.current_file,
+                            help: Some(format!("in argument {} of `{}`", i + 1, name)),
+                        });
+                    }
+            }
+
+            let resolved_ret = ctx.unify.resolve_ty(ret_ty, &ctx.interner);
+
+            if !sig.generics.is_empty() && !sig.bounds.is_empty() {
+                check_contract_bounds(ctx, &sig, &infer_vars, span);
+            }
+
+            Some(TypedExpr::Call {
+                ty: resolved_ret,
+                span,
+                callee: Box::new(TypedExpr::Var {
+                    ty: ctx.interner.func(param_tys, resolved_ret),
+                    span: name_span,
+                    name: name.to_string(),
+                }),
+                args: typed_args,
+                callee_def_id: Some(def_id),
+            })
+        }
+        _ => {
+            // Ambiguous — emit error
+            let err_ty = ctx.emit_error(TypeError::AmbiguousOverload {
+                fn_name: name.to_string(),
+                candidate_count: matching.len(),
+                call_span: span,
+                file: ctx.current_file,
+            });
+            Some(TypedExpr::Call {
+                ty: err_ty,
+                span,
+                callee: Box::new(TypedExpr::Var {
+                    ty: ctx.interner.error(),
+                    span: name_span,
+                    name: name.to_string(),
+                }),
+                args: typed_args,
+                callee_def_id: None,
+            })
+        }
+    }
+}
+
 pub(super) fn check_call_with_sig(
     ctx: &mut CheckCtx,
     fn_name: &str,
@@ -212,6 +336,22 @@ pub(super) fn check_call_with_sig(
 ) -> TypedExpr {
     let entry = ctx.def_map.get_entry(def_id);
     let def_span = entry.name_span;
+
+    // Emit W0006 if this function is deprecated and called from a different file.
+    if let Some(msg) = ctx.type_env.deprecated_items.get(&def_id) {
+        if entry.file_id != ctx.current_file {
+            let warning_msg = if msg.is_empty() {
+                format!("`{}` is deprecated", fn_name)
+            } else {
+                format!("`{}` is deprecated: {}", fn_name, msg)
+            };
+            ctx.diags.push(
+                Diagnostic::warning(code::W0006, warning_msg)
+                    .with_primary(ctx.current_file, name_span, "deprecated item used here")
+                    .build(),
+            );
+        }
+    }
 
     // Instantiate generics
     let (param_tys, ret_ty, infer_vars) =
@@ -302,7 +442,7 @@ pub(super) fn check_contract_bounds(
         if let Some(concrete_ty) = resolved_ty {
             // Get the DefId of the concrete type to look up in impl_index
             let concrete_def_id = match ctx.interner.kind(concrete_ty).clone() {
-                TyKind::Struct(did) | TyKind::Class(did) | TyKind::Entity(did) | TyKind::Enum(did) => Some(did),
+                TyKind::Struct(did) | TyKind::Class(did) | TyKind::Entity(did) | TyKind::Enum(did) | TyKind::Contract(did) => Some(did),
                 _ => None,
             };
 
@@ -329,11 +469,18 @@ pub(super) fn check_contract_bounds(
 
                 if !satisfies_bound {
                     let ty_name = ctx.display_ty(concrete_ty);
+                    let bound_decl_span = if i < sig.bound_decl_spans.len() {
+                        sig.bound_decl_spans[i]
+                    } else {
+                        call_span // fallback: point to call site if no span available
+                    };
                     ctx.emit_error(TypeError::UnsatisfiedBound {
                         ty_name: ty_name.clone(),
                         bound_name: contract_name.clone(),
                         call_span,
                         file: ctx.current_file,
+                        bound_decl_span,
+                        bound_decl_file: sig.fn_file,
                     });
                 }
             }
@@ -400,6 +547,36 @@ pub(super) fn check_generic_call(
         }
         // If the pair is unsupported, fall through to the error path below
         // (which will call check_expr on callee and emit the unknown-field error)
+    }
+
+    // Special case: Entity.getOrCreate<T>() — returns T (specific entity type)
+    if let AstExpr::MemberAccess { object, field, field_span: _, span: member_span } = callee
+        && field == "getOrCreate"
+        && type_args.len() == 1
+        && args.is_empty()
+    {
+        let typed_obj = check_expr(ctx, object);
+        let obj_kind = ctx.interner.kind(typed_obj.ty()).clone();
+        if matches!(obj_kind, TyKind::AnyEntity) {
+            let generic_map = rustc_hash::FxHashMap::default();
+            let entity_type = super::super::env::resolve_ast_type_with_file(
+                &type_args[0], ctx.def_map, &mut ctx.interner, &generic_map, ctx.current_file,
+            );
+            let fn_ty = ctx.interner.func(vec![], entity_type);
+            let callee_typed = TypedExpr::Field {
+                ty: fn_ty,
+                span: *member_span,
+                receiver: Box::new(typed_obj),
+                field: "getOrCreate".to_string(),
+            };
+            return TypedExpr::Call {
+                ty: entity_type,
+                span,
+                callee: Box::new(callee_typed),
+                args: vec![],
+                callee_def_id: None,
+            };
+        }
     }
 
     // For generic calls, resolve the callee to get its FnSig

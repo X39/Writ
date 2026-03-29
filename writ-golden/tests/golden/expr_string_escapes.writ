@@ -1,0 +1,10 @@
+fn main() {
+    let plain: string = "hello";
+    let escaped_quote: string = "fancy\"string";
+    let escaped_newline: string = "line1\nline2";
+    let escaped_tab: string = "col1\tcol2";
+    let escaped_backslash: string = "back\\slash";
+    let escaped_null: string = "null\0char";
+    let escaped_cr: string = "cr\rhere";
+    let multi_escape: string = "a\"b\\c\nd";
+}

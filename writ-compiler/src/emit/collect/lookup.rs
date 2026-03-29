@@ -123,16 +123,9 @@ pub(super) fn find_extern_fn_sig<'a>(asts: &'a [(FileId, &Ast)], entry: &DefEntr
     None
 }
 
-pub(super) fn find_extern_struct_decl<'a>(asts: &'a [(FileId, &Ast)], entry: &DefEntry) -> Option<&'a AstStructDecl> {
-    for (file_id, ast) in asts {
-        if *file_id != entry.file_id { continue; }
-        for decl in &ast.items {
-            if let AstDecl::Extern(AstExternDecl::Struct(_, s)) = decl
-                && s.name == entry.name && s.name_span == entry.name_span {
-                    return Some(s);
-                }
-        }
-    }
+pub(super) fn find_extern_struct_decl<'a>(_asts: &'a [(FileId, &Ast)], _entry: &DefEntry) -> Option<&'a AstStructDecl> {
+    // AstExternDecl::Struct variant removed in phase 94 — extern structs are no longer supported.
+    // Callers treat None as "no fields to emit", which is the correct fallback.
     None
 }
 
@@ -149,16 +142,9 @@ pub(super) fn find_class_decl<'a>(asts: &'a [(FileId, &Ast)], entry: &DefEntry) 
     None
 }
 
-pub(super) fn find_extern_class_decl<'a>(asts: &'a [(FileId, &Ast)], entry: &DefEntry) -> Option<&'a AstClassDecl> {
-    for (file_id, ast) in asts {
-        if *file_id != entry.file_id { continue; }
-        for decl in &ast.items {
-            if let AstDecl::Extern(AstExternDecl::Class(_, c)) = decl
-                && c.name == entry.name && c.name_span == entry.name_span {
-                    return Some(c);
-                }
-        }
-    }
+pub(super) fn find_extern_class_decl<'a>(_asts: &'a [(FileId, &Ast)], _entry: &DefEntry) -> Option<&'a AstClassDecl> {
+    // AstExternDecl::Class variant removed in phase 94 — extern classes are no longer supported.
+    // Callers treat None as "no fields to emit", which is the correct fallback.
     None
 }
 

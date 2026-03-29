@@ -1,0 +1,7 @@
+entity Goblin {
+    health: int = 50,
+}
+
+fn main() {
+    let t = typeof(Goblin);
+}

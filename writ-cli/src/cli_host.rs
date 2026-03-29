@@ -64,7 +64,7 @@ impl CliHost {
             Value::Ref(_) => "<string>".to_string(),
             Value::Void => "void".to_string(),
             Value::Entity(e) => format!("<entity@{}>", e.index),
-            Value::InlineStruct { type_idx, .. } => format!("<struct@{}>", type_idx),
+            Value::Struct { type_idx, .. } => format!("<struct@{}>", type_idx),
         }
     }
 
@@ -98,14 +98,25 @@ impl RuntimeHost for CliHost {
 
                 match name {
                     "say" => {
-                        // FIX-03: Use display_args for string content; fall back to format_value
-                        // for backward compat when display_args is not populated.
-                        let text = if !display_args.is_empty() {
-                            display_args[0].clone()
+                        // say(speaker, text) — spec §1.27.4
+                        let speaker = display_args.first().cloned().unwrap_or_default();
+                        let text = if display_args.len() > 1 {
+                            display_args[1].clone()
                         } else {
-                            args.first().map(Self::format_value).unwrap_or_default()
+                            args.get(1).map(Self::format_value).unwrap_or_default()
                         };
-                        println!("[say] {text}");
+                        println!("[say] {speaker}: {text}");
+                        HostResponse::Value(Value::Void)
+                    }
+                    "say_localized" => {
+                        // say_localized(speaker, key, fallback) — spec §1.29.4
+                        let speaker = display_args.first().cloned().unwrap_or_default();
+                        let text = if display_args.len() > 2 {
+                            display_args[2].clone()
+                        } else {
+                            args.get(2).map(Self::format_value).unwrap_or_default()
+                        };
+                        println!("[say] {speaker}: {text}");
                         HostResponse::Value(Value::Void)
                     }
                     "choice" => {
@@ -231,11 +242,12 @@ mod tests {
         let mut host = CliHost::new(&module, false, false);
         // ExternDef table_id=16, row=1 => token 0x10000001
         let extern_tok: u32 = (16u32 << 24) | 1;
+        // say(speaker, text) — spec §1.27.4
         let req = HostRequest::ExternCall {
             task_id: TaskId::new(0, 0),
             extern_idx: extern_tok,
-            args: vec![Value::Int(42)],
-            display_args: vec!["42".to_string()],
+            args: vec![Value::Int(0), Value::Int(42)],
+            display_args: vec!["0".to_string(), "42".to_string()],
         };
         match host.on_request(RequestId(0), &req) {
             HostResponse::Value(Value::Void) => {}

@@ -14,7 +14,7 @@ pub(super) fn exec_spawn_entity(
     let module = &ctx.modules[ctx.current_module_idx];
     let entity_id = ctx.entity_registry.begin_spawn(type_idx);
     let field_count = helpers::get_type_field_count(&module.module, type_idx);
-    let data_ref = ctx.heap.alloc_struct(field_count);
+    let data_ref = ctx.heap.alloc_struct(u32::MAX, field_count);
     let _ = ctx.entity_registry.set_data_ref(entity_id, data_ref);
     let frame = ctx.task.call_stack.last_mut().unwrap();
     frame.registers[r_dst as usize] = Value::Entity(entity_id);
@@ -141,6 +141,11 @@ pub(super) fn exec_get_component(
         HostResponse::Error(e) => {
             ExecutionResult::Crash(format!("host request failed: {:?}", e))
         }
+        HostResponse::Suspend => {
+            ctx.task.pending_request = Some((req_id, req));
+            ctx.task.pending_r_dst = r_dst;
+            ExecutionResult::Suspended(req_id)
+        }
     }
 }
 
@@ -160,7 +165,7 @@ pub(super) fn exec_get_or_create(
     let module = &ctx.modules[ctx.current_module_idx];
     let entity_id = ctx.entity_registry.allocate(type_idx);
     let field_count = helpers::get_type_field_count(&module.module, type_idx);
-    let data_ref = ctx.heap.alloc_struct(field_count);
+    let data_ref = ctx.heap.alloc_struct(u32::MAX, field_count);
     let _ = ctx.entity_registry.set_data_ref(entity_id, data_ref);
     ctx.entity_registry.register_singleton(type_idx, entity_id);
     let frame = ctx.task.call_stack.last_mut().unwrap();

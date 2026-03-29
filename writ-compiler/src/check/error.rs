@@ -32,6 +32,8 @@ pub enum TypeError {
         bound_name: String,
         call_span: SimpleSpan,
         file: FileId,
+        bound_decl_span: SimpleSpan,
+        bound_decl_file: FileId,
     },
     NotCallable {
         ty_name: String,
@@ -125,6 +127,19 @@ pub enum TypeError {
         span: SimpleSpan,
         file: FileId,
     },
+    IncompleteContractImpl {
+        ty_name: String,
+        contract_name: String,
+        missing_methods: Vec<String>,
+        span: SimpleSpan,
+        file: FileId,
+    },
+    AmbiguousOverload {
+        fn_name: String,
+        candidate_count: usize,
+        call_span: SimpleSpan,
+        file: FileId,
+    },
 }
 
 impl From<TypeError> for Diagnostic {
@@ -182,6 +197,8 @@ impl From<TypeError> for Diagnostic {
                 bound_name,
                 call_span,
                 file,
+                bound_decl_span,
+                bound_decl_file,
             } => Diagnostic::error(
                 code::E0103,
                 format!(
@@ -190,6 +207,7 @@ impl From<TypeError> for Diagnostic {
                 ),
             )
             .with_primary(file, call_span, "unsatisfied bound here")
+            .with_secondary(bound_decl_file, bound_decl_span, format!("bound `{}` declared here", bound_name))
             .with_help(format!(
                 "consider adding `impl {} for {} {{ ... }}`",
                 bound_name, ty_name
@@ -396,6 +414,40 @@ impl From<TypeError> for Diagnostic {
             )
             .with_primary(file, span, "recursive struct defined here")
             .with_help("consider using `class` instead of `struct` for reference semantics".to_string())
+            .build(),
+            TypeError::IncompleteContractImpl {
+                ty_name,
+                contract_name,
+                missing_methods,
+                span,
+                file,
+            } => Diagnostic::error(
+                code::E0123,
+                format!(
+                    "incomplete implementation of contract `{}` for `{}`",
+                    contract_name, ty_name
+                ),
+            )
+            .with_primary(file, span, "impl block defined here")
+            .with_help(format!(
+                "missing methods: {}",
+                missing_methods.join(", ")
+            ))
+            .build(),
+            TypeError::AmbiguousOverload {
+                fn_name,
+                candidate_count,
+                call_span,
+                file,
+            } => Diagnostic::error(
+                code::E0124,
+                format!(
+                    "ambiguous call to overloaded function `{}`: {} candidates match",
+                    fn_name, candidate_count
+                ),
+            )
+            .with_primary(file, call_span, "ambiguous call")
+            .with_help("add explicit type annotations to disambiguate")
             .build(),
         }
     }

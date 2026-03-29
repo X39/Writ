@@ -1,0 +1,104 @@
+.module "main" "0.1.0" {
+    .extern "writ-runtime" "1.0.0"
+    .type "Narrator" entity {
+    }
+    .impl Narrator : contract_167772179 {
+        .method "get_type" () -> Type pub {
+            .reg r0 int
+            .reg r1 int
+            TYPEOF r1, 33554433
+            RET r1
+        }
+        .method "greet" (npc: ?, name: string, count: int) -> void mut {
+            .locals {
+                r0: ? "npc" [0, 214)
+                r1: string "name" [0, 214)
+                r2: int "count" [0, 214)
+            }
+            .reg r0 int
+            .reg r1 string
+            .reg r2 int
+            .reg r3 void
+            .reg r4 string
+            .reg r5 string
+            .reg r6 string
+            .reg r7 string
+            .reg r8 string
+            .reg r9 string
+            .reg r10 int
+            .reg r11 string
+            .reg r12 void
+            .reg r13 string
+            .reg r14 string
+            .reg r15 string
+            .reg r16 string
+            .reg r17 int
+            .reg r18 string
+            .reg r19 void
+            .reg r20 string
+            .reg r21 string
+            .reg r22 string
+            .reg r23 string
+            .reg r24 string
+            .reg r25 string
+            .reg r26 string
+            .reg r27 string
+            .reg r28 string
+            .reg r29 string
+            .reg r30 int
+            .reg r31 string
+            LOAD_STRING r4, 216  ; line:1 col:327
+            LOAD_STRING r5, 226
+            MOV r6, r4
+            MOV r7, r1
+            MOV r8, r5
+            STR_BUILD r9, 3, r6
+            MOV r10, r0
+            MOV r11, r9
+            CALL_EXTERN r3, 268435457, r10, 2
+            LOAD_STRING r13, 231  ; line:1 col:350
+            I2S r14, r2
+            LOAD_STRING r15, 248
+            STR_BUILD r16, 3, r13
+            MOV r17, r0
+            MOV r18, r16
+            CALL_EXTERN r12, 268435457, r17, 2
+            LOAD_STRING r20, 261  ; line:1 col:389
+            LOAD_STRING r21, 279
+            I2S r22, r2
+            LOAD_STRING r23, 294
+            MOV r24, r20
+            MOV r25, r1
+            MOV r26, r21
+            MOV r27, r22
+            MOV r28, r23
+            STR_BUILD r29, 5, r24
+            MOV r30, r0
+            MOV r31, r29
+            CALL_EXTERN r19, 268435457, r30, 2
+            RET_VOID
+        }
+        .method "main" () -> void mut {
+            .locals {
+                r0: Narrator "e" [8, 60)
+            }
+            .reg r0 Narrator
+            .reg r1 void
+            .reg r2 string
+            .reg r3 int
+            .reg r4 Narrator
+            .reg r5 string
+            .reg r6 int
+            GET_OR_CREATE r0, 33554433  ; line:1 col:453
+            LOAD_STRING r2, 299  ; line:1 col:505
+            LOAD_INT r3, 3
+            MOV r4, r0
+            MOV r5, r2
+            MOV r6, r3
+            CALL r1, 117440514, r4, 3
+            RET_VOID
+        }
+    }
+    .extern_fn "say" (?) -> void "say"
+    .attribute 33554433 0 "Singleton"
+}

@@ -145,7 +145,7 @@ Ast {
                                         Return {
                                             value: Some(
                                                 StringLit {
-                                                    value: "\"hello\"",
+                                                    value: "hello",
                                                     span: 87..94,
                                                 },
                                             ),

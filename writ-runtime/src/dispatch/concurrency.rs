@@ -15,7 +15,7 @@ pub(super) fn exec_spawn_task(
     {
         let frame = ctx.task.call_stack.last().unwrap();
         for i in 0..argc as usize {
-            args.push(frame.registers[r_base as usize + i].clone());
+            args.push(frame.registers[r_base as usize + i]);
         }
     }
     ExecutionResult::SpawnChild {
@@ -40,7 +40,7 @@ pub(super) fn exec_spawn_detached(
     {
         let frame = ctx.task.call_stack.last().unwrap();
         for i in 0..argc as usize {
-            args.push(frame.registers[r_base as usize + i].clone());
+            args.push(frame.registers[r_base as usize + i]);
         }
     }
     ExecutionResult::SpawnDetachedTask {
@@ -81,7 +81,7 @@ pub(super) fn exec_defer_pop(ctx: &mut ExecContext<'_>) -> ExecutionResult {
 pub(super) fn exec_load_global(ctx: &mut ExecContext<'_>, r_dst: u16, global_idx: u32) -> ExecutionResult {
     let idx = global_idx as usize;
     if idx < ctx.globals.len() {
-        let val = ctx.globals[idx].clone();
+        let val = ctx.globals[idx];
         let frame = ctx.task.call_stack.last_mut().unwrap();
         frame.registers[r_dst as usize] = val;
         ExecutionResult::Continue
@@ -92,7 +92,7 @@ pub(super) fn exec_load_global(ctx: &mut ExecContext<'_>, r_dst: u16, global_idx
 
 pub(super) fn exec_store_global(ctx: &mut ExecContext<'_>, global_idx: u32, r_src: u16) -> ExecutionResult {
     let idx = global_idx as usize;
-    let val = ctx.task.call_stack.last().unwrap().registers[r_src as usize].clone();
+    let val = ctx.task.call_stack.last().unwrap().registers[r_src as usize];
     if idx < ctx.globals.len() {
         ctx.globals[idx] = val;
         ExecutionResult::Continue

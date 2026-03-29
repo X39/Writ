@@ -90,9 +90,74 @@ Correct, spec-compliant implementation at every layer — lowering matches Secti
 - ✓ GitHub Actions CI workflow for automated benchmark runs — v7.0
 - ✓ Benchmark results committed to `benchmark/results/` — v7.0
 
+- ✓ VM hot-path inlining (#[inline(always)] on extract helpers, #[inline] on dispatch functions) — v7.1
+- ✓ Zero-allocation call convention (direct register-to-register arg copies via split_at_mut) — v7.1
+- ✓ Frame register pool (RegisterPool with acquire/release, POOL_CAP=64) — v7.1
+- ✓ Inner dispatch loop (execute_batch amortizes scheduler overhead) — v7.1
+- ✓ Copy-semantic Value enum (InlineStruct→HeapRef, Value derives Copy) — v7.1
+- ✓ Clone cleanup and unsafe register indexing in hot arg-copy loops — v7.1
+- ✓ Profile-guided optimization (PGO) pipeline — fib(40) 83.297s→27.103s (-67.5%) — v7.1
+
+- ✓ mdBook documentation site with language reference, getting started guide, and architecture overview — v9.0
+- ✓ Rust API docs (cargo doc) hosted alongside mdBook on gh-pages — v9.0
+- ✓ GitHub Actions CI workflow for auto-deploy on push to master — v9.0
+- ✓ Language spec reformatted as browsable mdBook chapters — v9.0
+- ✓ Getting started guide (installation, hello world, first script, writ CLI) — v9.0
+- ✓ Architecture overview (compiler pipeline, crate structure, contribution guide) — v9.0
+
+- ✓ Attribute argument blob encoding (AttrValue, ATTR_TAG_*, round-trip encoder/decoder in writ-module) — v10.0
+- ✓ User-defined attribute declarations (`attribute Name(args);`) through full pipeline — v10.0
+- ✓ [Deprecated("msg")] compiler warning W0006 with same-file suppression + LSP diagnostic/hover — v10.0
+- ✓ [Conditional("name")] emit-time function elision via --condition flag + fallback verification — v10.0
+- ✓ @speaker validation E0007 for non-[Singleton] entities, E0003 for non-existent — v10.0
+- ✓ Builtin attributes in writ-runtime virtual module namespace — v10.0
+- ✓ Runtime query_attributes API (query by name, by type, by value) + pre-load callback — v10.0
+- ✓ LSP E2E tests for W0006/E0007 + language spec sections 1.17.5-1.17.7 — v10.0
+
+- ✓ Reflection spec (§1.28) with 6 reflection types, typeof/get_type semantics, Reflectable contract, dynamic invocation rules — v11.0
+- ✓ TypeOf opcode (0x0A30), format_version 4, §2.18.9 Reflection Types in writ-runtime virtual module — v11.0
+
+- ✓ writ-module TypeOf instruction (0x0A30, RI32), format_version=4, assembler/disassembler typeof mnemonic — v11.0
+
+- ✓ Virtual module reflection types (6 class TypeDefs, Reflectable contract 19, 4 primitive intrinsics) — v11.0
+
+- ✓ ReflectionIndex lazy cache, GC roots, 22 reflection intrinsics, TypeOf/GetType dispatch, integration tests — v11.0
+
+- ✓ typeof() compiler pipeline: lexer→parser→AST→lowering→TyKind::ReflectionType→TypeOf emission — v11.0
+
+- ✓ Reflectable auto-impl: every user TypeDef gets ImplDef + get_type() TYPEOF+RET body — v11.0
+
+- ✓ Read-only introspection E2E tests (12 runtime + 6 golden + 2 LSP), typeof equality, GC survival, static-vs-dynamic — v11.0
+
+- ✓ Dynamic invocation: FieldInfo.set (mut/readonly enforcement), MethodInfo.invoke (scheduler-driven), 6 integration tests — v11.0
+
+- ✓ Generic reflection: is_generic, type_args(), MethodInfo/FieldInfo.attributes(), spec documentation — v11.0
+
+- ✓ Closure capture fix (closures with captured variables execute correctly) — v12.0
+- ✓ s.len() returns byte length, not heap slot index — v12.0
+- ✓ ::choice with fn() {} lambdas serializes without UnexpectedEof — v12.0
+- ✓ Assembler directive completeness (.export, .extern_fn, .component_slot, .locale, .attribute) + real register type blob offsets — v12.0
+- ✓ Spec §26.4 TOC entry + `using log::*` limitation documented — v12.0
+- ✓ test_fn_optional registered and passing in golden test suite — v12.0
+- ✓ LSP Option/Result completions driven by TypeEnv.prelude_enum_variants + orphaned re-export removed — v12.0
+- ✓ DAP per-frame source file attribution via method_file_ids + dialogue {expr} interpolation golden test — v12.0
+
+- ✓ Generic constraints (`<T: Contract>` bounds enforcement, multi-span diagnostics, IL GenericConstraint table emission) — v13.0
+- ✓ Array primitives (dot-call methods on `T[]`, ArrayContains opcode) — v13.0
+- ✓ String utilities (split, trim, starts_with, ends_with, contains, replace, to_upper, to_lower as Rust intrinsics) — v13.0
+- ✓ Hashable builtin contract (auto-implemented for int, string, bool, float) — v13.0
+- ✓ Host value construction API (type-validated struct/class construction from Rust, ImmediateWithHeap handler) — v13.0
+- ✓ Collections (List<T>, Map<K,V>, Set<T>, HashMap<K,V> in pure Writ, loaded as library module) — v13.0
+- ✓ Iterator protocol (Iterable<T>/Iterator<T> contracts, for-in desugaring, map/filter/reduce on List<T>) — v13.0
+- ✓ Diagnostics polish (multi-span constraint errors, fix suggestions, --deny-warnings, LSP partial-parse recovery) — v13.0
+
+- ✓ Array semantics correction (T[] is allocation-explicit, growth methods removed, resize/copy_from added, format_version 5) — v14.0
+- ✓ Stdlib rewrite (List/Map/Set/HashMap internals use resize+indexed assignment, 72 golden tests pass) — v14.0
+- ✓ Cross-module type resolution (DefMap injection from .writc, compile_with_libraries API, virtual module injection, writ.toml [dependencies]) — v14.0
+
 ### Active
 
-(None — next milestone not yet planned)
+(None yet — next milestone pending)
 
 ### Out of Scope
 
@@ -101,11 +166,11 @@ Correct, spec-compliant implementation at every layer — lowering matches Secti
 - Macro system — no macros in current spec
 - Optimization passes — premature at this stage
 - Escaped brace de-escaping (`{{`/`}}`) — lexer gap in writ-parser, not lowering
-- Closure capture classification (by-value vs by-reference) — TYPE-12 stubbed; deferred to future milestone
+- Closure capture classification (by-value vs by-reference) — TYPE-12 capture list fix is in scope for v12.0; full by-value/by-reference classification deferred
 - async/await for tasks — spec uses cooperative yielding; Rust async futures cannot be inspected or serialized
 - Script-defined components — spec says components are extern-only, data-only
 - Exception tables — spec uses crash propagation with defer unwinding, not structured exceptions
-- Standard library (writ-std) — List<T>, Map<K,V>, utilities deferred to future milestone
+- Standard library (writ-std) — shipped in v13.0
 - Language Server Protocol (LSP) / Debug Adapter Protocol (DAP) — shipped in v5.0, fixes in v6.1
 
 ## Constraints
@@ -161,7 +226,7 @@ Correct, spec-compliant implementation at every layer — lowering matches Secti
 | pub(crate) narrowing for internal modules | Exposes dead code to compiler analysis; caught 6 genuinely unused items | ✓ Good |
 | Documented exceptions for 500-line target | parser/program.rs (Chumsky recursive()), module_builder.rs (single struct), dialogue.rs (tightly-coupled), resolver.rs (core algorithm) | ✓ Good |
 | by_fqn prefix scan for log:: namespace completions | inject_log_namespace bypasses def_map.insert(); pub_members_of returns empty | ✓ Good |
-| Hardcoded Option/Result namespace variants | Prelude types not in type_env.enum_variants; pragmatic workaround | ⚠️ Revisit |
+| Hardcoded Option/Result namespace variants | Prelude types not in type_env.enum_variants; pragmatic workaround | ✓ Fixed v12.0 — prelude_enum_variants field on TypeEnv |
 | Fix SWITCH offsets in serialize.rs Pass 4 | Encoding concerns belong in serializer, not emitter; instruction-index-based emitter stays clean | ✓ Good |
 | source_paths Vec replacing source_path Option | Multi-file tracking for DAP; per-frame attribution deferred (FileId not in SourceSpan) | ✓ Good |
 | Three-stage Dockerfile for benchmark container | Writ build, Rust bench build, Ubuntu runtime with 6 interpreters; clean layer separation | ✓ Good |
@@ -170,9 +235,19 @@ Correct, spec-compliant implementation at every layer — lowering matches Secti
 | Writ compile/run split as first-class metrics | `compile_ms` and `run_ms` separate JSON fields; distinguishes interpreter startup from compilation | ✓ Good |
 | CI numbers not authoritative | 15% regression threshold; publishable numbers from local Docker runs on stable machine | ✓ Good |
 | IMPL-METHOD fix for contract dispatch | Intercept Field callee on Struct/Class receiver via methoddef_token_by_type_and_name | ✓ Good |
+| Array growth methods removed, resize/copy added | T[] is fixed-size; dynamic behavior belongs on List<T> | ✓ Good |
+| format_version=5 strict (no backward compat) | Pre-1.0 project; reader rejects anything else | ✓ Good |
+| DefMap injection before collect_declarations | Library types must be visible during Pass 1 user code scanning | ✓ Good |
+| Virtual module through same mechanism as libraries | No special-casing; CLI pushes build_writ_runtime_module() into library list | ✓ Good |
+| Synthetic FileId(u32::MAX-1-lib_index) for library types | Avoids collision with existing FileId(u32::MAX) sentinel for log namespace | ✓ Good |
+
+## Current State
+
+v14.0 Array Semantics & Cross-Module Resolution complete. All 3 phases shipped: Phase 120 (Array Semantics Correction), Phase 121 (Stdlib Rewrite), Phase 122 (Cross-Module Type Resolution). T[] is allocation-explicit, stdlib uses resize+indexed assignment, compiler loads types from .writc library modules with compile-time validation.
 
 ## Context
 
+**Shipped v7.1** with 8 phases, 12 plans in 1 day. VM hot-path optimization: fib(40) 83.297s→27.103s (-67.5%), PGO pipeline, 35 requirements satisfied.
 **Shipped v7.0** with 79,005 LOC Rust (total), 5 phases, 12 plans in 1 day. Cross-language benchmark suite with Docker, SVG charts, CI workflow.
 **Shipped v6.1** with 74,997 LOC Rust, 3 phases, 5 plans in 1 day. LSP completions, DAP runtime fixes, dialogue golden tests.
 **Shipped v6.0** with 74,227 LOC Rust, 5 phases, 14 plans in 1 day. Structural cleanup across all crates.
@@ -184,18 +259,31 @@ Correct, spec-compliant implementation at every layer — lowering matches Secti
 **Workspace:** `writ-parser` (lexer+CST), `writ-compiler` (lowering + resolve + typecheck + codegen), `writ-module` (IL binary format), `writ-runtime` (VM+scheduler+entities+GC), `writ-assembler` (text IL assembler+disassembler), `writ-diagnostics` (shared error codes), `writ-cli` (`writ` binary with compile+run+build), `writ-lsp` (language server), `writ-dap` (debug adapter), `writ-vscode` (VS Code extension), `benchmark/` (Docker harness, Python charts, CI workflow).
 **Language spec:** `language-spec/spec/` (splatted files, v0.4) — Section 28 is the lowering reference; Sections 30-66 are the IL spec; §8 Structs (value types), §9 Classes (reference types).
 
-**12 milestones shipped** (v1.0-v7.0): 74 phases, 168 plans, ~23 days total.
+**Shipped v13.0** with 5 phases, 12 plans. Standard library: generic constraints, array primitives, string utilities, collections (List/Map/Set/HashMap), iterator protocol, diagnostics polish.
+**Shipped v12.0** with 6 phases, 6 plans. Tech debt cleanup: closure capture fix, runtime bug fixes, assembler completeness, spec/test housekeeping, LSP completions refactor, DAP fixes.
+**Shipped v11.0** with 9 phases, 17 plans. Runtime reflection: typeof, Reflectable auto-impl, 6 reflection types, dynamic invocation, generic reflection.
+**Shipped v10.0** with 7 phases, 13 plans. Attribute system: blob encoding, user-defined attributes, [Deprecated]/[Conditional] semantic effects, speaker validation, runtime query API + pre-load callback.
+**Shipped v9.0** with 6 phases, 13 plans. mdBook documentation site, language reference, getting started guide, cargo doc, GitHub Actions CI/deploy.
+**Shipped v8.0** with 4 phases, 5 plans. Contract-as-type: TyKind::Contract, assignability, CALL_VIRT emission, LSP support.
+**Shipped v14.0** with 3 phases, 8 plans in 1 day. Array semantics correction, stdlib rewrite, cross-module type resolution.
+**20 milestones shipped** (v1.0-v14.0): 122 phases, 254 plans.
 
-**Known tech debt:**
-- TYPE-12: Closure capture list stubbed empty — closures with captured variables execute incorrectly
-- RES-09: Speaker validation stub — structure in place, full @Speaker resolution deferred
-- Assembler lacks .export/.extern_fn/.component/.locale/.attribute directives
-- Register type blob offsets stored as 0 placeholders in assembler
-- §26.4 missing from spec table of contents
-- `using log::*;` behavior undocumented in spec
-- test_fn_optional not registered in golden_tests.rs
-- `::choice` with `fn() {}` lambdas causes serialization failure (UnexpectedEof) in multi-function modules
-- StrLen runtime bug: `s.len()` returns heap slot number not byte length
+## Evolution
+
+This document evolves at phase transitions and milestone boundaries.
+
+**After each phase transition** (via `/gsd:transition`):
+1. Requirements invalidated? → Move to Out of Scope with reason
+2. Requirements validated? → Move to Validated with phase reference
+3. New requirements emerged? → Add to Active
+4. Decisions to log? → Add to Key Decisions
+5. "What This Is" still accurate? → Update if drifted
+
+**After each milestone** (via `/gsd:complete-milestone`):
+1. Full review of all sections
+2. Core Value check — still the right priority?
+3. Audit Out of Scope — reasons still valid?
+4. Update Context with current state
 
 ---
-*Last updated: 2026-03-20 after v7.0 milestone*
+*Last updated: 2026-03-29 after v14.0 milestone*

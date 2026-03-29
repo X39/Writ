@@ -943,6 +943,34 @@ fn tail_call_does_not_grow_stack() {
 }
 
 #[test]
+fn tail_call_passes_multiple_args() {
+    // method 0: LoadInt r0=10, LoadInt r1=20, TailCall to method 1 with r_base=0 argc=2
+    // method 1: Add r2=r0+r1, Ret r2 → expected Int(30)
+
+    let main_instrs = vec![
+        Instruction::LoadInt { r_dst: 0, value: 10 },
+        Instruction::LoadInt { r_dst: 1, value: 20 },
+        Instruction::TailCall {
+            method_idx: 0x07000002,
+            r_base: 0,
+            argc: 2,
+        },
+    ];
+
+    let callee_instrs = vec![
+        Instruction::AddI { r_dst: 2, r_a: 0, r_b: 1 },
+        Instruction::Ret { r_src: 2 },
+    ];
+
+    let mut rt = build_two_method_runtime(&main_instrs, 2, &callee_instrs, 3);
+    let tid = rt.spawn_task(0, vec![]).unwrap();
+    rt.tick(0.0, ExecutionLimit::None);
+
+    assert_eq!(rt.task_state(tid), Some(TaskState::Completed));
+    assert_eq!(rt.return_value(tid), Some(Value::Int(30)));
+}
+
+#[test]
 fn call_extern_with_null_host_returns_void() {
     let (rt, tid) = run_simple(
         &[
@@ -1133,7 +1161,7 @@ fn str_len_returns_length() {
 
 #[test]
 fn new_allocates_struct() {
-    // New with type_idx=1 (our TestType, kind=Struct), creates InlineStruct (value-type, no heap allocation)
+    // New with type_idx=1 (our TestType, kind=Struct), creates Value::Struct with heap allocation
     let (rt, tid) = run_simple(
         &[
             Instruction::New {
@@ -1145,12 +1173,12 @@ fn new_allocates_struct() {
         1,
     );
     assert_eq!(rt.task_state(tid), Some(TaskState::Completed));
-    // Verify it's an InlineStruct (struct is a value-type: inline in register, no heap allocation)
+    // Verify it's a Value::Struct (struct allocates on heap, register holds Copy-semantic HeapRef)
     match rt.return_value(tid) {
-        Some(Value::InlineStruct { type_idx, .. }) => {
+        Some(Value::Struct { type_idx, .. }) => {
             assert_eq!(type_idx, 1);
         }
-        other => panic!("expected InlineStruct, got {:?}", other),
+        other => panic!("expected Value::Struct, got {:?}", other),
     }
 }
 
@@ -1200,54 +1228,58 @@ fn get_set_field_round_trip() {
 // ── Array Tests ──────────────────────────────────────────────────
 
 #[test]
-fn array_add_load_store_len() {
+fn array_resize_load_store_len() {
+    // Create a zero-length array, resize to 2, write values, then verify len + load.
     let (rt, tid) = run_simple(
         &[
-            // NewArray
+            // NewArray (zero-length)
             Instruction::NewArray {
                 r_dst: 0,
                 elem_type: 0,
             },
-            // Add element 10
-            Instruction::LoadInt {
-                r_dst: 1,
-                value: 10,
-            },
-            Instruction::ArrayAdd { r_arr: 0, r_val: 1 },
-            // Add element 20
-            Instruction::LoadInt {
-                r_dst: 1,
-                value: 20,
-            },
-            Instruction::ArrayAdd { r_arr: 0, r_val: 1 },
-            // ArrayLen
-            Instruction::ArrayLen { r_dst: 2, r_arr: 0 },
-            // ArrayLoad index 1
-            Instruction::LoadInt { r_dst: 3, value: 1 },
-            Instruction::ArrayLoad {
-                r_dst: 4,
+            // Resize to 2 (fills with default 0)
+            Instruction::LoadInt { r_dst: 1, value: 2 },
+            Instruction::ArrayResize { r_arr: 0, r_new_len: 1 },
+            // Store 10 at index 0
+            Instruction::LoadInt { r_dst: 1, value: 0 },
+            Instruction::LoadInt { r_dst: 2, value: 10 },
+            Instruction::ArrayStore {
                 r_arr: 0,
-                r_idx: 3,
+                r_idx: 1,
+                r_val: 2,
             },
-            // Return [len, element_1] — we'll check both
-            // Store len*100 + element for a combined check
-            Instruction::LoadInt {
+            // Store 20 at index 1
+            Instruction::LoadInt { r_dst: 1, value: 1 },
+            Instruction::LoadInt { r_dst: 2, value: 20 },
+            Instruction::ArrayStore {
+                r_arr: 0,
+                r_idx: 1,
+                r_val: 2,
+            },
+            // ArrayLen
+            Instruction::ArrayLen { r_dst: 3, r_arr: 0 },
+            // ArrayLoad index 1
+            Instruction::LoadInt { r_dst: 4, value: 1 },
+            Instruction::ArrayLoad {
                 r_dst: 5,
-                value: 100,
+                r_arr: 0,
+                r_idx: 4,
             },
+            // Return len*100 + element[1] for combined check
+            Instruction::LoadInt { r_dst: 6, value: 100 },
             Instruction::MulI {
-                r_dst: 6,
-                r_a: 2,
-                r_b: 5,
+                r_dst: 7,
+                r_a: 3,
+                r_b: 6,
             },
             Instruction::AddI {
-                r_dst: 7,
-                r_a: 6,
-                r_b: 4,
+                r_dst: 8,
+                r_a: 7,
+                r_b: 5,
             },
-            Instruction::Ret { r_src: 7 },
+            Instruction::Ret { r_src: 8 },
         ],
-        8,
+        9,
     );
     // len=2, element[1]=20, so 2*100 + 20 = 220
     assert_eq!(rt.return_value(tid), Some(Value::Int(220)));
@@ -1255,29 +1287,19 @@ fn array_add_load_store_len() {
 
 #[test]
 fn array_store_overwrites_element() {
+    // Use NewArraySized to create a 2-element array, then overwrite index 0 with 99.
     let (rt, tid) = run_simple(
         &[
-            Instruction::NewArray {
+            // NewArraySized: r_dst=0, elem_type=0 (int), r_len=1 (register holds 2)
+            Instruction::LoadInt { r_dst: 1, value: 2 },
+            Instruction::NewArraySized {
                 r_dst: 0,
                 elem_type: 0,
+                r_len: 1,
             },
-            // Add two elements
-            Instruction::LoadInt {
-                r_dst: 1,
-                value: 10,
-            },
-            Instruction::ArrayAdd { r_arr: 0, r_val: 1 },
-            Instruction::LoadInt {
-                r_dst: 1,
-                value: 20,
-            },
-            Instruction::ArrayAdd { r_arr: 0, r_val: 1 },
             // Store 99 at index 0
             Instruction::LoadInt { r_dst: 2, value: 0 },
-            Instruction::LoadInt {
-                r_dst: 3,
-                value: 99,
-            },
+            Instruction::LoadInt { r_dst: 3, value: 99 },
             Instruction::ArrayStore {
                 r_arr: 0,
                 r_idx: 2,
@@ -1541,6 +1563,39 @@ fn new_delegate_and_call_indirect() {
     rt.tick(0.0, ExecutionLimit::None);
 
     assert_eq!(rt.return_value(tid), Some(Value::Int(77)));
+}
+
+#[test]
+fn call_indirect_passes_args() {
+    // method 0: LoadInt r1=99, NewDelegate r0 to method 1 (r2=Void target),
+    //           CallIndirect r_dst=3 r_delegate=0 r_base=1 argc=1, Ret r3
+    // method 1: Ret r0  → receives the 99 as first arg
+    // Expected return value: Int(99)
+
+    let main_instrs = vec![
+        Instruction::LoadInt { r_dst: 1, value: 99 },
+        Instruction::NewDelegate {
+            r_dst: 0,
+            method_idx: 0x07000002,
+            r_target: 2, // r2 is Void, so no bound target
+        },
+        Instruction::CallIndirect {
+            r_dst: 3,
+            r_delegate: 0,
+            r_base: 1,
+            argc: 1,
+        },
+        Instruction::Ret { r_src: 3 },
+    ];
+
+    let callee_instrs = vec![Instruction::Ret { r_src: 0 }];
+
+    let mut rt = build_two_method_runtime(&main_instrs, 4, &callee_instrs, 1);
+    let tid = rt.spawn_task(0, vec![]).unwrap();
+    rt.tick(0.0, ExecutionLimit::None);
+
+    assert_eq!(rt.task_state(tid), Some(TaskState::Completed));
+    assert_eq!(rt.return_value(tid), Some(Value::Int(99)));
 }
 
 // ── RetVoid Test ─────────────────────────────────────────────────
@@ -2000,15 +2055,15 @@ fn call_virt_user_defined_contract_dispatch_table_populated() {
     let runtime = RuntimeBuilder::new(module).build().unwrap();
 
     // Verify the dispatch table includes the user's entry
-    // (36 intrinsic entries + 1 user entry = 37 after FIX-02 specialization fix)
+    // (67 intrinsic entries from virtual module + 1 user entry = 68 after Phase 108 additions)
     let dispatch_table = runtime.dispatch_table();
     assert_eq!(
-        dispatch_table.len(), 37,
-        "dispatch table should have 36 intrinsic + 1 user entry"
+        dispatch_table.len(), 72,
+        "dispatch table should have 71 intrinsic (67 base + 4 Hashable) + 1 user entry"
     );
 }
 
-// ── InlineStruct / Kind-dispatch Tests (VM-01 through VM-06) ─────
+// ── Struct / Kind-dispatch Tests (VM-01 through VM-06) ─────
 
 /// Helper: build a runtime with a named type of the given kind and N fields.
 /// Adds N field_defs after the type, then adds one "main" method with the
@@ -2036,9 +2091,9 @@ fn build_runtime_with_type(
     RuntimeBuilder::new(module).build().unwrap()
 }
 
-/// VM-01: NEW on kind=0 struct creates InlineStruct in register, no heap allocation.
+/// VM-01: NEW on kind=0 struct allocates on heap and register holds Value::Struct(HeapRef).
 #[test]
-fn test_new_struct_inline_no_heap() {
+fn test_new_struct_heap_alloc() {
     let mut rt = build_runtime_with_type(
         "MyStruct",
         TypeDefKind::Struct,
@@ -2055,17 +2110,15 @@ fn test_new_struct_inline_no_heap() {
     let heap_after = rt.heap().object_count();
 
     assert_eq!(rt.task_state(task_id), Some(TaskState::Completed));
-    // Heap count must not increase for struct NEW
-    assert_eq!(heap_before, heap_after, "struct NEW must not allocate on heap");
+    // Struct NEW now allocates on heap (Copy-semantic HeapRef)
+    assert_eq!(heap_after, heap_before + 1, "struct NEW must allocate on heap");
 
     let ret = rt.return_value(task_id).unwrap();
     match ret {
-        Value::InlineStruct { type_idx, fields } => {
+        Value::Struct { type_idx, .. } => {
             assert_eq!(type_idx, 1);
-            assert_eq!(fields.len(), 2);
-            assert!(fields.iter().all(|f| *f == Value::Void));
         }
-        other => panic!("expected InlineStruct, got {:?}", other),
+        other => panic!("expected Value::Struct, got {:?}", other),
     }
 }
 
@@ -2122,7 +2175,7 @@ fn test_new_enum_kind_crashes() {
     );
 }
 
-/// GET_FIELD and SET_FIELD on InlineStruct reads/writes directly.
+/// GET_FIELD and SET_FIELD on Value::Struct reads/writes through heap.
 #[test]
 fn test_get_set_field_inline_struct() {
     let mut rt = build_runtime_with_type(
@@ -2130,7 +2183,7 @@ fn test_get_set_field_inline_struct() {
         TypeDefKind::Struct,
         2,
         &[
-            // r0 = new MyStruct (InlineStruct{2 fields})
+            // r0 = new MyStruct (Value::Struct with heap-allocated fields)
             Instruction::New { r_dst: 0, type_idx: 1 },
             // r1 = 42
             Instruction::LoadInt { r_dst: 1, value: 42 },
@@ -2176,46 +2229,8 @@ fn test_get_set_field_class_ref() {
     assert_eq!(rt.return_value(task_id), Some(Value::Int(99)));
 }
 
-/// VM-02: MOV of InlineStruct produces independent copy.
-/// Mutating the copy does not affect the original.
-#[test]
-fn test_mov_inline_struct_independent_copy() {
-    let mut rt = build_runtime_with_type(
-        "MyStruct",
-        TypeDefKind::Struct,
-        1,
-        &[
-            // r0 = new MyStruct
-            Instruction::New { r_dst: 0, type_idx: 1 },
-            // r1 = 10
-            Instruction::LoadInt { r_dst: 1, value: 10 },
-            // r0.field[0] = 10
-            Instruction::SetField { r_obj: 0, field_idx: 0, r_val: 1 },
-            // r2 = copy of r0 (MOV)
-            Instruction::Mov { r_dst: 2, r_src: 0 },
-            // r3 = 999
-            Instruction::LoadInt { r_dst: 3, value: 999 },
-            // r2.field[0] = 999 (mutate the COPY)
-            Instruction::SetField { r_obj: 2, field_idx: 0, r_val: 3 },
-            // r4 = r0.field[0] — original should still be 10
-            Instruction::GetField { r_dst: 4, r_obj: 0, field_idx: 0 },
-            Instruction::Ret { r_src: 4 },
-        ],
-        5,
-    );
-    let task_id = rt.spawn_task(0, vec![]).unwrap();
-    rt.tick(0.0, ExecutionLimit::None);
-
-    assert_eq!(rt.task_state(task_id), Some(TaskState::Completed));
-    assert_eq!(
-        rt.return_value(task_id),
-        Some(Value::Int(10)),
-        "original struct must be unchanged after mutating the copy"
-    );
-}
-
-/// VM-05: BOX on InlineStruct stores Boxed(InlineStruct) on heap.
-/// UNBOX recovers an independent copy with same type_idx and fields.
+/// VM-05: BOX on Value::Struct stores Boxed(Value::Struct) on heap.
+/// UNBOX recovers the Value::Struct and field access through its HeapRef works correctly.
 #[test]
 fn test_box_unbox_inline_struct() {
     let mut rt = build_runtime_with_type(
@@ -2229,9 +2244,9 @@ fn test_box_unbox_inline_struct() {
             Instruction::LoadInt { r_dst: 1, value: 77 },
             // r0.field[0] = 77
             Instruction::SetField { r_obj: 0, field_idx: 0, r_val: 1 },
-            // r2 = Box(r0) — heap allocates Boxed(InlineStruct{...})
+            // r2 = Box(r0) — heap allocates Boxed(Value::Struct{...})
             Instruction::Box { r_dst: 2, r_val: 0 },
-            // r3 = Unbox(r2) — recovers independent copy
+            // r3 = Unbox(r2) — recovers Value::Struct (shared HeapRef)
             Instruction::Unbox { r_dst: 3, r_boxed: 2 },
             // r4 = r3.field[0] — should be 77
             Instruction::GetField { r_dst: 4, r_obj: 3, field_idx: 0 },
@@ -2246,97 +2261,196 @@ fn test_box_unbox_inline_struct() {
     assert_eq!(
         rt.return_value(task_id),
         Some(Value::Int(77)),
-        "UNBOX of InlineStruct should recover the field value"
+        "UNBOX of Value::Struct should recover the field value"
     );
 }
 
-// ── GC InlineStruct Tests (VM-04) ────────────────────────────────
+// ── GC Struct Tests (VM-04) ──────────────────────────────────────
 
-/// VM-04: GC traces InlineStruct fields in registers to find embedded Refs.
-/// An InlineStruct holding a Ref keeps the heap object alive.
+/// GC regression: Value::Struct(HeapRef) in a register must be traced as a root.
+/// If collect_value_refs does not push the href, the struct will be freed.
 #[test]
-fn test_gc_traces_inline_struct_ref_fields() {
-    use writ_runtime::gc::{GcHeap, MarkSweepHeap};
+fn test_gc_traces_struct_href_in_register() {
+    use writ_runtime::gc::{collect_value_refs, GcHeap, MarkSweepHeap};
+
     let mut heap = MarkSweepHeap::new();
 
-    // Allocate a string on the heap
-    let string_href = heap.alloc_string("keep me alive");
-    assert_eq!(heap.heap_size(), 1);
+    // Allocate a struct with one field containing a string ref
+    let string_href = heap.alloc_string("survive");
+    let struct_href = heap.alloc_struct(u32::MAX, 1);
+    heap.set_field(struct_href, 0, Value::Ref(string_href)).unwrap();
 
-    // simulate: a register holds InlineStruct{ fields: [Ref(string_href)] }
-    let inline_val = Value::InlineStruct {
-        type_idx: 1,
-        fields: vec![Value::Ref(string_href)],
-    };
+    // Simulate a register holding Value::Struct
+    let reg_val = Value::Struct { type_idx: 1, href: struct_href };
 
-    // collect_value_refs must find the ref
-    let mut refs = Vec::new();
-    writ_runtime::gc::collect_value_refs(&inline_val, &mut refs);
-    assert_eq!(refs, vec![string_href], "collect_value_refs must find embedded Ref");
+    // collect_value_refs must surface struct_href as a root
+    let mut roots = Vec::new();
+    collect_value_refs(&reg_val, &mut roots);
+    assert_eq!(roots, vec![struct_href]);
 
-    // Run GC with the InlineStruct ref as root — string survives
-    let stats = heap.collect(&refs);
+    // GC with struct_href as root — both struct and string survive
+    let stats = heap.collect(&roots);
     assert_eq!(stats.objects_freed, 0);
-    assert_eq!(heap.heap_size(), 1);
-    assert_eq!(heap.read_string(string_href).unwrap(), "keep me alive");
+    assert_eq!(heap.heap_size(), 2);
+    assert_eq!(heap.read_string(string_href).unwrap(), "survive");
 
-    // Run GC with no roots — string is freed
+    // GC with no roots — both freed
     let stats = heap.collect(&[]);
-    assert_eq!(stats.objects_freed, 1);
+    assert_eq!(stats.objects_freed, 2);
     assert_eq!(heap.heap_size(), 0);
 }
 
-/// VM-04: GC traces nested InlineStruct fields recursively.
+// ── Batch Dispatch Tests (Phase 78) ──────────────────────────────
+
+/// DISPATCH-01, DISPATCH-02, DISPATCH-05: execute_batch handles Continue, Call (stack push),
+/// Ret (stack pop), and Completed correctly across many instructions.
+///
+/// fib(10) = 55 — exercises batch dispatch through recursive calls.
+///
+/// fib(n) method layout (method_idx token 0x07000002 = array_index 1):
+///   r0 = n (argument)
+///   [0] LoadInt  r1, 1              @ byte 0,  12 bytes
+///   [1] CmpLtI   r2, r1, r0         @ byte 12, 8 bytes   -- r2 = (1 < n), i.e., n > 1
+///   [2] BrFalse  r2, offset=72      @ byte 20, 8 bytes   -- if NOT (n > 1), jump to [10] base case
+///   [3] SubI     r3, r0, r1         @ byte 28, 8 bytes   -- r3 = n - 1
+///   [4] Call     r4, fib, r3, 1     @ byte 36, 12 bytes  -- r4 = fib(n-1)
+///   [5] LoadInt  r1, 2              @ byte 48, 12 bytes
+///   [6] SubI     r3, r0, r1         @ byte 60, 8 bytes   -- r3 = n - 2
+///   [7] Call     r5, fib, r3, 1     @ byte 68, 12 bytes  -- r5 = fib(n-2)
+///   [8] AddI     r6, r4, r5         @ byte 80, 8 bytes
+///   [9] Ret      r6                 @ byte 88, 4 bytes
+///   [10] Ret     r0                 @ byte 92, 4 bytes   -- base case: return n
+///
+/// BrFalse at byte 20, target at byte 92 → offset = 92 - 20 = 72
 #[test]
-fn test_gc_traces_nested_inline_struct_refs() {
-    use writ_runtime::gc::{GcHeap, MarkSweepHeap};
-    let mut heap = MarkSweepHeap::new();
+fn batch_dispatch_fib_correctness() {
+    let main_instrs = vec![
+        Instruction::LoadInt { r_dst: 0, value: 10 },
+        // Call fib (method index 1, token 0x07000002)
+        Instruction::Call { r_dst: 1, method_idx: 0x07000002, r_base: 0, argc: 1 },
+        Instruction::Ret { r_src: 1 },
+    ];
 
-    let deep_href = heap.alloc_string("deep");
+    // fib(n): r0 = n; if n <= 1 return n; return fib(n-1) + fib(n-2)
+    // Uses CmpLtI (the only available less-than integer comparison).
+    // Checks: 1 < n  (i.e., n > 1) — if false, n <= 1, take base case.
+    let fib_instrs = vec![
+        // [0] r1 = 1
+        Instruction::LoadInt { r_dst: 1, value: 1 },
+        // [1] r2 = (1 < n)  i.e., n > 1
+        Instruction::CmpLtI { r_dst: 2, r_a: 1, r_b: 0 },
+        // [2] BrFalse: if NOT (n > 1), jump to base case [10] at byte 92
+        //              BrFalse is at byte 20, target byte = 92, offset = 92 - 20 = 72
+        Instruction::BrFalse { r_cond: 2, offset: 72 },
+        // [3] r3 = n - 1  (r1 still holds 1)
+        Instruction::SubI { r_dst: 3, r_a: 0, r_b: 1 },
+        // [4] r4 = fib(n-1)
+        Instruction::Call { r_dst: 4, method_idx: 0x07000002, r_base: 3, argc: 1 },
+        // [5] r1 = 2
+        Instruction::LoadInt { r_dst: 1, value: 2 },
+        // [6] r3 = n - 2
+        Instruction::SubI { r_dst: 3, r_a: 0, r_b: 1 },
+        // [7] r5 = fib(n-2)
+        Instruction::Call { r_dst: 5, method_idx: 0x07000002, r_base: 3, argc: 1 },
+        // [8] r6 = fib(n-1) + fib(n-2)
+        Instruction::AddI { r_dst: 6, r_a: 4, r_b: 5 },
+        // [9] return r6
+        Instruction::Ret { r_src: 6 },
+        // [10] base case: return n  (byte 92)
+        Instruction::Ret { r_src: 0 },
+    ];
 
-    // Outer struct contains inner struct which contains a Ref
-    let inner = Value::InlineStruct {
-        type_idx: 2,
-        fields: vec![Value::Ref(deep_href)],
-    };
-    let outer = Value::InlineStruct {
-        type_idx: 1,
-        fields: vec![inner],
-    };
-
-    let mut refs = Vec::new();
-    writ_runtime::gc::collect_value_refs(&outer, &mut refs);
-    assert_eq!(refs, vec![deep_href], "nested collect_value_refs must find deep Ref");
-
-    // GC with root — deep survives
-    let stats = heap.collect(&refs);
-    assert_eq!(stats.objects_freed, 0);
-    assert_eq!(heap.heap_size(), 1);
+    // main: 3 registers, fib: 7 registers (r0..r6)
+    let mut rt = build_two_method_runtime(&main_instrs, 2, &fib_instrs, 7);
+    let task_id = rt.spawn_task(0, vec![]).unwrap();
+    loop {
+        match rt.tick(0.0, ExecutionLimit::None) {
+            TickResult::AllCompleted => break,
+            _ => continue,
+        }
+    }
+    let ret = rt.return_value(task_id).unwrap();
+    assert_eq!(ret, Value::Int(55), "fib(10) should be 55, got {:?}", ret);
 }
 
-/// VM-04: GC traces Boxed(InlineStruct) correctly.
+/// DISPATCH-03: execute_batch respects the ExecutionLimit and re-queues the task when
+/// the budget is exhausted, producing LimitReached.
+///
+/// Program: r0 = 0; loop { r0 += 1; if r0 < 100 goto loop }; ret r0
+///
+/// Layout:
+///   [0] LoadInt  r0, 0    @ byte 0,  12 bytes
+///   [1] LoadInt  r1, 1    @ byte 12, 12 bytes
+///   [2] LoadInt  r2, 100  @ byte 24, 12 bytes
+///   -- loop start --
+///   [3] AddI     r0, r0, r1  @ byte 36, 8 bytes
+///   [4] CmpLtI   r3, r0, r2  @ byte 44, 8 bytes  -- r3 = r0 < 100
+///   [5] BrTrue   r3, offset  @ byte 52, 8 bytes  -- if true, goto [3] at byte 36
+///                              offset = 36 - 52 = -16
+///   [6] Ret      r0          @ byte 60, 4 bytes
+#[test]
+fn batch_respects_execution_limit() {
+    let instrs = vec![
+        Instruction::LoadInt { r_dst: 0, value: 0 },     // [0] r0 = 0
+        Instruction::LoadInt { r_dst: 1, value: 1 },     // [1] r1 = 1
+        Instruction::LoadInt { r_dst: 2, value: 100 },   // [2] r2 = 100
+        // loop start:
+        Instruction::AddI { r_dst: 0, r_a: 0, r_b: 1 }, // [3] r0 += 1
+        Instruction::CmpLtI { r_dst: 3, r_a: 0, r_b: 2 }, // [4] r3 = r0 < 100
+        Instruction::BrTrue { r_cond: 3, offset: -16 },  // [5] if r3, goto [3] at byte 36 (52-16=36)
+        Instruction::Ret { r_src: 0 },                   // [6] return r0
+    ];
+    let mut runtime = build_runtime(&instrs, 4);
+    let task_id = runtime.spawn_task(0, vec![]).unwrap();
+
+    // With a limit of 10 instructions, the loop (which needs ~303 instructions total)
+    // should NOT complete in one tick.
+    let result = runtime.tick(0.0, ExecutionLimit::Instructions(10));
+    assert!(
+        matches!(result, TickResult::ExecutionLimitReached),
+        "Expected ExecutionLimitReached with limit=10, got {:?}", result
+    );
+
+    // Task should be Ready (re-queued by run_one_task on LimitReached), not Completed
+    let state = runtime.task_state(task_id).unwrap();
+    assert_eq!(state, TaskState::Ready, "task should be re-queued as Ready after limit");
+
+    // Now run unlimited — should complete with r0 = 100
+    let result2 = runtime.tick(0.0, ExecutionLimit::None);
+    assert!(matches!(result2, TickResult::AllCompleted), "Expected AllCompleted, got {:?}", result2);
+    let ret = runtime.return_value(task_id).unwrap();
+    assert_eq!(ret, Value::Int(100), "loop should count to 100");
+}
+
+// DISPATCH-04 coverage note: The debug fallback path (host.debug_enabled() == true
+// causes execute_batch to delegate to execute_one for single-instruction dispatch)
+// is exercised by all tests in debug_hooks_integration_tests.rs which use a
+// DebugHost with debug_enabled() returning true. Those tests verify that
+// before_instruction fires on every instruction — which would fail if execute_batch
+// ran multiple instructions without calling the hook.
+
+/// VM-04: GC traces Boxed(Value::Struct) correctly.
 #[test]
 fn test_gc_traces_boxed_inline_struct() {
     use writ_runtime::gc::{GcHeap, MarkSweepHeap};
     let mut heap = MarkSweepHeap::new();
 
     let inner_href = heap.alloc_string("inner string");
-    let inline_val = Value::InlineStruct {
-        type_idx: 1,
-        fields: vec![Value::Ref(inner_href)],
-    };
-    // Box the InlineStruct
-    let boxed_href = heap.alloc_boxed(inline_val);
-    assert_eq!(heap.heap_size(), 2);
+    let struct_href = heap.alloc_struct(u32::MAX, 1);
+    heap.set_field(struct_href, 0, Value::Ref(inner_href)).unwrap();
+    let struct_val = Value::Struct { type_idx: 1, href: struct_href };
+    // Box the Value::Struct
+    let boxed_href = heap.alloc_boxed(struct_val);
+    assert_eq!(heap.heap_size(), 3);
 
-    // GC with boxed_href as root — both boxed and inner_href survive
+    // GC with boxed_href as root — boxed, struct, and inner_href all survive
     let stats = heap.collect(&[boxed_href]);
-    assert_eq!(stats.objects_freed, 0, "boxed InlineStruct and its Ref target must survive GC");
-    assert_eq!(heap.heap_size(), 2);
+    assert_eq!(stats.objects_freed, 0, "boxed Value::Struct and its heap objects must survive GC");
+    assert_eq!(heap.heap_size(), 3);
     assert_eq!(heap.read_string(inner_href).unwrap(), "inner string");
 
-    // GC with no roots — both freed
+    // GC with no roots — all freed
     let stats = heap.collect(&[]);
-    assert_eq!(stats.objects_freed, 2);
+    assert_eq!(stats.objects_freed, 3);
     assert_eq!(heap.heap_size(), 0);
 }

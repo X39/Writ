@@ -62,9 +62,8 @@ pub(super) fn decl_file_id(decl: &TypedDecl, def_map: &DefMap) -> FileId {
         | TypedDecl::Global { def_id, .. }
         | TypedDecl::Component { def_id, .. }
         | TypedDecl::ExternFn { def_id, .. }
-        | TypedDecl::ExternStruct { def_id, .. }
-        | TypedDecl::ExternClass { def_id, .. }
-        | TypedDecl::ExternComponent { def_id, .. } => *def_id,
+        | TypedDecl::ExternComponent { def_id, .. }
+        | TypedDecl::AttributeDef { def_id, .. } => *def_id,
     };
     def_map.get_entry(def_id).file_id
 }
@@ -287,6 +286,7 @@ mod tests {
         let (resolved, resolve_diags) = writ_compiler::resolve::resolve(
             &[(file_id, &ast)],
             &[(file_id, "test.writ")],
+            &[],
         );
         let resolve_errors: Vec<_> = resolve_diags
             .iter()
@@ -295,7 +295,7 @@ mod tests {
         assert!(resolve_errors.is_empty(), "resolve errors: {:?}", resolve_errors);
 
         let (typed_ast, _interner, _type_env, type_diags) =
-            writ_compiler::check::typecheck(resolved, &[(file_id, &ast)]);
+            writ_compiler::check::typecheck(resolved, &[(file_id, &ast)], &[]);
         let type_errors: Vec<_> = type_diags
             .iter()
             .filter(|d| d.severity == writ_diagnostics::Severity::Error)

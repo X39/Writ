@@ -1,12 +1,11 @@
-# 1. Writ Language Specification
-## 1.14 Dialogue Blocks (dlg)
+# 1.14 Dialogue Blocks (dlg)
 
 Dialogue blocks are the primary authoring construct for game dialogue. They provide a specialized syntax where plain
 text lines are the default and code requires explicit escaping. All `dlg` blocks lower to `fn` calls at compile time.
 
-### 1.14.1 Basic Syntax
+## 1.14.1 Basic Syntax
 
-```
+```writ
 dlg greetPlayer(playerName: string) {
     @Narrator Hey there, {playerName}.
     @Narrator
@@ -18,7 +17,7 @@ dlg greetPlayer(playerName: string) {
 The parameter list is optional for `dlg` declarations. Both `dlg name { ... }` and `dlg name() { ... }` are valid when
 there are no parameters. This is unique to `dlg` — functions (`fn`) always require parentheses.
 
-```
+```writ
 dlg worldIntro {              // no parens — valid
     @Narrator The world awaits.
 }
@@ -28,7 +27,7 @@ dlg worldIntro() {            // empty parens — also valid
 }
 ```
 
-### 1.14.2 Speaker Attribution
+## 1.14.2 Speaker Attribution
 
 The `@` sigil controls speaker attribution. It has two forms:
 
@@ -41,7 +40,7 @@ Speaker resolution for `@` in dialogue:
 2. Check `[Singleton]` entities with a `Speaker` component → resolve via `Entity.getOrCreate<T>()`.
 3. Otherwise → compile error: unknown speaker.
 
-```
+```writ
 dlg shopScene(customer: Entity, guard: Guard) {
     @Narrator You enter the shop.        // singleton, auto-resolved
     @OldTim Welcome, traveler!            // singleton, auto-resolved
@@ -50,7 +49,7 @@ dlg shopScene(customer: Entity, guard: Guard) {
 }
 ```
 
-### 1.14.3 The $ Sigil in Dialogue
+## 1.14.3 The $ Sigil in Dialogue
 
 The `$` sigil is the escape from dialogue into code. It has four forms, disambiguated by the token following `$`:
 
@@ -61,7 +60,7 @@ The `$` sigil is the escape from dialogue into code. It has four forms, disambig
 | Dialogue conditional | `$ if` / `$ match` | Condition is code, branches are dialogue       |
 | Dialogue choice      | `$ choice`         | Present player choices (branches are dialogue) |
 
-```
+```writ
 dlg example {
     @Narrator
     Let me check your reputation.
@@ -76,13 +75,13 @@ dlg example {
 }
 ```
 
-### 1.14.4 Choices
+## 1.14.4 Choices
 
 `$ choice` presents options to the player. Each option is a quoted string followed by a block. The blocks inside are
 dialogue context — text lines, speaker attributions, and further `$` escapes all work. Choice labels require quotes
 because they are not speaker-attributed and need a clear boundary before the block.
 
-```
+```writ
 dlg shopkeeper {
     @OldTim
     What would you like?
@@ -101,12 +100,12 @@ dlg shopkeeper {
 }
 ```
 
-### 1.14.5 Conditional Dialogue
+## 1.14.5 Conditional Dialogue
 
 `$ if` and `$ match` create dialogue-level conditionals. The condition or expression is code, but the branches remain in
 dialogue context — unquoted text, `@speaker`, `$ choice`, and `->` all work inside the branches.
 
-```
+```writ
 dlg greet(reputation: int) {
     @Narrator
     $ if reputation > 50 {
@@ -118,7 +117,7 @@ dlg greet(reputation: int) {
 }
 ```
 
-```
+```writ
 dlg questUpdate(status: QuestStatus) {
     @Narrator
     $ match status {
@@ -138,7 +137,7 @@ dlg questUpdate(status: QuestStatus) {
 
 Nesting is allowed — dialogue conditionals may contain `$ choice`, and choice branches may contain `$ if`:
 
-```
+```writ
 dlg merchant(gold: int) {
     @OldTim Welcome!
     $ choice {
@@ -157,7 +156,7 @@ dlg merchant(gold: int) {
 }
 ```
 
-### 1.14.6 Dialogue Transitions
+## 1.14.6 Dialogue Transitions
 
 The `->` operator performs a terminal transition to another dialogue. It is a tail call — execution does not return. It
 must be the last statement in its block.
@@ -167,7 +166,7 @@ Transitions have two forms:
 - `-> name` — No-argument transition. The target dialogue must have no required parameters.
 - `-> name(args)` — Transition with arguments passed to the target dialogue.
 
-```
+```writ
 dlg questIntro {
     @Narrator A great evil threatens the land.
     $ choice {
@@ -190,13 +189,13 @@ dlg shopEntry(player: Entity) {
 > **Note:** `->` is always terminal. For non-terminal dialogue invocation, call the lowered function directly via
 `$ questDetails();`
 
-### 1.14.7 Localization Keys
+## 1.14.7 Localization Keys
 
 Dialogue lines are automatically assigned localization keys based on content hashing (
 see [Section 1.26.2](#1262-string-extraction--the-localization-key)). To assign a **stable manual key**, append `#key` at
 the end of the line:
 
-```
+```writ
 dlg greet(name: string) {
     @Narrator Hello, {name}. Welcome back. #greet_welcome
     @Narrator The world needs you. #greet_call_to_action
@@ -208,7 +207,7 @@ edited. Keys must be unique within a `dlg` block — duplicate `#key` values are
 
 Lines without `#key` continue to use the auto-generated FNV-1a hash as before. Choice labels also support `#key`:
 
-```
+```writ
 $ choice {
     "Buy something" #shop_buy {
         ...
@@ -219,7 +218,7 @@ $ choice {
 }
 ```
 
-### 1.14.8 Text Styling
+## 1.14.8 Text Styling
 
 Dialogue text may contain inline styling markup using BBCode-style tags: `[tag]...[/tag]`. The compiler treats these as
 literal text — they pass through to the runtime's `say()` function, which interprets them.
@@ -234,7 +233,7 @@ literal text — they pass through to the runtime's `say()` function, which inte
 | `[size=X]...[/size]`   | Text size (X is runtime-defined)                          |
 | `[pause=N]`            | Pause for N milliseconds (self-closing)                   |
 
-```
+```writ
 dlg warning {
     @Narrator This is [b]very important[/b].
     @Narrator The [color=red]dragon[/color] approaches!
@@ -248,7 +247,7 @@ unrecognized by a runtime should be stripped and the inner text displayed normal
 > **Note:** Styling tags are a runtime convention, not a compiler-enforced syntax. The compiler does not validate tag
 > names or nesting — it simply passes the text through. Localization tools should preserve tags in translations.
 
-### 1.14.9 Dialogue Suspension
+## 1.14.9 Dialogue Suspension
 
 Dialogue operations are **transition points** — the runtime suspends execution and yields control to the host engine.
 The core dialogue functions are root-namespace inbuilt calls (§1.27.4) provided by the runtime:
@@ -259,18 +258,20 @@ The core dialogue functions are root-namespace inbuilt calls (§1.27.4) provided
 
 The compiler lowers dialogue syntax (`@Speaker text`, `$ choice { ... }`) into calls to these functions
 automatically — user code in `dlg` blocks does not call them directly. In `fn` bodies, `log` may be
-called freely without qualification. See §1.29.5 for the full lowering and §1.27.4 for the inbuilt call contract.
+called freely without qualification. See §1.30.5 for the full lowering and §1.27.4 for the inbuilt call contract.
 
 The host is responsible for presenting the dialogue UI, advancing text, and returning choice selections. The runtime
 does not prescribe how the host implements these — only that the runtime suspends until the host responds. This follows
 the suspend-and-confirm model (see IL spec §1.14.2).
 
-### 1.14.10 Dialogue Line Semantics
+Dialogue suspension uses the same cooperative task model described in [Concurrency](concurrency.md).
+
+## 1.14.10 Dialogue Line Semantics
 
 Dialogue text lines (unquoted text after a speaker, or continuation lines) are **implicitly formattable**. Interpolation
 with `{expr}` is always available without a `$` prefix — the `dlg` context provides this automatically.
 
-```
+```writ
 dlg greet(playerName: string) {
     @Narrator Hello, {playerName}. You have {getGold()} gold.
 }
@@ -278,7 +279,7 @@ dlg greet(playerName: string) {
 
 To include a literal `{` or `}` in dialogue text, double it:
 
-```
+```writ
 dlg explain {
     @Narrator Use $"{{expression}}" for interpolation in code.
 }

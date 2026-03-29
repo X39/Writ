@@ -6,28 +6,56 @@ use super::{helpers, ExecContext, ExecutionResult};
 // ── Struct Object Model ────────────────────────────────────────
 
 pub(super) fn exec_new(ctx: &mut ExecContext<'_>, r_dst: u16, type_idx: u32) -> ExecutionResult {
-    let module = &ctx.modules[ctx.current_module_idx];
-    let field_count = helpers::get_type_field_count(&module.module, type_idx);
-
-    // type_idx is a MetadataToken: high byte = table ID, low 24 bits = 1-based row.
-    // Strip the table bits to get the 1-based row, then convert to 0-based array index.
+    let table_id = (type_idx >> 24) as u8;
     let row = type_idx & 0x00FF_FFFF;
-    let idx = row.saturating_sub(1) as usize;
-    let kind_u8 = module.module.type_defs.get(idx).map(|t| t.kind);
+
+    // Resolve the target module and typedef index.
+    // TypeDef tokens (table 2) reference the current module directly.
+    // TypeRef tokens (table 3) require cross-module resolution.
+    let (target_module_idx, target_typedef_idx) = if table_id == 3 {
+        // TypeRef — resolve through the domain's cross-module resolution
+        let module = &ctx.modules[ctx.current_module_idx];
+        let typeref_row_0based = row.saturating_sub(1) as u32;
+        if let Some(resolved) = module.resolved_refs.types.get(&typeref_row_0based) {
+            (resolved.module_idx, resolved.typedef_idx as usize)
+        } else {
+            return ExecutionResult::Crash(format!(
+                "NEW: TypeRef row {} not resolved", typeref_row_0based
+            ));
+        }
+    } else {
+        // TypeDef — current module, convert 1-based row to 0-based index
+        (ctx.current_module_idx, row.saturating_sub(1) as usize)
+    };
+
+    let target_module = &ctx.modules[target_module_idx];
+    // For TypeRef tokens, build a synthetic TypeDef token for the resolved typedef index
+    // so get_type_field_count can decode it correctly against the target module.
+    let resolved_type_idx = if table_id == 3 {
+        // Encode as TypeDef token (table_id=2) with 1-based row in the target module
+        (2u32 << 24) | ((target_typedef_idx as u32) + 1)
+    } else {
+        type_idx
+    };
+    let field_count = helpers::get_type_field_count(&target_module.module, resolved_type_idx);
+    let kind_u8 = target_module.module.type_defs.get(target_typedef_idx).map(|t| t.kind);
 
     match kind_u8.and_then(writ_module::TypeDefKind::from_u8) {
         Some(writ_module::TypeDefKind::Struct) => {
-            // kind=0: value-type struct — inline in register, no heap allocation
+            // kind=0: value-type struct — heap allocation with Copy-semantic HeapRef.
+            // The type_key is not needed in the HeapObject because type_idx is carried
+            // directly in Value::Struct for virtual dispatch.
+            let href = ctx.heap.alloc_struct(u32::MAX, field_count);
             let frame = ctx.task.call_stack.last_mut().unwrap();
-            frame.registers[r_dst as usize] = Value::InlineStruct {
-                type_idx,
-                fields: vec![Value::Void; field_count],
-            };
+            frame.registers[r_dst as usize] = Value::Struct { type_idx, href };
             ExecutionResult::Continue
         }
         Some(writ_module::TypeDefKind::Class) | Some(writ_module::TypeDefKind::Entity) => {
-            // kind=4 (class) or kind=2 (entity): heap allocation (existing behavior preserved)
-            let href = ctx.heap.alloc_struct(field_count);
+            // kind=4 (class) or kind=2 (entity): heap allocation.
+            // Encode the type_key as (target_module_idx << 16) | target_typedef_idx so that
+            // CALL_VIRT can resolve the dispatch table entry from the runtime object type.
+            let class_type_key = ((target_module_idx as u32) << 16) | (target_typedef_idx as u32);
+            let href = ctx.heap.alloc_struct(class_type_key, field_count);
             let frame = ctx.task.call_stack.last_mut().unwrap();
             frame.registers[r_dst as usize] = Value::Ref(href);
             ExecutionResult::Continue
@@ -52,20 +80,15 @@ pub(super) fn exec_get_field(
     let frame = ctx.task.call_stack.last().unwrap();
     let obj_val = &frame.registers[r_obj as usize];
     match obj_val {
-        Value::InlineStruct { fields, .. } => {
-            let idx = field_idx as usize;
-            match fields.get(idx) {
-                Some(val) => {
-                    let val = val.clone();
+        Value::Struct { href, .. } => {
+            let href = *href;
+            match ctx.heap.get_field(href, field_idx as usize) {
+                Ok(val) => {
                     let frame = ctx.task.call_stack.last_mut().unwrap();
                     frame.registers[r_dst as usize] = val;
                     ExecutionResult::Continue
                 }
-                None => ExecutionResult::Crash(format!(
-                    "GetField: field index {} out of range for struct with {} fields",
-                    idx,
-                    fields.len()
-                )),
+                Err(e) => ExecutionResult::Crash(format!("GetField: {}", e)),
             }
         }
         Value::Ref(_) | Value::Entity(_) => {
@@ -94,21 +117,17 @@ pub(super) fn exec_set_field(
     r_val: u16,
 ) -> ExecutionResult {
     let idx = field_idx as usize;
-    // Clone the value to store BEFORE taking mutable reference to the object register
-    let val = ctx.task.call_stack.last().unwrap().registers[r_val as usize].clone();
+    // Copy the value to store BEFORE taking mutable reference to the object register
+    let val = ctx.task.call_stack.last().unwrap().registers[r_val as usize];
 
     let frame = ctx.task.call_stack.last_mut().unwrap();
     match &mut frame.registers[r_obj as usize] {
-        Value::InlineStruct { fields, .. } => {
-            if idx < fields.len() {
-                fields[idx] = val;
-                ExecutionResult::Continue
-            } else {
-                ExecutionResult::Crash(format!(
-                    "SetField: field index {} out of range for struct with {} fields",
-                    idx,
-                    fields.len()
-                ))
+        Value::Struct { href, .. } => {
+            let href = *href;
+            let _ = frame;
+            match ctx.heap.set_field(href, idx, val) {
+                Ok(()) => ExecutionResult::Continue,
+                Err(e) => ExecutionResult::Crash(format!("SetField: {}", e)),
             }
         }
         Value::Ref(href) => {
@@ -145,7 +164,7 @@ pub(super) fn exec_array_init(
     {
         let frame = ctx.task.call_stack.last().unwrap();
         for i in 0..count as usize {
-            elements.push(frame.registers[r_base as usize + i].clone());
+            elements.push(frame.registers[r_base as usize + i]);
         }
     }
     let idx = ctx.heap.alloc_array(elem_type);
@@ -169,7 +188,7 @@ pub(super) fn exec_array_load(
     match ctx.heap.get_object(arr_ref) {
         Ok(HeapObject::Array { elements, .. }) => {
             if idx < elements.len() {
-                let val = elements[idx].clone();
+                let val = elements[idx];
                 let frame = ctx.task.call_stack.last_mut().unwrap();
                 frame.registers[r_dst as usize] = val;
                 ExecutionResult::Continue
@@ -190,7 +209,7 @@ pub(super) fn exec_array_store(
     let frame = ctx.task.call_stack.last().unwrap();
     let arr_ref = helpers::extract_ref(&frame.registers[r_arr as usize]);
     let idx = helpers::extract_int(&frame.registers[r_idx as usize]) as usize;
-    let val = frame.registers[r_val as usize].clone();
+    let val = frame.registers[r_val as usize];
     match ctx.heap.get_object_mut(arr_ref) {
         Ok(HeapObject::Array { elements, .. }) => {
             if idx < elements.len() {
@@ -217,57 +236,141 @@ pub(super) fn exec_array_len(ctx: &mut ExecContext<'_>, r_dst: u16, r_arr: u16) 
     }
 }
 
-pub(super) fn exec_array_add(ctx: &mut ExecContext<'_>, r_arr: u16, r_val: u16) -> ExecutionResult {
-    let frame = ctx.task.call_stack.last().unwrap();
-    let arr_ref = helpers::extract_ref(&frame.registers[r_arr as usize]);
-    let val = frame.registers[r_val as usize].clone();
-    match ctx.heap.get_object_mut(arr_ref) {
-        Ok(HeapObject::Array { elements, .. }) => {
-            elements.push(val);
-            ExecutionResult::Continue
-        }
-        _ => ExecutionResult::Crash("ArrayAdd: not an array".into()),
-    }
-}
-
-pub(super) fn exec_array_remove(ctx: &mut ExecContext<'_>, r_arr: u16, r_idx: u16) -> ExecutionResult {
-    let frame = ctx.task.call_stack.last().unwrap();
-    let arr_ref = helpers::extract_ref(&frame.registers[r_arr as usize]);
-    let idx = helpers::extract_int(&frame.registers[r_idx as usize]) as usize;
-    match ctx.heap.get_object_mut(arr_ref) {
-        Ok(HeapObject::Array { elements, .. }) => {
-            if idx < elements.len() {
-                elements.remove(idx);
-                ExecutionResult::Continue
-            } else {
-                ExecutionResult::Crash(format!("ArrayRemove: index {} out of bounds", idx))
-            }
-        }
-        _ => ExecutionResult::Crash("ArrayRemove: not an array".into()),
-    }
-}
-
-pub(super) fn exec_array_insert(
+pub(super) fn exec_array_resize(
     ctx: &mut ExecContext<'_>,
     r_arr: u16,
-    r_idx: u16,
-    r_val: u16,
+    r_new_len: u16,
 ) -> ExecutionResult {
     let frame = ctx.task.call_stack.last().unwrap();
     let arr_ref = helpers::extract_ref(&frame.registers[r_arr as usize]);
-    let idx = helpers::extract_int(&frame.registers[r_idx as usize]) as usize;
-    let val = frame.registers[r_val as usize].clone();
-    match ctx.heap.get_object_mut(arr_ref) {
-        Ok(HeapObject::Array { elements, .. }) => {
-            if idx <= elements.len() {
-                elements.insert(idx, val);
-                ExecutionResult::Continue
-            } else {
-                ExecutionResult::Crash(format!("ArrayInsert: index {} out of bounds", idx))
-            }
-        }
-        _ => ExecutionResult::Crash("ArrayInsert: not an array".into()),
+    let new_len = helpers::extract_int(&frame.registers[r_new_len as usize]);
+    if new_len < 0 {
+        return ExecutionResult::Crash("ArrayResize: negative length".into());
     }
+    match ctx.heap.get_object_mut(arr_ref) {
+        Ok(HeapObject::Array { elements, elem_type }) => {
+            let new_len = new_len as usize;
+            let et = *elem_type;
+            if new_len > elements.len() {
+                let default = default_value_for(et);
+                elements.resize(new_len, default);
+            } else {
+                elements.truncate(new_len);
+            }
+            ExecutionResult::Continue
+        }
+        _ => ExecutionResult::Crash("ArrayResize: not an array".into()),
+    }
+}
+
+fn default_value_for(elem_type: u32) -> Value {
+    // elem_type encoding: 0=int, 1=float, 2=bool; others (string, reference) → Void
+    match elem_type {
+        0 => Value::Int(0),
+        1 => Value::Float(0.0),
+        2 => Value::Bool(false),
+        _ => Value::Void,
+    }
+}
+
+pub(super) fn exec_array_copy(
+    ctx: &mut ExecContext<'_>,
+    r_dst_arr: u16,
+    r_dst_idx: u16,
+    r_src_arr: u16,
+    r_src_idx: u16,
+    r_len: u16,
+) -> ExecutionResult {
+    let frame = ctx.task.call_stack.last().unwrap();
+    let dst_ref = helpers::extract_ref(&frame.registers[r_dst_arr as usize]);
+    let dst_idx = helpers::extract_int(&frame.registers[r_dst_idx as usize]) as usize;
+    let src_ref = helpers::extract_ref(&frame.registers[r_src_arr as usize]);
+    let src_idx = helpers::extract_int(&frame.registers[r_src_idx as usize]) as usize;
+    let len = helpers::extract_int(&frame.registers[r_len as usize]) as usize;
+
+    if dst_ref == src_ref {
+        // Same array — use copy_within for memmove semantics (per D-09)
+        match ctx.heap.get_object_mut(dst_ref) {
+            Ok(HeapObject::Array { elements, .. }) => {
+                if src_idx + len > elements.len() || dst_idx + len > elements.len() {
+                    return ExecutionResult::Crash("ArrayCopy: out of bounds".into());
+                }
+                elements.copy_within(src_idx..src_idx + len, dst_idx);
+                ExecutionResult::Continue
+            }
+            _ => ExecutionResult::Crash("ArrayCopy: not an array".into()),
+        }
+    } else {
+        // Different arrays — clone elements from src, write to dst
+        // Read source elements first (immutable borrow)
+        let src_elems = match ctx.heap.get_object(src_ref) {
+            Ok(HeapObject::Array { elements, .. }) => {
+                if src_idx + len > elements.len() {
+                    return ExecutionResult::Crash("ArrayCopy: source out of bounds".into());
+                }
+                elements[src_idx..src_idx + len].to_vec()
+            }
+            _ => return ExecutionResult::Crash("ArrayCopy: source not an array".into()),
+        };
+        // Write to destination (mutable borrow)
+        match ctx.heap.get_object_mut(dst_ref) {
+            Ok(HeapObject::Array { elements, .. }) => {
+                if dst_idx + len > elements.len() {
+                    return ExecutionResult::Crash("ArrayCopy: destination out of bounds".into());
+                }
+                elements[dst_idx..dst_idx + len].clone_from_slice(&src_elems);
+                ExecutionResult::Continue
+            }
+            _ => ExecutionResult::Crash("ArrayCopy: destination not an array".into()),
+        }
+    }
+}
+
+pub(super) fn exec_new_array_sized(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    elem_type: u32,
+    r_len: u16,
+) -> ExecutionResult {
+    let frame = ctx.task.call_stack.last().unwrap();
+    let len = helpers::extract_int(&frame.registers[r_len as usize]);
+    if len < 0 {
+        return ExecutionResult::Crash("NewArraySized: negative length".into());
+    }
+    let len = len as usize;
+    let default = default_value_for(elem_type);
+    let elements = vec![default; len];
+    let href = ctx.heap.alloc_array(elem_type);
+    if let Ok(HeapObject::Array { elements: elems, .. }) = ctx.heap.get_object_mut(href) {
+        *elems = elements;
+    }
+    let frame = ctx.task.call_stack.last_mut().unwrap();
+    frame.registers[r_dst as usize] = Value::Ref(href);
+    ExecutionResult::Continue
+}
+
+pub(super) fn exec_new_array_filled(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    elem_type: u32,
+    r_len: u16,
+    r_fill: u16,
+) -> ExecutionResult {
+    let frame = ctx.task.call_stack.last().unwrap();
+    let len = helpers::extract_int(&frame.registers[r_len as usize]);
+    if len < 0 {
+        return ExecutionResult::Crash("NewArrayFilled: negative length".into());
+    }
+    let len = len as usize;
+    let fill_val = frame.registers[r_fill as usize];
+    let elements = vec![fill_val; len];
+    let href = ctx.heap.alloc_array(elem_type);
+    if let Ok(HeapObject::Array { elements: elems, .. }) = ctx.heap.get_object_mut(href) {
+        *elems = elements;
+    }
+    let frame = ctx.task.call_stack.last_mut().unwrap();
+    frame.registers[r_dst as usize] = Value::Ref(href);
+    ExecutionResult::Continue
 }
 
 pub(super) fn exec_array_slice(
@@ -304,7 +407,7 @@ pub(super) fn exec_array_slice(
 // ── Option ─────────────────────────────────────────────────────
 
 pub(super) fn exec_wrap_some(ctx: &mut ExecContext<'_>, r_dst: u16, r_val: u16) -> ExecutionResult {
-    let val = ctx.task.call_stack.last().unwrap().registers[r_val as usize].clone();
+    let val = ctx.task.call_stack.last().unwrap().registers[r_val as usize];
     let href = ctx.heap.alloc_enum(0, 1, vec![val]); // tag 1 = Some
     let frame = ctx.task.call_stack.last_mut().unwrap();
     frame.registers[r_dst as usize] = Value::Ref(href);
@@ -316,7 +419,7 @@ pub(super) fn exec_unwrap(ctx: &mut ExecContext<'_>, r_dst: u16, r_opt: u16) -> 
     match ctx.heap.get_object(opt_ref) {
         Ok(HeapObject::Enum { tag, fields, .. }) => {
             if *tag == 1 && !fields.is_empty() {
-                let val = fields[0].clone();
+                let val = fields[0];
                 let frame = ctx.task.call_stack.last_mut().unwrap();
                 frame.registers[r_dst as usize] = val;
                 ExecutionResult::Continue
@@ -353,7 +456,7 @@ pub(super) fn exec_is_none(ctx: &mut ExecContext<'_>, r_dst: u16, r_opt: u16) ->
 // ── Result ─────────────────────────────────────────────────────
 
 pub(super) fn exec_wrap_ok(ctx: &mut ExecContext<'_>, r_dst: u16, r_val: u16) -> ExecutionResult {
-    let val = ctx.task.call_stack.last().unwrap().registers[r_val as usize].clone();
+    let val = ctx.task.call_stack.last().unwrap().registers[r_val as usize];
     let href = ctx.heap.alloc_enum(0, 0, vec![val]); // tag 0 = Ok
     let frame = ctx.task.call_stack.last_mut().unwrap();
     frame.registers[r_dst as usize] = Value::Ref(href);
@@ -361,7 +464,7 @@ pub(super) fn exec_wrap_ok(ctx: &mut ExecContext<'_>, r_dst: u16, r_val: u16) ->
 }
 
 pub(super) fn exec_wrap_err(ctx: &mut ExecContext<'_>, r_dst: u16, r_err: u16) -> ExecutionResult {
-    let val = ctx.task.call_stack.last().unwrap().registers[r_err as usize].clone();
+    let val = ctx.task.call_stack.last().unwrap().registers[r_err as usize];
     let href = ctx.heap.alloc_enum(0, 1, vec![val]); // tag 1 = Err
     let frame = ctx.task.call_stack.last_mut().unwrap();
     frame.registers[r_dst as usize] = Value::Ref(href);
@@ -373,7 +476,7 @@ pub(super) fn exec_unwrap_ok(ctx: &mut ExecContext<'_>, r_dst: u16, r_result: u1
     match ctx.heap.get_object(res_ref) {
         Ok(HeapObject::Enum { tag, fields, .. }) => {
             if *tag == 0 && !fields.is_empty() {
-                let val = fields[0].clone();
+                let val = fields[0];
                 let frame = ctx.task.call_stack.last_mut().unwrap();
                 frame.registers[r_dst as usize] = val;
                 ExecutionResult::Continue
@@ -412,7 +515,7 @@ pub(super) fn exec_extract_err(ctx: &mut ExecContext<'_>, r_dst: u16, r_result: 
     match ctx.heap.get_object(res_ref) {
         Ok(HeapObject::Enum { tag, fields, .. }) => {
             if *tag == 1 && !fields.is_empty() {
-                let val = fields[0].clone();
+                let val = fields[0];
                 let frame = ctx.task.call_stack.last_mut().unwrap();
                 frame.registers[r_dst as usize] = val;
                 ExecutionResult::Continue
@@ -438,7 +541,7 @@ pub(super) fn exec_new_enum(
     {
         let frame = ctx.task.call_stack.last().unwrap();
         for i in 0..field_count as usize {
-            fields.push(frame.registers[r_base as usize + i].clone());
+            fields.push(frame.registers[r_base as usize + i]);
         }
     }
     let href = ctx.heap.alloc_enum(type_idx, tag, fields);
@@ -471,7 +574,7 @@ pub(super) fn exec_extract_field(
         Ok(HeapObject::Enum { fields, .. }) => {
             let idx = field_idx as usize;
             if idx < fields.len() {
-                let val = fields[idx].clone();
+                let val = fields[idx];
                 let frame = ctx.task.call_stack.last_mut().unwrap();
                 frame.registers[r_dst as usize] = val;
                 ExecutionResult::Continue

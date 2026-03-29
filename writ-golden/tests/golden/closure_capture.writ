@@ -1,0 +1,5 @@
+pub fn main() -> int {
+    let x: int = 42;
+    let f: fn() -> int = fn() -> int { x };
+    f()
+}

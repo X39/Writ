@@ -23,3 +23,9 @@ writ-runtime = { path = "../writ-runtime" }
 writ-compiler = { path = "../writ-compiler" }
 writ-diagnostics = { path = "../writ-diagnostics" }
 writ-parser = { path = "../writ-parser" }
+
+[build-dependencies]
+writ-compiler = { path = "../writ-compiler" }
+
+[lints]
+workspace = true

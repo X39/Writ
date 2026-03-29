@@ -1,5 +1,4 @@
-# Writ IL Specification
-## 2.14 Runtime-Host Interface
+# 2.14 Runtime-Host Interface
 
 **Status:** Resolved.
 
@@ -7,7 +6,7 @@ The Writ runtime is embedded inside a host game engine. The runtime owns script 
 registry) but depends on the host for native capabilities (rendering, physics, audio, input). This interface defines the
 contract between the two.
 
-### 2.14.1 Architecture
+## 2.14.1 Architecture
 
 ```
 +-----------------------------------------------------------+
@@ -23,7 +22,7 @@ contract between the two.
 +-----------------------------------------------------------+
 ```
 
-### 2.14.2 Runtime -> Host (requests — runtime suspends until host confirms)
+## 2.14.2 Runtime -> Host (requests — runtime suspends until host confirms)
 
 The runtime does not fire-and-forget notifications. When the runtime needs the host to perform an action, it **suspends
 execution** until the host has processed the request and confirmed the result. This ensures consistency with the game
@@ -40,7 +39,7 @@ engine's logic loop — the host processes changes on its own tick, not asynchro
 | **Say / choice / wait**   | speaker, text/options, duration                         | Display dialogue, present choices, wait for time/input.                                       |
 | **Save requested**        | —                                                       | Runtime is about to serialize. Host should prepare (flush buffers, etc.). Confirm when ready. |
 
-### 2.14.3 Host -> Runtime (commands the host sends)
+## 2.14.3 Host -> Runtime (commands the host sends)
 
 | Command            | Data                                                      | Purpose                                           |
 |--------------------|-----------------------------------------------------------|---------------------------------------------------|
@@ -51,7 +50,7 @@ engine's logic loop — the host processes changes on its own tick, not asynchro
 | **Load save**      | save data                                                 | Restore VM state from a save                      |
 | **Hot reload**     | new IL module                                             | Replace running scripts (if supported)            |
 
-### 2.14.4 Entity Ownership Model
+## 2.14.4 Entity Ownership Model
 
 **Decision:** The runtime owns all script-defined state. The host owns all native state.
 
@@ -69,7 +68,7 @@ This means:
 - `GET_COMPONENT` -> runtime proxies to host.
 - `DESTROY_ENTITY` -> runtime fires `on_destroy`, runs defers, removes from registry, notifies host.
 
-### 2.14.5 Singleton Entities and the Host
+## 2.14.5 Singleton Entities and the Host
 
 `[Singleton]` entities have special semantics at the runtime-host boundary:
 
@@ -80,7 +79,7 @@ This means:
 - When the runtime notifies the host of "entity unreferenced," the `is_singleton` flag tells the host this entity should
   likely be preserved (singletons are expected to exist for the lifetime of the game).
 
-### 2.14.6 Scripted Entities: Runtime Requirements
+## 2.14.6 Scripted Entities: Runtime Requirements
 
 The spec allows entities to be defined entirely in Writ scripts. The runtime MUST support these — it cannot refuse
 script-defined entities. However, the runtime is not required to provide a rendering/physics implementation for them. A
@@ -90,7 +89,7 @@ If a scripted entity uses extern components (`use Sprite { ... }`), the host MUS
 does not support a required extern component, entity spawning fails with a crash (same semantics as a failed library
 load — unrecoverable, defer unwinding).
 
-### 2.14.7 Runtime Logging Interface
+## 2.14.7 Runtime Logging Interface
 
 The runtime must provide a logging interface that reports events to the host with a severity level. The host decides
 how to handle log messages (display to user, write to file, ignore, etc.).
@@ -110,7 +109,7 @@ The logging interface is the primary mechanism for the runtime to communicate er
 prescribe the format — the runtime may use callbacks, a message queue, or any other mechanism appropriate to the
 embedding environment.
 
-### 2.14.8 Implementation Guidance
+## 2.14.8 Implementation Guidance
 
 The following are **recommendations**, not requirements. Runtime implementors may deviate based on their host
 environment.

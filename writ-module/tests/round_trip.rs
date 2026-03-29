@@ -363,3 +363,16 @@ fn test_invalid_typedef_kind_rejection() {
         other => panic!("Expected InvalidTypeDefKind, got {other:?}"),
     }
 }
+
+#[test]
+fn test_unsupported_version_3_rejected() {
+    let module = Module::new();
+    let mut bytes = module.to_bytes().unwrap();
+    // Patch format_version field (bytes 4-5 in LE u16 in the 200-byte header)
+    bytes[4] = 3;
+    bytes[5] = 0;
+    match Module::from_bytes(&bytes) {
+        Err(DecodeError::UnsupportedVersion(3)) => {}
+        other => panic!("expected UnsupportedVersion(3), got {:?}", other),
+    }
+}

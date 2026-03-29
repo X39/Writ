@@ -86,6 +86,12 @@ pub enum ResolutionError {
         file: FileId,
         span: SimpleSpan,
     },
+    /// User-defined attribute shadows a builtin attribute name.
+    BuiltinAttributeShadow {
+        name: String,
+        file: FileId,
+        span: SimpleSpan,
+    },
 }
 
 impl From<ResolutionError> for Diagnostic {
@@ -195,8 +201,8 @@ impl From<ResolutionError> for Diagnostic {
 
             ResolutionError::InvalidSpeaker { name, file, span } => {
                 Diagnostic::error(code::E0007, format!("invalid speaker `{name}`"))
-                    .with_primary(file, span, "speaker not found")
-                    .with_help("speakers must be declared as entities or structs in scope")
+                    .with_primary(file, span, "entity is not [Singleton]")
+                    .with_help("add [Singleton] attribute to the entity declaration, or use a parameter-based speaker")
                     .build()
             }
 
@@ -225,6 +231,15 @@ impl From<ResolutionError> for Diagnostic {
                 Diagnostic::error(code::E0003, format!("`{name}` is not a component type"))
                     .with_primary(file, span, "expected a component type")
                     .with_help("component slots must reference types declared with `component` or `extern component`")
+                    .build()
+            }
+
+            ResolutionError::BuiltinAttributeShadow { name, file, span } => {
+                Diagnostic::error(code::E0008, format!("cannot shadow builtin attribute `{name}`"))
+                    .with_primary(file, span, format!("`{name}` is a builtin attribute"))
+                    .with_help(format!(
+                        "`{name}` is a builtin attribute provided by the Writ runtime and cannot be redefined"
+                    ))
                     .build()
             }
         }

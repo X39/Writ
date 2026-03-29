@@ -21,6 +21,7 @@ use writ_module::instruction::Instruction;
 
 use crate::check::ir::{TypedAst, TypedDecl, TypedExpr, TypedLiteral, TypedStmt};
 use crate::check::ty::{Ty, TyInterner};
+use crate::emit::collect::ReflectableInfo;
 use crate::emit::module_builder::ModuleBuilder;
 use crate::resolve::def_map::DefId;
 
@@ -329,7 +330,8 @@ fn expr_has_error(expr: &TypedExpr) -> bool {
         | TypedExpr::Var { .. }
         | TypedExpr::SelfRef { .. }
         | TypedExpr::Path { .. }
-        | TypedExpr::Crash { .. } => {} // Crash is intentional runtime panic, not a compile error
+        | TypedExpr::Crash { .. }
+        | TypedExpr::TypeOf { .. } => {} // Crash is intentional runtime panic, not a compile error
     }
     false
 }
@@ -377,6 +379,7 @@ pub fn emit_all_bodies(
     builder: &ModuleBuilder,
     lambda_infos: &[closure::LambdaInfo],
     struct_field_types: &FxHashMap<DefId, Vec<(String, crate::check::ty::Ty)>>,
+    reflectable_infos: &[ReflectableInfo],
 ) -> (Vec<EmittedBody>, Vec<writ_diagnostics::Diagnostic>) {
     let mut diags = Vec::new();
     let mut bodies = Vec::new();
@@ -432,10 +435,8 @@ pub fn emit_all_bodies(
                     label_allocator: emitter.labels,
                 });
             }
-            TypedDecl::Impl { methods, .. } => {
-                for (def_id, body) in methods {
-                    // Per-method error check: a single broken method does not skip the
-                    // entire impl block — other methods in the same impl are still emitted.
+            TypedDecl::Impl { def_id: impl_def_id, methods } => {
+                for (method_idx, (def_id, body)) in methods.iter().enumerate() {
                     if expr_has_error(body) {
                         let method_name = typed_ast.def_map.arena
                             .get(*def_id)
@@ -452,11 +453,19 @@ pub fn emit_all_bodies(
                     let mut emitter = BodyEmitter::new(builder, interner, struct_field_types);
                     emitter.current_method_def_id = Some(*def_id);
                     // Pre-allocate parameter registers r0..r(n-1) per IL spec section 2.16.2.
-                    if let Some(params) = builder.get_fn_params(*def_id) {
+                    //
+                    // BUG FIX: All impl methods share the same DefId (the impl block's DefId),
+                    // so fn_param_map only retains the LAST method's params. Use the handle-based
+                    // impl_method_param_map which is indexed by MethodDefHandle for unambiguous
+                    // per-method param lookup. Fall back to fn_param_map for non-impl methods.
+                    let method_handle_idx = builder.find_impl_method_handle(*impl_def_id, method_idx);
+                    let params_opt = method_handle_idx
+                        .and_then(|h| builder.get_fn_params_by_handle(h))
+                        .or_else(|| builder.get_fn_params(*def_id));
+                    if let Some(params) = params_opt {
                         for (name, ty) in params.clone() {
                             let r = emitter.alloc_reg(ty);
                             emitter.locals.insert(name.clone(), r);
-                            // Parameters are live from the start of the method body.
                             emitter.debug_locals.push((r, name, 0, u32::MAX));
                         }
                     }
@@ -582,20 +591,97 @@ pub fn emit_all_bodies(
         }
     }
 
+    // Emit synthetic Reflectable get_type() bodies BEFORE lambda bodies.
+    //
+    // Ordering requirement: Reflectable MethodDefs are added during collect_defs (before
+    // pre_scan_lambdas), so they appear first in the MethodDef table after finalize's
+    // stable sort by parent TypeDefHandle. Lambda MethodDefs are added by pre_scan_lambdas
+    // which runs after collect_defs. Bodies are matched to orphaned MethodDefs (def_id=None)
+    // in positional order by the serializer. Therefore, reflectable bodies must come BEFORE
+    // lambda bodies in the bodies Vec.
+    //
+    // Each synthetic body: r0 = self (pre-allocated), r1 = TYPEOF result, TYPEOF r1 type_idx, RET r1.
+    for info in reflectable_infos {
+        // Resolve the type_idx: use the TypeDef's finalized MetadataToken for TYPEOF.
+        // This is the same token returned by token_for_def(def_id) post-finalize.
+        let type_idx = builder.token_for_def(info.def_id)
+            .map(|t| t.0)
+            .unwrap_or(0);
+
+        // r0 = self (Ty placeholder — self type is not used for IL execution correctness)
+        // r1 = TYPEOF result (also Ty placeholder — only reg index matters for TYPEOF dst)
+        let self_ty = Ty(0);  // Int placeholder — type doesn't affect IL execution
+        let type_ty = Ty(0);  // Int placeholder — Type return type
+
+        let instructions = vec![
+            Instruction::TypeOf { r_dst: 1, type_idx },
+            Instruction::Ret { r_src: 1 },
+        ];
+
+        bodies.push(EmittedBody {
+            method_def_id: None,  // synthetic method — no source DefId
+            instructions,
+            reg_count: 2,         // r0 = self, r1 = TYPEOF result
+            reg_types: vec![self_ty, type_ty],
+            source_spans: Vec::new(),
+            debug_locals: Vec::new(),
+            pending_strings: Vec::new(),
+            label_allocator: labels::LabelAllocator::new(),
+        });
+    }
+
     // Emit lambda bodies as separate EmittedBody entries.
     // lambda_infos[i] corresponds to the i-th Lambda node discovered by pre_scan_lambdas.
-    // Walk the TypedAst in the same order as pre_scan_lambdas to collect lambda bodies.
-    let mut lambda_bodies: Vec<&TypedExpr> = Vec::new();
-    collect_lambda_bodies_from_ast(typed_ast, &mut lambda_bodies);
+    // Walk the TypedAst in the same order as pre_scan_lambdas to collect lambda nodes.
+    let mut lambda_exprs: Vec<&TypedExpr> = Vec::new();
+    collect_lambda_exprs_from_ast(typed_ast, &mut lambda_exprs);
 
-    for (i, lambda_body) in lambda_bodies.iter().enumerate() {
+    for (i, lambda_expr) in lambda_exprs.iter().enumerate() {
         if i >= lambda_infos.len() {
             break;
         }
-        let _info = &lambda_infos[i];
+        let info = &lambda_infos[i];
+
+        // Extract params and body from the Lambda node itself.
+        let (params, lambda_body) = match lambda_expr {
+            TypedExpr::Lambda { params, body, .. } => (params.as_slice(), body.as_ref()),
+            _ => continue,
+        };
+
         let mut emitter = BodyEmitter::new(builder, interner, struct_field_types);
+
+        // If this lambda has captures, register r0 as the capture struct (self/target)
+        // and emit GET_FIELD instructions to load each captured variable into a named local.
+        if !info.captures_info.is_empty() {
+            let closure_name = format!("__closure_{}", info.closure_idx);
+            // r0 = capture struct reference (passed as the delegate target)
+            let env_ty = crate::check::ty::Ty(4); // Void placeholder — type not used by VM for field access
+            let r_self = emitter.alloc_reg(env_ty);
+
+            for (cap_name, cap_ty) in &info.captures_info {
+                let r_cap = emitter.alloc_reg(*cap_ty);
+                let field_idx = builder.field_token_by_name_on_closure(&closure_name, cap_name).unwrap_or(0);
+                emitter.emit(Instruction::GetField {
+                    r_dst: r_cap,
+                    r_obj: r_self,
+                    field_idx,
+                });
+                emitter.locals.insert(cap_name.clone(), r_cap);
+            }
+        }
+
+        // Register lambda params in locals AFTER captures so captures come first in reg layout.
+        for (pname, pty) in params {
+            let r_param = emitter.alloc_reg(*pty);
+            emitter.locals.insert(pname.clone(), r_param);
+        }
+
         let r = expr::emit_expr(&mut emitter, lambda_body);
-        emitter.emit(Instruction::Ret { r_src: r });
+        if lambda_body.ty() == Ty(4) {
+            emitter.emit(Instruction::RetVoid);
+        } else {
+            emitter.emit(Instruction::Ret { r_src: r });
+        }
 
         // Lambda bodies have no source DefId — use None.
         // The serializer matches lambda MethodDefs by name pattern, not DefId.
@@ -617,20 +703,20 @@ pub fn emit_all_bodies(
 }
 
 /// Walk the TypedAst in the same pre-order as `pre_scan_lambdas` and collect
-/// references to each Lambda's body expression.
-fn collect_lambda_bodies_from_ast<'a>(typed_ast: &'a TypedAst, out: &mut Vec<&'a TypedExpr>) {
+/// references to each Lambda expression node (not just the body).
+fn collect_lambda_exprs_from_ast<'a>(typed_ast: &'a TypedAst, out: &mut Vec<&'a TypedExpr>) {
     for decl in &typed_ast.decls {
         match decl {
             TypedDecl::Fn { body, .. } => {
-                collect_lambda_bodies_from_expr(body, out);
+                collect_lambda_exprs_from_expr(body, out);
             }
             TypedDecl::Impl { methods, .. } => {
                 for (_, body) in methods {
-                    collect_lambda_bodies_from_expr(body, out);
+                    collect_lambda_exprs_from_expr(body, out);
                 }
             }
             TypedDecl::Const { value, .. } | TypedDecl::Global { value, .. } => {
-                collect_lambda_bodies_from_expr(value, out);
+                collect_lambda_exprs_from_expr(value, out);
             }
             _ => {}
         }
@@ -638,69 +724,70 @@ fn collect_lambda_bodies_from_ast<'a>(typed_ast: &'a TypedAst, out: &mut Vec<&'a
 }
 
 /// Walk an expression in the same pre-order as `scan_expr_for_lambdas`,
-/// collecting the body of each Lambda encountered.
-fn collect_lambda_bodies_from_expr<'a>(expr: &'a TypedExpr, out: &mut Vec<&'a TypedExpr>) {
+/// collecting the Lambda node itself (not just its body).
+fn collect_lambda_exprs_from_expr<'a>(expr: &'a TypedExpr, out: &mut Vec<&'a TypedExpr>) {
     match expr {
         TypedExpr::Lambda { body, .. } => {
-            // Collect the body expression for this lambda, then recurse into it.
-            out.push(body.as_ref());
-            collect_lambda_bodies_from_expr(body, out);
+            // Collect this Lambda node itself (so we have access to params + captures + body),
+            // then recurse into the body for nested lambdas.
+            out.push(expr);
+            collect_lambda_exprs_from_expr(body, out);
         }
         TypedExpr::Block { stmts, tail, .. } => {
             for stmt in stmts {
-                collect_lambda_bodies_from_stmt(stmt, out);
+                collect_lambda_exprs_from_stmt(stmt, out);
             }
             if let Some(t) = tail {
-                collect_lambda_bodies_from_expr(t, out);
+                collect_lambda_exprs_from_expr(t, out);
             }
         }
         TypedExpr::If { condition, then_branch, else_branch, .. } => {
-            collect_lambda_bodies_from_expr(condition, out);
-            collect_lambda_bodies_from_expr(then_branch, out);
+            collect_lambda_exprs_from_expr(condition, out);
+            collect_lambda_exprs_from_expr(then_branch, out);
             if let Some(e) = else_branch {
-                collect_lambda_bodies_from_expr(e, out);
+                collect_lambda_exprs_from_expr(e, out);
             }
         }
         TypedExpr::Binary { left, right, .. } => {
-            collect_lambda_bodies_from_expr(left, out);
-            collect_lambda_bodies_from_expr(right, out);
+            collect_lambda_exprs_from_expr(left, out);
+            collect_lambda_exprs_from_expr(right, out);
         }
         TypedExpr::UnaryPrefix { expr: inner, .. } => {
-            collect_lambda_bodies_from_expr(inner, out);
+            collect_lambda_exprs_from_expr(inner, out);
         }
         TypedExpr::Call { callee, args, .. } => {
-            collect_lambda_bodies_from_expr(callee, out);
+            collect_lambda_exprs_from_expr(callee, out);
             for arg in args {
-                collect_lambda_bodies_from_expr(arg, out);
+                collect_lambda_exprs_from_expr(arg, out);
             }
         }
         TypedExpr::Field { receiver, .. } | TypedExpr::ComponentAccess { receiver, .. } => {
-            collect_lambda_bodies_from_expr(receiver, out);
+            collect_lambda_exprs_from_expr(receiver, out);
         }
         TypedExpr::Index { receiver, index, .. } => {
-            collect_lambda_bodies_from_expr(receiver, out);
-            collect_lambda_bodies_from_expr(index, out);
+            collect_lambda_exprs_from_expr(receiver, out);
+            collect_lambda_exprs_from_expr(index, out);
         }
         TypedExpr::Assign { target, value, .. } => {
-            collect_lambda_bodies_from_expr(target, out);
-            collect_lambda_bodies_from_expr(value, out);
+            collect_lambda_exprs_from_expr(target, out);
+            collect_lambda_exprs_from_expr(value, out);
         }
         TypedExpr::New { fields, .. } => {
             for (_, v) in fields {
-                collect_lambda_bodies_from_expr(v, out);
+                collect_lambda_exprs_from_expr(v, out);
             }
         }
         TypedExpr::ArrayLit { elements, .. } => {
             for e in elements {
-                collect_lambda_bodies_from_expr(e, out);
+                collect_lambda_exprs_from_expr(e, out);
             }
         }
         TypedExpr::Range { start, end, .. } => {
             if let Some(s) = start {
-                collect_lambda_bodies_from_expr(s, out);
+                collect_lambda_exprs_from_expr(s, out);
             }
             if let Some(e) = end {
-                collect_lambda_bodies_from_expr(e, out);
+                collect_lambda_exprs_from_expr(e, out);
             }
         }
         TypedExpr::Spawn { expr: inner, .. }
@@ -708,17 +795,17 @@ fn collect_lambda_bodies_from_expr<'a>(expr: &'a TypedExpr, out: &mut Vec<&'a Ty
         | TypedExpr::Join { expr: inner, .. }
         | TypedExpr::Cancel { expr: inner, .. }
         | TypedExpr::Defer { expr: inner, .. } => {
-            collect_lambda_bodies_from_expr(inner, out);
+            collect_lambda_exprs_from_expr(inner, out);
         }
         TypedExpr::Match { scrutinee, arms, .. } => {
-            collect_lambda_bodies_from_expr(scrutinee, out);
+            collect_lambda_exprs_from_expr(scrutinee, out);
             for arm in arms {
-                collect_lambda_bodies_from_expr(&arm.body, out);
+                collect_lambda_exprs_from_expr(&arm.body, out);
             }
         }
         TypedExpr::Return { value, .. } => {
             if let Some(v) = value {
-                collect_lambda_bodies_from_expr(v, out);
+                collect_lambda_exprs_from_expr(v, out);
             }
         }
         // Leaf nodes
@@ -727,40 +814,41 @@ fn collect_lambda_bodies_from_expr<'a>(expr: &'a TypedExpr, out: &mut Vec<&'a Ty
         | TypedExpr::SelfRef { .. }
         | TypedExpr::Path { .. }
         | TypedExpr::Error { .. }
-        | TypedExpr::Crash { .. } => {}
+        | TypedExpr::Crash { .. }
+        | TypedExpr::TypeOf { .. } => {}
     }
 }
 
-/// Walk a statement for lambda bodies.
-fn collect_lambda_bodies_from_stmt<'a>(stmt: &'a TypedStmt, out: &mut Vec<&'a TypedExpr>) {
+/// Walk a statement for lambda expressions.
+fn collect_lambda_exprs_from_stmt<'a>(stmt: &'a TypedStmt, out: &mut Vec<&'a TypedExpr>) {
     match stmt {
-        TypedStmt::Let { value, .. } => collect_lambda_bodies_from_expr(value, out),
-        TypedStmt::Expr { expr, .. } => collect_lambda_bodies_from_expr(expr, out),
+        TypedStmt::Let { value, .. } => collect_lambda_exprs_from_expr(value, out),
+        TypedStmt::Expr { expr, .. } => collect_lambda_exprs_from_expr(expr, out),
         TypedStmt::Return { value, .. } => {
             if let Some(v) = value {
-                collect_lambda_bodies_from_expr(v, out);
+                collect_lambda_exprs_from_expr(v, out);
             }
         }
         TypedStmt::For { iterable, body, .. } => {
-            collect_lambda_bodies_from_expr(iterable, out);
+            collect_lambda_exprs_from_expr(iterable, out);
             for s in body {
-                collect_lambda_bodies_from_stmt(s, out);
+                collect_lambda_exprs_from_stmt(s, out);
             }
         }
         TypedStmt::While { condition, body, .. } => {
-            collect_lambda_bodies_from_expr(condition, out);
+            collect_lambda_exprs_from_expr(condition, out);
             for s in body {
-                collect_lambda_bodies_from_stmt(s, out);
+                collect_lambda_exprs_from_stmt(s, out);
             }
         }
         TypedStmt::Atomic { body, .. } => {
             for s in body {
-                collect_lambda_bodies_from_stmt(s, out);
+                collect_lambda_exprs_from_stmt(s, out);
             }
         }
         TypedStmt::Break { value, .. } => {
             if let Some(v) = value {
-                collect_lambda_bodies_from_expr(v, out);
+                collect_lambda_exprs_from_expr(v, out);
             }
         }
         TypedStmt::Continue { .. } | TypedStmt::Error { .. } => {}

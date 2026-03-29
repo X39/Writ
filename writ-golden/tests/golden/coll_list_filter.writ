@@ -1,0 +1,43 @@
+pub class List<T> {
+    items: T[]
+}
+
+impl<T> List<T> {
+    pub fn add(mut self, item: T) {
+        let old_len: int = self.items.len();
+        self.items.resize(old_len + 1);
+        self.items[old_len] = item;
+    }
+
+    pub fn get(self, index: int) -> T {
+        self.items[index]
+    }
+
+    pub fn len(self) -> int {
+        self.items.len()
+    }
+
+    pub fn filter(self, f: fn(T) -> bool) -> List<T> {
+        let result: List<T> = new List<T> { items: [] };
+        let mut i: int = 0;
+        while i < self.items.len() {
+            if f(self.items[i]) {
+                result.add(self.items[i]);
+            }
+            i = i + 1;
+        }
+        result
+    }
+}
+
+fn main() {
+    let list: List<int> = new List<int> { items: [] };
+    list.add(1);
+    list.add(2);
+    list.add(3);
+    list.add(4);
+    list.add(5);
+    let filtered: List<int> = list.filter(fn(x: int) -> bool { x > 2 });
+    let _v: int = filtered.get(0);
+    let _len: int = filtered.len();
+}

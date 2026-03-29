@@ -1,0 +1,7 @@
+class Widget {
+    name: string,
+}
+
+fn main() {
+    let t = typeof(Widget);
+}

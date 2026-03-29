@@ -1,0 +1,29 @@
+.module "main" "0.1.0" {
+    .extern "writ-runtime" "1.0.0"
+    .type "Stub" class pub {
+        .field "value" int
+    }
+    .impl Stub : contract_167772179 {
+        .method "get_type" () -> Type pub {
+            .reg r0 int
+            .reg r1 int
+            TYPEOF r1, 33554433
+            RET r1
+        }
+        .method "main" () -> void mut {
+            .locals {
+                r0: Stub "s" [30, 42)
+                r2: int "v" [40, 42)
+            }
+            .reg r0 Stub
+            .reg r1 int
+            .reg r2 int
+            NEW r0, 33554433  ; line:1 col:57
+            LOAD_INT r1, 42
+            SET_FIELD r0, 0, r1
+            GET_FIELD r2, r0, 0  ; line:1 col:100
+            RET_VOID
+        }
+    }
+    .export "Stub" type 33554433
+}

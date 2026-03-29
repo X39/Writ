@@ -159,6 +159,8 @@ fn make_clean_ast() -> TypedAst {
         }],
         def_map,
         struct_field_types: FxHashMap::default(),
+        conditional_fns: FxHashMap::default(),
+        fallback_for_conditional: FxHashMap::default(),
     }
 }
 
@@ -177,6 +179,8 @@ fn make_ast_with_error_expr() -> TypedAst {
         }],
         def_map,
         struct_field_types: FxHashMap::default(),
+        conditional_fns: FxHashMap::default(),
+        fallback_for_conditional: FxHashMap::default(),
     }
 }
 
@@ -197,6 +201,8 @@ fn make_ast_with_error_stmt() -> TypedAst {
         }],
         def_map,
         struct_field_types: FxHashMap::default(),
+        conditional_fns: FxHashMap::default(),
+        fallback_for_conditional: FxHashMap::default(),
     }
 }
 
@@ -957,6 +963,166 @@ fn test_object_model_component_access() {
     assert!(has_get_component, "expected GetComponent instruction for component access");
 }
 
+// ─── Entity namespace static methods (GET_OR_CREATE, FIND_ALL, etc.) ─────────
+
+#[test]
+fn test_entity_get_or_create_emits_instruction() {
+    // Entity.getOrCreate<MyEntity>() -> GET_OR_CREATE { r_dst, type_idx }
+    let mut interner = make_interner();
+    let (_, entity_def_id) = make_def_id();
+    let ty_entity = interner.intern(TyKind::Entity(entity_def_id));
+    let ty_any_entity = interner.any_entity();
+    let callee_fn_ty = interner.func(vec![], ty_entity);
+
+    let builder = make_builder_with_entity_fields(entity_def_id, &["health"]);
+    let mut emitter = make_emitter(&builder, &interner);
+    let call_expr = TypedExpr::Call {
+        ty: ty_entity,
+        span: dummy_span(),
+        callee: Box::new(TypedExpr::Field {
+            ty: callee_fn_ty,
+            span: dummy_span(),
+            receiver: Box::new(TypedExpr::Var {
+                ty: ty_any_entity,
+                span: dummy_span(),
+                name: "Entity".to_string(),
+            }),
+            field: "getOrCreate".to_string(),
+        }),
+        args: vec![],
+        callee_def_id: None,
+    };
+
+    let _r = emit_expr(&mut emitter, &call_expr);
+    assert!(
+        emitter.instructions.iter().any(|i| matches!(i, Instruction::GetOrCreate { .. })),
+        "expected GetOrCreate instruction, got {:?}", emitter.instructions
+    );
+    // Verify the type_idx is non-zero (resolved from the entity TypeDef)
+    let get_or_create = emitter.instructions.iter().find(|i| matches!(i, Instruction::GetOrCreate { .. })).unwrap();
+    if let Instruction::GetOrCreate { type_idx, .. } = get_or_create {
+        assert!(*type_idx != 0, "type_idx should be resolved from entity TypeDef, got 0");
+    }
+}
+
+#[test]
+fn test_entity_find_all_emits_instruction() {
+    // Entity.findAll<MyEntity>() -> FIND_ALL { r_dst, type_idx }
+    let mut interner = make_interner();
+    let (_, entity_def_id) = make_def_id();
+    let _ty_entity = interner.intern(TyKind::Entity(entity_def_id));
+    let ty_any_entity = interner.any_entity();
+    let ty_arr = interner.array(ty_any_entity);
+    let callee_fn_ty = interner.func(vec![], ty_arr);
+
+    let builder = make_builder_with_entity_fields(entity_def_id, &["health"]);
+    let mut emitter = make_emitter(&builder, &interner);
+    let call_expr = TypedExpr::Call {
+        ty: ty_arr,
+        span: dummy_span(),
+        callee: Box::new(TypedExpr::Field {
+            ty: callee_fn_ty,
+            span: dummy_span(),
+            receiver: Box::new(TypedExpr::Var {
+                ty: ty_any_entity,
+                span: dummy_span(),
+                name: "Entity".to_string(),
+            }),
+            field: "findAll".to_string(),
+        }),
+        args: vec![],
+        callee_def_id: None,
+    };
+
+    let _r = emit_expr(&mut emitter, &call_expr);
+    assert!(
+        emitter.instructions.iter().any(|i| matches!(i, Instruction::FindAll { .. })),
+        "expected FindAll instruction, got {:?}", emitter.instructions
+    );
+}
+
+#[test]
+fn test_entity_destroy_emits_instruction() {
+    // Entity.destroy(e) -> DESTROY_ENTITY { r_entity }
+    let mut interner = make_interner();
+    let (_, entity_def_id) = make_def_id();
+    let ty_entity = interner.intern(TyKind::Entity(entity_def_id));
+    let ty_any_entity = interner.any_entity();
+    let ty_void = interner.void();
+    let callee_fn_ty = interner.func(vec![ty_any_entity], ty_void);
+
+    let builder = make_builder_with_entity_fields(entity_def_id, &["health"]);
+    let mut emitter = make_emitter(&builder, &interner);
+
+    emitter.locals.insert("e".to_string(), 0);
+    emitter.regs.alloc(ty_entity);
+    let call_expr = TypedExpr::Call {
+        ty: ty_void,
+        span: dummy_span(),
+        callee: Box::new(TypedExpr::Field {
+            ty: callee_fn_ty,
+            span: dummy_span(),
+            receiver: Box::new(TypedExpr::Var {
+                ty: ty_any_entity,
+                span: dummy_span(),
+                name: "Entity".to_string(),
+            }),
+            field: "destroy".to_string(),
+        }),
+        args: vec![
+            TypedExpr::Var { ty: ty_entity, span: dummy_span(), name: "e".to_string() },
+        ],
+        callee_def_id: None,
+    };
+
+    let _r = emit_expr(&mut emitter, &call_expr);
+    assert!(
+        emitter.instructions.iter().any(|i| matches!(i, Instruction::DestroyEntity { .. })),
+        "expected DestroyEntity instruction, got {:?}", emitter.instructions
+    );
+}
+
+#[test]
+fn test_entity_is_alive_emits_instruction() {
+    // Entity.isAlive(e) -> ENTITY_IS_ALIVE { r_dst, r_entity }
+    let mut interner = make_interner();
+    let (_, entity_def_id) = make_def_id();
+    let ty_entity = interner.intern(TyKind::Entity(entity_def_id));
+    let ty_any_entity = interner.any_entity();
+    let ty_bool = interner.bool_ty();
+    let callee_fn_ty = interner.func(vec![ty_any_entity], ty_bool);
+
+    let builder = make_builder_with_entity_fields(entity_def_id, &["health"]);
+    let mut emitter = make_emitter(&builder, &interner);
+
+    emitter.locals.insert("e".to_string(), 0);
+    emitter.regs.alloc(ty_entity);
+    let call_expr = TypedExpr::Call {
+        ty: ty_bool,
+        span: dummy_span(),
+        callee: Box::new(TypedExpr::Field {
+            ty: callee_fn_ty,
+            span: dummy_span(),
+            receiver: Box::new(TypedExpr::Var {
+                ty: ty_any_entity,
+                span: dummy_span(),
+                name: "Entity".to_string(),
+            }),
+            field: "isAlive".to_string(),
+        }),
+        args: vec![
+            TypedExpr::Var { ty: ty_entity, span: dummy_span(), name: "e".to_string() },
+        ],
+        callee_def_id: None,
+    };
+
+    let _r = emit_expr(&mut emitter, &call_expr);
+    assert!(
+        emitter.instructions.iter().any(|i| matches!(i, Instruction::EntityIsAlive { .. })),
+        "expected EntityIsAlive instruction, got {:?}", emitter.instructions
+    );
+}
+
 // ─── Task 1 (Plan 03): Array instruction emission ────────────────────────────
 
 #[test]
@@ -1144,6 +1310,8 @@ fn test_for_loop_over_array_uses_counter_loop() {
         },
         body: vec![],
         span: dummy_span(),
+        iterable_contract_def_id: None,
+        iterator_contract_def_id: None,
     };
 
     emit_stmt(&mut emitter, &for_stmt);
@@ -2135,6 +2303,8 @@ fn make_two_fn_ast_error_first() -> (TypedAst, TyInterner, DefId, DefId) {
         ],
         def_map,
         struct_field_types: FxHashMap::default(),
+        conditional_fns: FxHashMap::default(),
+        fallback_for_conditional: FxHashMap::default(),
     };
     (ast, interner, fn_a_id, fn_b_id)
 }
@@ -2192,6 +2362,8 @@ fn make_two_fn_ast_both_valid() -> (TypedAst, TyInterner) {
         ],
         def_map,
         struct_field_types: FxHashMap::default(),
+        conditional_fns: FxHashMap::default(),
+        fallback_for_conditional: FxHashMap::default(),
     };
     (ast, interner)
 }
@@ -2239,6 +2411,8 @@ fn make_two_fn_ast_both_error() -> (TypedAst, TyInterner) {
         ],
         def_map,
         struct_field_types: FxHashMap::default(),
+        conditional_fns: FxHashMap::default(),
+        fallback_for_conditional: FxHashMap::default(),
     };
     (ast, interner)
 }
@@ -2248,7 +2422,7 @@ fn make_two_fn_ast_both_error() -> (TypedAst, TyInterner) {
 fn test_emit_all_bodies_skips_error_fn_emits_valid_fn() {
     let (ast, interner, _fn_a_id, fn_b_id) = make_two_fn_ast_error_first();
     let builder = ModuleBuilder::new();
-    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default());
+    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default(), &[]);
 
     // Only fn_b should produce a body
     assert_eq!(bodies.len(), 1, "expected 1 body for fn_b, got {}", bodies.len());
@@ -2273,7 +2447,7 @@ fn test_emit_all_bodies_skips_error_fn_emits_valid_fn() {
 fn test_emit_all_bodies_both_valid_emits_both() {
     let (ast, interner) = make_two_fn_ast_both_valid();
     let builder = ModuleBuilder::new();
-    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default());
+    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default(), &[]);
 
     assert_eq!(bodies.len(), 2, "expected 2 bodies for valid functions, got {}", bodies.len());
     assert!(diags.is_empty(), "expected no diagnostics for valid functions, got {:?}", diags);
@@ -2284,7 +2458,7 @@ fn test_emit_all_bodies_both_valid_emits_both() {
 fn test_emit_all_bodies_all_error_fns_skipped() {
     let (ast, interner) = make_two_fn_ast_both_error();
     let builder = ModuleBuilder::new();
-    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default());
+    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default(), &[]);
 
     assert_eq!(bodies.len(), 0, "expected 0 bodies when all functions have errors");
     assert_eq!(diags.len(), 2, "expected 2 diagnostics (one per skipped function)");
@@ -2415,10 +2589,12 @@ fn test_const_decl_foldable_emits_load_int() {
         decls: vec![TypedDecl::Const { def_id, value }],
         def_map,
         struct_field_types: FxHashMap::default(),
+        conditional_fns: FxHashMap::default(),
+        fallback_for_conditional: FxHashMap::default(),
     };
 
     let builder = ModuleBuilder::new();
-    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default());
+    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default(), &[]);
     assert!(diags.is_empty(), "Expected no diagnostics, got {:?}", diags);
     assert_eq!(bodies.len(), 1, "Expected 1 emitted body for the const decl");
 
@@ -2447,10 +2623,12 @@ fn test_const_decl_non_foldable_emits_instructions() {
         decls: vec![TypedDecl::Const { def_id, value }],
         def_map,
         struct_field_types: FxHashMap::default(),
+        conditional_fns: FxHashMap::default(),
+        fallback_for_conditional: FxHashMap::default(),
     };
 
     let builder = ModuleBuilder::new();
-    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default());
+    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default(), &[]);
     assert!(diags.is_empty(), "Expected no diagnostics");
     // Body is emitted (non-foldable path still produces a body)
     assert_eq!(bodies.len(), 1, "Expected 1 emitted body for non-foldable const");
@@ -2492,6 +2670,8 @@ fn test_lambda_body_emitted_as_separate_body_entry() {
         }],
         def_map,
         struct_field_types: FxHashMap::default(),
+        conditional_fns: FxHashMap::default(),
+        fallback_for_conditional: FxHashMap::default(),
     };
 
     let mut builder = ModuleBuilder::new();
@@ -2500,7 +2680,7 @@ fn test_lambda_body_emitted_as_separate_body_entry() {
 
     assert_eq!(lambda_infos.len(), 1, "Expected 1 lambda info");
 
-    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &lambda_infos, &FxHashMap::default());
+    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &lambda_infos, &FxHashMap::default(), &[]);
     assert!(diags.is_empty(), "Expected no diagnostics, got {:?}", diags);
     assert_eq!(bodies.len(), 2, "Expected 2 bodies: fn body + lambda body, got {}", bodies.len());
 
@@ -2527,10 +2707,13 @@ fn test_string_literal_interning_via_emit_bodies() {
         }],
         def_map,
         struct_field_types: FxHashMap::default(),
+        conditional_fns: FxHashMap::default(),
+        fallback_for_conditional: FxHashMap::default(),
     };
 
     // emit_bodies does the full pipeline including string interning fixup
-    let result = emit_bodies(&ast, &interner, &[], true, &[]);
+    let active_conditions = std::collections::HashSet::new();
+    let result = emit_bodies(&ast, &interner, &[], true, &[], &active_conditions);
     assert!(result.is_ok(), "emit_bodies should succeed, got {:?}", result.err());
     // Just check we get bytes back (string interning fixup produced a valid module)
     let bytes = result.unwrap();
@@ -2556,10 +2739,12 @@ fn test_string_literal_pending_strings_populated() {
         }],
         def_map,
         struct_field_types: FxHashMap::default(),
+        conditional_fns: FxHashMap::default(),
+        fallback_for_conditional: FxHashMap::default(),
     };
 
     let builder = ModuleBuilder::new();
-    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default());
+    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default(), &[]);
     assert!(diags.is_empty(), "Expected no diagnostics");
     assert_eq!(bodies.len(), 1, "Expected 1 body");
 
@@ -2623,10 +2808,12 @@ fn test_two_string_literals_produce_different_pending_entries() {
         }],
         def_map,
         struct_field_types: FxHashMap::default(),
+        conditional_fns: FxHashMap::default(),
+        fallback_for_conditional: FxHashMap::default(),
     };
 
     let builder = ModuleBuilder::new();
-    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default());
+    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default(), &[]);
     assert!(diags.is_empty(), "Expected no diagnostics");
     assert_eq!(bodies.len(), 1, "Expected 1 body");
 
@@ -3401,6 +3588,150 @@ fn test_emit_expr_extern_call_emits_call_extern() {
     }
 }
 
+// ─── Phase 85: CALL_VIRT for contract-typed receivers (EMIT-01, EMIT-02) ─────
+
+/// Helper: build a ModuleBuilder with a ContractDef that has a DefId, plus methods and an impl.
+/// Returns a builder with vtable slots assigned and finalized.
+fn make_builder_with_contract_receiver(
+    contract_def_id: DefId,
+    struct_def_id: DefId,
+) -> ModuleBuilder {
+    let mut builder = ModuleBuilder::new();
+
+    // ContractDef with DefId so token_for_def works
+    let contract_handle = builder.add_contract_def("MyContract", "test", Some(contract_def_id));
+    builder.add_contract_method(contract_handle, "first_method", 0, 0);
+    builder.add_contract_method(contract_handle, "second_method", 0, 0);
+
+    // TypeDef for the implementing struct
+    let type_handle = builder.add_typedef("MyClass", "test", TypeDefKind::Class, 0, Some(struct_def_id));
+
+    // MethodDef for the impl methods
+    let (_, impl_method_def_id_1) = make_def_id();
+    builder.add_methoddef(Some(type_handle), "first_method", 0, 0, Some(impl_method_def_id_1), 0);
+    let (_, impl_method_def_id_2) = make_def_id();
+    builder.add_methoddef(Some(type_handle), "second_method", 0, 0, Some(impl_method_def_id_2), 0);
+
+    // Assign vtable slots before finalize
+    writ_compiler::emit::slots::assign_vtable_slots(&mut builder);
+    builder.finalize();
+
+    builder
+}
+
+#[test]
+fn test_contract_method_slot_by_name() {
+    let (_, contract_def_id) = make_def_id();
+    let (_, struct_def_id) = make_def_id();
+    let builder = make_builder_with_contract_receiver(contract_def_id, struct_def_id);
+
+    assert_eq!(builder.contract_method_slot_by_name(contract_def_id, "first_method"), Some(0));
+    assert_eq!(builder.contract_method_slot_by_name(contract_def_id, "second_method"), Some(1));
+    assert_eq!(builder.contract_method_slot_by_name(contract_def_id, "nonexistent"), None);
+}
+
+#[test]
+fn test_contract_receiver_emits_call_virt() {
+    // EMIT-01: Method call on a contract-typed receiver emits CALL_VIRT (not CALL)
+    let mut interner = make_interner();
+    let ty_void = interner.void();
+    let ty_self_fn = interner.intern(TyKind::Func {
+        params: vec![],
+        ret: ty_void,
+    });
+
+    let (_, contract_def_id) = make_def_id();
+    let (_, struct_def_id) = make_def_id();
+    let ty_contract = interner.intern(TyKind::Contract(contract_def_id));
+
+    let builder = make_builder_with_contract_receiver(contract_def_id, struct_def_id);
+    let mut emitter = make_emitter(&builder, &interner);
+
+    // Allocate a register for the receiver object
+    emitter.regs.alloc(ty_contract); // r0
+
+    let expr = TypedExpr::Call {
+        ty: ty_void,
+        span: dummy_span(),
+        callee: Box::new(TypedExpr::Field {
+            ty: ty_self_fn,
+            span: dummy_span(),
+            receiver: Box::new(TypedExpr::Var {
+                ty: ty_contract,
+                span: dummy_span(),
+                name: "c".to_string(),
+            }),
+            field: "first_method".to_string(),
+        }),
+        args: vec![],
+        callee_def_id: None,
+    };
+
+    emit_expr(&mut emitter, &expr);
+
+    let call_virt = emitter.instructions.iter().find(|i| matches!(i, Instruction::CallVirt { .. }));
+    assert!(call_virt.is_some(), "contract-typed receiver call should emit CALL_VIRT, got: {:?}", emitter.instructions);
+
+    // Should NOT have CALL or CALL_INDIRECT
+    let has_call = emitter.instructions.iter().any(|i| matches!(i, Instruction::Call { .. }));
+    let has_indirect = emitter.instructions.iter().any(|i| matches!(i, Instruction::CallIndirect { .. }));
+    assert!(!has_call, "contract-typed receiver should NOT emit CALL");
+    assert!(!has_indirect, "contract-typed receiver should NOT emit CALL_INDIRECT");
+}
+
+#[test]
+fn test_contract_receiver_call_virt_correct_idx_and_slot() {
+    // EMIT-02: CALL_VIRT carries correct contract_idx and slot
+    let mut interner = make_interner();
+    let ty_void = interner.void();
+    let ty_self_fn = interner.intern(TyKind::Func {
+        params: vec![],
+        ret: ty_void,
+    });
+
+    let (_, contract_def_id) = make_def_id();
+    let (_, struct_def_id) = make_def_id();
+    let ty_contract = interner.intern(TyKind::Contract(contract_def_id));
+
+    let builder = make_builder_with_contract_receiver(contract_def_id, struct_def_id);
+
+    // Get the expected contract token
+    let expected_contract_token = builder.token_for_def(contract_def_id).unwrap().0;
+
+    let mut emitter = make_emitter(&builder, &interner);
+    emitter.regs.alloc(ty_contract); // r0
+
+    // Call second_method (slot should be 1, not 0)
+    let expr = TypedExpr::Call {
+        ty: ty_void,
+        span: dummy_span(),
+        callee: Box::new(TypedExpr::Field {
+            ty: ty_self_fn,
+            span: dummy_span(),
+            receiver: Box::new(TypedExpr::Var {
+                ty: ty_contract,
+                span: dummy_span(),
+                name: "c".to_string(),
+            }),
+            field: "second_method".to_string(),
+        }),
+        args: vec![],
+        callee_def_id: None,
+    };
+
+    emit_expr(&mut emitter, &expr);
+
+    let call_virt = emitter.instructions.iter().find(|i| matches!(i, Instruction::CallVirt { .. }));
+    assert!(call_virt.is_some(), "should emit CALL_VIRT");
+
+    if let Some(Instruction::CallVirt { contract_idx, slot, .. }) = call_virt {
+        assert_ne!(*contract_idx, 0, "contract_idx must be non-zero");
+        assert_eq!(*contract_idx, expected_contract_token,
+            "contract_idx should match the contract's MetadataToken; expected {}, got {}", expected_contract_token, contract_idx);
+        assert_eq!(*slot, 1, "second_method should have slot=1 (0-based position in contract declaration)");
+    }
+}
+
 /// BUG-05 negative case: When callee_def_id maps to a MethodDef token (not ExternDef),
 /// emit_expr should still emit CALL (not CALL_EXTERN).
 #[test]
@@ -3443,5 +3774,155 @@ fn test_emit_expr_non_extern_call_emits_call() {
         matches!(call_instr.unwrap(), Instruction::Call { .. }),
         "regular fn callee_def_id should produce CALL (not CALL_EXTERN), got {:?}",
         call_instr.unwrap()
+    );
+}
+
+// ─── Attribute Declaration Emission (UATTR-02) ───────────────────────────────
+
+#[test]
+fn attribute_decl_emits_def_row() {
+    // Compile a source file with a user-defined attribute declaration.
+    let bytes = writ_compiler::compile_source(
+        r#"pub attribute Quest(name: string, level: int);"#,
+    )
+    .expect("compile should succeed");
+
+    // Parse the binary module.
+    let module = writ_module::module::Module::from_bytes(&bytes)
+        .expect("module should parse");
+
+    // Find the AttributeDef row for "Quest".
+    let quest_row = module.attribute_defs.iter().find(|row| {
+        writ_module::heap::read_string(&module.string_heap, row.name)
+            .map(|n| n == "Quest")
+            .unwrap_or(false)
+    });
+
+    assert!(quest_row.is_some(), "AttributeDef row for 'Quest' not found; rows: {:?}", module.attribute_defs);
+    let quest_row = quest_row.unwrap();
+
+    // owner_kind = 3 = ATTR_OWNER_KIND_DECL
+    assert_eq!(
+        quest_row.owner_kind, 3,
+        "Quest AttributeDef should have owner_kind=3 (ATTR_OWNER_KIND_DECL)"
+    );
+
+    // Blob should be non-zero (encodes 2 params: string + int).
+    assert!(
+        quest_row.value != 0,
+        "Quest AttributeDef should have non-zero blob value"
+    );
+}
+
+// ─── Task 2 (Plan 104-02): TypeOf IL emission ────────────────────────────────
+
+/// Helper: create a DefId with a struct-like entry in the DefMap.
+fn make_struct_def_id(name: &str) -> (DefMap, DefId) {
+    let mut def_map = DefMap::new();
+    let id = def_map.arena.alloc(DefEntry {
+        id: None,
+        kind: DefKind::Struct,
+        vis: DefVis::Pub,
+        file_id: FileId(0),
+        namespace: String::new(),
+        name: name.to_string(),
+        name_span: dummy_span(),
+        generics: vec![],
+        span: dummy_span(),
+    });
+    (def_map, id)
+}
+
+#[test]
+fn emit_typeof_struct() {
+    // typeof(struct_var) where struct_var: MyStruct
+    // Expected: exactly 1 instruction — Instruction::TypeOf { r_dst, type_idx }
+    // where type_idx matches the TypeDef token for MyStruct.
+    let mut interner = make_interner();
+    let (_, struct_def_id) = make_struct_def_id("MyStruct");
+
+    // Build a ModuleBuilder with the struct registered so token_for_def works.
+    let mut builder = ModuleBuilder::new();
+    builder.add_typedef("MyStruct", "", TypeDefKind::Struct, 0, Some(struct_def_id));
+    builder.finalize();
+
+    let expected_token = builder.token_for_def(struct_def_id)
+        .expect("struct should have a token after finalize");
+    let expected_type_idx = expected_token.0;
+
+    // TyKind::Struct(def_id) is the static_ty; ReflectionType wraps it as the ty.
+    let ty_struct = interner.intern(TyKind::Struct(struct_def_id));
+    let ty_reflection = interner.reflection_type(ty_struct);
+
+    let expr = TypedExpr::TypeOf {
+        ty: ty_reflection,
+        span: dummy_span(),
+        static_ty: ty_struct,
+    };
+
+    let mut emitter = make_emitter(&builder, &interner);
+    let r_dst = emit_expr(&mut emitter, &expr);
+
+    assert_eq!(
+        emitter.instructions.len(), 1,
+        "typeof(struct) should emit exactly 1 instruction, got {:?}",
+        emitter.instructions
+    );
+    assert!(
+        matches!(
+            &emitter.instructions[0],
+            Instruction::TypeOf { r_dst: rd, type_idx } if *rd == r_dst && *type_idx == expected_type_idx
+        ),
+        "expected TypeOf {{ r_dst: {r_dst}, type_idx: {expected_type_idx} }}, got {:?}",
+        emitter.instructions[0]
+    );
+}
+
+#[test]
+fn emit_typeof_primitive_int() {
+    // typeof(42) where 42: int
+    // Expected: exactly 1 instruction — Instruction::TypeOf { r_dst, type_idx }
+    // where type_idx matches the "Int" TypeRef token.
+    let mut interner = make_interner();
+
+    // Build a ModuleBuilder that has the primitive TypeRefs registered
+    // (mirrors what collect_defs does after plan 02).
+    let mut builder = ModuleBuilder::new();
+    let runtime_mod_idx = builder.add_module_ref("writ-runtime", "1.0.0");
+    builder.add_type_ref(runtime_mod_idx, "Range", "writ");
+    builder.add_type_ref(runtime_mod_idx, "Type", "writ");
+    builder.add_type_ref(runtime_mod_idx, "Int", "writ");
+    builder.add_type_ref(runtime_mod_idx, "Float", "writ");
+    builder.add_type_ref(runtime_mod_idx, "Bool", "writ");
+    builder.add_type_ref(runtime_mod_idx, "String", "writ");
+    builder.finalize();
+
+    let expected_type_idx = builder.type_ref_token_by_name("Int");
+    assert_ne!(expected_type_idx, 0, "Int TypeRef token should be non-zero after registration");
+
+    let ty_int = interner.int();
+    let ty_reflection = interner.reflection_type(ty_int);
+
+    let expr = TypedExpr::TypeOf {
+        ty: ty_reflection,
+        span: dummy_span(),
+        static_ty: ty_int,
+    };
+
+    let mut emitter = make_emitter(&builder, &interner);
+    let r_dst = emit_expr(&mut emitter, &expr);
+
+    assert_eq!(
+        emitter.instructions.len(), 1,
+        "typeof(int) should emit exactly 1 instruction, got {:?}",
+        emitter.instructions
+    );
+    assert!(
+        matches!(
+            &emitter.instructions[0],
+            Instruction::TypeOf { r_dst: rd, type_idx } if *rd == r_dst && *type_idx == expected_type_idx
+        ),
+        "expected TypeOf {{ r_dst: {r_dst}, type_idx: {expected_type_idx} }}, got {:?}",
+        emitter.instructions[0]
     );
 }

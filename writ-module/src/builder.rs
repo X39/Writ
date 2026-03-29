@@ -595,7 +595,7 @@ impl ModuleBuilder {
 
         Module {
             header: ModuleHeader {
-                format_version: 4,
+                format_version: 5,
                 flags: 0,
                 module_name: name_off,
                 module_version: version_off,

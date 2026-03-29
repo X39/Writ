@@ -1,5 +1,4 @@
-# Writ IL Specification
-## 3.10 Type Operations
+# 3.10 Type Operations
 
 **Option (specialized):**
 
@@ -28,4 +27,10 @@
 | `NEW_ENUM`      | var   | r_dst, type_idx:u32, tag:u16, field_count:u16, r_base | Construct an enum value. tag selects the variant, fields are read from consecutive registers r_base..+field_count. For tag-only variants (no payload), field_count is 0 and r_base is ignored. Encoding: `u16(op) u16(r_dst) u32(type_idx) u16(tag) u16(field_count) u16(r_base)` = 14B. |
 | `GET_TAG`       | RR    | r_dst, r_enum                                         | Extract the tag as int.                                                                                                                                                                                                                                                                  |
 | `EXTRACT_FIELD` | var   | r_dst, r_enum, field_idx:u16                          | Extract a payload field from the current variant. The caller must have verified the tag first. field_idx is the zero-based index within the variant's payload fields. Encoding: `u16(op) u16(r_dst) u16(r_enum) u16(field_idx)` = 8B.                                                    |
+
+**Reflection:**
+
+| Mnemonic | Shape | Operands            | Description                                                                                                                                                                                                |
+|----------|-------|---------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `TYPEOF` | RI32  | r_dst, type_idx:u32 | Load the compile-time Type singleton for the type at type_idx into r_dst. The type_idx is a TypeDef metadata token baked in at compile time. r_dst receives a lazily-allocated Type heap reference (see section 2.18.9). Encoding: `u16(0x0A30) u16(r_dst) u32(type_idx)` = 8 bytes. |
 

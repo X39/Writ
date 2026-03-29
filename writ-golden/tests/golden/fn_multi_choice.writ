@@ -1,0 +1,12 @@
+// Multi-function module with ::choice lambdas (RT-03 regression anchor).
+// Validates that orphaned body matching in serialize.rs handles
+// the combination of entity TypeDefs + multiple functions + choice lambdas.
+
+entity Narrator {}
+
+fn helper() -> int { 42 }
+
+pub fn main() -> int {
+    ::choice([ ::ChoiceOption("Pick A", "a", fn() { ::log::info("chose A"); }) ]);
+    helper()
+}

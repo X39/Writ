@@ -39,6 +39,7 @@ fn compile_source(src: &str) -> Result<Vec<u8>, String> {
     let (resolved, resolve_diags) = writ_compiler::resolve::resolve(
         &[(file_id, &ast)],
         &[(file_id, "test.writ")],
+        &[],
     );
     let has_resolve_errors = resolve_diags.iter().any(|d| d.severity == Severity::Error);
     if has_resolve_errors {
@@ -50,6 +51,7 @@ fn compile_source(src: &str) -> Result<Vec<u8>, String> {
     let (typed_ast, interner, _type_env, type_diags) = writ_compiler::check::typecheck(
         resolved,
         &[(file_id, &ast)],
+        &[],
     );
     let has_type_errors = type_diags.iter().any(|d| d.severity == Severity::Error);
     if has_type_errors {
@@ -58,7 +60,8 @@ fn compile_source(src: &str) -> Result<Vec<u8>, String> {
     }
 
     // Stage 5: IL codegen (includes metadata + bodies + serialization)
-    writ_compiler::emit_bodies(&typed_ast, &interner, &[(file_id, &ast)], true, &[])
+    let active_conditions = std::collections::HashSet::new();
+    writ_compiler::emit_bodies(&typed_ast, &interner, &[(file_id, &ast)], true, &[], &active_conditions)
         .map_err(|diags| {
             let msgs: Vec<_> = diags.iter().map(|d| d.message.clone()).collect();
             format!("{} codegen error(s): {}", diags.len(), msgs.join("; "))
@@ -88,6 +91,7 @@ fn compile_expect_error(src: &str) -> (bool, Vec<String>) {
     let (resolved, resolve_diags) = writ_compiler::resolve::resolve(
         &[(file_id, &ast)],
         &[(file_id, "test.writ")],
+        &[],
     );
     let resolve_errors: Vec<String> = resolve_diags
         .iter()
@@ -103,6 +107,7 @@ fn compile_expect_error(src: &str) -> (bool, Vec<String>) {
     let (_typed_ast, _interner, _type_env, type_diags) = writ_compiler::check::typecheck(
         resolved,
         &[(file_id, &ast)],
+        &[],
     );
     let type_errors: Vec<String> = type_diags
         .iter()
@@ -382,4 +387,67 @@ pub fn main() {
     }
 
     assert!(completed, "struct field get/set should run to completion");
+}
+
+/// RT-03 round-trip: multi-function module with entity + ::choice lambdas.
+///
+/// Locks that a module with entity TypeDef + multiple top-level functions +
+/// ::choice lambdas (fn() {} bodies) serializes and deserializes correctly
+/// without UnexpectedEof errors. Regression anchor for RT-03.
+#[test]
+fn test_multi_fn_choice_round_trip() {
+    let src = r#"
+entity Narrator {}
+
+fn helper() -> int { 42 }
+
+pub fn main() -> int {
+    ::choice([ ::ChoiceOption("Pick A", "a", fn() { ::log::info("chose A"); }) ]);
+    helper()
+}
+"#;
+    let bytes = compile_source(src).expect("should compile");
+    let module = Module::from_bytes(&bytes).expect("module should deserialize without UnexpectedEof");
+
+    let main_export = module
+        .export_defs
+        .iter()
+        .find(|e| read_string(&module.string_heap, e.name).unwrap_or("") == "main")
+        .expect("main must be exported");
+    let method_idx = (main_export.item.0 & 0x00FF_FFFF) as usize - 1;
+
+    let mut runtime = RuntimeBuilder::new(module).build().expect("runtime should build");
+    let tid = runtime.spawn_task(method_idx, vec![]).expect("spawn should succeed");
+    runtime.tick(0.0, ExecutionLimit::None);
+
+    assert_eq!(
+        runtime.return_value(tid),
+        Some(writ_runtime::Value::Int(42)),
+        "multi-fn module with choice lambdas should execute correctly"
+    );
+}
+
+/// E2E: s.len() returns byte length through full pipeline (RT-02).
+#[test]
+fn test_str_len_returns_byte_length() {
+    let src = r#"pub fn main() -> int { let s: string = "hello"; s.len() }"#;
+    let bytes = compile_source(src).expect("should compile");
+    let module = Module::from_bytes(&bytes).expect("should deserialize");
+
+    let main_export = module
+        .export_defs
+        .iter()
+        .find(|e| read_string(&module.string_heap, e.name).unwrap_or("") == "main")
+        .expect("main must be exported");
+    let method_idx = (main_export.item.0 & 0x00FF_FFFF) as usize - 1;
+
+    let mut runtime = RuntimeBuilder::new(module).build().expect("runtime should build");
+    let tid = runtime.spawn_task(method_idx, vec![]).expect("spawn should succeed");
+    runtime.tick(0.0, ExecutionLimit::None);
+
+    assert_eq!(
+        runtime.return_value(tid),
+        Some(writ_runtime::Value::Int(5)),
+        "s.len() on \"hello\" should return 5 (byte count)"
+    );
 }

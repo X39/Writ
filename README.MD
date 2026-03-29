@@ -80,27 +80,9 @@ writ disasm <file>      Disassemble a .writc binary module to .writil text
 writ run <file>         Execute a .writc binary module
 ```
 
-## Status
-
-The project has shipped 12 milestones (v1.0 through v7.0) across 74 phases and 168 plans:
-
-- **v1.0:** Complete CST-to-AST lowering pipeline with 7 desugaring passes (optional sugar, formattable strings, compound assignment, operators, concurrency, dialogue with localization, entities with lifecycle hooks)
-- **v2.0:** Full IL runtime — 91-instruction register-based VM, cooperative task scheduler, entity system with mark-sweep GC, contract dispatch, binary module format (200-byte header, 21 metadata tables), text assembler/disassembler, and `writ` CLI
-- **v3.0–v3.2:** Complete compiler pipeline (name resolution, type checking, IL codegen), spec corrections, and tooling improvements
-- **v4.0:** Struct/class split — structs as value types, classes as reference types
-- **v5.0:** VS Code extension, language server (LSP), and debug adapter (DAP)
-- **v6.0–v6.1:** Codebase cleanup, LSP/DAP refinements, namespace completions, crash stacktraces
-- **v7.0:** Cross-language benchmark suite (Docker, SVG charts, GitHub Actions CI)
-
-The project is 79,005 LOC Rust across 10 crates, plus a TypeScript VS Code extension and Python benchmark tooling.
-
-The language specification lives in [`language-spec/spec/`](language-spec/spec/) (splatted files). Sections 00–29 cover the language; Sections 30–66 cover the IL spec.
-
 ## License
 
 LGPL-3.0-only
-
-Note: This only applies to the Writ project (tools and spec) itself.
 
 ## Contributing
 

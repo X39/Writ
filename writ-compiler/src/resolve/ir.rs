@@ -79,14 +79,12 @@ pub enum ResolvedDecl {
     Component { def_id: DefId },
     /// A resolved extern function.
     ExternFn { def_id: DefId },
-    /// A resolved extern struct.
-    ExternStruct { def_id: DefId },
-    /// A resolved extern class (reference type).
-    ExternClass { def_id: DefId },
     /// A resolved extern component.
     ExternComponent { def_id: DefId },
     /// A resolved constant.
     Const { def_id: DefId },
     /// A resolved global.
     Global { def_id: DefId },
+    /// A resolved user-defined attribute declaration.
+    AttributeDef { def_id: DefId },
 }

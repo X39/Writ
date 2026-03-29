@@ -1,0 +1,19 @@
+contract Animal {
+    fn speak() -> string;
+}
+
+struct Dog {
+    name: string,
+}
+
+impl Animal for Dog {
+    fn speak() -> string {
+        "woof"
+    }
+}
+
+fn main() {
+    let static_type = typeof(Animal);
+    let dog = new Dog { name: "Rex" };
+    let dynamic_type = typeof(Dog);
+}

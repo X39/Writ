@@ -1,5 +1,4 @@
-# Writ IL Specification
-## 2.18 `writ-runtime` Module Contents
+# 2.18 `writ-runtime` Module Contents
 
 The `writ-runtime` module is a virtual module provided by every conforming runtime. It is not compiled from Writ
 source — the runtime supplies it as part of its implementation. The compiler references types, contracts, and methods
@@ -9,9 +8,9 @@ dependency module.
 The spec mandates the types, contracts, and implementations listed below. The runtime must provide these with the
 exact layouts specified. Additional types or methods beyond this list are permitted but not required.
 
-### 2.18.1 Core Enums
+## 2.18.1 Core Enums
 
-#### Option\<T\>
+### Option\<T\>
 
 ```
 enum Option<T> {
@@ -35,7 +34,7 @@ The `T?` syntax is sugar for `Option<T>`. The `null` literal is sugar for `Optio
 
 The `unwrap` method crashes the task if the value is `None`. This is equivalent to the `!` postfix operator — `opt.unwrap()` and `opt!` produce identical IL.
 
-#### Result\<T, E: Error\>
+### Result\<T, E: Error\>
 
 ```
 enum Result<T, E: Error> {
@@ -58,7 +57,7 @@ Tag assignments are mandatory: `Ok = 0`, `Err = 1`. The `E` parameter is constra
 
 The `unwrap` method crashes the task if the value is `Err`. This is equivalent to the `!` postfix operator — `result.unwrap()` and `result!` produce identical IL.
 
-### 2.18.2 Range\<T\>
+## 2.18.2 Range\<T\>
 
 ```
 struct Range<T> {
@@ -87,7 +86,7 @@ to support custom range iteration.
 **Range indexing:** Arrays and strings use `Range<int>` for slice operations via `Index<Range<int>, T[]>` and
 `Index<Range<int>, string>` (§6.9).
 
-### 2.18.3 Contracts
+## 2.18.3 Contracts
 
 The following contracts are defined in `writ-runtime`. The compiler maps operator syntax to these contracts
 automatically (§1.11.1, §2.7). Each contract produces a `ContractDef` row in the `writ-runtime` module metadata.
@@ -141,7 +140,7 @@ Derived operators `!=`, `>`, `<=`, `>=` are compiler desugaring from `Eq` and `O
 | `Into<T>` | `fn into(self) -> T`         |
 | `Error`   | `fn message(self) -> string` |
 
-### 2.18.4 Primitive Pseudo-Types
+## 2.18.4 Primitive Pseudo-Types
 
 Primitive types (`int`, `float`, `bool`, `string`) have fixed type tags (§2.15.2) and are not constructed via `NEW`.
 To anchor contract implementations in the metadata, `writ-runtime` provides **pseudo-TypeDefs** for each primitive.
@@ -158,7 +157,7 @@ user-visible fields or methods beyond their contract implementations.
 The runtime maps primitive type tags to these pseudo-TypeDefs for contract dispatch. When generic code calls a
 contract method on a boxed `int`, the runtime resolves via the `Int` pseudo-TypeDef's `ImplDef` entries.
 
-### 2.18.5 Primitive Contract Implementations
+## 2.18.5 Primitive Contract Implementations
 
 All primitive contract implementations are intrinsic — the runtime provides native implementations that correspond
 to dedicated IL instructions. For direct primitive operations, the compiler emits the dedicated instruction (§2.7).
@@ -216,7 +215,7 @@ The `ImplDef` entries exist for generic dispatch when primitives are boxed throu
 | `Index<Range<int>, string>` | Intrinsic (substring)        |
 | `Into<string>`              | Identity (returns self)      |
 
-### 2.18.6 Array Type
+## 2.18.6 Array Type
 
 The `Array<T>` TypeDef provides methods and contract implementations for the built-in array type. The `T[]` syntax
 is sugar for `Array<T>`. In the type encoding, arrays use kind `0x20` (§2.15.3); the runtime maps this to the
@@ -252,7 +251,7 @@ Eq-implementing types.
 | `Index<Range<int>, Array<T>>` | `ARRAY_SLICE`                                     |
 | `Iterable<T>`                 | Returns a runtime-provided iterator over elements |
 
-### 2.18.7 Entity Base Type
+## 2.18.7 Entity Base Type
 
 The `Entity` TypeDef (kind=Entity) serves as the base handle type for all entity references. When a variable is
 typed as `Entity` (rather than a specific entity type like `Guard`), it refers to this base type. All user-defined
@@ -267,7 +266,7 @@ entity types are assignable to `Entity` for handle operations.
 | `getOrCreate` | `fn getOrCreate<T>() -> T`           | `GET_OR_CREATE`   |
 | `findAll`     | `fn findAll<T>() -> EntityList<T>`   | `FIND_ALL`        |
 
-### 2.18.8 Versioning
+## 2.18.8 Versioning
 
 The `writ-runtime` module version tracks the IL specification version. A major version bump in the IL spec
 corresponds to a major version bump in `writ-runtime`. Compiled modules reference `writ-runtime` via `ModuleRef`
@@ -276,4 +275,131 @@ with a `min_version` matching the IL spec version they were compiled against.
 Since `writ-runtime` is provided by the runtime rather than loaded from disk, the runtime ensures its provided module
 matches the version expected by loaded user modules. On version mismatch, the runtime reports the conflict via the
 logging interface (§2.14.7).
+
+## 2.18.9 Reflection Types
+
+The `writ-runtime` module provides six class TypeDefs for reflection metadata and one contract for dynamic type queries. All reflection type methods are intrinsic — the runtime provides native implementations. Reflection types are class types (kind=4 in TypeDef).
+
+### Type
+
+Represents the metadata for a single type definition.
+
+**Fields:**
+
+| Field       | Type     | Description                                      |
+|-------------|----------|--------------------------------------------------|
+| `name`      | `string` | Unqualified type name                            |
+| `namespace` | `string` | Fully-qualified namespace                        |
+| `kind`      | `string` | One of: "struct", "class", "enum", "entity"      |
+| `is_generic`| `bool`   | Whether the type has generic parameters          |
+
+**Methods (intrinsic):**
+
+| Method       | Signature                                       | Intrinsic IL          |
+|--------------|-------------------------------------------------|-----------------------|
+| `fields`     | `fn fields(self) -> FieldInfo[]`                | `TypeFields`          |
+| `methods`    | `fn methods(self) -> MethodInfo[]`              | `TypeMethods`         |
+| `attributes` | `fn attributes(self) -> AttributeInfo[]`        | `TypeAttributes`      |
+| `contracts`  | `fn contracts(self) -> ContractInfo[]`           | `TypeContracts`       |
+| `implements` | `fn implements(self, contract: Type) -> bool`   | `TypeImplements`      |
+| `type_args`  | `fn type_args(self) -> Type[]`                  | `TypeTypeArgs`        |
+
+Type objects are lazily-allocated singletons — one per TypeDef. `typeof(T) == typeof(T)` is always true (identity by TypeDef index). The runtime registers Type heap objects as permanent GC roots so they are never freed by garbage collection.
+
+### FieldInfo
+
+Describes a single public field of a type.
+
+**Fields:**
+
+| Field          | Type   | Description                                        |
+|----------------|--------|----------------------------------------------------|
+| `name`         | `string` | Field name                                       |
+| `declared_type`| `Type`   | Type of the field                                |
+| `is_mutable`   | `bool`   | true if declared with `mut`, false if `let`      |
+
+**Methods (intrinsic):**
+
+| Method | Signature                                           | Intrinsic IL     |
+|--------|-----------------------------------------------------|------------------|
+| `get`  | `fn get(self, instance: Box) -> Box`                | `FieldGet`       |
+| `set`  | `fn set(self, instance: Box, value: Box)`           | `FieldSet`       |
+| `attributes` | `fn attributes(self) -> AttributeInfo[]`       | `FieldAttributes`|
+
+`FieldInfo.set()` on an immutable field (`is_mutable == false`) crashes the current task.
+
+### MethodInfo
+
+Describes a single public method of a type.
+
+**Fields:**
+
+| Field         | Type              | Description            |
+|---------------|-------------------|------------------------|
+| `name`        | `string`          | Method name            |
+| `parameters`  | `ParameterInfo[]` | Parameter descriptors  |
+| `return_type` | `Type`            | Return type            |
+
+**Methods (intrinsic):**
+
+| Method       | Signature                                             | Intrinsic IL        |
+|--------------|-------------------------------------------------------|---------------------|
+| `invoke`     | `fn invoke(self, instance: Box, args: Box[]) -> Box`  | `MethodInvoke`      |
+| `attributes` | `fn attributes(self) -> AttributeInfo[]`              | `MethodAttributes`  |
+
+`MethodInfo.invoke()` executes on the current task's call stack. The invoked method participates in cooperative scheduling normally.
+
+### ParameterInfo
+
+Describes a method parameter.
+
+**Fields:**
+
+| Field          | Type     | Description    |
+|----------------|----------|----------------|
+| `name`         | `string` | Parameter name |
+| `declared_type`| `Type`   | Parameter type |
+
+### AttributeInfo
+
+Describes an applied attribute. Integrates with the attribute system (section 1.17) and shares the underlying `AttributeIndex` with the `ModuleAttributeView` query API.
+
+**Fields:**
+
+| Field  | Type    | Description                          |
+|--------|---------|--------------------------------------|
+| `name` | `string`| Attribute name                       |
+| `args` | `Box[]` | Attribute arguments (boxed values)   |
+
+### ContractInfo
+
+Describes an implemented contract.
+
+**Fields:**
+
+| Field  | Type     | Description              |
+|--------|----------|--------------------------|
+| `name` | `string` | Contract name            |
+| `type` | `Type`   | The contract's Type object |
+
+### Reflectable Contract
+
+The `Reflectable` contract is defined as contract slot 19 in the `writ-runtime` module.
+
+| Contract      | Method Signature              |
+|---------------|-------------------------------|
+| `Reflectable` | `fn get_type(self) -> Type`   |
+
+The compiler auto-generates a `Reflectable` `ImplDef` for every user-defined type (struct, class, entity, enum). The auto-generated implementation returns the lazily-allocated Type singleton for that TypeDef.
+
+For primitives, the runtime provides separate intrinsic dispatch:
+
+| Primitive | Intrinsic ID     |
+|-----------|------------------|
+| `int`     | `IntGetType`     |
+| `float`   | `FloatGetType`   |
+| `bool`    | `BoolGetType`    |
+| `string`  | `StringGetType`  |
+
+These intrinsics are registered on the primitive pseudo-TypeDefs (section 2.18.4) as Reflectable implementations.
 

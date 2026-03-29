@@ -1,7 +1,10 @@
 
+entity Narrator {}
+
 pub fn main() {
+    let speaker: Entity = Entity.getOrCreate<Narrator>();
     ::log::info("saying Test");
-    ::say("Test");
+    ::say(speaker, "Test");
     ::log::info("showing choice");
     ::choice([
         ::ChoiceOption("Option A", "opt_a", fn() {}),

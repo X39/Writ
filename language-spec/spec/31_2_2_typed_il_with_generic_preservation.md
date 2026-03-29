@@ -1,5 +1,4 @@
-# Writ IL Specification
-## 2.2 Typed IL with Generic Preservation
+# 2.2 Typed IL with Generic Preservation
 
 **Decision:** The IL preserves full type information. Generics are not monomorphized at compile time.
 

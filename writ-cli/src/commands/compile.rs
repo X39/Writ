@@ -3,7 +3,7 @@
 use crate::bom_utils::strip_bom_and_decode;
 use crate::pipeline::run_pipeline;
 
-pub fn cmd_compile(input: String, output: Option<String>) -> Result<(), String> {
+pub fn cmd_compile(input: String, output: Option<String>, condition: Vec<String>, deny_warnings: bool) -> Result<(), String> {
     // Detect directory input and give helpful error
     if std::path::Path::new(&input).is_dir() {
         return Err(format!(
@@ -11,6 +11,9 @@ pub fn cmd_compile(input: String, output: Option<String>) -> Result<(), String> 
             input
         ));
     }
+
+    // Build the active conditions set from CLI flags.
+    let active_conditions: std::collections::HashSet<String> = condition.into_iter().collect();
 
     // The compiler pipeline performs deep recursive AST walks (emit_expr,
     // scan_expr_for_lambdas, has_error_nodes, collect_lambda_bodies_from_expr)
@@ -34,6 +37,9 @@ pub fn cmd_compile(input: String, output: Option<String>) -> Result<(), String> 
                 vec![(file_id, input.clone(), src)],
                 None,       // no module_name override
                 true,       // always emit debug info in single-file mode
+                &active_conditions,
+                deny_warnings,
+                &[],        // no library modules in single-file mode
             )?;
 
             // Determine output path

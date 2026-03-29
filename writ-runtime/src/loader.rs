@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::io::Cursor;
 
 use writ_module::{Instruction, Module};
@@ -79,7 +79,7 @@ fn decode_and_reindex(raw_code: &[u8], method_idx: usize) -> Result<(Vec<Instruc
 
     // Build offset map: byte_offset -> instruction_index
     // Also include the byte position after the last instruction (for forward jumps to end)
-    let mut offset_map: HashMap<u32, usize> = HashMap::new();
+    let mut offset_map: FxHashMap<u32, usize> = FxHashMap::default();
     for (idx, &byte_off) in byte_offsets.iter().enumerate() {
         offset_map.insert(byte_off, idx);
     }

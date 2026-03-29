@@ -1,7 +1,6 @@
-# 1. Writ Language Specification
-## 1.18 Operators & Overloading
+# 1.18 Operators & Overloading
 
-### 1.18.1 Operator Precedence (highest to lowest)
+## 1.18.1 Operator Precedence (highest to lowest)
 
 | Prec | Operators                    | Assoc | Notes                                        |
 |------|------------------------------|-------|----------------------------------------------|
@@ -19,12 +18,12 @@
 | 12   | `..` `..=`                   | Left  | Range (exclusive, inclusive)                 |
 | 13   | `=` `+=` `-=` `*=` `/=` `%=` | Right | Assignment                                   |
 
-### 1.18.2 Overloading Syntax
+## 1.18.2 Overloading Syntax
 
 Operators are overloaded inside `impl` blocks using the `operator` keyword. The compiler automatically maps these to the
 corresponding builtin contract.
 
-```
+```writ
 impl vec2 {
     // Binary operators
     operator +(other: vec2) -> vec2 {
@@ -70,12 +69,12 @@ impl vec2 {
 //   impl Neg<vec2> for vec2, impl Index<int, float> for vec2, etc.
 ```
 
-### 1.18.3 Compound Assignment
+## 1.18.3 Compound Assignment
 
 Compound assignment operators (`+=`, `-=`, `*=`, `/=`, `%=`) are syntactic sugar. They are not independently
 overloadable.
 
-```
+```writ
 a += b;     // desugars to: a = a + b;   (uses Add)
 a -= b;     // desugars to: a = a - b;   (uses Sub)
 a *= b;     // desugars to: a = a * b;   (uses Mul)
@@ -83,7 +82,7 @@ a /= b;     // desugars to: a = a / b;   (uses Div)
 a %= b;     // desugars to: a = a % b;   (uses Mod)
 ```
 
-### 1.18.4 Derived Operators
+## 1.18.4 Derived Operators
 
 Some operators are auto-derived from a base implementation and cannot be overridden individually:
 

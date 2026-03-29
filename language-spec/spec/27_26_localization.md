@@ -1,10 +1,9 @@
-# 1. Writ Language Specification
-## 1.26 Localization
+# 1.26 Localization
 
 Writ provides a localization system designed around standard game industry workflows. Dialogue text remains clean in
 source files — localization is handled by compiler tooling and the runtime string table, not by language syntax.
 
-### 1.26.1 Overview
+## 1.26.1 Overview
 
 The localization system has two tiers:
 
@@ -16,13 +15,13 @@ The localization system has two tiers:
    different branching, different number of lines), a `[Locale]` attribute marks an entire `dlg` as a locale-specific
    replacement.
 
-### 1.26.2 String Extraction & the Localization Key
+## 1.26.2 String Extraction & the Localization Key
 
 Every dialogue line and choice label in a `dlg` block is assigned a **localization key**. By default, this key is a
 hex-encoded hash computed from a composite string that uniquely identifies the occurrence. Lines may also specify a
 manual key with `#key` (see [Section 1.14.7](#1147-localization-keys)), which overrides the computed hash.
 
-#### 1.26.2.1 Key Computation
+### 1.26.2.1 Key Computation
 
 The localization key is computed using the **FNV-1a 32-bit** hash algorithm over the following input string:
 
@@ -45,7 +44,7 @@ Where:
 
 The hash output is rendered as an 8-character lowercase hexadecimal string (e.g., `a3f7c012`).
 
-#### 1.26.2.2 FNV-1a 32-bit Algorithm
+### 1.26.2.2 FNV-1a 32-bit Algorithm
 
 The algorithm is specified exactly to ensure all Writ implementations produce identical keys:
 
@@ -64,11 +63,11 @@ fn fnv1a_32(data: byte[]) -> uint32:
 
 The input string is encoded as UTF-8 bytes before hashing.
 
-#### 1.26.2.3 Deduplication Index
+### 1.26.2.3 Deduplication Index
 
 The `occurrence_index` field solves the deduplication problem. Consider:
 
-```
+```writ
 dlg battleTalk {
     @Warrior Yes, please!
     @Healer Yes, please!
@@ -78,7 +77,7 @@ dlg battleTalk {
 Without the deduplication index, these two lines would produce different keys because the `speaker` field differs (
 `Warrior` vs `Healer`). However, if the *same* speaker says the *same* line twice in the same `dlg`:
 
-```
+```writ
 dlg annoyingNPC {
     @Guard Move along.
     @Guard Move along.
@@ -88,12 +87,12 @@ dlg annoyingNPC {
 The first occurrence gets `occurrence_index = "0"`, the second gets `occurrence_index = "1"`. This ensures each line
 gets a unique key even in pathological cases.
 
-### 1.26.3 CSV Localization Format
+## 1.26.3 CSV Localization Format
 
 The `writ loc export` command produces CSV files for translator workflows. The format is specified exactly to ensure
 interoperability.
 
-#### 1.26.3.1 CSV Encoding Rules
+### 1.26.3.1 CSV Encoding Rules
 
 | Property         | Value                                                                                                                                                              |
 |------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -106,7 +105,7 @@ interoperability.
 | Header row       | Required. Must be the first row.                                                                                                                                   |
 | Trailing newline | The file MUST end with a line ending after the last data row.                                                                                                      |
 
-#### 1.26.3.2 Column Structure
+### 1.26.3.2 Column Structure
 
 The CSV has the following columns, in order:
 
@@ -120,7 +119,7 @@ The CSV has the following columns, in order:
 | `Default`        | The default locale text, with interpolation slots preserved literally (e.g., `Hey, {name}.`).                                                                   |
 | *locale columns* | One column per locale listed in `writ.toml`'s `locale.supported` array, excluding the default locale. Column header is the BCP 47 tag (e.g., `de`, `fr`, `ja`). |
 
-#### 1.26.3.3 Example
+### 1.26.3.3 Example
 
 Given `writ.toml`:
 
@@ -132,7 +131,7 @@ supported = ["en", "de", "ja"]
 
 And source:
 
-```
+```writ
 // dialogue/greet.writ
 namespace dialogue;
 
@@ -165,7 +164,7 @@ f8a23d77,dialogue,greetPlayer,Narrator,line,Sorry to hear that.,,
 Translators fill in the `de` and `ja` columns. The completed CSV is imported via `writ loc import`, which produces the
 runtime string table.
 
-#### 1.26.3.4 Interpolation Slot Validation
+### 1.26.3.4 Interpolation Slot Validation
 
 When importing a translated CSV, the compiler MUST verify that every interpolation slot present in the `Default` column
 also appears in each translation. Missing or extra slots produce a compile error:
@@ -177,7 +176,7 @@ Error: locale "de", key "a3f7c012": interpolation slot {name} missing in transla
 The order of interpolation slots MAY differ between languages (to accommodate different grammar). Only the presence of
 the same set of slot names is checked.
 
-### 1.26.4 Compiler Tooling
+## 1.26.4 Compiler Tooling
 
 The following commands are part of the Writ compiler toolchain:
 
@@ -187,7 +186,7 @@ The following commands are part of the Writ compiler toolchain:
 | `writ loc check`  | Validates a translated CSV against the current source. Reports: missing translations (new source strings not in CSV), orphaned translations (CSV keys that no longer exist in source), interpolation slot mismatches.   |
 | `writ loc import` | Reads a completed CSV and produces the runtime string table in the format required by the target runtime (binary, JSON, etc. — runtime-specific).                                                                       |
 
-#### 1.26.4.1 Incremental Export
+### 1.26.4.1 Incremental Export
 
 When `writ loc export` is run against an existing CSV file:
 
@@ -197,7 +196,7 @@ When `writ loc export` is run against an existing CSV file:
 - Modified strings (same key but different `Default` text — this should not happen with content-hashed keys, but can
   occur if the hashing input changes due to eg. a speaker rename) are reported as conflicts.
 
-### 1.26.5 Runtime String Table Lookup
+## 1.26.5 Runtime String Table Lookup
 
 At runtime, the `say(speaker, text)` function performs the following lookup:
 
@@ -213,14 +212,14 @@ table — the inline text just works.
 > index) to perform the lookup. The compiler embeds this metadata in the lowered `say()` calls. Alternatively, the
 > compiler can pre-compute keys and emit `say_localized(key, fallback_text, speaker)` calls.
 
-### 1.26.6 Structural Overrides with [Locale]
+## 1.26.6 Structural Overrides with [Locale]
 
 When a locale requires fundamentally different dialogue structure — different choices, different branching, additional
 or fewer lines — a `[Locale]` override replaces the entire `dlg` block for that locale.
 
-#### 1.26.6.1 Syntax
+### 1.26.6.1 Syntax
 
-```
+```writ
 // Default (en) version
 dlg greetPlayer(name: string) {
     @Narrator Hey, {name}.
@@ -253,7 +252,7 @@ dlg greetPlayer(name: string) {
 }
 ```
 
-#### 1.26.6.2 Rules
+### 1.26.6.2 Rules
 
 1. The `[Locale(tag)]` attribute takes a single BCP 47 locale string matching one of the `locale.supported` entries in
    `writ.toml`.
@@ -267,7 +266,7 @@ dlg greetPlayer(name: string) {
    full freedom in its dialogue structure.
 7. There is no `[Locale]` attribute for the default locale. The un-attributed `dlg` IS the default locale version.
 
-#### 1.26.6.3 Runtime Dispatch
+### 1.26.6.3 Runtime Dispatch
 
 When the runtime calls a `dlg` function, it checks:
 
@@ -277,7 +276,7 @@ When the runtime calls a `dlg` function, it checks:
 This is a simple dispatch — the compiler generates a lookup table of `(dlg_name, locale) → function_pointer` for all
 overrides.
 
-### 1.26.7 Design Rationale
+## 1.26.7 Design Rationale
 
 **Why CSV?** CSV is the lowest common denominator. Every spreadsheet application, every programming language, and every
 translation management system can read and write CSV. Small developers can pipe the `Default` column through DeepL or

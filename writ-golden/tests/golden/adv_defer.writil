@@ -1,6 +1,6 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
-    // .extern_fn "log::info" (string) -> void "log::info"
+    .extern_fn "log::info" (string) -> void "log::info"
     .method "main" () -> void mut {
         .reg r0 void
         .reg r1 void
@@ -10,10 +10,10 @@
         DEFER_PUSH r0, 18  ; line:1 col:18
         DEFER_POP
         BR 30
-        LOAD_STRING r2, 69  ; line:1 col:35
+        LOAD_STRING r2, 152  ; line:1 col:35
         CALL_EXTERN r1, 268435457, r2, 1
         DEFER_END
-        LOAD_STRING r4, 82  ; line:1 col:71
+        LOAD_STRING r4, 163  ; line:1 col:71
         CALL_EXTERN r3, 268435457, r4, 1
         RET_VOID
     }

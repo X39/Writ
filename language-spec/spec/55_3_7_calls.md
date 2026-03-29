@@ -1,5 +1,4 @@
-# Writ IL Specification
-## 3.7 Calls
+# 3.7 Calls
 
 | Mnemonic        | Shape | Operands                                                   | Description                                                                                                                                                                                                                                                                                      |
 |-----------------|-------|------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -9,4 +8,6 @@
 | `NEW_DELEGATE`  | var   | r_dst, method_idx:u32, r_target                            | Create a delegate (function value). r_target is the target object (capture struct, self) or a register holding null for free functions. Method is resolved at creation time. Encoding: `u16(op) u16(r_dst) u32(method_idx) u16(r_target)` = 10B.                                                 |
 | `CALL_INDIRECT` | var   | r_dst, r_delegate, r_base, argc:u16                        | Call a delegate. Runtime extracts method + target from the delegate object. If target is non-null, it is prepended as the first argument (self/env). Encoding: `u16(op) u16(r_dst) u16(r_delegate) u16(r_base) u16(argc)` = 10B.                                                                 |
 | `TAIL_CALL`     | var   | method_idx:u32, r_base, argc:u16                           | Tail call — reuse the current stack frame. Used for dialogue `->` transitions. No r_dst (does not return to caller). Encoding: `u16(op) u32(method_idx) u16(r_base) u16(argc)` = 10B.                                                                                                            |
+
+Call semantics, including transition-point suspension for `CALL_EXTERN`, are detailed in [Execution Model](execution.md#2173-transition-points).
 

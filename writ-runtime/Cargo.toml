@@ -3,6 +3,18 @@ name = "writ-runtime"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+compiler = ["dep:writ-compiler"]
+
 [dependencies]
 writ-module = { path = "../writ-module" }
+writ-compiler = { path = "../writ-compiler", optional = true }
 thiserror = "2.0"
+rustc-hash = "2.1.1"
+
+[dev-dependencies]
+writ-compiler = { path = "../writ-compiler" }
+writ-module = { path = "../writ-module" }
+
+[lints]
+workspace = true

@@ -547,7 +547,7 @@ fn lower_dlg_text(
             (converted, span)
         })
         .collect();
-    lower_fmt_string(string_segments, outer_span, ctx)
+    lower_fmt_string(string_segments, outer_span, false, ctx)
 }
 
 // =========================================================

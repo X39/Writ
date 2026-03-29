@@ -24,7 +24,7 @@ fn typecheck_src(src: &'static str) -> (TypedAst, Vec<Diagnostic>) {
     let file_id = FileId(0);
     let asts: Vec<(FileId, &Ast)> = vec![(file_id, &ast)];
     let file_paths: Vec<(FileId, &str)> = vec![(file_id, "src/test.writ")];
-    let (resolved, resolve_diags) = resolve::resolve(&asts, &file_paths);
+    let (resolved, resolve_diags) = resolve::resolve(&asts, &file_paths, &[]);
 
     let resolve_errors: Vec<&Diagnostic> = resolve_diags
         .iter()
@@ -36,7 +36,7 @@ fn typecheck_src(src: &'static str) -> (TypedAst, Vec<Diagnostic>) {
         resolve_errors
     );
 
-    let (typed_ast, _interner, _type_env, type_diags) = typecheck(resolved, &asts);
+    let (typed_ast, _interner, _type_env, type_diags) = typecheck(resolved, &asts, &[]);
     (typed_ast, type_diags)
 }
 
@@ -1033,6 +1033,347 @@ fn force_unwrap_result_no_errors() {
 }
 
 // =========================================================
+// Contract typing and dispatch tests (BUG-CONTRACT-*)
+// =========================================================
+
+#[test]
+fn test_incomplete_contract_impl_error() {
+    let src = r#"
+        pub contract MyContract {
+            fn requiredA(self);
+            fn requiredB(self);
+        }
+        pub class MyClass {}
+        impl MyContract for MyClass {
+            fn requiredA(self) {}
+        }
+        pub fn main() {}
+    "#;
+    let (_ast, diags) = typecheck_src(src);
+    assert!(has_error(&diags, "E0123"), "expected E0123 for incomplete impl, got: {:?}", diags);
+}
+
+#[test]
+fn test_complete_contract_impl_no_error() {
+    let src = r#"
+        pub contract MyContract {
+            fn requiredA(self);
+        }
+        pub class MyClass {}
+        impl MyContract for MyClass {
+            fn requiredA(self) {}
+        }
+        pub fn main() {}
+    "#;
+    let (_ast, diags) = typecheck_src(src);
+    assert!(has_no_errors(&diags), "unexpected errors: {:?}", diags);
+}
+
+#[test]
+fn test_contract_as_type_valid() {
+    // Previously asserted E0122; now that contract-as-type is supported,
+    // this exact code should compile without errors.
+    let src = r#"
+        pub contract MyContract {
+            fn doThing(self);
+        }
+        pub class MyClass {}
+        impl MyContract for MyClass {
+            fn doThing(self) {}
+        }
+        pub fn main() {
+            let c: MyContract = new MyClass{};
+        }
+    "#;
+    let (_ast, diags) = typecheck_src(src);
+    assert!(has_no_errors(&diags), "expected no errors for valid contract assignment, got: {:?}", diags);
+}
+
+#[test]
+fn test_class_method_call_no_error() {
+    let src = r#"
+        pub contract MyContract {
+            fn doThing(self);
+        }
+        pub class MyClass {}
+        impl MyContract for MyClass {
+            fn doThing(self) {}
+        }
+        pub fn main() {
+            let c = new MyClass{};
+            c.doThing();
+        }
+    "#;
+    let (_ast, diags) = typecheck_src(src);
+    assert!(has_no_errors(&diags), "unexpected errors: {:?}", diags);
+}
+
+// =========================================================
+// Contract-as-type assignability tests (Phase 84)
+// =========================================================
+
+#[test]
+fn test_contract_as_type_valid_assignment() {
+    let src = r#"
+        pub contract Movable {
+            fn move_(self);
+        }
+        pub class Cat {}
+        impl Movable for Cat {
+            fn move_(self) {}
+        }
+        pub fn main() {
+            let m: Movable = new Cat{};
+        }
+    "#;
+    let (_ast, diags) = typecheck_src(src);
+    assert!(has_no_errors(&diags), "expected no errors for valid contract assignment, got: {:?}", diags);
+}
+
+#[test]
+fn test_contract_as_type_invalid_assignment() {
+    let src = r#"
+        pub contract Movable {
+            fn move_(self);
+        }
+        pub class Dog {}
+        pub fn main() {
+            let m: Movable = new Dog{};
+        }
+    "#;
+    let (_ast, diags) = typecheck_src(src);
+    assert!(has_error(&diags, "E0112"), "expected E0112 for type not implementing contract, got: {:?}", diags);
+}
+
+#[test]
+fn test_contract_as_param_type() {
+    let src = r#"
+        pub contract Speakable {
+            fn speak(self) -> string;
+        }
+        pub class Parrot {}
+        impl Speakable for Parrot {
+            fn speak(self) -> string { return "squawk"; }
+        }
+        pub fn greet(s: Speakable) -> string {
+            return s.speak();
+        }
+    "#;
+    let (_ast, diags) = typecheck_src(src);
+    assert!(has_no_errors(&diags), "expected no errors for contract param type, got: {:?}", diags);
+}
+
+#[test]
+fn test_contract_as_return_type() {
+    let src = r#"
+        pub contract Runnable {
+            fn run(self);
+        }
+        pub class Task_ {}
+        impl Runnable for Task_ {
+            fn run(self) {}
+        }
+        pub fn make_runnable() -> Runnable {
+            return new Task_{};
+        }
+    "#;
+    let (_ast, diags) = typecheck_src(src);
+    assert!(has_no_errors(&diags), "expected no errors for contract return type, got: {:?}", diags);
+}
+
+// =========================================================
+// Contract method resolution tests (Phase 84-02)
+// =========================================================
+
+#[test]
+fn test_contract_method_call_on_receiver() {
+    let src = r#"
+        pub contract Movable {
+            fn move_(self);
+            fn speed(self) -> int;
+        }
+        pub class Cat {}
+        impl Movable for Cat {
+            fn move_(self) {}
+            fn speed(self) -> int { return 5; }
+        }
+        pub fn main() {
+            let m: Movable = new Cat{};
+            m.move_();
+            let s: int = m.speed();
+        }
+    "#;
+    let (_ast, diags) = typecheck_src(src);
+    assert!(has_no_errors(&diags), "expected no errors for contract method call, got: {:?}", diags);
+}
+
+#[test]
+fn test_contract_method_call_unknown_method() {
+    let src = r#"
+        pub contract Movable {
+            fn move_(self);
+        }
+        pub class Cat {}
+        impl Movable for Cat {
+            fn move_(self) {}
+        }
+        pub fn main() {
+            let m: Movable = new Cat{};
+            m.fly();
+        }
+    "#;
+    let (_ast, diags) = typecheck_src(src);
+    assert!(has_error(&diags, "E0106"), "expected E0106 for unknown method on contract, got: {:?}", diags);
+}
+
+#[test]
+fn test_contract_method_call_with_args() {
+    let src = r#"
+        pub contract Adder {
+            fn add(self, x: int) -> int;
+        }
+        pub class Counter { value: int }
+        impl Adder for Counter {
+            fn add(self, x: int) -> int { return self.value + x; }
+        }
+        pub fn main() {
+            let a: Adder = new Counter{ value: 0 };
+            let result: int = a.add(5);
+        }
+    "#;
+    let (_ast, diags) = typecheck_src(src);
+    assert!(has_no_errors(&diags), "expected no errors for contract method with args, got: {:?}", diags);
+}
+
+// =========================================================
+// Repro script tests (Phase 85 - EMIT-04)
+// =========================================================
+
+#[test]
+fn test_contract_receiver_repro_complete_impl() {
+    // EMIT-04: The complete-impl path of the repro script compiles without errors.
+    // c.implementedFunc() on a contract-typed receiver should type-check and
+    // emit correctly (CALL_VIRT emission verified separately in emit_body_tests).
+    let src = r#"
+        pub contract MyContract {
+            fn implementedFunc(self);
+        }
+        pub class MyClass {}
+        impl MyContract for MyClass {
+            fn implementedFunc(self) {}
+        }
+        pub fn main() {
+            let c: MyContract = new MyClass{};
+            c.implementedFunc();
+        }
+    "#;
+    let (_ast, diags) = typecheck_src(src);
+    assert!(has_no_errors(&diags),
+        "complete impl repro script should compile without errors, got: {:?}", diags);
+}
+
+#[test]
+fn test_contract_receiver_repro_incomplete_impl() {
+    // EMIT-04: The incomplete-impl path of the repro script catches E0123.
+    // notImplementedFunc is NOT implemented by MyClass, so calling it
+    // on a MyContract-typed receiver should produce E0123.
+    let src = r#"
+        pub contract MyContract {
+            fn implementedFunc(self);
+            fn notImplementedFunc(self);
+        }
+        pub class MyClass {}
+        impl MyContract for MyClass {
+            fn implementedFunc(self) {}
+        }
+        pub fn main() {
+            let c: MyContract = new MyClass{};
+            c.notImplementedFunc();
+        }
+    "#;
+    let (_ast, diags) = typecheck_src(src);
+    assert!(has_error(&diags, "E0123"),
+        "incomplete impl repro script should produce E0123, got: {:?}", diags);
+}
+
+// =========================================================
+// Reflection — typeof type checking (COMP-04, COMP-05)
+// =========================================================
+
+/// typeof(x) on a primitive type-checks without errors
+#[test]
+fn typeof_primitive_type() {
+    let (_ast, diags) = typecheck_src("fn test(x: int) { typeof(x); }");
+    assert!(has_no_errors(&diags), "errors: {:?}", diags);
+}
+
+/// typeof(f) on a struct variable type-checks without errors
+#[test]
+fn typeof_struct_type() {
+    let (_ast, diags) = typecheck_src(
+        "struct Foo { x: int } fn test(f: Foo) { typeof(f); }"
+    );
+    assert!(has_no_errors(&diags), "errors: {:?}", diags);
+}
+
+/// typeof(x) + 1 produces a type error (ReflectionType cannot be added to int)
+#[test]
+fn typeof_type_error_on_arithmetic() {
+    let (_ast, diags) = typecheck_src("fn test(x: int) { let t = typeof(x) + 1; }");
+    assert!(
+        diags.iter().any(|d| d.severity == writ_diagnostics::Severity::Error),
+        "expected a type error for typeof(x) + 1, got: {:?}",
+        diags
+    );
+}
+
+/// typeof result is TyKind::ReflectionType — display shows "Type"
+#[test]
+fn typeof_result_is_reflection_type() {
+    use writ_compiler::check::ty::{Ty, TyKind};
+
+    let src = "fn test(x: int) { typeof(x); }";
+    let (items, _) = writ_parser::parse(src);
+    let items = items.expect("parse returned None");
+    let (ast, _) = writ_compiler::lower::lower(items);
+    let file_id = writ_diagnostics::FileId(0);
+    let asts: Vec<(writ_diagnostics::FileId, &writ_compiler::ast::Ast)> = vec![(file_id, &ast)];
+    let file_paths: Vec<(writ_diagnostics::FileId, &str)> = vec![(file_id, "src/test.writ")];
+    let (resolved, _) = writ_compiler::resolve::resolve(&asts, &file_paths, &[]);
+    let (_typed_ast, interner, _type_env, diags) = writ_compiler::check::typecheck(resolved, &asts, &[]);
+
+    assert!(has_no_errors(&diags), "errors: {:?}", diags);
+
+    // Verify TyKind::ReflectionType exists in the interner and displays as "Type"
+    let mut found_reflection = false;
+    // Interner pre-interns 6 primitives (Int=0, Float=1, Bool=2, String=3, Void=4, Error=5)
+    // ReflectionType(Int) would be at index 6
+    for i in 0u32..20 {
+        let ty = Ty(i);
+        if matches!(interner.kind(ty), TyKind::ReflectionType(_)) {
+            assert_eq!(interner.display(ty), "Type", "ReflectionType should display as 'Type'");
+            found_reflection = true;
+            break;
+        }
+    }
+    assert!(found_reflection, "TyKind::ReflectionType was not interned");
+}
+
+/// typeof(d) where d is declared as a class variable — typeof uses static type (Animal), not runtime type
+#[test]
+fn typeof_static_type_not_dynamic() {
+    // typeof(d) should type-check without errors; it uses d's declared (static) type
+    let src = r#"
+        class Animal {}
+        fn test(d: Animal) {
+            typeof(d);
+        }
+    "#;
+    let (_ast, diags) = typecheck_src(src);
+    assert!(has_no_errors(&diags), "errors: {:?}", diags);
+}
+
+// =========================================================
 // Full program test
 // =========================================================
 
@@ -1055,4 +1396,85 @@ fn full_program_typecheck() {
          }",
     );
     assert!(has_no_errors(&diags), "errors: {:?}", diags);
+}
+
+// =========================================================
+// Generic constraint bounds tests (Phase 115 — GEN-01..GEN-06)
+// =========================================================
+
+#[test]
+fn generic_bound_not_satisfied_emits_e0103() {
+    let (_ast, diags) = typecheck_src(
+        r#"pub contract EqBound { fn equals() -> bool; }
+           pub struct Foo { x: int }
+           pub fn check_eq<T: EqBound>(a: T, b: T) -> bool { true }
+           pub fn test() { check_eq(new Foo { x: 1 }, new Foo { x: 2 }); }"#,
+    );
+    assert!(has_error(&diags, "E0103"), "expected E0103, got: {:?}", diags);
+}
+
+#[test]
+fn generic_single_bound_satisfied() {
+    let (_ast, diags) = typecheck_src(
+        r#"pub contract EqBound { fn equals() -> bool; }
+           pub struct Bar { x: int }
+           impl EqBound for Bar { fn equals() -> bool { true } }
+           pub fn check_eq<T: EqBound>(a: T, b: T) -> bool { true }
+           pub fn test() { check_eq(new Bar { x: 1 }, new Bar { x: 2 }); }"#,
+    );
+    assert!(has_no_errors(&diags), "expected no errors, got: {:?}", diags);
+}
+
+#[test]
+fn generic_multi_bound_both_satisfied() {
+    let (_ast, diags) = typecheck_src(
+        r#"pub contract EqBound { fn equals() -> bool; }
+           pub contract OrdBound { fn compare() -> int; }
+           pub struct Pair { x: int }
+           impl EqBound for Pair { fn equals() -> bool { true } }
+           impl OrdBound for Pair { fn compare() -> int { 0 } }
+           pub fn do_compare<T: EqBound + OrdBound>(a: T, b: T) -> bool { true }
+           pub fn test() { do_compare(new Pair { x: 1 }, new Pair { x: 2 }); }"#,
+    );
+    assert!(has_no_errors(&diags), "expected no errors, got: {:?}", diags);
+}
+
+#[test]
+fn generic_multi_bound_missing_one_emits_e0103() {
+    let (_ast, diags) = typecheck_src(
+        r#"pub contract EqBound { fn equals() -> bool; }
+           pub contract OrdBound { fn compare() -> int; }
+           pub struct Half { x: int }
+           impl EqBound for Half { fn equals() -> bool { true } }
+           pub fn do_compare<T: EqBound + OrdBound>(a: T, b: T) -> bool { true }
+           pub fn test() { do_compare(new Half { x: 1 }, new Half { x: 2 }); }"#,
+    );
+    assert!(has_error(&diags, "E0103"), "expected E0103 for missing Ord, got: {:?}", diags);
+}
+
+#[test]
+fn generic_bound_error_has_secondary_label() {
+    let (_ast, diags) = typecheck_src(
+        r#"pub contract EqBound { fn equals() -> bool; }
+           pub struct Nope { x: int }
+           pub fn check_eq<T: EqBound>(a: T, b: T) -> bool { true }
+           pub fn test() { check_eq(new Nope { x: 1 }, new Nope { x: 2 }); }"#,
+    );
+    let e0103 = diags.iter().find(|d| d.code == "E0103").expect("expected E0103");
+    assert!(!e0103.secondary_labels.is_empty(), "expected secondary label pointing to bound declaration");
+}
+
+#[test]
+fn generic_bound_error_has_help_suggestion() {
+    let (_ast, diags) = typecheck_src(
+        r#"pub contract EqBound { fn equals() -> bool; }
+           pub struct Nope { x: int }
+           pub fn check_eq<T: EqBound>(a: T, b: T) -> bool { true }
+           pub fn test() { check_eq(new Nope { x: 1 }, new Nope { x: 2 }); }"#,
+    );
+    let e0103 = diags.iter().find(|d| d.code == "E0103").expect("expected E0103");
+    assert!(
+        e0103.help.contains("consider adding `impl"),
+        "expected help suggestion, got: {:?}", e0103.help
+    );
 }

@@ -1,5 +1,4 @@
-# Writ IL Specification
-## 2.17 Execution Model
+# 2.17 Execution Model
 
 The Writ runtime executes IL code as a set of concurrent **tasks**. Each task has its own call stack and executes
 independently. The runtime schedules tasks cooperatively — tasks run until they voluntarily suspend at transition
@@ -12,7 +11,7 @@ sections must provide exclusion) but does not mandate a specific scheduler, thre
 Runtime implementors may extend the state machine with additional states or transitions as needed for their host
 environment.
 
-### 2.17.1 Call Stack
+## 2.17.1 Call Stack
 
 Each task maintains a **managed call stack**: an ordered sequence of **call frames**. Each frame contains:
 
@@ -29,7 +28,7 @@ The call stack is not the native thread stack — it is a runtime-managed data s
 serialization (the runtime must be able to walk and snapshot all frames) and for suspension (the runtime can pause and
 resume a task without unwinding native frames).
 
-### 2.17.2 Task States
+## 2.17.2 Task States
 
 Each task is in exactly one of the following states:
 
@@ -63,7 +62,7 @@ implementing atomic sections via a drain-and-run strategy (§2.17.6) may add a *
 `ATOMIC_BEGIN`, all other Running tasks are moved to Draining (paused at their current instruction boundary), the atomic
 section runs to completion, and drained tasks return to Ready. This is one valid approach — not the only one.
 
-### 2.17.3 Transition Points
+## 2.17.3 Transition Points
 
 A **transition point** is an instruction where the runtime suspends the executing task to wait for an external response.
 The task moves from Running to Suspended and does not resume until the host or another task provides the awaited result.
@@ -91,7 +90,7 @@ level.
 Save operations (§2.13) should only occur when all running tasks have reached a transition point or are otherwise
 suspended.
 
-### 2.17.4 Entry Points
+## 2.17.4 Entry Points
 
 The host drives execution through commands (§2.14.3). The following commands affect the task state machine:
 
@@ -105,7 +104,7 @@ The host drives execution through commands (§2.14.3). The following commands af
 Tasks created by host commands enter the Ready state. Whether they are scheduled within the current tick or deferred to
 the next tick is implementation-defined.
 
-### 2.17.5 Scheduling and Execution Limits
+## 2.17.5 Scheduling and Execution Limits
 
 The runtime must schedule Ready tasks for execution. The spec does not mandate a scheduling algorithm — the runtime may
 use any strategy (FIFO, priority-based, round-robin, work-stealing, etc.). The order in which Ready tasks are selected
@@ -130,7 +129,7 @@ points).
 
 **Exception:** A task inside an `ATOMIC_BEGIN`/`ATOMIC_END` section must not be paused by execution limits. See §2.17.6.
 
-### 2.17.6 Atomic Sections
+## 2.17.6 Atomic Sections
 
 `ATOMIC_BEGIN` and `ATOMIC_END` create a region where the runtime **must** guarantee exclusive access to the globals
 read or written by the executing task. The following requirements are mandatory:
@@ -159,7 +158,7 @@ block until the atomic section completes. This can cause deadlocks if the host r
 The compiler **must** emit a warning when a transition point occurs inside an atomic block. A future language mechanism
 may allow suppressing this warning for cases where the author has verified safety (see TODO).
 
-### 2.17.7 Crash Propagation and Defer Unwinding
+## 2.17.7 Crash Propagation and Defer Unwinding
 
 When a task crashes (`CRASH` instruction, failed `UNWRAP`/`UNWRAP_OK`, out-of-bounds array access, dead entity handle
 access, division by zero, etc.), the runtime unwinds the **entire task call stack**:
@@ -177,7 +176,7 @@ continues unwinding the remaining defers and frames.
 `CANCEL` from another task triggers the same unwinding sequence — the target task's stack is fully unwound with defer
 handlers firing at each frame.
 
-### 2.17.8 Task Tree
+## 2.17.8 Task Tree
 
 Tasks form a tree based on their spawn relationships:
 

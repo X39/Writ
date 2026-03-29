@@ -1,5 +1,4 @@
-# Writ IL Specification
-## 2.3 Execution Model: Cooperative Yielding with Preemptive Serialization
+# 2.3 Execution Model: Cooperative Yielding with Preemptive Serialization
 
 **Decision:** Functions are normal imperative code in the IL. The runtime manages suspension transparently.
 

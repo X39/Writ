@@ -1,0 +1,32 @@
+.module "main" "0.1.0" {
+    .extern "writ-runtime" "1.0.0"
+    .method "main" () -> void mut {
+        .locals {
+            r0: string "plain" [8, 66)
+            r1: string "escaped_quote" [16, 66)
+            r2: string "escaped_newline" [24, 66)
+            r3: string "escaped_tab" [32, 66)
+            r4: string "escaped_backslash" [40, 66)
+            r5: string "escaped_null" [48, 66)
+            r6: string "escaped_cr" [56, 66)
+            r7: string "multi_escape" [64, 66)
+        }
+        .reg r0 string
+        .reg r1 string
+        .reg r2 string
+        .reg r3 string
+        .reg r4 string
+        .reg r5 string
+        .reg r6 string
+        .reg r7 string
+        LOAD_STRING r0, 139  ; line:1 col:18
+        LOAD_STRING r1, 148  ; line:1 col:52
+        LOAD_STRING r2, 164  ; line:1 col:102
+        LOAD_STRING r3, 179  ; line:1 col:153
+        LOAD_STRING r4, 192  ; line:1 col:198
+        LOAD_STRING r5, 206  ; line:1 col:250
+        LOAD_STRING r6, 219  ; line:1 col:296
+        LOAD_STRING r7, 230  ; line:1 col:338
+        RET_VOID
+    }
+}

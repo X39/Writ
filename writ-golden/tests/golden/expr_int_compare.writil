@@ -45,5 +45,5 @@
         CALL r0, 117440513, r1, 2
         RET_VOID
     }
-    // .export "compare" method 117440513
+    .export "compare" method 117440513
 }

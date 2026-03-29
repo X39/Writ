@@ -5,6 +5,14 @@ use writ_runtime::{ExecutionLimit, RuntimeBuilder, TickResult};
 
 use crate::cli_host::CliHost;
 
+/// Pre-compiled writ-std library, embedded at build time.
+///
+/// The `writ-cli/build.rs` script compiles `writ-std/src/collections.writ` and
+/// writes the resulting bytes to `$OUT_DIR/writ-std.writc`. This constant
+/// embeds those bytes so the CLI can load the standard library without any
+/// file-system access at runtime.
+const WRIT_STD_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/writ-std.writc"));
+
 pub fn cmd_run(
     input: String,
     entry: String,
@@ -63,9 +71,14 @@ pub fn cmd_run(
             })?
     };
 
+    // Load writ-std library (pre-compiled and embedded at build time)
+    let std_module = Module::from_bytes(WRIT_STD_BYTES)
+        .map_err(|e| format!("failed to load writ-std: {e:?}"))?;
+
     // Create CliHost and build runtime
     let cli_host = CliHost::new(&module, interactive, verbose);
     let mut runtime = RuntimeBuilder::new(module)
+        .with_library(std_module)
         .with_host(cli_host)
         .build()
         .map_err(|e| format!("runtime build error: {e:?}"))?;

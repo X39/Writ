@@ -98,8 +98,8 @@ pub fn build_identifier_completions(
 
         let (kind, sort_prefix) = match entry.kind {
             DefKind::Fn | DefKind::ExternFn => (CompletionItemKind::FUNCTION, "1_"),
-            DefKind::Struct | DefKind::ExternStruct => (CompletionItemKind::STRUCT, "0_"),
-            DefKind::Class | DefKind::ExternClass => (CompletionItemKind::CLASS, "0_"),
+            DefKind::Struct => (CompletionItemKind::STRUCT, "0_"),
+            DefKind::Class => (CompletionItemKind::CLASS, "0_"),
             DefKind::Entity => (CompletionItemKind::CLASS, "0_"),
             DefKind::Enum => (CompletionItemKind::ENUM, "0_"),
             DefKind::Contract => (CompletionItemKind::INTERFACE, "5_"),
@@ -131,8 +131,8 @@ pub fn build_identifier_completions(
 
             let (kind, sort_prefix) = match entry.kind {
                 DefKind::Fn | DefKind::ExternFn => (CompletionItemKind::FUNCTION, "1_"),
-                DefKind::Struct | DefKind::ExternStruct => (CompletionItemKind::STRUCT, "0_"),
-                DefKind::Class | DefKind::ExternClass => (CompletionItemKind::CLASS, "0_"),
+                DefKind::Struct => (CompletionItemKind::STRUCT, "0_"),
+                DefKind::Class => (CompletionItemKind::CLASS, "0_"),
                 DefKind::Entity => (CompletionItemKind::CLASS, "0_"),
                 DefKind::Enum => (CompletionItemKind::ENUM, "0_"),
                 DefKind::Contract => (CompletionItemKind::INTERFACE, "5_"),
@@ -247,6 +247,23 @@ pub fn build_dot_completions(
                 }
             }
         }
+        TyKind::AnyEntity => {
+            // Entity namespace static methods
+            for (name, detail) in [
+                ("getOrCreate", "fn getOrCreate<T>() -> T"),
+                ("findAll", "fn findAll<T>() -> T[]"),
+                ("destroy", "fn destroy(entity: Entity)"),
+                ("isAlive", "fn isAlive(entity: Entity) -> bool"),
+            ] {
+                items.push(CompletionItem {
+                    label: name.to_string(),
+                    kind: Some(CompletionItemKind::METHOD),
+                    detail: Some(detail.to_string()),
+                    sort_text: Some(format!("1_{}", name)),
+                    ..Default::default()
+                });
+            }
+        }
         TyKind::Array(_) => {
             // Built-in array methods
             for (name, detail) in [
@@ -290,6 +307,20 @@ pub fn build_dot_completions(
                     detail: Some(detail.to_string()),
                     ..Default::default()
                 });
+            }
+        }
+        TyKind::Contract(def_id) => {
+            if let Some(methods) = type_env.contract_methods.get(def_id) {
+                for sig in methods {
+                    let detail = format_fn_sig_oneliner(sig, interner, def_map);
+                    items.push(CompletionItem {
+                        label: sig.name.clone(),
+                        kind: Some(CompletionItemKind::METHOD),
+                        detail: Some(detail),
+                        sort_text: Some(format!("1_{}", sig.name)),
+                        ..Default::default()
+                    });
+                }
             }
         }
         _ => {} // No dot completions for primitives, void, func, etc.
@@ -531,7 +562,7 @@ fn build_type_detail(
     def_map: &DefMap,
 ) -> Option<String> {
     match kind {
-        DefKind::Struct | DefKind::ExternStruct | DefKind::Class | DefKind::ExternClass => {
+        DefKind::Struct | DefKind::Class => {
             if let Some(fields) = type_env.struct_fields.get(&def_id) {
                 let field_strs: Vec<String> = fields
                     .iter()
@@ -560,7 +591,7 @@ fn build_type_detail(
 /// Build completion items for the context immediately after the `new` keyword.
 ///
 /// Returns only types that are constructable with `new Type { ... }` syntax:
-/// `Struct`, `ExternStruct`, `Class`, `ExternClass`, and `Entity` kinds.
+/// `Struct`, `Class`, and `Entity` kinds.
 ///
 /// Synthetic entries (file_id == FileId(u32::MAX)) are excluded. Prelude
 /// types such as `Option` and `Result` are enum-like and not constructable
@@ -584,8 +615,8 @@ pub fn build_new_keyword_completions(
         }
 
         let kind = match entry.kind {
-            DefKind::Struct | DefKind::ExternStruct => CompletionItemKind::STRUCT,
-            DefKind::Class | DefKind::ExternClass => CompletionItemKind::CLASS,
+            DefKind::Struct => CompletionItemKind::STRUCT,
+            DefKind::Class => CompletionItemKind::CLASS,
             DefKind::Entity => CompletionItemKind::CLASS,
             // All other kinds (Fn, Enum, Contract, Impl, Const, Global, …) are
             // NOT constructable with `new`.
@@ -611,8 +642,8 @@ pub fn build_new_keyword_completions(
                 continue;
             }
             let kind = match entry.kind {
-                DefKind::Struct | DefKind::ExternStruct => CompletionItemKind::STRUCT,
-                DefKind::Class | DefKind::ExternClass => CompletionItemKind::CLASS,
+                DefKind::Struct => CompletionItemKind::STRUCT,
+                DefKind::Class => CompletionItemKind::CLASS,
                 DefKind::Entity => CompletionItemKind::CLASS,
                 _ => continue,
             };
@@ -678,7 +709,7 @@ pub fn extract_namespace_prefix(source: &str, cursor: usize) -> Option<String> {
 /// Build completion items for a namespace completion (`::` trigger).
 ///
 /// Handles three cases in priority order:
-/// 1. Hardcoded prelude types (`Option` → Some/None, `Result` → Ok/Err).
+/// 1. Prelude enum variants via `type_env.prelude_enum_variants` (`Option` → Some/None, `Result` → Ok/Err).
 /// 2. Log namespace via `by_fqn` prefix scan (`log::trace` etc).
 /// 3. User-defined enums via `enum_variants` in `type_env`.
 pub fn build_namespace_completions(
@@ -686,34 +717,16 @@ pub fn build_namespace_completions(
     def_map: &DefMap,
     type_env: &writ_compiler::check::env::TypeEnv,
 ) -> Vec<CompletionItem> {
-    // 1. Hardcoded prelude types.
-    if namespace == "Option" {
-        return vec![
-            CompletionItem {
-                label: "Some".to_string(),
+    // 1. Prelude enum variants from type_env.
+    if let Some(variant_names) = type_env.prelude_enum_variants.get(namespace) {
+        return variant_names
+            .iter()
+            .map(|name| CompletionItem {
+                label: name.clone(),
                 kind: Some(CompletionItemKind::ENUM_MEMBER),
                 ..Default::default()
-            },
-            CompletionItem {
-                label: "None".to_string(),
-                kind: Some(CompletionItemKind::ENUM_MEMBER),
-                ..Default::default()
-            },
-        ];
-    }
-    if namespace == "Result" {
-        return vec![
-            CompletionItem {
-                label: "Ok".to_string(),
-                kind: Some(CompletionItemKind::ENUM_MEMBER),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "Err".to_string(),
-                kind: Some(CompletionItemKind::ENUM_MEMBER),
-                ..Default::default()
-            },
-        ];
+            })
+            .collect();
     }
 
     // 2. DefMap by_fqn prefix scan (handles log:: and any namespace members).
@@ -924,6 +937,7 @@ mod tests {
         let (resolved, resolve_diags) = writ_compiler::resolve::resolve(
             &[(file_id, &ast)],
             &[(file_id, "test.writ")],
+            &[],
         );
         let resolve_errors: Vec<_> = resolve_diags
             .iter()
@@ -932,7 +946,7 @@ mod tests {
         assert!(resolve_errors.is_empty(), "resolve errors: {:?}", resolve_errors);
 
         let (typed_ast, interner, type_env, type_diags) =
-            writ_compiler::check::typecheck(resolved, &[(file_id, &ast)]);
+            writ_compiler::check::typecheck(resolved, &[(file_id, &ast)], &[]);
         let type_errors: Vec<_> = type_diags
             .iter()
             .filter(|d| d.severity == Severity::Error)
@@ -1024,6 +1038,22 @@ fn main() { }
         // At minimum we should get component items (entity_components from type_env)
         // Even if entity has no explicit components listed, the function should not panic
         let _ = items; // Just verify it returns without error
+    }
+
+    #[test]
+    fn test_dot_completions_any_entity_namespace() {
+        // Entity namespace (AnyEntity) should offer static methods
+        let src = "fn main() {}";
+        let (ast, interner, type_env) = build_typed_ast_full(src);
+        let mut interner = interner;
+        let receiver_ty = interner.any_entity();
+        let items = build_dot_completions(receiver_ty, &interner, &ast.def_map, &type_env);
+
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(labels.contains(&"getOrCreate"), "expected getOrCreate in Entity completions, got: {:?}", labels);
+        assert!(labels.contains(&"findAll"), "expected findAll in Entity completions, got: {:?}", labels);
+        assert!(labels.contains(&"destroy"), "expected destroy in Entity completions, got: {:?}", labels);
+        assert!(labels.contains(&"isAlive"), "expected isAlive in Entity completions, got: {:?}", labels);
     }
 
     // ── build_signature_help tests ────────────────────────────────────────────
@@ -1147,7 +1177,7 @@ fn main() { }
 
     #[test]
     fn test_namespace_completions_option() {
-        // Option is a prelude type — hardcoded path, fresh DefMap is fine
+        // Option is a prelude type — prelude_enum_variants path, fresh DefMap is fine
         let def_map = writ_compiler::resolve::def_map::DefMap::new();
         let type_env_empty = writ_compiler::check::env::TypeEnv {
             fn_sigs: Default::default(),
@@ -1160,6 +1190,15 @@ fn main() { }
             const_types: Default::default(),
             global_types: Default::default(),
             component_fields: Default::default(),
+            deprecated_items: Default::default(),
+            conditional_fns: Default::default(),
+            fallback_for_conditional: Default::default(),
+            prelude_enum_variants: {
+                let mut m: std::collections::HashMap<String, Vec<String>> = Default::default();
+                m.insert("Option".to_string(), vec!["Some".to_string(), "None".to_string()]);
+                m.insert("Result".to_string(), vec!["Ok".to_string(), "Err".to_string()]);
+                m.into_iter().collect()
+            },
         };
         let items = build_namespace_completions("Option", &def_map, &type_env_empty);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
@@ -1170,7 +1209,7 @@ fn main() { }
 
     #[test]
     fn test_namespace_completions_result() {
-        // Result is a prelude type — hardcoded path
+        // Result is a prelude type — prelude_enum_variants path
         let def_map = writ_compiler::resolve::def_map::DefMap::new();
         let type_env_empty = writ_compiler::check::env::TypeEnv {
             fn_sigs: Default::default(),
@@ -1183,6 +1222,15 @@ fn main() { }
             const_types: Default::default(),
             global_types: Default::default(),
             component_fields: Default::default(),
+            deprecated_items: Default::default(),
+            conditional_fns: Default::default(),
+            fallback_for_conditional: Default::default(),
+            prelude_enum_variants: {
+                let mut m: std::collections::HashMap<String, Vec<String>> = Default::default();
+                m.insert("Option".to_string(), vec!["Some".to_string(), "None".to_string()]);
+                m.insert("Result".to_string(), vec!["Ok".to_string(), "Err".to_string()]);
+                m.into_iter().collect()
+            },
         };
         let items = build_namespace_completions("Result", &def_map, &type_env_empty);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
@@ -1217,6 +1265,10 @@ fn main() { }
             const_types: Default::default(),
             global_types: Default::default(),
             component_fields: Default::default(),
+            deprecated_items: Default::default(),
+            conditional_fns: Default::default(),
+            fallback_for_conditional: Default::default(),
+            prelude_enum_variants: Default::default(),
         };
         let items = build_namespace_completions("Nonexistent", &def_map, &type_env_empty);
         assert!(items.is_empty(), "expected empty vec for unknown namespace, got: {:?}", items.iter().map(|i| &i.label).collect::<Vec<_>>());
@@ -1384,6 +1436,119 @@ fn main() { }
         assert!(labels.contains(&"pop"),      "expected 'pop' in array dot completions, got: {:?}", labels);
         assert!(labels.contains(&"len"),      "expected 'len' in array dot completions, got: {:?}", labels);
         assert!(labels.contains(&"is_empty"), "expected 'is_empty' in array dot completions, got: {:?}", labels);
+    }
+
+    // ── TyKind::Contract dot-completion tests ─────────────────────────────────
+
+    #[test]
+    fn test_dot_completions_contract() {
+        // Build a contract with a single method via the full pipeline
+        let src = r#"pub contract Vocalize {
+    fn speak(self, msg: string) -> void;
+}
+pub class NPC {}
+impl Vocalize for NPC {
+    fn speak(self, msg: string) -> void {}
+}
+pub fn main() {
+    let s: Vocalize = new NPC {};
+}"#;
+        let (ast, mut interner, type_env) = build_typed_ast_full(src);
+
+        // Find the contract DefId by looking for the "Vocalize" def
+        use writ_compiler::resolve::def_map::DefKind;
+        let contract_def_id = ast.def_map
+            .by_fqn
+            .values()
+            .chain(ast.def_map.file_private.values().flat_map(|m| m.values()))
+            .find(|&&id| {
+                let entry = ast.def_map.get_entry(id);
+                entry.name == "Vocalize" && entry.kind == DefKind::Contract
+            })
+            .copied()
+            .expect("should find Vocalize contract def");
+
+        // Build a TyKind::Contract Ty via the interner
+        let contract_ty = interner.intern(writ_compiler::check::ty::TyKind::Contract(contract_def_id));
+
+        // Call build_dot_completions with the contract type
+        let items = build_dot_completions(contract_ty, &interner, &ast.def_map, &type_env);
+
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            labels.contains(&"speak"),
+            "expected 'speak' method in contract dot completions, got: {:?}",
+            labels
+        );
+
+        // Verify kind and detail
+        let speak_item = items.iter().find(|i| i.label == "speak").unwrap();
+        assert_eq!(
+            speak_item.kind,
+            Some(lsp_types::CompletionItemKind::METHOD),
+            "speak completion should have kind METHOD"
+        );
+        let detail = speak_item.detail.as_deref().unwrap_or("");
+        assert!(
+            detail.contains("msg"),
+            "detail should mention parameter 'msg', got: {:?}",
+            detail
+        );
+        assert!(
+            detail.contains("void"),
+            "detail should mention return type 'void', got: {:?}",
+            detail
+        );
+    }
+
+    #[test]
+    fn test_dot_completion_integration_contract() {
+        // Full pipeline: contract Vocalize with speak method, NPC class implementing it,
+        // contract-typed variable with trailing dot — simulates what backend.rs does.
+        let original = r#"pub contract Vocalize {
+    fn speak(self, msg: string) -> void;
+}
+pub class NPC {}
+impl Vocalize for NPC {
+    fn speak(self, msg: string) -> void {}
+}
+pub fn main() {
+    let s: Vocalize = new NPC {};
+    s.
+}"#;
+        // Find the dot position: it's the '.' in "s."
+        let dot_pos = original.rfind("s.").unwrap() + 1; // byte offset of '.'
+        // Strip the dot (exactly what backend.rs does)
+        let modified = format!("{}{}", &original[..dot_pos], &original[dot_pos + 1..]);
+
+        // Run analyze_standalone on the modified source
+        let result = crate::analysis_host::AnalysisHost::analyze_standalone(
+            modified.clone(), "test.writ".to_string()
+        );
+        let (typed_ast, interner, type_env) = match (result.typed_ast, result.ty_interner, result.type_env) {
+            (Some(t), Some(i), Some(e)) => (t, i, e),
+            _ => panic!("analyze_standalone failed to produce typed AST for modified source.\nModified source:\n{}", modified),
+        };
+
+        // Find receiver at dot_pos - 1 (the 's' character)
+        let receiver_offset = dot_pos.saturating_sub(1);
+        let receiver_expr = crate::queries::expr_at_offset(&typed_ast, receiver_offset, writ_diagnostics::FileId(0));
+        assert!(
+            receiver_expr.is_some(),
+            "expr_at_offset should find receiver at offset {} in modified source:\n{}",
+            receiver_offset,
+            modified
+        );
+
+        let receiver_ty = receiver_expr.unwrap().ty();
+        let items = build_dot_completions(receiver_ty, &interner, &typed_ast.def_map, &type_env);
+
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        assert!(
+            labels.contains(&"speak"),
+            "expected 'speak' method in contract dot completions (integration), got: {:?}",
+            labels
+        );
     }
 
     // ── file-private definition inclusion tests ────────────────────────────────

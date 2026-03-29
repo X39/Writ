@@ -10,6 +10,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tower_lsp::{LspService, Server};
+use url::Url;
 use writ_lsp::backend::Backend;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -162,6 +163,34 @@ impl LspClient {
         resp
     }
 
+    /// Send `initialize` with a custom rootUri + `initialized`.
+    /// Used for project-mode tests that need a workspace root (e.g. writ.toml discovery).
+    async fn initialize_with_root(&mut self, root_uri: &str) -> Value {
+        let id = self.next_id();
+        self.send(json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "initialize",
+            "params": {
+                "capabilities": {},
+                "processId": null,
+                "rootUri": root_uri
+            }
+        }))
+        .await;
+
+        let resp = self.recv_response(id).await;
+
+        self.send(json!({
+            "jsonrpc": "2.0",
+            "method": "initialized",
+            "params": {}
+        }))
+        .await;
+
+        resp
+    }
+
     /// Open a document, wait for analysis, and collect any publishDiagnostics notifications.
     async fn open_document_and_collect_diagnostics(
         &mut self,
@@ -252,6 +281,28 @@ impl LspClient {
             "params": {
                 "textDocument": { "uri": uri },
                 "position": { "line": line, "character": character }
+            }
+        }))
+        .await;
+
+        let resp = self.recv_response(id).await;
+        resp.get("result").cloned().filter(|v| !v.is_null())
+    }
+
+    /// Send a dot-triggered completion request (includes triggerCharacter: ".").
+    async fn dot_completion(&mut self, uri: &str, line: u32, character: u32) -> Option<Value> {
+        let id = self.next_id();
+        self.send(json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "textDocument/completion",
+            "params": {
+                "textDocument": { "uri": uri },
+                "position": { "line": line, "character": character },
+                "context": {
+                    "triggerKind": 2,
+                    "triggerCharacter": "."
+                }
             }
         }))
         .await;
@@ -644,7 +695,7 @@ fn hover_text(hover_result: &Option<Value>) -> String {
         .to_string()
 }
 
-/// Hover on `available` (line 59) should show type `bool`.
+/// Hover on `available` (line 61) should show type `bool`.
 /// Source: `let available: bool = is_quest_available(status);`
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_hover_available_shows_bool() {
@@ -652,17 +703,17 @@ async fn test_hover_available_shows_bool() {
     let source = fixture_source(QUEST_PATH);
     client.open_document(QUEST_URI, &source).await;
 
-    // Line 59 (0-indexed: 58), col 8: `available`
-    let hover = client.hover(QUEST_URI, 58, 8).await;
+    // Line 61 (0-indexed: 60), col 8: `available`
+    let hover = client.hover(QUEST_URI, 60, 8).await;
     let text = hover_text(&hover);
     assert!(
         text.contains("bool"),
-        "hovering `available` on line 59 should show bool, got: {}",
+        "hovering `available` on line 61 should show bool, got: {}",
         text
     );
 }
 
-/// Hover on `types` (line 129) should show `QuestType[]`.
+/// Hover on `types` (line 133) should show `QuestType[]`.
 /// Source: `for t in types {`
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_hover_types_shows_quest_type_array() {
@@ -670,17 +721,17 @@ async fn test_hover_types_shows_quest_type_array() {
     let source = fixture_source(QUEST_PATH);
     client.open_document(QUEST_URI, &source).await;
 
-    // Line 129 (0-indexed: 128), col 13: `types`
-    let hover = client.hover(QUEST_URI, 128, 13).await;
+    // Line 133 (0-indexed: 132), col 13: `types`
+    let hover = client.hover(QUEST_URI, 132, 13).await;
     let text = hover_text(&hover);
     assert!(
         text.contains("QuestType"),
-        "hovering `types` on line 129 should show QuestType[], got: {}",
+        "hovering `types` on line 133 should show QuestType[], got: {}",
         text
     );
 }
 
-/// Hover on `t` (line 129) should show `QuestType`.
+/// Hover on `t` (line 133) should show `QuestType`.
 /// Source: `for t in types {`
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_hover_for_binding_shows_quest_type() {
@@ -688,17 +739,17 @@ async fn test_hover_for_binding_shows_quest_type() {
     let source = fixture_source(QUEST_PATH);
     client.open_document(QUEST_URI, &source).await;
 
-    // Line 129 (0-indexed: 128), col 8: `t`
-    let hover = client.hover(QUEST_URI, 128, 8).await;
+    // Line 133 (0-indexed: 132), col 8: `t`
+    let hover = client.hover(QUEST_URI, 132, 8).await;
     let text = hover_text(&hover);
     assert!(
         text.contains("QuestType"),
-        "hovering `t` on line 129 should show QuestType, got: {}",
+        "hovering `t` on line 133 should show QuestType, got: {}",
         text
     );
 }
 
-/// Hover on `main` (line 110) should show function signature.
+/// Hover on `main` (line 112) should show function signature.
 /// Source: `fn main() {`
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_hover_main_shows_function_sig() {
@@ -706,17 +757,99 @@ async fn test_hover_main_shows_function_sig() {
     let source = fixture_source(QUEST_PATH);
     client.open_document(QUEST_URI, &source).await;
 
-    // Line 110 (0-indexed: 109), col 3: `main`
-    let hover = client.hover(QUEST_URI, 109, 3).await;
+    // Line 112 (0-indexed: 111), col 3: `main`
+    let hover = client.hover(QUEST_URI, 111, 3).await;
     let text = hover_text(&hover);
     assert!(
         text.contains("fn") && text.contains("main"),
-        "hovering `main` on line 110 should show function info, got: {}",
+        "hovering `main` on line 112 should show function info, got: {}",
         text
     );
 }
 
-/// Hover on `QuestStatus` (line 117) should show enum info.
+// ─── Deprecated Hover/Diagnostic Tests ───────────────────────────────────────
+//
+// These tests verify that [Deprecated("msg")] attributes surface correctly in
+// LSP hover tooltips.
+//
+// Note: W0006 diagnostic squiggles are integration-tested at the compiler level in
+// writ-compiler/tests/deprecated_tests.rs. The LSP diagnostic pipeline routes
+// W0006 through Severity::Warning → DiagnosticSeverity::WARNING automatically
+// (see writ-lsp/src/convert.rs). Single-file LSP tests do not trigger W0006
+// because same-file deprecation references are suppressed by design.
+
+const DEPRECATED_URI: &str = "file:///test/deprecated_test.writ";
+
+/// Hovering over a deprecated function's declaration shows **Deprecated** notice.
+///
+/// Source line 0: `[Deprecated("use bar instead")] fn foo() -> void { }`
+/// Hover at col 36 (the `foo` name on the declaration site).
+/// Verifies that hover_text_for_def prepends the deprecation notice.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_deprecated_hover_on_declaration() {
+    let mut client = LspClient::start().await;
+
+    // Line 0: [Deprecated("use bar instead")] fn foo() -> void { }
+    // `foo` name starts at col 36 (after "[Deprecated("use bar instead")] fn ")
+    // Line 1: fn main() -> void { }
+    let source = "[Deprecated(\"use bar instead\")] fn foo() -> void { }\nfn main() -> void { }\n";
+
+    client.open_document(DEPRECATED_URI, source).await;
+
+    // Hover on line 0 (0-indexed), col 36: the `foo` declaration name
+    let hover = client.hover(DEPRECATED_URI, 0, 36).await;
+    let text = hover_text(&hover);
+
+    assert!(
+        text.contains("Deprecated"),
+        "hover on deprecated fn declaration should contain 'Deprecated', got: {:?}",
+        text
+    );
+    assert!(
+        text.contains("use bar instead"),
+        "hover on deprecated fn declaration should contain the deprecation message, got: {:?}",
+        text
+    );
+    assert!(
+        text.contains("foo"),
+        "hover on deprecated fn declaration should contain the fn name, got: {:?}",
+        text
+    );
+}
+
+/// Hovering over a call to a deprecated function shows **Deprecated** notice.
+///
+/// Source line 1: `fn main() -> void { foo(); }`
+/// Hover at col 20 (the `foo` call site).
+/// Verifies that hover_text_for_expr prepends the deprecation notice for Call expressions.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_deprecated_hover_on_call_site() {
+    let mut client = LspClient::start().await;
+
+    // Line 0: [Deprecated("use bar instead")] fn foo() -> void { }
+    // Line 1: fn main() -> void { foo(); }
+    //         `foo` starts at col 20
+    let source = "[Deprecated(\"use bar instead\")] fn foo() -> void { }\nfn main() -> void { foo(); }\n";
+
+    client.open_document(DEPRECATED_URI, source).await;
+
+    // Hover on line 1 (0-indexed), col 20: the `foo()` call expression
+    let hover = client.hover(DEPRECATED_URI, 1, 20).await;
+    let text = hover_text(&hover);
+
+    assert!(
+        text.contains("Deprecated"),
+        "hover on deprecated fn call site should contain 'Deprecated', got: {:?}",
+        text
+    );
+    assert!(
+        text.contains("use bar instead"),
+        "hover on deprecated fn call site should contain the deprecation message, got: {:?}",
+        text
+    );
+}
+
+/// Hover on `QuestStatus` (line 121) should show enum info.
 /// Source: `QuestStatus::NotStarted,`
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_hover_quest_status_shows_enum_info() {
@@ -724,17 +857,17 @@ async fn test_hover_quest_status_shows_enum_info() {
     let source = fixture_source(QUEST_PATH);
     client.open_document(QUEST_URI, &source).await;
 
-    // Line 117 (0-indexed: 116), col 8: `QuestStatus`
-    let hover = client.hover(QUEST_URI, 116, 8).await;
+    // Line 121 (0-indexed: 120), col 8: `QuestStatus`
+    let hover = client.hover(QUEST_URI, 120, 8).await;
     let text = hover_text(&hover);
     assert!(
         text.contains("QuestStatus"),
-        "hovering `QuestStatus` on line 117 should show enum info, got: {}",
+        "hovering `QuestStatus` on line 121 should show enum info, got: {}",
         text
     );
 }
 
-/// Hover on `MAX_QUESTS` (line 161) should show const type.
+/// Hover on `MAX_QUESTS` (line 165) should show const type.
 /// Source: `if active_quest_count < MAX_QUESTS {`
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_hover_max_quests_shows_const() {
@@ -742,12 +875,12 @@ async fn test_hover_max_quests_shows_const() {
     let source = fixture_source(QUEST_PATH);
     client.open_document(QUEST_URI, &source).await;
 
-    // Line 161 (0-indexed: 160), col 30: `MAX_QUESTS`
-    let hover = client.hover(QUEST_URI, 160, 30).await;
+    // Line 165 (0-indexed: 164), col 30: `MAX_QUESTS`
+    let hover = client.hover(QUEST_URI, 164, 30).await;
     let text = hover_text(&hover);
     assert!(
         !text.is_empty(),
-        "hovering `MAX_QUESTS` on line 161 should produce hover"
+        "hovering `MAX_QUESTS` on line 165 should produce hover"
     );
     assert!(
         text.contains("int"),
@@ -1088,5 +1221,539 @@ async fn test_completion_after_new_shows_private_struct_with_detail() {
         detail.contains("y: int"),
         "Point detail should contain 'y: int', got: {}",
         detail
+    );
+}
+
+// ─── Entity namespace hover + completion tests ──────────────────────────────
+
+/// Test: hovering `getOrCreate` on `Entity.getOrCreate<Guard>()` shows the method signature.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_hover_entity_get_or_create() {
+    let mut client = LspClient::start().await;
+    let source = r#"[Singleton]
+entity Guard {
+    health: int = 100,
+}
+fn main() {
+    let g = Entity.getOrCreate<Guard>();
+}
+"#;
+    let uri = "file:///test/entity_get_or_create.writ";
+    client.open_document(uri, source).await;
+
+    // Line 5 (0-indexed), `Entity.getOrCreate<Guard>()` — hover on `Entity` at col 12
+    let hover = client.hover(uri, 5, 12).await;
+    let text = hover_text(&hover);
+    assert!(
+        text.contains("Entity"),
+        "hovering Entity should show Entity namespace info, got: {}",
+        text
+    );
+
+    client.shutdown().await;
+}
+
+/// Test: completion on `Entity.` returns the namespace methods.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_completion_entity_dot_namespace() {
+    let mut client = LspClient::start().await;
+    let source = r#"[Singleton]
+entity Guard {
+    health: int = 100,
+}
+fn main() {
+    Entity.
+}
+"#;
+    let uri = "file:///test/entity_dot_completion.writ";
+    client.open_document(uri, source).await;
+
+    // Line 5 (0-indexed), col 11: right after `Entity.`
+    let result = client.dot_completion(uri, 5, 11).await;
+
+    let items: Vec<Value> = match result {
+        Some(v) if v.is_array() => v.as_array().cloned().unwrap_or_default(),
+        Some(v) => v.get("items").and_then(|v| v.as_array()).cloned().unwrap_or_default(),
+        None => vec![],
+    };
+
+    let labels: Vec<&str> = items
+        .iter()
+        .filter_map(|item| item.get("label").and_then(|l| l.as_str()))
+        .collect();
+
+    assert!(
+        labels.contains(&"getOrCreate"),
+        "Entity. completions should include getOrCreate, got: {:?}",
+        labels
+    );
+    assert!(
+        labels.contains(&"destroy"),
+        "Entity. completions should include destroy, got: {:?}",
+        labels
+    );
+
+    client.shutdown().await;
+}
+
+/// Test: Valid contract-typed code produces zero LSP diagnostics.
+///
+/// A contract with a complete implementation and a properly-typed variable
+/// must produce no errors. This is a regression test confirming E0122
+/// (ContractAsType error, removed in Phase 84) is truly gone.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_diagnostics_contract_valid_no_errors() {
+    let mut client = LspClient::start().await;
+    let source = r#"pub contract Vocalize {
+    fn speak(self, msg: string) -> void;
+}
+pub class NPC {}
+impl Vocalize for NPC {
+    fn speak(self, msg: string) -> void {}
+}
+pub fn main() {
+    let s: Vocalize = new NPC {};
+    s.speak("hello");
+}
+"#;
+    let uri = "file:///test/contract_valid.writ";
+
+    let diag_notifications = client
+        .open_document_and_collect_diagnostics(uri, source)
+        .await;
+
+    // Collect all diagnostics from notifications targeting our document
+    let mut all_diagnostics: Vec<Value> = Vec::new();
+    for notif in &diag_notifications {
+        let params = notif.get("params").cloned().unwrap_or(json!({}));
+        let notif_uri = params.get("uri").and_then(|v| v.as_str()).unwrap_or("");
+        if notif_uri == uri {
+            if let Some(diags) = params.get("diagnostics").and_then(|v| v.as_array()) {
+                all_diagnostics.extend(diags.iter().cloned());
+            }
+        }
+    }
+
+    assert!(
+        all_diagnostics.is_empty(),
+        "valid contract code should produce zero diagnostics, got: {:?}",
+        all_diagnostics
+    );
+
+    client.shutdown().await;
+}
+
+/// Test: Assigning a non-implementing type to a contract-typed variable produces an error diagnostic.
+///
+/// BadClass does NOT implement Vocalize — the compiler should produce E0112.
+/// This is a regression test confirming E0123 (incomplete impl) still fires.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_diagnostics_contract_invalid_produces_error() {
+    let mut client = LspClient::start().await;
+    let source = r#"pub contract Vocalize {
+    fn speak(self, msg: string) -> void;
+}
+pub class BadClass {}
+pub fn main() {
+    let s: Vocalize = new BadClass {};
+}
+"#;
+    let uri = "file:///test/contract_invalid.writ";
+
+    let diag_notifications = client
+        .open_document_and_collect_diagnostics(uri, source)
+        .await;
+
+    // Collect all diagnostics from notifications targeting our document
+    let mut all_diagnostics: Vec<Value> = Vec::new();
+    for notif in &diag_notifications {
+        let params = notif.get("params").cloned().unwrap_or(json!({}));
+        let notif_uri = params.get("uri").and_then(|v| v.as_str()).unwrap_or("");
+        if notif_uri == uri {
+            if let Some(diags) = params.get("diagnostics").and_then(|v| v.as_array()) {
+                all_diagnostics.extend(diags.iter().cloned());
+            }
+        }
+    }
+
+    assert!(
+        !all_diagnostics.is_empty(),
+        "assigning non-implementing type to contract should produce at least one diagnostic, \
+         got {} publishDiagnostics notifications",
+        diag_notifications.len()
+    );
+
+    // Verify at least one diagnostic has severity Error (1 in LSP)
+    let has_error = all_diagnostics.iter().any(|d| {
+        d.get("severity")
+            .and_then(|v| v.as_i64())
+            .map(|s| s == 1)
+            .unwrap_or(false)
+    });
+    assert!(
+        has_error,
+        "at least one diagnostic should have severity=Error (1), got: {:?}",
+        all_diagnostics
+    );
+
+    client.shutdown().await;
+}
+
+/// Test: Code action for incomplete contract impl generates method stubs.
+///
+/// An impl block missing required methods (E0123) should produce a quick-fix
+/// code action that inserts stub method bodies.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_code_action_implement_missing_methods() {
+    let mut client = LspClient::start().await;
+    let source = r#"pub contract Greetable {
+    fn greet(self) -> string;
+    fn farewell(self, name: string) -> void;
+}
+pub class Person {}
+impl Greetable for Person {
+}
+pub fn main() {}
+"#;
+    let uri = "file:///test/code_action.writ";
+
+    let diag_notifications = client
+        .open_document_and_collect_diagnostics(uri, source)
+        .await;
+
+    // Collect E0123 diagnostics
+    let mut e0123_diags: Vec<Value> = Vec::new();
+    for notif in &diag_notifications {
+        let params = notif.get("params").cloned().unwrap_or(json!({}));
+        let notif_uri = params.get("uri").and_then(|v| v.as_str()).unwrap_or("");
+        if notif_uri == uri {
+            if let Some(diags) = params.get("diagnostics").and_then(|v| v.as_array()) {
+                for d in diags {
+                    if d.get("code").and_then(|v| v.as_str()) == Some("E0123") {
+                        e0123_diags.push(d.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    assert!(
+        !e0123_diags.is_empty(),
+        "incomplete impl should produce E0123 diagnostic"
+    );
+
+    // Send code action request with the E0123 diagnostic
+    let diag = &e0123_diags[0];
+    let range = diag.get("range").cloned().unwrap();
+
+    let id = client.next_id();
+    client
+        .send(json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "textDocument/codeAction",
+            "params": {
+                "textDocument": { "uri": uri },
+                "range": range,
+                "context": {
+                    "diagnostics": e0123_diags
+                }
+            }
+        }))
+        .await;
+
+    let resp = client.recv_response(id).await;
+    let actions = resp
+        .get("result")
+        .and_then(|v| v.as_array())
+        .expect("code action should return an array");
+
+    assert!(
+        !actions.is_empty(),
+        "should produce at least one code action for E0123"
+    );
+
+    // Verify the action is a quickfix with workspace edit
+    let action = &actions[0];
+    assert_eq!(
+        action.get("kind").and_then(|v| v.as_str()),
+        Some("quickfix"),
+        "action should be a quickfix"
+    );
+
+    let edit = action
+        .get("edit")
+        .expect("action should have an edit");
+    let changes = edit
+        .get("changes")
+        .expect("edit should have changes");
+    let file_edits = changes
+        .get(uri)
+        .and_then(|v| v.as_array())
+        .expect("changes should contain edits for the document URI");
+
+    assert!(
+        !file_edits.is_empty(),
+        "should have at least one text edit"
+    );
+
+    // Verify the inserted text contains both missing method stubs
+    let new_text = file_edits[0]
+        .get("newText")
+        .and_then(|v| v.as_str())
+        .expect("edit should have newText");
+
+    assert!(
+        new_text.contains("fn greet(self)"),
+        "stub should contain greet method, got: {}",
+        new_text
+    );
+    assert!(
+        new_text.contains("fn farewell(self,"),
+        "stub should contain farewell method, got: {}",
+        new_text
+    );
+    assert!(
+        new_text.contains("-> string"),
+        "greet stub should have return type, got: {}",
+        new_text
+    );
+
+    client.shutdown().await;
+}
+
+// ─── Attribute Diagnostic E2E Tests ──────────────────────────────────────────
+//
+// These tests verify the end-to-end LSP diagnostic pipeline for attribute-based
+// diagnostics added in phases 93-98.
+
+/// Test: [Deprecated] attribute on a function in a cross-file project produces W0006
+/// Warning diagnostic with the deprecation message at the call site.
+///
+/// Uses project-mode (writ.toml in temp dir) because W0006 is only produced for
+/// cross-file deprecation references (same-file references are suppressed by design).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_deprecated_warning_published() {
+    let tmp = std::env::temp_dir().join("writ_lsp_test_deprecated_e2e");
+    let _ = std::fs::remove_dir_all(&tmp);
+    let src_dir = tmp.join("src");
+    std::fs::create_dir_all(&src_dir).unwrap();
+
+    // Minimal project manifest — sources default to src/
+    std::fs::write(
+        tmp.join("writ.toml"),
+        "[project]\nname = \"test-deprecated\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+
+    // lib.writ: defines a deprecated function
+    std::fs::write(
+        src_dir.join("lib.writ"),
+        "[Deprecated(\"use bar instead\")]\npub fn foo() {}\n",
+    )
+    .unwrap();
+
+    // main.writ: calls the deprecated function (triggers W0006 cross-file)
+    std::fs::write(
+        src_dir.join("main.writ"),
+        "pub fn main() { foo(); }\n",
+    )
+    .unwrap();
+
+    let mut client = LspClient::start_raw().await;
+
+    let root_uri = Url::from_directory_path(&tmp).unwrap().to_string();
+    client.initialize_with_root(&root_uri).await;
+
+    let main_path = src_dir.join("main.writ");
+    let main_uri = Url::from_file_path(&main_path).unwrap().to_string();
+    let main_content = std::fs::read_to_string(&main_path).unwrap();
+
+    let diag_notifications = client
+        .open_document_and_collect_diagnostics(&main_uri, &main_content)
+        .await;
+
+    // Collect all diagnostics across all published URIs (project mode publishes per file)
+    let mut all_diagnostics: Vec<Value> = Vec::new();
+    for notif in &diag_notifications {
+        let params = notif.get("params").cloned().unwrap_or(json!({}));
+        if let Some(diags) = params.get("diagnostics").and_then(|v| v.as_array()) {
+            all_diagnostics.extend(diags.iter().cloned());
+        }
+    }
+
+    // W0006 should be emitted as a Warning (severity 2) with the deprecation message
+    let has_w0006 = all_diagnostics.iter().any(|d| {
+        d.get("code").and_then(|v| v.as_str()) == Some("W0006")
+    });
+    assert!(
+        has_w0006,
+        "Expected W0006 diagnostic for deprecated function call across files. Got diagnostics: {:?}",
+        all_diagnostics
+    );
+
+    let has_warning_severity = all_diagnostics.iter().any(|d| {
+        d.get("code").and_then(|v| v.as_str()) == Some("W0006")
+            && d.get("severity").and_then(|v| v.as_i64()) == Some(2)
+    });
+    assert!(
+        has_warning_severity,
+        "W0006 should be severity 2 (Warning). Got diagnostics: {:?}",
+        all_diagnostics
+    );
+
+    let has_message = all_diagnostics.iter().any(|d| {
+        d.get("code").and_then(|v| v.as_str()) == Some("W0006")
+            && d.get("message")
+                .and_then(|v| v.as_str())
+                .map(|msg| msg.contains("use bar instead"))
+                .unwrap_or(false)
+    });
+    assert!(
+        has_message,
+        "W0006 diagnostic message should contain 'use bar instead'. Got diagnostics: {:?}",
+        all_diagnostics
+    );
+
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// Test: @speaker targeting a non-Singleton entity produces an E0007 diagnostic.
+///
+/// Uses standalone (single-file) mode — E0007 fires at resolve stage regardless
+/// of file boundary.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_speaker_validation_e0007() {
+    let mut client = LspClient::start().await;
+
+    let source = r#"entity Npc {}
+
+dlg greet() {
+    @Npc say("hello");
+}
+"#;
+    let uri = "file:///test/speaker_e0007.writ";
+
+    let diag_notifications = client
+        .open_document_and_collect_diagnostics(uri, source)
+        .await;
+
+    let mut all_diagnostics: Vec<Value> = Vec::new();
+    for notif in &diag_notifications {
+        let params = notif.get("params").cloned().unwrap_or(json!({}));
+        let notif_uri = params.get("uri").and_then(|v| v.as_str()).unwrap_or("");
+        if notif_uri == uri {
+            if let Some(diags) = params.get("diagnostics").and_then(|v| v.as_array()) {
+                all_diagnostics.extend(diags.iter().cloned());
+            }
+        }
+    }
+
+    // E0007 = invalid speaker (entity is not [Singleton])
+    let has_e0007 = all_diagnostics.iter().any(|d| {
+        d.get("code").and_then(|v| v.as_str()) == Some("E0007")
+    });
+    assert!(
+        has_e0007,
+        "Expected E0007 diagnostic for non-Singleton @speaker. Got diagnostics: {:?}",
+        all_diagnostics
+    );
+
+    // E0007 should be an Error (severity 1)
+    let has_error_severity = all_diagnostics.iter().any(|d| {
+        d.get("code").and_then(|v| v.as_str()) == Some("E0007")
+            && d.get("severity").and_then(|v| v.as_i64()) == Some(1)
+    });
+    assert!(
+        has_error_severity,
+        "E0007 should be severity 1 (Error). Got diagnostics: {:?}",
+        all_diagnostics
+    );
+}
+
+/// DIAG-04: Hover on incomplete source must not crash the LSP server.
+///
+/// Opens a document with a syntax error (unterminated string literal) and sends
+/// a hover request. The response must be a valid JSON-RPC response — not an
+/// error code — even though the source does not parse cleanly. The server is
+/// expected to return null (no hover info) gracefully rather than crash.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_hover_on_incomplete_source_no_crash() {
+    let mut client = LspClient::start().await;
+
+    let incomplete_source = "pub fn main() {\n    let x: int = 42;\n    let y: string = \"unterminated\n}\n";
+    let uri = "file:///test/incomplete_hover.writ";
+
+    // Open document with syntax error — gives server time to analyze
+    client.open_document(uri, incomplete_source).await;
+
+    // Send hover request at line 1, character 8 (over `x`)
+    let id = client.next_id();
+    client.send(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "textDocument/hover",
+        "params": {
+            "textDocument": { "uri": uri },
+            "position": { "line": 1, "character": 8 }
+        }
+    })).await;
+
+    let resp = client.recv_response(id).await;
+
+    // The response must be a valid JSON-RPC response — no error field
+    assert!(
+        resp.get("error").is_none(),
+        "hover on incomplete source must not return a JSON-RPC error, got: {:?}",
+        resp
+    );
+    // result may be null (graceful degradation) or Some value — both acceptable
+    assert!(
+        resp.get("result").is_some(),
+        "hover response must have a 'result' field (even if null), got: {:?}",
+        resp
+    );
+}
+
+/// DIAG-04: Completion on incomplete source must not crash the LSP server.
+///
+/// Opens a document with a syntax error and sends a completion request.
+/// The response must be a valid JSON-RPC response, not a crash. The server
+/// is expected to return null or an empty list gracefully.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn test_completion_on_incomplete_source_no_crash() {
+    let mut client = LspClient::start().await;
+
+    let incomplete_source = "pub fn main() {\n    let x: int = 42;\n    let y: string = \"unterminated\n}\n";
+    let uri = "file:///test/incomplete_completion.writ";
+
+    // Open document with syntax error — gives server time to analyze
+    client.open_document(uri, incomplete_source).await;
+
+    // Send completion request at line 1, character 12 (after `x: i`)
+    let id = client.next_id();
+    client.send(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": { "uri": uri },
+            "position": { "line": 1, "character": 12 }
+        }
+    })).await;
+
+    let resp = client.recv_response(id).await;
+
+    // The response must be a valid JSON-RPC response — no error field
+    assert!(
+        resp.get("error").is_none(),
+        "completion on incomplete source must not return a JSON-RPC error, got: {:?}",
+        resp
+    );
+    // result may be null (graceful degradation) or a list — both acceptable
+    assert!(
+        resp.get("result").is_some(),
+        "completion response must have a 'result' field (even if null), got: {:?}",
+        resp
     );
 }

@@ -1,9 +1,7 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
-    // .extern_fn "say" (?, string) -> void "say"
-    // .extern_fn "say_localized" (?, string, string) -> void "say_localized"
-    // .extern_fn "log::info" (string) -> void "log::info"
-    // .extern_fn "say" (string) -> void "say"
+    .extern_fn "log::info" (string) -> void "log::info"
+    .extern_fn "say" (?) -> void "say"
     .method "format_greeting" (name: string) -> string mut {
         .locals {
             r0: string "name" [0, 46)
@@ -15,8 +13,8 @@
         .reg r4 string
         .reg r5 string
         .reg r6 string
-        LOAD_STRING r1, 247  ; line:1 col:683
-        LOAD_STRING r2, 262
+        LOAD_STRING r1, 313  ; line:1 col:426
+        LOAD_STRING r2, 326
         MOV r3, r1
         MOV r4, r0
         MOV r5, r2
@@ -31,7 +29,7 @@
         .reg r0 int
         .reg r1 int
         .reg r2 int
-        MUL_I r2, r0, r1  ; line:1 col:814
+        MUL_I r2, r0, r1  ; line:1 col:557
         RET r2
     }
     .method "greet" (npc: ?, player_name: string) -> void mut {
@@ -57,20 +55,20 @@
         .reg r13 int
         .reg r14 void
         .reg r15 string
-        LOAD_STRING r3, 269  ; line:1 col:956
+        LOAD_STRING r3, 331  ; line:1 col:699
         MOV r4, r0
         MOV r5, r3
-        CALL_EXTERN r2, 268435460, r4, 2
-        CALL r6, 117440513, r1, 1  ; line:1 col:985
-        LOAD_STRING r8, 289  ; line:1 col:1043
+        CALL_EXTERN r2, 268435458, r4, 2
+        CALL r6, 117440513, r1, 1  ; line:1 col:728
+        LOAD_STRING r8, 351  ; line:1 col:786
         MOV r9, r0
         MOV r10, r8
-        CALL_EXTERN r7, 268435460, r9, 2
-        LOAD_INT r12, 10  ; line:1 col:1074
+        CALL_EXTERN r7, 268435458, r9, 2
+        LOAD_INT r12, 10  ; line:1 col:817
         LOAD_INT r13, 3
         CALL r11, 117440514, r12, 2
-        LOAD_STRING r15, 311  ; line:1 col:1120
-        CALL_EXTERN r14, 268435459, r15, 1
+        LOAD_STRING r15, 373  ; line:1 col:863
+        CALL_EXTERN r14, 268435457, r15, 1
         RET_VOID
     }
     .method "intro" (narrator: ?) -> void mut {
@@ -87,15 +85,15 @@
         .reg r7 int
         .reg r8 string
         .reg r9 void
-        LOAD_STRING r2, 332  ; line:1 col:1251
+        LOAD_STRING r2, 392  ; line:1 col:994
         MOV r3, r0
         MOV r4, r2
-        CALL_EXTERN r1, 268435460, r3, 2
-        LOAD_STRING r6, 362  ; line:1 col:1293
+        CALL_EXTERN r1, 268435458, r3, 2
+        LOAD_STRING r6, 422  ; line:1 col:1036
         MOV r7, r0
         MOV r8, r6
-        CALL_EXTERN r5, 268435460, r7, 2
-        TAIL_CALL 117440517, r0, 1  ; line:1 col:1323
+        CALL_EXTERN r5, 268435458, r7, 2
+        TAIL_CALL 117440517, r0, 1  ; line:1 col:1066
         RET_VOID
     }
     .method "quest_start" (narrator: ?) -> void mut {
@@ -113,15 +111,15 @@
         .reg r7 string
         .reg r8 int
         .reg r9 string
-        LOAD_STRING r2, 380  ; line:1 col:1424
+        LOAD_STRING r2, 440  ; line:1 col:1167
         MOV r3, r0
         MOV r4, r2
-        CALL_EXTERN r1, 268435460, r3, 2
-        LOAD_INT r5, 0  ; line:1 col:1463
-        LOAD_STRING r7, 405  ; line:1 col:1491
+        CALL_EXTERN r1, 268435458, r3, 2
+        LOAD_INT r5, 0  ; line:1 col:1206
+        LOAD_STRING r7, 465  ; line:1 col:1234
         MOV r8, r0
         MOV r9, r7
-        CALL_EXTERN r6, 268435460, r8, 2
+        CALL_EXTERN r6, 268435458, r8, 2
         RET_VOID
     }
     .method "start_conversation" (npc: ?) -> void mut {
@@ -133,7 +131,7 @@
         .reg r2 string
         .reg r3 int
         .reg r4 string
-        LOAD_STRING r2, 435  ; line:1 col:1630
+        LOAD_STRING r2, 495  ; line:1 col:1373
         MOV r3, r0
         MOV r4, r2
         CALL r1, 117440515, r3, 2
@@ -142,10 +140,8 @@
     .method "main" () -> void mut {
         .reg r0 void
         .reg r1 string
-        LOAD_STRING r1, 445  ; line:1 col:1673
-        CALL_EXTERN r0, 268435459, r1, 1
+        LOAD_STRING r1, 503  ; line:1 col:1416
+        CALL_EXTERN r0, 268435457, r1, 1
         RET_VOID
     }
-    // .export "say" method 268435460
-    // .export "say_localized" method 268435458
 }

@@ -1,7 +1,6 @@
-# 1. Writ Language Specification
-## 1.27 Standard Library Builtins
+# 1.27 Standard Library Builtins
 
-### 1.27.1 Compiler-Known Types
+## 1.27.1 Compiler-Known Types
 
 | Type           | Sugar        | Purpose                                 |
 |----------------|--------------|-----------------------------------------|
@@ -9,7 +8,7 @@
 | `Result<T, E>` | —            | Fallible operations (`E: Error`)        |
 | `Range<T>`     | `..`, `..=`  | Interval type for iteration and slicing |
 
-### 1.27.2 Compiler-Known Contracts
+## 1.27.2 Compiler-Known Contracts
 
 | Contract                          | Special Behavior                                                                                                                                                                              |
 |-----------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -21,8 +20,9 @@
 | `Index<K, V>`, `IndexSet<K, V>`   | Mapped from `operator []` (read) and `operator []=` (write) syntax.                                                                                                                           |
 | `BitAnd`, `BitOr`                 | Mapped from `operator &`, `\|`.                                                                                                                                                               |
 | `Iterable<T>`, `Iterator<T>`      | Enable `for` loop iteration. `T[]` and `Range<T>` have compiler-provided implementations. See Section 1.11.3.                                                                                   |
+| `Speaker`                         | Display name override for entities used as dialogue speakers. Requires `speaker_name(self) -> string`. If implemented, `say()` uses the result instead of the entity type name. See Section 1.14. |
 
-### 1.27.3 Standard Library Types
+## 1.27.3 Standard Library Types
 
 These types are provided by the standard library with no special compiler support:
 
@@ -33,31 +33,36 @@ These types are provided by the standard library with no special compiler suppor
 | `Set<T>`        | Unordered unique collection                                    |
 | `EntityList<T>` | Typed entity reference collection with component query support |
 
-### 1.27.4 Root-Namespace Inbuilt Calls
+## 1.27.4 Root-Namespace Inbuilt Calls
 
 The following functions and namespaces are always available from the root namespace without any
 qualifier. No `writ::`, `Runtime::`, or any other qualifier is needed or accepted.
 
-#### say and choice
+### say, choice, and ChoiceOption
 
-| Function | Signature | Purpose |
-|----------|-----------|---------|
-| `say`    | `fn say(speaker: Entity, text: string)` | Display dialogue (transition point — suspends) |
-| `choice` | `fn choice(options: ...) -> int` | Present choices (transition point — suspends) |
+| Function       | Signature                                                          | Purpose                                                          |
+|----------------|--------------------------------------------------------------------|------------------------------------------------------------------|
+| `say`          | `fn say(speaker: Entity, text: string)`                            | Display dialogue (transition point — suspends)                   |
+| `say_localized`| `fn say_localized(speaker: Entity, key: string, fallback: string)` | Localized display with string table lookup (transition point)    |
+| `choice`       | `fn choice(options: ChoiceOption[]) -> int`                        | Present choices (transition point — suspends), return selection   |
+| `ChoiceOption`  | `fn ChoiceOption(label: string, key: string, body: fn() -> void) -> ChoiceOption` | Construct a single choice option with label, loc key, and callback |
 
 These are **inbuilt calls** — the compiler resolves them from the root namespace. They are callable as
-`say(speaker, text)` and `choice(options)`.
+`say(speaker, text)`, `choice(options)`, etc.
 
-The root-qualified forms `::say` and `::choice` (with a leading `::`) are also valid — `::` means
+The root-qualified forms `::say`, `::choice`, etc. (with a leading `::`) are also valid — `::` means
 "resolve from the root namespace" (see §1.24.9). They are equivalent to the unqualified names and
 produce identical IL. Both forms are accepted from any `fn` or `dlg` context.
 
-`say` and `choice` are dialogue transition points — the VM suspends until the host responds (§1.14.9).
+`say`, `say_localized`, and `choice` are dialogue transition points — the VM suspends until the host
+responds (§1.14.9). `ChoiceOption` is not a transition point — it constructs a choice descriptor that
+is collected into an array and passed to `choice`.
 
-The compiler lowers `dlg` syntax (`@Speaker text`, `$ choice { ... }`) into calls to `say` and
-`choice` automatically — user code in `dlg` blocks does not call them directly.
+The compiler lowers `dlg` syntax (`@Speaker text`, `$ choice { ... }`) into calls to `say`,
+`say_localized`, `choice`, and `ChoiceOption` automatically — user code in `dlg` blocks does not call
+them directly. See §1.30.1–§1.30.5 for the full lowering rules.
 
-#### log:: namespace
+### log:: namespace
 
 `log` is a **compiler-known namespace**, not a callable function. It provides five leveled logging
 functions:

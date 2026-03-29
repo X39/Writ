@@ -1,0 +1,44 @@
+.module "main" "0.1.0" {
+    .extern "writ-runtime" "1.0.0"
+    .type "Alpha" struct {
+        .field "a" int
+    }
+    .type "Beta" struct {
+        .field "b" int
+    }
+    .impl Alpha : contract_167772179 {
+        .method "get_type" () -> Type pub {
+            .reg r0 int
+            .reg r1 int
+            TYPEOF r1, 33554433
+            RET r1
+        }
+    }
+    .impl Beta : contract_167772179 {
+        .method "get_type" () -> Type pub {
+            .reg r0 int
+            .reg r1 int
+            TYPEOF r1, 33554434
+            RET r1
+        }
+        .method "main" () -> bool mut {
+            .locals {
+                r2: bool "same" [24, 52)
+                r5: bool "diff" [48, 52)
+            }
+            .reg r0 ?
+            .reg r1 ?
+            .reg r2 bool
+            .reg r3 ?
+            .reg r4 ?
+            .reg r5 bool
+            TYPEOF r0, 33554433  ; line:1 col:73
+            TYPEOF r1, 33554433
+            CMP_EQ_I r2, r0, r1
+            TYPEOF r3, 33554433  ; line:1 col:120
+            TYPEOF r4, 33554434
+            CMP_EQ_I r5, r3, r4
+            RET r2  ; line:1 col:166
+        }
+    }
+}

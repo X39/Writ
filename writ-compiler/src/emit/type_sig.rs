@@ -38,7 +38,13 @@ fn encode_type_into(
         TyKind::Bool => buf.push(0x03),
         TyKind::String => buf.push(0x04),
 
-        TyKind::Struct(def_id) | TyKind::Class(def_id) | TyKind::Entity(def_id) | TyKind::Enum(def_id) => {
+        TyKind::AnyEntity => buf.push(0x05),
+
+        TyKind::Struct(def_id)
+        | TyKind::Class(def_id)
+        | TyKind::Entity(def_id)
+        | TyKind::Enum(def_id)
+        | TyKind::Contract(def_id) => {
             let token = token_for_def(*def_id);
             buf.push(0x10);
             buf.extend_from_slice(&token.row().to_le_bytes());
@@ -71,6 +77,13 @@ fn encode_type_into(
             let blob_offset = blob_heap.intern(&sig_buf);
             buf.push(0x30);
             buf.extend_from_slice(&blob_offset.to_le_bytes());
+        }
+
+        TyKind::ReflectionType(_inner) => {
+            // Type is a class in writ-runtime. Encode as TypeSpec placeholder (same as Option/Result).
+            // Will be resolved when TypeRef for "Type" is registered in Plan 02.
+            buf.push(0x11);
+            buf.extend_from_slice(&0u32.to_le_bytes());
         }
 
         TyKind::Option(inner) | TyKind::Result(inner, _) | TyKind::TaskHandle(inner) => {

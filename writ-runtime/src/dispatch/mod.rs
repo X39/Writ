@@ -1,11 +1,12 @@
-use std::collections::HashMap;
-
+use rustc_hash::FxHashMap;
 use writ_module::Instruction;
 
 use crate::entity::EntityRegistry;
+use crate::frame::RegisterPool;
 use crate::gc::GcHeap;
 use crate::host::{DebugAction, LogLevel, RuntimeHost};
 use crate::loader::LoadedModule;
+use crate::reflection::ReflectionIndex;
 use crate::task::{SuspendReason, Task, TaskState};
 use crate::value::{TaskId, Value};
 
@@ -62,16 +63,41 @@ pub enum IntrinsicId {
     StringIntoInt, StringIntoFloat, StringIntoBool,
     // Array (4)
     ArrayIndex, ArrayIndexSet, ArraySlice, ArrayIterable,
+    // Reflection (4) — get_type() on primitive pseudo-TypeDefs
+    IntGetType, FloatGetType, BoolGetType, StringGetType,
+    // Reflection — Type methods (Phase 103)
+    TypeFields, TypeMethods, TypeAttributes, TypeContracts, TypeImplements,
+    TypeGetName, TypeGetNamespace, TypeGetKind, TypeGetIsGeneric,
+    // Reflection — FieldInfo methods (Phase 103)
+    FieldInfoGet, FieldInfoGetName, FieldInfoGetDeclaredType, FieldInfoGetIsMutable,
+    // Reflection — FieldInfo mutation (Phase 107)
+    FieldInfoSet,
+    // Reflection — MethodInfo methods (Phase 103)
+    MethodInfoGetName, MethodInfoGetReturnType, MethodInfoGetParameters,
+    // Reflection — MethodInfo invocation (Phase 107)
+    MethodInfoInvoke,
+    // Reflection — Generic type queries (Phase 108)
+    TypeTypeArgs,
+    // Reflection — Per-member attributes (Phase 108)
+    MethodInfoAttributes, FieldInfoAttributes,
+    // Reflection — ParameterInfo methods (Phase 103)
+    ParameterInfoGetName, ParameterInfoGetType,
+    // Reflection — AttributeInfo methods (Phase 103)
+    AttributeInfoGetName, AttributeInfoGetArgs,
+    // Reflection — ContractInfo methods (Phase 103)
+    ContractInfoGetName, ContractInfoGetType,
+    // Hashable (4) — hash() method for primitive types (Phase 116)
+    IntHash, FloatHash, BoolHash, StringHash,
 }
 
 /// The dispatch table for O(1) contract method resolution.
 pub struct DispatchTable {
-    table: HashMap<DispatchKey, DispatchTarget>,
+    table: FxHashMap<DispatchKey, DispatchTarget>,
 }
 
 impl DispatchTable {
     pub fn new() -> Self {
-        DispatchTable { table: HashMap::new() }
+        DispatchTable { table: FxHashMap::default() }
     }
 
     pub fn insert(&mut self, key: DispatchKey, target: DispatchTarget) {
@@ -160,6 +186,8 @@ pub(super) struct ExecContext<'a> {
     pub globals: &'a mut Vec<Value>,
     pub next_request_id: &'a mut u32,
     pub entity_registry: &'a mut EntityRegistry,
+    pub pool: &'a mut RegisterPool,
+    pub reflection: &'a mut ReflectionIndex,
 }
 
 /// Decode a MethodDef metadata token to a 0-based method body index.
@@ -217,6 +245,8 @@ pub(crate) fn execute_one(
     globals: &mut Vec<Value>,
     next_request_id: &mut u32,
     entity_registry: &mut EntityRegistry,
+    pool: &mut RegisterPool,
+    reflection: &mut ReflectionIndex,
 ) -> ExecutionResult {
     let module = &modules[current_module_idx];
 
@@ -242,16 +272,15 @@ pub(crate) fn execute_one(
         ));
     }
 
-    // Translate instruction index to byte offset for source span and breakpoint lookups.
-    // SourceSpan.pc and BreakpointTable store byte offsets, but frame.pc is an instruction index.
-    let byte_pc = module.byte_offsets
-        .get(method_idx)
-        .and_then(|offsets| offsets.get(pc))
-        .copied()
-        .unwrap_or(0);
-
-    // Debug hook: called before each instruction when debug is active
+    // Debug hook: called before each instruction when debug is active.
+    // byte_pc lookup is skipped entirely in non-debug mode (hot path optimization).
     if host.debug_enabled() {
+        // Translate instruction index to byte offset only when debug is enabled.
+        let byte_pc = module.byte_offsets
+            .get(method_idx)
+            .and_then(|offsets| offsets.get(pc))
+            .copied()
+            .unwrap_or(0);
         let (line, col) = lookup_source_location(module, method_idx, byte_pc);
         let action = host.before_instruction(task.id, method_idx as u32, byte_pc, line, col);
         match action {
@@ -285,9 +314,19 @@ pub(crate) fn execute_one(
         }
     }
 
-    let instr = body[pc].clone();
-    frame.pc += 1;
+    // Increment PC while we still hold `frame`. The `frame` borrow (a mutable sub-borrow
+    // of `task`) ends after this block via Rust's NLL, allowing `task` to be moved
+    // into ExecContext below. `task.instructions_executed` is a disjoint field from
+    // `task.call_stack`, so the compiler accepts both mutations here.
+    frame.pc = pc + 1;
     task.instructions_executed += 1;
+
+    // Borrow the instruction without cloning — the primary hot-path optimization.
+    // `instr` borrows `modules` (a shared reference parameter, Copy).
+    // `modules` is also stored in ExecContext as a shared reference — same lifetime, no conflict.
+    // `Switch::offsets` is a Vec<i32> in the instruction; we pass it as `&[i32]` to exec_switch
+    // (signature changed below) to avoid any heap allocation on the dispatch path.
+    let instr = &modules[current_module_idx].decoded_bodies[method_idx][pc];
 
     let mut ctx = ExecContext {
         task,
@@ -299,166 +338,172 @@ pub(crate) fn execute_one(
         globals,
         next_request_id,
         entity_registry,
+        pool,
+        reflection,
     };
 
+    // Extract scalar operands from the borrowed instruction for dispatch.
+    // This avoids cloning for all non-Switch variants. For Switch we borrow the slice.
     match instr {
         // ── Meta ──────────────────────────────────────────────
         Instruction::Nop => ExecutionResult::Continue,
-        Instruction::Crash { r_msg } => arith::exec_crash(&mut ctx, r_msg),
+        Instruction::Crash { r_msg } => arith::exec_crash(&mut ctx, *r_msg),
 
         // ── Data Movement ─────────────────────────────────────
-        Instruction::Mov { r_dst, r_src } => arith::exec_mov(&mut ctx, r_dst, r_src),
-        Instruction::LoadInt { r_dst, value } => arith::exec_load_int(&mut ctx, r_dst, value),
-        Instruction::LoadFloat { r_dst, value } => arith::exec_load_float(&mut ctx, r_dst, value),
-        Instruction::LoadTrue { r_dst } => arith::exec_load_true(&mut ctx, r_dst),
-        Instruction::LoadFalse { r_dst } => arith::exec_load_false(&mut ctx, r_dst),
-        Instruction::LoadString { r_dst, string_idx } => arith::exec_load_string(&mut ctx, r_dst, string_idx),
-        Instruction::LoadNull { r_dst } => arith::exec_load_null(&mut ctx, r_dst),
+        Instruction::Mov { r_dst, r_src } => arith::exec_mov(&mut ctx, *r_dst, *r_src),
+        Instruction::LoadInt { r_dst, value } => arith::exec_load_int(&mut ctx, *r_dst, *value),
+        Instruction::LoadFloat { r_dst, value } => arith::exec_load_float(&mut ctx, *r_dst, *value),
+        Instruction::LoadTrue { r_dst } => arith::exec_load_true(&mut ctx, *r_dst),
+        Instruction::LoadFalse { r_dst } => arith::exec_load_false(&mut ctx, *r_dst),
+        Instruction::LoadString { r_dst, string_idx } => arith::exec_load_string(&mut ctx, *r_dst, *string_idx),
+        Instruction::LoadNull { r_dst } => arith::exec_load_null(&mut ctx, *r_dst),
 
         // ── Integer Arithmetic ────────────────────────────────
-        Instruction::AddI { r_dst, r_a, r_b } => arith::exec_add_i(&mut ctx, r_dst, r_a, r_b),
-        Instruction::SubI { r_dst, r_a, r_b } => arith::exec_sub_i(&mut ctx, r_dst, r_a, r_b),
-        Instruction::MulI { r_dst, r_a, r_b } => arith::exec_mul_i(&mut ctx, r_dst, r_a, r_b),
-        Instruction::DivI { r_dst, r_a, r_b } => arith::exec_div_i(&mut ctx, r_dst, r_a, r_b),
-        Instruction::ModI { r_dst, r_a, r_b } => arith::exec_mod_i(&mut ctx, r_dst, r_a, r_b),
-        Instruction::NegI { r_dst, r_src } => arith::exec_neg_i(&mut ctx, r_dst, r_src),
+        Instruction::AddI { r_dst, r_a, r_b } => arith::exec_add_i(&mut ctx, *r_dst, *r_a, *r_b),
+        Instruction::SubI { r_dst, r_a, r_b } => arith::exec_sub_i(&mut ctx, *r_dst, *r_a, *r_b),
+        Instruction::MulI { r_dst, r_a, r_b } => arith::exec_mul_i(&mut ctx, *r_dst, *r_a, *r_b),
+        Instruction::DivI { r_dst, r_a, r_b } => arith::exec_div_i(&mut ctx, *r_dst, *r_a, *r_b),
+        Instruction::ModI { r_dst, r_a, r_b } => arith::exec_mod_i(&mut ctx, *r_dst, *r_a, *r_b),
+        Instruction::NegI { r_dst, r_src } => arith::exec_neg_i(&mut ctx, *r_dst, *r_src),
 
         // ── Float Arithmetic ──────────────────────────────────
-        Instruction::AddF { r_dst, r_a, r_b } => arith::exec_add_f(&mut ctx, r_dst, r_a, r_b),
-        Instruction::SubF { r_dst, r_a, r_b } => arith::exec_sub_f(&mut ctx, r_dst, r_a, r_b),
-        Instruction::MulF { r_dst, r_a, r_b } => arith::exec_mul_f(&mut ctx, r_dst, r_a, r_b),
-        Instruction::DivF { r_dst, r_a, r_b } => arith::exec_div_f(&mut ctx, r_dst, r_a, r_b),
-        Instruction::ModF { r_dst, r_a, r_b } => arith::exec_mod_f(&mut ctx, r_dst, r_a, r_b),
-        Instruction::NegF { r_dst, r_src } => arith::exec_neg_f(&mut ctx, r_dst, r_src),
+        Instruction::AddF { r_dst, r_a, r_b } => arith::exec_add_f(&mut ctx, *r_dst, *r_a, *r_b),
+        Instruction::SubF { r_dst, r_a, r_b } => arith::exec_sub_f(&mut ctx, *r_dst, *r_a, *r_b),
+        Instruction::MulF { r_dst, r_a, r_b } => arith::exec_mul_f(&mut ctx, *r_dst, *r_a, *r_b),
+        Instruction::DivF { r_dst, r_a, r_b } => arith::exec_div_f(&mut ctx, *r_dst, *r_a, *r_b),
+        Instruction::ModF { r_dst, r_a, r_b } => arith::exec_mod_f(&mut ctx, *r_dst, *r_a, *r_b),
+        Instruction::NegF { r_dst, r_src } => arith::exec_neg_f(&mut ctx, *r_dst, *r_src),
 
         // ── Bitwise & Logical ─────────────────────────────────
-        Instruction::BitAnd { r_dst, r_a, r_b } => arith::exec_bit_and(&mut ctx, r_dst, r_a, r_b),
-        Instruction::BitOr { r_dst, r_a, r_b } => arith::exec_bit_or(&mut ctx, r_dst, r_a, r_b),
-        Instruction::Shl { r_dst, r_a, r_b } => arith::exec_shl(&mut ctx, r_dst, r_a, r_b),
-        Instruction::Shr { r_dst, r_a, r_b } => arith::exec_shr(&mut ctx, r_dst, r_a, r_b),
-        Instruction::Not { r_dst, r_src } => arith::exec_not(&mut ctx, r_dst, r_src),
+        Instruction::BitAnd { r_dst, r_a, r_b } => arith::exec_bit_and(&mut ctx, *r_dst, *r_a, *r_b),
+        Instruction::BitOr { r_dst, r_a, r_b } => arith::exec_bit_or(&mut ctx, *r_dst, *r_a, *r_b),
+        Instruction::Shl { r_dst, r_a, r_b } => arith::exec_shl(&mut ctx, *r_dst, *r_a, *r_b),
+        Instruction::Shr { r_dst, r_a, r_b } => arith::exec_shr(&mut ctx, *r_dst, *r_a, *r_b),
+        Instruction::Not { r_dst, r_src } => arith::exec_not(&mut ctx, *r_dst, *r_src),
 
         // ── Comparison ────────────────────────────────────────
-        Instruction::CmpEqI { r_dst, r_a, r_b } => arith::exec_cmp_eq_i(&mut ctx, r_dst, r_a, r_b),
-        Instruction::CmpEqF { r_dst, r_a, r_b } => arith::exec_cmp_eq_f(&mut ctx, r_dst, r_a, r_b),
-        Instruction::CmpEqB { r_dst, r_a, r_b } => arith::exec_cmp_eq_b(&mut ctx, r_dst, r_a, r_b),
-        Instruction::CmpEqS { r_dst, r_a, r_b } => arith::exec_cmp_eq_s(&mut ctx, r_dst, r_a, r_b),
-        Instruction::CmpLtI { r_dst, r_a, r_b } => arith::exec_cmp_lt_i(&mut ctx, r_dst, r_a, r_b),
-        Instruction::CmpLtF { r_dst, r_a, r_b } => arith::exec_cmp_lt_f(&mut ctx, r_dst, r_a, r_b),
+        Instruction::CmpEqI { r_dst, r_a, r_b } => arith::exec_cmp_eq_i(&mut ctx, *r_dst, *r_a, *r_b),
+        Instruction::CmpEqF { r_dst, r_a, r_b } => arith::exec_cmp_eq_f(&mut ctx, *r_dst, *r_a, *r_b),
+        Instruction::CmpEqB { r_dst, r_a, r_b } => arith::exec_cmp_eq_b(&mut ctx, *r_dst, *r_a, *r_b),
+        Instruction::CmpEqS { r_dst, r_a, r_b } => arith::exec_cmp_eq_s(&mut ctx, *r_dst, *r_a, *r_b),
+        Instruction::CmpLtI { r_dst, r_a, r_b } => arith::exec_cmp_lt_i(&mut ctx, *r_dst, *r_a, *r_b),
+        Instruction::CmpLtF { r_dst, r_a, r_b } => arith::exec_cmp_lt_f(&mut ctx, *r_dst, *r_a, *r_b),
 
         // ── Control Flow ──────────────────────────────────────
-        Instruction::Br { offset } => arith::exec_br(&mut ctx, offset),
-        Instruction::BrTrue { r_cond, offset } => arith::exec_br_true(&mut ctx, r_cond, offset),
-        Instruction::BrFalse { r_cond, offset } => arith::exec_br_false(&mut ctx, r_cond, offset),
-        Instruction::Switch { r_tag, offsets } => arith::exec_switch(&mut ctx, r_tag, offsets),
+        Instruction::Br { offset } => arith::exec_br(&mut ctx, *offset),
+        Instruction::BrTrue { r_cond, offset } => arith::exec_br_true(&mut ctx, *r_cond, *offset),
+        Instruction::BrFalse { r_cond, offset } => arith::exec_br_false(&mut ctx, *r_cond, *offset),
+        Instruction::Switch { r_tag, offsets } => arith::exec_switch(&mut ctx, *r_tag, offsets),
 
         Instruction::Ret { r_src } => {
-            let ret_val = ctx.task.call_stack.last().unwrap().registers[r_src as usize].clone();
+            let ret_val = ctx.task.call_stack.last().unwrap().registers[*r_src as usize];
             execute_ret(ctx.task, ret_val, ctx.modules, ctx.current_module_idx,
                         ctx.dispatch_table, ctx.heap, ctx.host, ctx.globals,
-                        ctx.next_request_id, ctx.entity_registry)
+                        ctx.next_request_id, ctx.entity_registry, ctx.pool, ctx.reflection)
         }
         Instruction::RetVoid => {
             execute_ret(ctx.task, Value::Void, ctx.modules, ctx.current_module_idx,
                         ctx.dispatch_table, ctx.heap, ctx.host, ctx.globals,
-                        ctx.next_request_id, ctx.entity_registry)
+                        ctx.next_request_id, ctx.entity_registry, ctx.pool, ctx.reflection)
         }
 
         // ── Calls & Delegates ─────────────────────────────────
         Instruction::Call { r_dst, method_idx, r_base, argc } =>
-            calls::exec_call(&mut ctx, r_dst, method_idx, r_base, argc),
+            calls::exec_call(&mut ctx, *r_dst, *method_idx, *r_base, *argc),
         Instruction::CallVirt { r_dst, r_obj, contract_idx, slot, r_base, argc } =>
-            calls::exec_call_virt(&mut ctx, r_dst, r_obj, contract_idx, slot, r_base, argc),
+            calls::exec_call_virt(&mut ctx, *r_dst, *r_obj, *contract_idx, *slot, *r_base, *argc),
         Instruction::CallExtern { r_dst, extern_idx, r_base, argc } =>
-            calls::exec_call_extern(&mut ctx, r_dst, extern_idx, r_base, argc),
+            calls::exec_call_extern(&mut ctx, *r_dst, *extern_idx, *r_base, *argc),
         Instruction::NewDelegate { r_dst, method_idx, r_target } =>
-            calls::exec_new_delegate(&mut ctx, r_dst, method_idx, r_target),
+            calls::exec_new_delegate(&mut ctx, *r_dst, *method_idx, *r_target),
         Instruction::CallIndirect { r_dst, r_delegate, r_base, argc } =>
-            calls::exec_call_indirect(&mut ctx, r_dst, r_delegate, r_base, argc),
+            calls::exec_call_indirect(&mut ctx, *r_dst, *r_delegate, *r_base, *argc),
         Instruction::TailCall { method_idx, r_base, argc } =>
-            calls::exec_tail_call(&mut ctx, method_idx, r_base, argc),
+            calls::exec_tail_call(&mut ctx, *method_idx, *r_base, *argc),
 
         // ── Object Model ──────────────────────────────────────
-        Instruction::New { r_dst, type_idx } => objects::exec_new(&mut ctx, r_dst, type_idx),
+        Instruction::New { r_dst, type_idx } => objects::exec_new(&mut ctx, *r_dst, *type_idx),
         Instruction::GetField { r_dst, r_obj, field_idx } =>
-            objects::exec_get_field(&mut ctx, r_dst, r_obj, field_idx),
+            objects::exec_get_field(&mut ctx, *r_dst, *r_obj, *field_idx),
         Instruction::SetField { r_obj, field_idx, r_val } =>
-            objects::exec_set_field(&mut ctx, r_obj, field_idx, r_val),
+            objects::exec_set_field(&mut ctx, *r_obj, *field_idx, *r_val),
 
         // ── Entity Instructions ───────────────────────────────
         Instruction::SpawnEntity { r_dst, type_idx } =>
-            entities::exec_spawn_entity(&mut ctx, r_dst, type_idx),
+            entities::exec_spawn_entity(&mut ctx, *r_dst, *type_idx),
         Instruction::InitEntity { r_entity } =>
-            entities::exec_init_entity(&mut ctx, r_entity),
+            entities::exec_init_entity(&mut ctx, *r_entity),
         Instruction::DestroyEntity { r_entity } =>
-            entities::exec_destroy_entity(&mut ctx, r_entity),
+            entities::exec_destroy_entity(&mut ctx, *r_entity),
         Instruction::GetComponent { r_dst, r_entity, comp_type_idx } =>
-            entities::exec_get_component(&mut ctx, r_dst, r_entity, comp_type_idx),
+            entities::exec_get_component(&mut ctx, *r_dst, *r_entity, *comp_type_idx),
         Instruction::GetOrCreate { r_dst, type_idx } =>
-            entities::exec_get_or_create(&mut ctx, r_dst, type_idx),
+            entities::exec_get_or_create(&mut ctx, *r_dst, *type_idx),
         Instruction::FindAll { r_dst, type_idx } =>
-            entities::exec_find_all(&mut ctx, r_dst, type_idx),
+            entities::exec_find_all(&mut ctx, *r_dst, *type_idx),
         Instruction::EntityIsAlive { r_dst, r_entity } =>
-            entities::exec_entity_is_alive(&mut ctx, r_dst, r_entity),
+            entities::exec_entity_is_alive(&mut ctx, *r_dst, *r_entity),
 
         // ── Arrays ────────────────────────────────────────────
         Instruction::NewArray { r_dst, elem_type } =>
-            objects::exec_new_array(&mut ctx, r_dst, elem_type),
+            objects::exec_new_array(&mut ctx, *r_dst, *elem_type),
         Instruction::ArrayInit { r_dst, elem_type, count, r_base } =>
-            objects::exec_array_init(&mut ctx, r_dst, elem_type, count, r_base),
+            objects::exec_array_init(&mut ctx, *r_dst, *elem_type, *count, *r_base),
         Instruction::ArrayLoad { r_dst, r_arr, r_idx } =>
-            objects::exec_array_load(&mut ctx, r_dst, r_arr, r_idx),
+            objects::exec_array_load(&mut ctx, *r_dst, *r_arr, *r_idx),
         Instruction::ArrayStore { r_arr, r_idx, r_val } =>
-            objects::exec_array_store(&mut ctx, r_arr, r_idx, r_val),
+            objects::exec_array_store(&mut ctx, *r_arr, *r_idx, *r_val),
         Instruction::ArrayLen { r_dst, r_arr } =>
-            objects::exec_array_len(&mut ctx, r_dst, r_arr),
-        Instruction::ArrayAdd { r_arr, r_val } =>
-            objects::exec_array_add(&mut ctx, r_arr, r_val),
-        Instruction::ArrayRemove { r_arr, r_idx } =>
-            objects::exec_array_remove(&mut ctx, r_arr, r_idx),
-        Instruction::ArrayInsert { r_arr, r_idx, r_val } =>
-            objects::exec_array_insert(&mut ctx, r_arr, r_idx, r_val),
+            objects::exec_array_len(&mut ctx, *r_dst, *r_arr),
+        Instruction::ArrayResize { r_arr, r_new_len } =>
+            objects::exec_array_resize(&mut ctx, *r_arr, *r_new_len),
+        Instruction::ArrayCopy { r_dst_arr, r_dst_idx, r_src_arr, r_src_idx, r_len } =>
+            objects::exec_array_copy(&mut ctx, *r_dst_arr, *r_dst_idx, *r_src_arr, *r_src_idx, *r_len),
         Instruction::ArraySlice { r_dst, r_arr, r_start, r_end } =>
-            objects::exec_array_slice(&mut ctx, r_dst, r_arr, r_start, r_end),
+            objects::exec_array_slice(&mut ctx, *r_dst, *r_arr, *r_start, *r_end),
+        Instruction::NewArraySized { r_dst, elem_type, r_len } =>
+            objects::exec_new_array_sized(&mut ctx, *r_dst, *elem_type, *r_len),
+        Instruction::NewArrayFilled { r_dst, elem_type, r_len, r_fill } =>
+            objects::exec_new_array_filled(&mut ctx, *r_dst, *elem_type, *r_len, *r_fill),
 
         // ── Type Operations — Option ──────────────────────────
-        Instruction::WrapSome { r_dst, r_val } => objects::exec_wrap_some(&mut ctx, r_dst, r_val),
-        Instruction::Unwrap { r_dst, r_opt } => objects::exec_unwrap(&mut ctx, r_dst, r_opt),
-        Instruction::IsSome { r_dst, r_opt } => objects::exec_is_some(&mut ctx, r_dst, r_opt),
-        Instruction::IsNone { r_dst, r_opt } => objects::exec_is_none(&mut ctx, r_dst, r_opt),
+        Instruction::WrapSome { r_dst, r_val } => objects::exec_wrap_some(&mut ctx, *r_dst, *r_val),
+        Instruction::Unwrap { r_dst, r_opt } => objects::exec_unwrap(&mut ctx, *r_dst, *r_opt),
+        Instruction::IsSome { r_dst, r_opt } => objects::exec_is_some(&mut ctx, *r_dst, *r_opt),
+        Instruction::IsNone { r_dst, r_opt } => objects::exec_is_none(&mut ctx, *r_dst, *r_opt),
 
         // ── Type Operations — Result ──────────────────────────
-        Instruction::WrapOk { r_dst, r_val } => objects::exec_wrap_ok(&mut ctx, r_dst, r_val),
-        Instruction::WrapErr { r_dst, r_err } => objects::exec_wrap_err(&mut ctx, r_dst, r_err),
-        Instruction::UnwrapOk { r_dst, r_result } => objects::exec_unwrap_ok(&mut ctx, r_dst, r_result),
-        Instruction::IsOk { r_dst, r_result } => objects::exec_is_ok(&mut ctx, r_dst, r_result),
-        Instruction::IsErr { r_dst, r_result } => objects::exec_is_err(&mut ctx, r_dst, r_result),
-        Instruction::ExtractErr { r_dst, r_result } => objects::exec_extract_err(&mut ctx, r_dst, r_result),
+        Instruction::WrapOk { r_dst, r_val } => objects::exec_wrap_ok(&mut ctx, *r_dst, *r_val),
+        Instruction::WrapErr { r_dst, r_err } => objects::exec_wrap_err(&mut ctx, *r_dst, *r_err),
+        Instruction::UnwrapOk { r_dst, r_result } => objects::exec_unwrap_ok(&mut ctx, *r_dst, *r_result),
+        Instruction::IsOk { r_dst, r_result } => objects::exec_is_ok(&mut ctx, *r_dst, *r_result),
+        Instruction::IsErr { r_dst, r_result } => objects::exec_is_err(&mut ctx, *r_dst, *r_result),
+        Instruction::ExtractErr { r_dst, r_result } => objects::exec_extract_err(&mut ctx, *r_dst, *r_result),
 
         // ── Type Operations — Enum ────────────────────────────
         Instruction::NewEnum { r_dst, type_idx, tag, field_count, r_base } =>
-            objects::exec_new_enum(&mut ctx, r_dst, type_idx, tag, field_count, r_base),
-        Instruction::GetTag { r_dst, r_enum } => objects::exec_get_tag(&mut ctx, r_dst, r_enum),
+            objects::exec_new_enum(&mut ctx, *r_dst, *type_idx, *tag, *field_count, *r_base),
+        Instruction::GetTag { r_dst, r_enum } => objects::exec_get_tag(&mut ctx, *r_dst, *r_enum),
         Instruction::ExtractField { r_dst, r_enum, field_idx } =>
-            objects::exec_extract_field(&mut ctx, r_dst, r_enum, field_idx),
+            objects::exec_extract_field(&mut ctx, *r_dst, *r_enum, *field_idx),
 
         // ── Concurrency ───────────────────────────────────────
         Instruction::SpawnTask { r_dst, method_idx, r_base, argc } =>
-            concurrency::exec_spawn_task(&mut ctx, r_dst, method_idx, r_base, argc),
+            concurrency::exec_spawn_task(&mut ctx, *r_dst, *method_idx, *r_base, *argc),
         Instruction::SpawnDetached { r_dst, method_idx, r_base, argc } =>
-            concurrency::exec_spawn_detached(&mut ctx, r_dst, method_idx, r_base, argc),
-        Instruction::Join { r_dst, r_task } => concurrency::exec_join(&mut ctx, r_dst, r_task),
-        Instruction::Cancel { r_task } => concurrency::exec_cancel(&mut ctx, r_task),
+            concurrency::exec_spawn_detached(&mut ctx, *r_dst, *method_idx, *r_base, *argc),
+        Instruction::Join { r_dst, r_task } => concurrency::exec_join(&mut ctx, *r_dst, *r_task),
+        Instruction::Cancel { r_task } => concurrency::exec_cancel(&mut ctx, *r_task),
         Instruction::DeferPush { r_dst: _, method_idx } =>
-            concurrency::exec_defer_push(&mut ctx, method_idx as usize),
+            concurrency::exec_defer_push(&mut ctx, *method_idx as usize),
         Instruction::DeferPop => concurrency::exec_defer_pop(&mut ctx),
         Instruction::DeferEnd => ExecutionResult::DeferComplete,
 
         // ── Globals & Atomics ─────────────────────────────────
         Instruction::LoadGlobal { r_dst, global_idx } =>
-            concurrency::exec_load_global(&mut ctx, r_dst, global_idx),
+            concurrency::exec_load_global(&mut ctx, *r_dst, *global_idx),
         Instruction::StoreGlobal { global_idx, r_src } =>
-            concurrency::exec_store_global(&mut ctx, global_idx, r_src),
+            concurrency::exec_store_global(&mut ctx, *global_idx, *r_src),
         Instruction::AtomicBegin => {
             ctx.task.atomic_depth += 1;
             ExecutionResult::Continue
@@ -466,30 +511,119 @@ pub(crate) fn execute_one(
         Instruction::AtomicEnd => concurrency::exec_atomic_end(&mut ctx),
 
         // ── Conversion ────────────────────────────────────────
-        Instruction::I2f { r_dst, r_src } => arith::exec_i2f(&mut ctx, r_dst, r_src),
-        Instruction::F2i { r_dst, r_src } => arith::exec_f2i(&mut ctx, r_dst, r_src),
-        Instruction::I2s { r_dst, r_src } => arith::exec_i2s(&mut ctx, r_dst, r_src),
-        Instruction::F2s { r_dst, r_src } => arith::exec_f2s(&mut ctx, r_dst, r_src),
-        Instruction::B2s { r_dst, r_src } => arith::exec_b2s(&mut ctx, r_dst, r_src),
-        Instruction::Convert { r_dst, r_src, .. } => arith::exec_convert(&mut ctx, r_dst, r_src),
-        Instruction::S2i { r_dst, r_src } => arith::exec_s2i(&mut ctx, r_dst, r_src),
-        Instruction::S2f { r_dst, r_src } => arith::exec_s2f(&mut ctx, r_dst, r_src),
-        Instruction::S2b { r_dst, r_src } => arith::exec_s2b(&mut ctx, r_dst, r_src),
+        Instruction::I2f { r_dst, r_src } => arith::exec_i2f(&mut ctx, *r_dst, *r_src),
+        Instruction::F2i { r_dst, r_src } => arith::exec_f2i(&mut ctx, *r_dst, *r_src),
+        Instruction::I2s { r_dst, r_src } => arith::exec_i2s(&mut ctx, *r_dst, *r_src),
+        Instruction::F2s { r_dst, r_src } => arith::exec_f2s(&mut ctx, *r_dst, *r_src),
+        Instruction::B2s { r_dst, r_src } => arith::exec_b2s(&mut ctx, *r_dst, *r_src),
+        Instruction::Convert { r_dst, r_src, .. } => arith::exec_convert(&mut ctx, *r_dst, *r_src),
+        Instruction::S2i { r_dst, r_src } => arith::exec_s2i(&mut ctx, *r_dst, *r_src),
+        Instruction::S2f { r_dst, r_src } => arith::exec_s2f(&mut ctx, *r_dst, *r_src),
+        Instruction::S2b { r_dst, r_src } => arith::exec_s2b(&mut ctx, *r_dst, *r_src),
 
         // ── Strings ───────────────────────────────────────────
-        Instruction::StrConcat { r_dst, r_a, r_b } => arith::exec_str_concat(&mut ctx, r_dst, r_a, r_b),
-        Instruction::StrBuild { r_dst, count, r_base } => arith::exec_str_build(&mut ctx, r_dst, count, r_base),
-        Instruction::StrLen { r_dst, r_str } => arith::exec_str_len(&mut ctx, r_dst, r_str),
+        Instruction::StrConcat { r_dst, r_a, r_b } => arith::exec_str_concat(&mut ctx, *r_dst, *r_a, *r_b),
+        Instruction::StrBuild { r_dst, count, r_base } => arith::exec_str_build(&mut ctx, *r_dst, *count, *r_base),
+        Instruction::StrLen { r_dst, r_str } => arith::exec_str_len(&mut ctx, *r_dst, *r_str),
+        Instruction::StrTrim { r_dst, r_src } => arith::exec_str_trim(&mut ctx, *r_dst, *r_src),
+        Instruction::StrToUpper { r_dst, r_src } => arith::exec_str_to_upper(&mut ctx, *r_dst, *r_src),
+        Instruction::StrToLower { r_dst, r_src } => arith::exec_str_to_lower(&mut ctx, *r_dst, *r_src),
+        Instruction::StrStartsWith { r_dst, r_str, r_prefix } => arith::exec_str_starts_with(&mut ctx, *r_dst, *r_str, *r_prefix),
+        Instruction::StrEndsWith { r_dst, r_str, r_suffix } => arith::exec_str_ends_with(&mut ctx, *r_dst, *r_str, *r_suffix),
+        Instruction::StrContains { r_dst, r_str, r_sub } => arith::exec_str_contains(&mut ctx, *r_dst, *r_str, *r_sub),
+        Instruction::StrSplit { r_dst, r_str, r_sep } => arith::exec_str_split(&mut ctx, *r_dst, *r_str, *r_sep),
+        Instruction::StrReplace { r_dst, r_str, r_from, r_to } => arith::exec_str_replace(&mut ctx, *r_dst, *r_str, *r_from, *r_to),
 
         // ── Boxing ────────────────────────────────────────────
-        Instruction::Box { r_dst, r_val } => arith::exec_box(&mut ctx, r_dst, r_val),
-        Instruction::Unbox { r_dst, r_boxed } => arith::exec_unbox(&mut ctx, r_dst, r_boxed),
+        Instruction::Box { r_dst, r_val } => arith::exec_box(&mut ctx, *r_dst, *r_val),
+        Instruction::Unbox { r_dst, r_boxed } => arith::exec_unbox(&mut ctx, *r_dst, *r_boxed),
+
+        // ── Reflection ────────────────────────────────────────
+        Instruction::TypeOf { r_dst, type_idx } => {
+            // Decode metadata token: bits 31-24 = table_id, bits 23-0 = row_index (1-based).
+            // table_id 4 = TypeSpec (generic instantiation, e.g. typeof(Array<int>))
+            // table_id 2 = TypeDef (non-generic type)
+            let table_id = (*type_idx >> 24) as u8;
+            let row_0based = ((*type_idx & 0x00FF_FFFF) as usize).saturating_sub(1);
+            let href = if table_id == 4 {
+                // TypeSpec token — generic instantiation
+                ctx.reflection.get_or_alloc_typespec_type(
+                    ctx.current_module_idx,
+                    row_0based,
+                    ctx.heap,
+                    ctx.modules,
+                )
+            } else {
+                // TypeDef token (or any other) — non-generic type
+                ctx.reflection.get_or_alloc_type(
+                    ctx.current_module_idx,
+                    row_0based,
+                    ctx.heap,
+                    ctx.modules,
+                )
+            };
+            let frame = ctx.task.call_stack.last_mut().unwrap();
+            frame.registers[*r_dst as usize] = Value::Ref(href);
+            ExecutionResult::Continue
+        }
+    }
+}
+
+/// Execute instructions in a batch without returning to the scheduler between them.
+///
+/// Holds `&mut Task` across the entire batch, eliminating the per-instruction
+/// HashMap task lookup that `run_one_task` would otherwise perform. Terminates
+/// the batch on any non-Continue result or when the instruction budget is exhausted.
+///
+/// When `host.debug_enabled()` is true, falls back to single-instruction dispatch
+/// to preserve the per-instruction `before_instruction` hook behavior.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn execute_batch(
+    task: &mut Task,
+    modules: &[LoadedModule],
+    current_module_idx: usize,
+    dispatch_table: &DispatchTable,
+    heap: &mut dyn GcHeap,
+    host: &mut dyn RuntimeHost,
+    globals: &mut Vec<Value>,
+    next_request_id: &mut u32,
+    entity_registry: &mut EntityRegistry,
+    pool: &mut RegisterPool,
+    reflection: &mut ReflectionIndex,
+    limit: u64,
+) -> ExecutionResult {
+    // DISPATCH-04: debug path — single instruction to preserve per-instruction hooks
+    if host.debug_enabled() {
+        return execute_one(task, modules, current_module_idx, dispatch_table,
+                          heap, host, globals, next_request_id, entity_registry, pool, reflection);
+    }
+
+    let mut executed: u64 = 0;
+
+    loop {
+        // DISPATCH-03: respect limit with atomic-section awareness (never yield mid-atomic)
+        if limit > 0 && executed >= limit && task.atomic_depth == 0 {
+            return ExecutionResult::LimitReached;
+        }
+
+        // DISPATCH-01/DISPATCH-05: execute_one fetches task.call_stack.last_mut() fresh
+        // on every call, so frame reference is always current after Call/Ret/TailCall
+        let result = execute_one(task, modules, current_module_idx, dispatch_table,
+                                heap, host, globals, next_request_id, entity_registry, pool, reflection);
+        executed += 1;
+
+        // DISPATCH-02: continue only on Continue; terminate on everything else
+        match result {
+            ExecutionResult::Continue => continue,
+            other => return other,
+        }
     }
 }
 
 // ── Helper functions ──────────────────────────────────────────────
 
 /// Execute RET: run defer handlers in LIFO order, pop frame, deliver return value.
+#[inline]
 #[allow(clippy::too_many_arguments)] // mirrors execute_one parameter set for return with defer handler execution
 fn execute_ret(
     task: &mut Task,
@@ -502,11 +636,13 @@ fn execute_ret(
     globals: &mut Vec<Value>,
     next_request_id: &mut u32,
     entity_registry: &mut EntityRegistry,
+    pool: &mut RegisterPool,
+    reflection: &mut ReflectionIndex,
 ) -> ExecutionResult {
     // Step 1: Run defers in LIFO order
     while let Some(handler_pc) = task.call_stack.last_mut().unwrap().defer_stack.pop() {
         if let Err(secondary) = execute_defer_handler(
-            task, handler_pc, modules, current_module_idx, dispatch_table, heap, host, globals, next_request_id, entity_registry,
+            task, handler_pc, modules, current_module_idx, dispatch_table, heap, host, globals, next_request_id, entity_registry, pool, reflection,
         ) {
             host.on_log(
                 LogLevel::Error,
@@ -521,18 +657,21 @@ fn execute_ret(
         host.on_function_exit(task.id, exiting_method_idx as u32);
     }
     let popped = task.call_stack.pop().unwrap();
+    // Extract return_register (Copy u16) before moving registers into pool
+    let return_register = popped.return_register;
+    pool.release(popped.registers);
 
     // Step 3: Deliver result
     if task.call_stack.is_empty() {
         task.state = TaskState::Completed;
-        task.return_value = Some(ret_val.clone());
+        task.return_value = Some(ret_val);
         ExecutionResult::Completed(ret_val)
     } else {
         let caller = task.call_stack.last_mut().unwrap();
         // HOOK_RETURN_SINK (u16::MAX) is used by lifecycle hook frames to discard
         // the return value without writing to any caller register.
-        if popped.return_register != u16::MAX {
-            caller.registers[popped.return_register as usize] = ret_val;
+        if return_register != u16::MAX {
+            caller.registers[return_register as usize] = ret_val;
         }
         ExecutionResult::Continue
     }
@@ -553,6 +692,8 @@ pub(crate) fn execute_defer_handler(
     globals: &mut Vec<Value>,
     next_request_id: &mut u32,
     entity_registry: &mut EntityRegistry,
+    pool: &mut RegisterPool,
+    reflection: &mut ReflectionIndex,
 ) -> Result<(), String> {
     // Save current PC
     let saved_pc = task.call_stack.last().unwrap().pc;
@@ -561,7 +702,7 @@ pub(crate) fn execute_defer_handler(
     task.call_stack.last_mut().unwrap().pc = handler_pc;
 
     loop {
-        let result = execute_one(task, modules, current_module_idx, dispatch_table, heap, host, globals, next_request_id, entity_registry);
+        let result = execute_one(task, modules, current_module_idx, dispatch_table, heap, host, globals, next_request_id, entity_registry, pool, reflection);
         match result {
             ExecutionResult::Continue => continue,
             ExecutionResult::DeferComplete => {
@@ -600,6 +741,8 @@ pub(crate) fn execute_crash(
     globals: &mut Vec<Value>,
     next_request_id: &mut u32,
     entity_registry: &mut EntityRegistry,
+    pool: &mut RegisterPool,
+    reflection: &mut ReflectionIndex,
 ) {
     // Build crash info BEFORE unwinding — preserve register values so the DAP debugger
     // can inspect local variables at the crash point. Resolve method names and source
@@ -658,7 +801,7 @@ pub(crate) fn execute_crash(
     while !task.call_stack.is_empty() {
         while let Some(handler_pc) = task.call_stack.last_mut().unwrap().defer_stack.pop() {
             if let Err(secondary) = execute_defer_handler(
-                task, handler_pc, modules, current_module_idx, dispatch_table, heap, host, globals, next_request_id, entity_registry,
+                task, handler_pc, modules, current_module_idx, dispatch_table, heap, host, globals, next_request_id, entity_registry, pool, reflection,
             ) {
                 host.on_log(
                     LogLevel::Error,
@@ -669,7 +812,8 @@ pub(crate) fn execute_crash(
                 );
             }
         }
-        task.call_stack.pop();
+        let frame = task.call_stack.pop().unwrap();
+        pool.release(frame.registers);
     }
 
     task.state = TaskState::Cancelled;

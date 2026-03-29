@@ -38,7 +38,7 @@
         CALL r3, 117440514, r0, 1  ; line:1 col:189
         RET_VOID
     }
-    // .export "is_positive" method 117440514
-    // .export "main" method 117440515
-    // .export "add" method 117440513
+    .export "is_positive" method 117440514
+    .export "main" method 117440515
+    .export "add" method 117440513
 }

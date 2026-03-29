@@ -4,398 +4,457 @@
     }
     .type "QuestType" enum {
     }
+    .type "Narrator" entity {
+    }
+    .impl QuestStatus : contract_167772179 {
+        .method "get_type" () -> Type pub {
+            .reg r0 int
+            .reg r1 int
+            TYPEOF r1, 33554433
+            RET r1
+        }
+    }
+    .impl QuestType : contract_167772179 {
+        .method "get_type" () -> Type pub {
+            .reg r0 int
+            .reg r1 int
+            TYPEOF r1, 33554434
+            RET r1
+        }
+    }
+    .impl Narrator : contract_167772179 {
+        .method "get_type" () -> Type pub {
+            .reg r0 int
+            .reg r1 int
+            TYPEOF r1, 33554435
+            RET r1
+        }
+        .method "calculate_reward" (base_xp: int, quest_type: ?) -> int mut {
+            .locals {
+                r0: int "base_xp" [0, 110)
+                r1: ? "quest_type" [0, 110)
+                r3: int "multiplier" [98, 110)
+            }
+            .reg r0 int
+            .reg r1 int
+            .reg r2 int
+            .reg r3 int
+            .reg r4 int
+            .reg r5 int
+            .reg r6 int
+            .reg r7 int
+            .reg r8 int
+            .reg r9 int
+            GET_TAG r2, r1  ; line:1 col:605
+            SWITCH r2, 18, 52, 66
+            LOAD_INT r5, 3  ; line:1 col:681
+            MUL_I r6, r4, r5
+            MOV r3, r6
+            BR 48
+            MOV r3, r7  ; line:1 col:736
+            BR 34
+            LOAD_INT r8, 1  ; line:1 col:783
+            MOV r3, r8
+            BR 8
+            MUL_I r9, r0, r3  ; line:1 col:800
+            RET r9
+        }
+        .method "is_quest_available" (status: ?) -> bool mut {
+            .locals {
+                r0: ? "status" [0, 104)
+            }
+            .reg r0 int
+            .reg r1 int
+            .reg r2 bool
+            .reg r3 bool
+            .reg r4 bool
+            .reg r5 bool
+            .reg r6 bool
+            GET_TAG r1, r0  ; line:1 col:953
+            SWITCH r1, 22, 40, 58, 76
+            LOAD_TRUE r3  ; line:1 col:1006
+            MOV r2, r3
+            BR 62
+            LOAD_FALSE r4  ; line:1 col:1047
+            MOV r2, r4
+            BR 44
+            LOAD_FALSE r5  ; line:1 col:1092
+            MOV r2, r5
+            BR 26
+            LOAD_TRUE r6  ; line:1 col:1134
+            MOV r2, r6
+            BR 8
+            RET r2
+        }
+        .method "find_first_active" (statuses: array<?>) -> ? mut {
+            .locals {
+                r0: ? "statuses" [0, 262)
+                r1: int "idx" [12, 262)
+            }
+            .reg r0 int
+            .reg r1 int
+            .reg r2 int
+            .reg r3 int
+            .reg r4 bool
+            .reg r5 QuestStatus
+            .reg r6 int
+            .reg r7 void
+            .reg r8 void
+            .reg r9 int
+            .reg r10 int
+            .reg r11 int
+            .reg r12 int
+            .reg r13 int
+            .reg r14 int
+            .reg r15 int
+            .reg r16 ?
+            LOAD_INT r1, 0  ; line:1 col:1290
+            ARRAY_LEN r2, r0  ; line:1 col:1317
+            LOAD_INT r3, 0
+            CMP_LT_I r4, r3, r2
+            BR_FALSE r4, 216
+            ARRAY_LOAD r5, r0, r3
+            GET_TAG r6, r5  ; line:1 col:1346
+            SWITCH r6, 22, 46, 86, 126
+            TAIL_CALL 0, r1, 1  ; line:1 col:1394
+            MOV r7, r0
+            BR 128
+            LOAD_INT r9, 1  ; line:1 col:1464
+            ADD_I r10, r1, r9
+            MOV r1, r10
+            MOV r7, r1
+            BR 88
+            LOAD_INT r11, 1  ; line:1 col:1522
+            ADD_I r12, r1, r11
+            MOV r1, r12
+            MOV r7, r1
+            BR 48
+            LOAD_INT r13, 1  ; line:1 col:1577
+            ADD_I r14, r1, r13
+            MOV r1, r14
+            MOV r7, r1
+            BR 8
+            LOAD_INT r15, 1
+            ADD_I r3, r3, r15
+            BR -216
+            LOAD_NULL r16  ; line:1 col:1617
+            RET r16
+        }
+        .method "complete_quest" (status: ?, base_xp: int, quest_type: ?) -> ? mut {
+            .locals {
+                r0: ? "status" [0, 244)
+                r1: int "base_xp" [0, 244)
+                r2: ? "quest_type" [0, 244)
+                r3: bool "available" [12, 244)
+                r8: int "reward" [92, 244)
+            }
+            .reg r0 int
+            .reg r1 int
+            .reg r2 int
+            .reg r3 bool
+            .reg r4 void
+            .reg r5 QuestStatus
+            .reg r6 int
+            .reg r7 QuestStatus
+            .reg r8 int
+            .reg r9 int
+            .reg r10 int
+            .reg r11 void
+            .reg r12 int
+            .reg r13 int
+            .reg r14 int
+            .reg r15 void
+            .reg r16 QuestStatus
+            .reg r17 QuestStatus
+            .reg r18 QuestStatus
+            .reg r19 QuestStatus
+            CALL r3, 117440517, r0, 1  ; line:1 col:1816
+            BR_FALSE r3, 38  ; line:1 col:1871
+            LOAD_INT r5, 1  ; line:1 col:1895
+            RET r5
+            MOV r4, r0
+            BR 10
+            NOP
+            GET_TAG r6, r0  ; line:1 col:1935
+            SWITCH r6, 22, 104, 130, 156
+            CALL r8, 117440516, r1, 2  ; line:1 col:1997
+            ATOMIC_BEGIN  ; line:1 col:2067
+            ADD_I r10, r9, r8  ; line:1 col:2093
+            MOV r11, r10
+            LOAD_INT r13, 1  ; line:1 col:2140
+            ADD_I r14, r12, r13
+            MOV r15, r14
+            ATOMIC_END
+            LOAD_INT r16, 2  ; line:1 col:2213
+            MOV r7, r16
+            BR 86
+            LOAD_INT r17, 3  ; line:1 col:2285
+            MOV r7, r17
+            BR 60
+            LOAD_INT r18, 2  ; line:1 col:2344
+            MOV r7, r18
+            BR 34
+            LOAD_INT r19, 3  ; line:1 col:2403
+            MOV r7, r19
+            BR 8
+            RET r7
+        }
+        .method "process_quest_log" (statuses: array<?>) -> int mut {
+            .locals {
+                r0: ? "statuses" [0, 214)
+                r1: int "completed" [12, 214)
+            }
+            .reg r0 int
+            .reg r1 int
+            .reg r2 int
+            .reg r3 int
+            .reg r4 bool
+            .reg r5 QuestStatus
+            .reg r6 int
+            .reg r7 void
+            .reg r8 int
+            .reg r9 int
+            .reg r10 int
+            LOAD_INT r1, 0  ; line:1 col:2556
+            ARRAY_LEN r2, r0  ; line:1 col:2589
+            LOAD_INT r3, 0
+            CMP_LT_I r4, r3, r2
+            BR_FALSE r4, 172
+            ARRAY_LOAD r5, r0, r3
+            GET_TAG r6, r5  ; line:1 col:2618
+            SWITCH r6, 22, 62, 82, 102
+            LOAD_INT r8, 1  ; line:1 col:2669
+            ADD_I r9, r1, r8
+            MOV r1, r9
+            MOV r7, r1
+            BR 68
+            MOV r1, r1  ; line:1 col:2740
+            MOV r7, r1
+            BR 48
+            MOV r1, r1  ; line:1 col:2803
+            MOV r7, r1
+            BR 28
+            MOV r1, r1  ; line:1 col:2866
+            MOV r7, r1
+            BR 8
+            LOAD_INT r10, 1
+            ADD_I r3, r3, r10
+            BR -172
+            RET r1  ; line:1 col:2914
+        }
+        .method "announce_quest" (speaker: ?, quest_type: ?) -> void mut {
+            .locals {
+                r0: ? "speaker" [0, 224)
+                r1: ? "quest_type" [0, 224)
+            }
+            .reg r0 int
+            .reg r1 int
+            .reg r2 int
+            .reg r3 void
+            .reg r4 void
+            .reg r5 string
+            .reg r6 void
+            .reg r7 string
+            .reg r8 int
+            .reg r9 string
+            .reg r10 void
+            .reg r11 string
+            .reg r12 void
+            .reg r13 string
+            .reg r14 int
+            .reg r15 string
+            .reg r16 void
+            .reg r17 string
+            .reg r18 void
+            .reg r19 string
+            .reg r20 int
+            .reg r21 string
+            GET_TAG r2, r1  ; line:1 col:3047
+            SWITCH r2, 18, 84, 150
+            LOAD_STRING r5, 454  ; line:1 col:3114
+            CALL_EXTERN r4, 268435457, r5, 1
+            LOAD_STRING r7, 485  ; line:1 col:3171
+            MOV r8, r0
+            MOV r9, r7
+            CALL_EXTERN r6, 268435458, r8, 2
+            MOV r3, r6
+            BR 140
+            LOAD_STRING r11, 528  ; line:1 col:3289
+            CALL_EXTERN r10, 268435457, r11, 1
+            LOAD_STRING r13, 553  ; line:1 col:3340
+            MOV r14, r0
+            MOV r15, r13
+            CALL_EXTERN r12, 268435458, r14, 2
+            MOV r3, r12
+            BR 74
+            LOAD_STRING r17, 583  ; line:1 col:3441
+            CALL_EXTERN r16, 268435457, r17, 1
+            LOAD_STRING r19, 609  ; line:1 col:3493
+            MOV r20, r0
+            MOV r21, r19
+            CALL_EXTERN r18, 268435458, r20, 2
+            MOV r3, r18
+            BR 8
+            RET_VOID
+        }
+        .method "main" () -> void mut {
+            .locals {
+                r3: Narrator "speaker" [48, 708)
+                r4: array<QuestStatus> "statuses" [108, 708)
+                r9: array<QuestType> "types" [156, 708)
+                r21: ? "maybe_active" [262, 708)
+                r35: QuestStatus "new_status" [428, 708)
+                r49: int "num_completed" [618, 708)
+                r60: int "snapshot_xp" [704, 708)
+            }
+            .reg r0 void
+            .reg r1 void
+            .reg r2 string
+            .reg r3 Narrator
+            .reg r4 array<QuestStatus>
+            .reg r5 QuestStatus
+            .reg r6 QuestStatus
+            .reg r7 QuestStatus
+            .reg r8 QuestStatus
+            .reg r9 array<QuestType>
+            .reg r10 QuestType
+            .reg r11 QuestType
+            .reg r12 QuestType
+            .reg r13 int
+            .reg r14 int
+            .reg r15 bool
+            .reg r16 QuestType
+            .reg r17 void
+            .reg r18 Narrator
+            .reg r19 QuestType
+            .reg r20 int
+            .reg r21 ?
+            .reg r22 void
+            .reg r23 void
+            .reg r24 string
+            .reg r25 void
+            .reg r26 string
+            .reg r27 Narrator
+            .reg r28 string
+            .reg r29 void
+            .reg r30 string
+            .reg r31 void
+            .reg r32 string
+            .reg r33 Narrator
+            .reg r34 string
+            .reg r35 QuestStatus
+            .reg r36 QuestStatus
+            .reg r37 int
+            .reg r38 QuestType
+            .reg r39 int
+            .reg r40 void
+            .reg r41 void
+            .reg r42 string
+            .reg r43 void
+            .reg r44 string
+            .reg r45 void
+            .reg r46 string
+            .reg r47 void
+            .reg r48 string
+            .reg r49 int
+            .reg r50 int
+            .reg r51 int
+            .reg r52 bool
+            .reg r53 void
+            .reg r54 void
+            .reg r55 string
+            .reg r56 void
+            .reg r57 string
+            .reg r58 Narrator
+            .reg r59 string
+            .reg r60 int
+            DEFER_PUSH r0, 18  ; line:1 col:3580
+            DEFER_POP
+            BR 30
+            LOAD_STRING r2, 639  ; line:1 col:3597
+            CALL_EXTERN r1, 268435457, r2, 1
+            DEFER_END
+            GET_OR_CREATE r3, 33554435  ; line:1 col:3655
+            LOAD_INT r5, 0  ; line:1 col:3759
+            LOAD_INT r6, 1
+            LOAD_INT r7, 2
+            LOAD_INT r8, 3
+            ARRAY_INIT r4, 0, 4, r5
+            LOAD_INT r10, 0  ; line:1 col:3931
+            LOAD_INT r11, 1
+            LOAD_INT r12, 2
+            ARRAY_INIT r9, 0, 3, r10
+            ARRAY_LEN r13, r9  ; line:1 col:4126
+            LOAD_INT r14, 0
+            CMP_LT_I r15, r14, r13
+            BR_FALSE r15, 68
+            ARRAY_LOAD r16, r9, r14
+            MOV r18, r3  ; line:1 col:4152
+            MOV r19, r16
+            CALL r17, 117440521, r18, 2
+            LOAD_INT r20, 1
+            ADD_I r14, r14, r20
+            BR -68
+            CALL r21, 117440518, r4, 1  ; line:1 col:4227
+            LOAD_STRING r24, 670  ; line:1 col:4347
+            CALL_EXTERN r23, 268435457, r24, 1
+            LOAD_STRING r26, 696  ; line:1 col:4399
+            MOV r27, r3
+            MOV r28, r26
+            CALL_EXTERN r25, 268435458, r27, 2
+            MOV r22, r25
+            BR 286
+            LOAD_STRING r30, 731  ; line:1 col:4506
+            CALL_EXTERN r29, 268435457, r30, 1
+            LOAD_STRING r32, 754  ; line:1 col:4555
+            MOV r33, r3
+            MOV r34, r32
+            CALL_EXTERN r31, 268435458, r33, 2
+            LOAD_INT r36, 1  ; line:1 col:4613
+            LOAD_INT r37, 50
+            LOAD_INT r38, 0
+            CALL r35, 117440519, r36, 3
+            GET_TAG r39, r35  ; line:1 col:4785
+            SWITCH r39, 22, 56, 90, 124
+            LOAD_STRING r42, 783  ; line:1 col:4849
+            CALL_EXTERN r41, 268435457, r42, 1
+            MOV r40, r41
+            BR 110
+            LOAD_STRING r44, 803  ; line:1 col:4926
+            CALL_EXTERN r43, 268435457, r44, 1
+            MOV r40, r43
+            BR 76
+            LOAD_STRING r46, 820  ; line:1 col:5000
+            CALL_EXTERN r45, 268435457, r46, 1
+            MOV r40, r45
+            BR 42
+            LOAD_STRING r48, 843  ; line:1 col:5084
+            CALL_EXTERN r47, 268435457, r48, 1
+            MOV r40, r47
+            BR 8
+            MOV r22, r40
+            BR 8
+            CALL r49, 117440520, r4, 1  ; line:1 col:5193
+            CMP_LT_I r52, r50, r51  ; line:1 col:5313
+            BR_FALSE r52, 74
+            LOAD_STRING r55, 865  ; line:1 col:5359
+            CALL_EXTERN r54, 268435457, r55, 1
+            LOAD_STRING r57, 895  ; line:1 col:5411
+            MOV r58, r3
+            MOV r59, r57
+            CALL_EXTERN r56, 268435458, r58, 2
+            MOV r53, r56
+            BR 10
+            NOP
+            ATOMIC_BEGIN  ; line:1 col:5509
+            ATOMIC_END  ; line:1 col:5569
+            RET_VOID
+        }
+    }
     .global "MAX_QUESTS" int mut
     .global "XP_MULTIPLIER" int mut
     .global "active_quest_count" int static
     .global "total_xp" int static
-    // .extern_fn "log::info" (string) -> void "log::info"
-    // .extern_fn "say" (string) -> void "say"
-    .method "calculate_reward" (base_xp: int, quest_type: ?) -> int mut {
-        .locals {
-            r0: int "base_xp" [0, 110)
-            r1: ? "quest_type" [0, 110)
-            r3: int "multiplier" [98, 110)
-        }
-        .reg r0 int
-        .reg r1 int
-        .reg r2 int
-        .reg r3 int
-        .reg r4 int
-        .reg r5 int
-        .reg r6 int
-        .reg r7 int
-        .reg r8 int
-        .reg r9 int
-        GET_TAG r2, r1  ; line:1 col:583
-        SWITCH r2, 18, 52, 66
-        LOAD_INT r5, 3  ; line:1 col:659
-        MUL_I r6, r4, r5
-        MOV r3, r6
-        BR 48
-        MOV r3, r7  ; line:1 col:714
-        BR 34
-        LOAD_INT r8, 1  ; line:1 col:761
-        MOV r3, r8
-        BR 8
-        MUL_I r9, r0, r3  ; line:1 col:778
-        RET r9
-    }
-    .method "is_quest_available" (status: ?) -> bool mut {
-        .locals {
-            r0: ? "status" [0, 104)
-        }
-        .reg r0 int
-        .reg r1 int
-        .reg r2 bool
-        .reg r3 bool
-        .reg r4 bool
-        .reg r5 bool
-        .reg r6 bool
-        GET_TAG r1, r0  ; line:1 col:931
-        SWITCH r1, 22, 40, 58, 76
-        LOAD_TRUE r3  ; line:1 col:984
-        MOV r2, r3
-        BR 62
-        LOAD_FALSE r4  ; line:1 col:1025
-        MOV r2, r4
-        BR 44
-        LOAD_FALSE r5  ; line:1 col:1070
-        MOV r2, r5
-        BR 26
-        LOAD_TRUE r6  ; line:1 col:1112
-        MOV r2, r6
-        BR 8
-        RET r2
-    }
-    .method "find_first_active" (statuses: array<?>) -> ? mut {
-        .locals {
-            r0: ? "statuses" [0, 262)
-            r1: int "idx" [12, 262)
-        }
-        .reg r0 int
-        .reg r1 int
-        .reg r2 int
-        .reg r3 int
-        .reg r4 bool
-        .reg r5 QuestStatus
-        .reg r6 int
-        .reg r7 void
-        .reg r8 void
-        .reg r9 int
-        .reg r10 int
-        .reg r11 int
-        .reg r12 int
-        .reg r13 int
-        .reg r14 int
-        .reg r15 int
-        .reg r16 ?
-        LOAD_INT r1, 0  ; line:1 col:1268
-        ARRAY_LEN r2, r0  ; line:1 col:1295
-        LOAD_INT r3, 0
-        CMP_LT_I r4, r3, r2
-        BR_FALSE r4, 216
-        ARRAY_LOAD r5, r0, r3
-        GET_TAG r6, r5  ; line:1 col:1324
-        SWITCH r6, 22, 46, 86, 126
-        TAIL_CALL 0, r1, 1  ; line:1 col:1372
-        MOV r7, r0
-        BR 128
-        LOAD_INT r9, 1  ; line:1 col:1442
-        ADD_I r10, r1, r9
-        MOV r1, r10
-        MOV r7, r1
-        BR 88
-        LOAD_INT r11, 1  ; line:1 col:1500
-        ADD_I r12, r1, r11
-        MOV r1, r12
-        MOV r7, r1
-        BR 48
-        LOAD_INT r13, 1  ; line:1 col:1555
-        ADD_I r14, r1, r13
-        MOV r1, r14
-        MOV r7, r1
-        BR 8
-        LOAD_INT r15, 1
-        ADD_I r3, r3, r15
-        BR -216
-        LOAD_NULL r16  ; line:1 col:1595
-        RET r16
-    }
-    .method "complete_quest" (status: ?, base_xp: int, quest_type: ?) -> ? mut {
-        .locals {
-            r0: ? "status" [0, 244)
-            r1: int "base_xp" [0, 244)
-            r2: ? "quest_type" [0, 244)
-            r3: bool "available" [12, 244)
-            r8: int "reward" [92, 244)
-        }
-        .reg r0 int
-        .reg r1 int
-        .reg r2 int
-        .reg r3 bool
-        .reg r4 void
-        .reg r5 QuestStatus
-        .reg r6 int
-        .reg r7 QuestStatus
-        .reg r8 int
-        .reg r9 int
-        .reg r10 int
-        .reg r11 void
-        .reg r12 int
-        .reg r13 int
-        .reg r14 int
-        .reg r15 void
-        .reg r16 QuestStatus
-        .reg r17 QuestStatus
-        .reg r18 QuestStatus
-        .reg r19 QuestStatus
-        CALL r3, 117440514, r0, 1  ; line:1 col:1794
-        BR_FALSE r3, 38  ; line:1 col:1849
-        LOAD_INT r5, 1  ; line:1 col:1873
-        RET r5
-        MOV r4, r0
-        BR 10
-        NOP
-        GET_TAG r6, r0  ; line:1 col:1913
-        SWITCH r6, 22, 104, 130, 156
-        CALL r8, 117440513, r1, 2  ; line:1 col:1975
-        ATOMIC_BEGIN  ; line:1 col:2045
-        ADD_I r10, r9, r8  ; line:1 col:2071
-        MOV r11, r10
-        LOAD_INT r13, 1  ; line:1 col:2118
-        ADD_I r14, r12, r13
-        MOV r15, r14
-        ATOMIC_END
-        LOAD_INT r16, 2  ; line:1 col:2191
-        MOV r7, r16
-        BR 86
-        LOAD_INT r17, 3  ; line:1 col:2263
-        MOV r7, r17
-        BR 60
-        LOAD_INT r18, 2  ; line:1 col:2322
-        MOV r7, r18
-        BR 34
-        LOAD_INT r19, 3  ; line:1 col:2381
-        MOV r7, r19
-        BR 8
-        RET r7
-    }
-    .method "process_quest_log" (statuses: array<?>) -> int mut {
-        .locals {
-            r0: ? "statuses" [0, 214)
-            r1: int "completed" [12, 214)
-        }
-        .reg r0 int
-        .reg r1 int
-        .reg r2 int
-        .reg r3 int
-        .reg r4 bool
-        .reg r5 QuestStatus
-        .reg r6 int
-        .reg r7 void
-        .reg r8 int
-        .reg r9 int
-        .reg r10 int
-        LOAD_INT r1, 0  ; line:1 col:2534
-        ARRAY_LEN r2, r0  ; line:1 col:2567
-        LOAD_INT r3, 0
-        CMP_LT_I r4, r3, r2
-        BR_FALSE r4, 172
-        ARRAY_LOAD r5, r0, r3
-        GET_TAG r6, r5  ; line:1 col:2596
-        SWITCH r6, 22, 62, 82, 102
-        LOAD_INT r8, 1  ; line:1 col:2647
-        ADD_I r9, r1, r8
-        MOV r1, r9
-        MOV r7, r1
-        BR 68
-        MOV r1, r1  ; line:1 col:2718
-        MOV r7, r1
-        BR 48
-        MOV r1, r1  ; line:1 col:2781
-        MOV r7, r1
-        BR 28
-        MOV r1, r1  ; line:1 col:2844
-        MOV r7, r1
-        BR 8
-        LOAD_INT r10, 1
-        ADD_I r3, r3, r10
-        BR -172
-        RET r1  ; line:1 col:2892
-    }
-    .method "announce_quest" (quest_type: ?) -> void mut {
-        .locals {
-            r0: ? "quest_type" [0, 188)
-        }
-        .reg r0 int
-        .reg r1 int
-        .reg r2 void
-        .reg r3 void
-        .reg r4 string
-        .reg r5 void
-        .reg r6 string
-        .reg r7 void
-        .reg r8 string
-        .reg r9 void
-        .reg r10 string
-        .reg r11 void
-        .reg r12 string
-        .reg r13 void
-        .reg r14 string
-        GET_TAG r1, r0  ; line:1 col:3008
-        SWITCH r1, 18, 72, 126
-        LOAD_STRING r4, 336  ; line:1 col:3075
-        CALL_EXTERN r3, 268435457, r4, 1
-        LOAD_STRING r6, 369  ; line:1 col:3132
-        CALL_EXTERN r5, 268435458, r6, 1
-        MOV r2, r5
-        BR 116
-        LOAD_STRING r8, 414  ; line:1 col:3241
-        CALL_EXTERN r7, 268435457, r8, 1
-        LOAD_STRING r10, 441  ; line:1 col:3292
-        CALL_EXTERN r9, 268435458, r10, 1
-        MOV r2, r9
-        BR 62
-        LOAD_STRING r12, 473  ; line:1 col:3384
-        CALL_EXTERN r11, 268435457, r12, 1
-        LOAD_STRING r14, 501  ; line:1 col:3436
-        CALL_EXTERN r13, 268435458, r14, 1
-        MOV r2, r13
-        BR 8
-        RET_VOID
-    }
-    .method "main" () -> void mut {
-        .locals {
-            r3: array<QuestStatus> "statuses" [100, 652)
-            r8: array<QuestType> "types" [148, 652)
-            r18: ? "maybe_active" [242, 652)
-            r28: QuestStatus "new_status" [384, 652)
-            r42: int "num_completed" [574, 652)
-            r51: int "snapshot_xp" [648, 652)
-        }
-        .reg r0 void
-        .reg r1 void
-        .reg r2 string
-        .reg r3 array<QuestStatus>
-        .reg r4 QuestStatus
-        .reg r5 QuestStatus
-        .reg r6 QuestStatus
-        .reg r7 QuestStatus
-        .reg r8 array<QuestType>
-        .reg r9 QuestType
-        .reg r10 QuestType
-        .reg r11 QuestType
-        .reg r12 int
-        .reg r13 int
-        .reg r14 bool
-        .reg r15 QuestType
-        .reg r16 void
-        .reg r17 int
-        .reg r18 ?
-        .reg r19 void
-        .reg r20 void
-        .reg r21 string
-        .reg r22 void
-        .reg r23 string
-        .reg r24 void
-        .reg r25 string
-        .reg r26 void
-        .reg r27 string
-        .reg r28 QuestStatus
-        .reg r29 QuestStatus
-        .reg r30 int
-        .reg r31 QuestType
-        .reg r32 int
-        .reg r33 void
-        .reg r34 void
-        .reg r35 string
-        .reg r36 void
-        .reg r37 string
-        .reg r38 void
-        .reg r39 string
-        .reg r40 void
-        .reg r41 string
-        .reg r42 int
-        .reg r43 int
-        .reg r44 int
-        .reg r45 bool
-        .reg r46 void
-        .reg r47 void
-        .reg r48 string
-        .reg r49 void
-        .reg r50 string
-        .reg r51 int
-        DEFER_PUSH r0, 18  ; line:1 col:3514
-        DEFER_POP
-        BR 30
-        LOAD_STRING r2, 533  ; line:1 col:3531
-        CALL_EXTERN r1, 268435457, r2, 1
-        DEFER_END
-        LOAD_INT r4, 0  ; line:1 col:3632
-        LOAD_INT r5, 1
-        LOAD_INT r6, 2
-        LOAD_INT r7, 3
-        ARRAY_INIT r3, 0, 4, r4
-        LOAD_INT r9, 0  ; line:1 col:3804
-        LOAD_INT r10, 1
-        LOAD_INT r11, 2
-        ARRAY_INIT r8, 0, 3, r9
-        ARRAY_LEN r12, r8  ; line:1 col:3999
-        LOAD_INT r13, 0
-        CMP_LT_I r14, r13, r12
-        BR_FALSE r14, 56
-        ARRAY_LOAD r15, r8, r13
-        CALL r16, 117440518, r15, 1  ; line:1 col:4025
-        LOAD_INT r17, 1
-        ADD_I r13, r13, r17
-        BR -56
-        CALL r18, 117440515, r3, 1  ; line:1 col:4091
-        LOAD_STRING r21, 566  ; line:1 col:4211
-        CALL_EXTERN r20, 268435457, r21, 1
-        LOAD_STRING r23, 594  ; line:1 col:4263
-        CALL_EXTERN r22, 268435458, r23, 1
-        MOV r19, r22
-        BR 274
-        LOAD_STRING r25, 631  ; line:1 col:4361
-        CALL_EXTERN r24, 268435457, r25, 1
-        LOAD_STRING r27, 656  ; line:1 col:4410
-        CALL_EXTERN r26, 268435458, r27, 1
-        LOAD_INT r29, 1  ; line:1 col:4459
-        LOAD_INT r30, 50
-        LOAD_INT r31, 0
-        CALL r28, 117440516, r29, 3
-        GET_TAG r32, r28  ; line:1 col:4631
-        SWITCH r32, 22, 56, 90, 124
-        LOAD_STRING r35, 687  ; line:1 col:4695
-        CALL_EXTERN r34, 268435457, r35, 1
-        MOV r33, r34
-        BR 110
-        LOAD_STRING r37, 709  ; line:1 col:4772
-        CALL_EXTERN r36, 268435457, r37, 1
-        MOV r33, r36
-        BR 76
-        LOAD_STRING r39, 728  ; line:1 col:4846
-        CALL_EXTERN r38, 268435457, r39, 1
-        MOV r33, r38
-        BR 42
-        LOAD_STRING r41, 753  ; line:1 col:4930
-        CALL_EXTERN r40, 268435457, r41, 1
-        MOV r33, r40
-        BR 8
-        MOV r19, r33
-        BR 8
-        CALL r42, 117440517, r3, 1  ; line:1 col:5039
-        CMP_LT_I r45, r43, r44  ; line:1 col:5159
-        BR_FALSE r45, 62
-        LOAD_STRING r48, 777  ; line:1 col:5205
-        CALL_EXTERN r47, 268435457, r48, 1
-        LOAD_STRING r50, 809  ; line:1 col:5257
-        CALL_EXTERN r49, 268435458, r50, 1
-        MOV r46, r49
-        BR 10
-        NOP
-        ATOMIC_BEGIN  ; line:1 col:5346
-        ATOMIC_END  ; line:1 col:5406
-        RET_VOID
-    }
+    .extern_fn "log::info" (string) -> void "log::info"
+    .extern_fn "say" (?) -> void "say"
 }

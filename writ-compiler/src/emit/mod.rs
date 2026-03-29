@@ -39,13 +39,25 @@ pub fn emit(
     let mut diags = Vec::new();
 
     // Pass 1: collect all definitions into provisional rows.
-    collect::collect_defs(typed_ast, asts, interner, &mut builder, &mut diags);
+    // The `emit` function is used for metadata-only (no conditions needed here).
+    let empty_conditions = std::collections::HashSet::new();
+    let reflectable_infos = collect::collect_defs(typed_ast, asts, interner, &mut builder, &mut diags, &empty_conditions);
 
     // Assign CALL_VIRT slot indices from contract declaration order.
     slots::assign_vtable_slots(&mut builder);
 
     // Pass 2: finalize — assign contiguous row indices, populate def_token_map.
     builder.finalize();
+
+    // Post-finalize: fix up Reflectable auto-impl ImplDef.method_list values.
+    // After finalize(), TypeDef.method_list points to the first MethodDef row for each type.
+    // The Reflectable get_type() MethodDef is the first method added to each TypeDef
+    // (added immediately after collect_struct/class/entity/enum, before any user impl methods),
+    // so TypeDef.method_list equals the get_type() MethodDef's row index.
+    for info in &reflectable_infos {
+        let method_list = builder.typedef_method_list_by_handle(info.typedef_handle);
+        builder.set_impl_def_method_list(info.impl_handle, method_list);
+    }
 
     // Post-finalize: collect exports and attributes that depend on resolved tokens.
     collect::collect_post_finalize(typed_ast, asts, &mut builder);
@@ -75,6 +87,7 @@ pub fn emit_bodies(
     asts: &[(FileId, &Ast)],
     emit_debug_info: bool,
     sources: &[(FileId, &str)],
+    active_conditions: &std::collections::HashSet<String>,
 ) -> Result<Vec<u8>, Vec<Diagnostic>> {
     let mut diags = Vec::new();
 
@@ -84,7 +97,7 @@ pub fn emit_bodies(
 
     // Pass 1: collect all definitions (TypeDef, MethodDef, FieldDef, ExternDef, etc.)
     // When asts is non-empty, this populates all 21 metadata tables including exports.
-    collect::collect_defs(typed_ast, asts, interner, &mut builder, &mut diags);
+    let reflectable_infos = collect::collect_defs(typed_ast, asts, interner, &mut builder, &mut diags, active_conditions);
 
     if !diags.is_empty() {
         return Err(diags);
@@ -99,14 +112,24 @@ pub fn emit_bodies(
     // Finalize: assign contiguous row indices, populate def_token_map.
     builder.finalize();
 
+    // Post-finalize: fix up Reflectable auto-impl ImplDef.method_list values.
+    // After finalize(), TypeDef.method_list points to the first MethodDef row for each type.
+    // Reflectable get_type() MethodDef is added first (before any user impl methods),
+    // so TypeDef.method_list == get_type() row index for each type.
+    for info in &reflectable_infos {
+        let method_list = builder.typedef_method_list_by_handle(info.typedef_handle);
+        builder.set_impl_def_method_list(info.impl_handle, method_list);
+    }
+
     // Post-finalize: collect exports and attributes that depend on resolved tokens.
     // This populates ExportDef rows for all pub-visible items.
     collect::collect_post_finalize(typed_ast, asts, &mut builder);
 
-    // Emit all method bodies (including lambda bodies via lambda_infos).
+    // Emit all method bodies (including lambda bodies via lambda_infos and synthetic
+    // Reflectable get_type() bodies via reflectable_infos).
     // Per-function error nodes cause that function's body to be skipped with an E9001
     // diagnostic; other functions in the same file are still emitted.
-    let (mut bodies, body_diags) = body::emit_all_bodies(typed_ast, interner, &builder, &lambda_infos, &typed_ast.struct_field_types);
+    let (mut bodies, body_diags) = body::emit_all_bodies(typed_ast, interner, &builder, &lambda_infos, &typed_ast.struct_field_types, &reflectable_infos);
     diags.extend(body_diags);
 
     // Only return Err if there are ZERO valid bodies AND there are diagnostics.

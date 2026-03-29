@@ -1,37 +1,42 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
+use rustc_hash::FxHashMap;
 
-use crate::dispatch::{execute_crash, execute_one, DispatchTable, ExecutionResult};
+use crate::dispatch::{execute_batch, execute_crash, DispatchTable, ExecutionResult};
 use crate::entity::EntityRegistry;
-use crate::frame::CallFrame;
+use crate::frame::{CallFrame, RegisterPool};
 use crate::gc::GcHeap;
 use crate::host::RuntimeHost;
 use crate::loader::LoadedModule;
+use crate::reflection::ReflectionIndex;
 use crate::task::{SuspendReason, Task, TaskState};
 use crate::value::{pack_task_id, TaskId, Value};
 
 /// Task scheduler managing task lifecycle and execution.
 pub struct Scheduler {
-    pub(crate) tasks: HashMap<TaskId, Task>,
+    pub(crate) tasks: FxHashMap<TaskId, Task>,
     pub(crate) ready_queue: VecDeque<TaskId>,
     pub(crate) next_task_index: u32,
     pub(crate) globals: Vec<Value>,
-    pub(crate) global_locks: HashMap<u32, TaskId>,
+    pub(crate) global_locks: FxHashMap<u32, TaskId>,
     /// Tasks waiting to join on another task. Maps target_task_id -> Vec<(waiting_task_id, r_dst)>.
-    pub(crate) join_waiters: HashMap<TaskId, Vec<(TaskId, u16)>>,
+    pub(crate) join_waiters: FxHashMap<TaskId, Vec<(TaskId, u16)>>,
     /// Entity registry for entity lifecycle management.
     pub(crate) entity_registry: EntityRegistry,
+    /// Free-list pool for reusing register Vecs across call frames.
+    pub(crate) pool: RegisterPool,
 }
 
 impl Scheduler {
     pub fn new() -> Self {
         Self {
-            tasks: HashMap::new(),
+            tasks: FxHashMap::default(),
             ready_queue: VecDeque::new(),
             next_task_index: 0,
             globals: Vec::new(),
-            global_locks: HashMap::new(),
-            join_waiters: HashMap::new(),
+            global_locks: FxHashMap::default(),
+            join_waiters: FxHashMap::default(),
             entity_registry: EntityRegistry::new(),
+            pool: RegisterPool::new(),
         }
     }
 
@@ -52,7 +57,7 @@ impl Scheduler {
             args.len().max(1)
         };
 
-        let mut frame = CallFrame::new(method_idx, reg_count, 0);
+        let mut frame = CallFrame::with_pool(&mut self.pool, method_idx, reg_count, 0);
         for (i, arg) in args.into_iter().enumerate() {
             if i < frame.registers.len() {
                 frame.registers[i] = arg;
@@ -77,6 +82,7 @@ impl Scheduler {
         host: &mut dyn RuntimeHost,
         limit: u64,
         next_request_id: &mut u32,
+        reflection: &mut ReflectionIndex,
     ) -> Option<(TaskId, ExecutionResult)> {
         let task_id = self.ready_queue.pop_front()?;
 
@@ -85,23 +91,10 @@ impl Scheduler {
             task.state = TaskState::Running;
         }
 
-        let mut instructions_run: u64 = 0;
-
         loop {
-            // Check execution limit (skip if in atomic section)
-            {
-                let task = self.tasks.get(&task_id).unwrap();
-                if task.atomic_depth == 0 && limit > 0 && instructions_run >= limit {
-                    let task = self.tasks.get_mut(&task_id).unwrap();
-                    task.state = TaskState::Ready;
-                    self.ready_queue.push_back(task_id);
-                    return Some((task_id, ExecutionResult::LimitReached));
-                }
-            }
-
             let result = {
                 let task = self.tasks.get_mut(&task_id).unwrap();
-                execute_one(
+                execute_batch(
                     task,
                     modules,
                     current_module_idx,
@@ -111,9 +104,11 @@ impl Scheduler {
                     &mut self.globals,
                     next_request_id,
                     &mut self.entity_registry,
+                    &mut self.pool,
+                    reflection,
+                    limit,
                 )
             };
-            instructions_run += 1;
 
             match result {
                 ExecutionResult::Continue => continue,
@@ -155,7 +150,7 @@ impl Scheduler {
                         execute_crash(
                             task, msg.clone(), modules, current_module_idx, dispatch_table, heap, host,
                             &mut self.globals, next_request_id,
-                            &mut self.entity_registry,
+                            &mut self.entity_registry, &mut self.pool, reflection,
                         );
                     }
                     // Cancel scoped children
@@ -163,7 +158,7 @@ impl Scheduler {
                         .map(|t| t.scoped_children.clone())
                         .unwrap_or_default();
                     for child_id in children {
-                        self.cancel_task_tree(child_id, modules, current_module_idx, dispatch_table, heap, host, next_request_id);
+                        self.cancel_task_tree(child_id, modules, current_module_idx, dispatch_table, heap, host, next_request_id, reflection);
                     }
                     // Release any global locks held by this task
                     let locks: Vec<u32> = self.tasks.get(&task_id)
@@ -249,7 +244,7 @@ impl Scheduler {
                     }
                 }
                 ExecutionResult::CancelTask { target } => {
-                    self.cancel_task_tree(target, modules, current_module_idx, dispatch_table, heap, host, next_request_id);
+                    self.cancel_task_tree(target, modules, current_module_idx, dispatch_table, heap, host, next_request_id, reflection);
                     continue;
                 }
             }
@@ -268,6 +263,7 @@ impl Scheduler {
         heap: &mut dyn GcHeap,
         host: &mut dyn RuntimeHost,
         next_request_id: &mut u32,
+        reflection: &mut crate::reflection::ReflectionIndex,
     ) {
         // Get children first (depth-first)
         let children = self.tasks.get(&task_id)
@@ -276,7 +272,7 @@ impl Scheduler {
 
         // Cancel children first
         for child_id in children {
-            self.cancel_task_tree(child_id, modules, current_module_idx, dispatch_table, heap, host, next_request_id);
+            self.cancel_task_tree(child_id, modules, current_module_idx, dispatch_table, heap, host, next_request_id, reflection);
         }
 
         // Cancel this task
@@ -295,7 +291,7 @@ impl Scheduler {
                 task,
                 "task cancelled".into(),
                 modules, current_module_idx, dispatch_table, heap, host, &mut self.globals, next_request_id,
-                &mut self.entity_registry,
+                &mut self.entity_registry, &mut self.pool, reflection,
             );
         }
 

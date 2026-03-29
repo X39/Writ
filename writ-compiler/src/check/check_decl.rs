@@ -9,7 +9,8 @@ use super::check_expr::{check_block_stmts, check_expr, CheckCtx};
 use super::env::Mutability;
 use super::ir::{TypedDecl, TypedExpr};
 use super::ty::TyKind;
-use writ_diagnostics::FileId;
+use writ_diagnostics::{Diagnostic, FileId};
+use writ_diagnostics::code;
 
 /// Type-check a resolved declaration, returning a TypedDecl.
 pub fn check_decl(
@@ -27,11 +28,10 @@ pub fn check_decl(
         ResolvedDecl::Impl { def_id } => check_impl_decl(ctx, *def_id, asts),
         ResolvedDecl::Component { def_id } => TypedDecl::Component { def_id: *def_id },
         ResolvedDecl::ExternFn { def_id } => TypedDecl::ExternFn { def_id: *def_id },
-        ResolvedDecl::ExternStruct { def_id } => TypedDecl::ExternStruct { def_id: *def_id },
-        ResolvedDecl::ExternClass { def_id } => TypedDecl::ExternClass { def_id: *def_id },
         ResolvedDecl::ExternComponent { def_id } => TypedDecl::ExternComponent { def_id: *def_id },
         ResolvedDecl::Const { def_id } => check_const_decl(ctx, *def_id, asts),
         ResolvedDecl::Global { def_id } => check_global_decl(ctx, *def_id, asts),
+        ResolvedDecl::AttributeDef { def_id } => check_attribute_decl(ctx, *def_id, asts),
     }
 }
 
@@ -116,32 +116,25 @@ fn check_impl_decl(ctx: &mut CheckCtx, def_id: DefId, asts: &[(FileId, &Ast)]) -
     }
     let impl_decl = impl_decl.unwrap();
 
-    // Resolve self type for methods
-    let self_type = match &impl_decl.target {
-        crate::ast::types::AstType::Named { name, .. } => {
-            if let Some(target_def_id) = ctx.def_map.get(name) {
-                let target_entry = ctx.def_map.get_entry(target_def_id);
-                match target_entry.kind {
-                    DefKind::Struct | DefKind::ExternStruct => {
-                        Some(ctx.interner.intern(TyKind::Struct(target_def_id)))
-                    }
-                    DefKind::Class | DefKind::ExternClass => {
-                        Some(ctx.interner.intern(TyKind::Class(target_def_id)))
-                    }
-                    DefKind::Entity => {
-                        Some(ctx.interner.intern(TyKind::Entity(target_def_id)))
-                    }
-                    DefKind::Enum => {
-                        Some(ctx.interner.intern(TyKind::Enum(target_def_id)))
-                    }
-                    _ => None,
-                }
-            } else {
-                None
-            }
-        }
+    // Resolve self type for methods.
+    // Handle both `impl Foo` (Named) and `impl<T> Foo<T>` (Generic).
+    let target_type_name = match &impl_decl.target {
+        crate::ast::types::AstType::Named { name, .. } => Some(name.as_str()),
+        crate::ast::types::AstType::Generic { name, .. } => Some(name.as_str()),
         _ => None,
     };
+    let self_type = target_type_name.and_then(|name| {
+        let target_def_id = ctx.def_map.get(name)?;
+        let target_entry = ctx.def_map.get_entry(target_def_id);
+        match target_entry.kind {
+            DefKind::Struct => Some(ctx.interner.intern(TyKind::Struct(target_def_id))),
+            DefKind::Class => Some(ctx.interner.intern(TyKind::Class(target_def_id))),
+            DefKind::Entity => Some(ctx.interner.intern(TyKind::Entity(target_def_id))),
+            DefKind::Enum => Some(ctx.interner.intern(TyKind::Enum(target_def_id))),
+            DefKind::Contract => Some(ctx.interner.intern(TyKind::Contract(target_def_id))),
+            _ => None,
+        }
+    });
 
     let mut methods = Vec::new();
 
@@ -164,14 +157,15 @@ fn check_impl_decl(ctx: &mut CheckCtx, def_id: DefId, asts: &[(FileId, &Ast)]) -
 
             ctx.local_env.push_scope();
 
-            // Define self if present
+            // Define self if present, using the actual mutability from the SelfParam.
             if let Some(self_ty) = self_type {
                 for param in &fn_decl.params {
-                    if let AstFnParam::SelfParam { .. } = param {
+                    if let AstFnParam::SelfParam { mutable, .. } = param {
+                        let self_mut = if *mutable { Mutability::Mutable } else { Mutability::Immutable };
                         ctx.local_env.define(
                             "self".to_string(),
                             self_ty,
-                            Mutability::Immutable,
+                            self_mut,
                             span,
                         );
                     }
@@ -259,6 +253,54 @@ fn check_global_decl(ctx: &mut CheckCtx, def_id: DefId, asts: &[(FileId, &Ast)])
             },
         }
     }
+}
+
+fn check_attribute_decl(ctx: &mut CheckCtx, def_id: DefId, asts: &[(FileId, &Ast)]) -> TypedDecl {
+    // UATTR-01: Validate attribute parameter types are string, int, or bool
+    let entry = ctx.def_map.get_entry(def_id);
+    let file_id = entry.file_id;
+    let name = entry.name.clone();
+    let name_span = entry.name_span;
+
+    // Find the AstAttributeDecl in the ASTs
+    for (fid, ast) in asts {
+        if *fid != file_id {
+            continue;
+        }
+        for decl in &ast.items {
+            if let AstDecl::Attribute(a) = decl {
+                if a.name == name && a.name_span == name_span {
+                    for param in &a.params {
+                        let valid = match &param.ty {
+                            crate::ast::types::AstType::Named { name: ty_name, .. } => {
+                                matches!(ty_name.as_str(), "string" | "int" | "bool")
+                            }
+                            _ => false,
+                        };
+                        if !valid {
+                            ctx.diags.push(
+                                Diagnostic::error(
+                                    code::E0006,
+                                    format!(
+                                        "unsupported attribute parameter type for `{}`",
+                                        param.name
+                                    ),
+                                )
+                                .with_primary(
+                                    file_id,
+                                    param.span,
+                                    "attribute parameters must be `string`, `int`, or `bool`",
+                                )
+                                .build(),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    TypedDecl::AttributeDef { def_id }
 }
 
 // AST lookup helpers

@@ -4,25 +4,33 @@
         .field "value" int
         .field "label" string
     }
-    .method "main" () -> void mut {
-        .locals {
-            r0: Node "n" [48, 70)
-            r3: int "v" [58, 70)
-            r4: string "s" [68, 70)
+    .impl Node : contract_167772179 {
+        .method "get_type" () -> Type pub {
+            .reg r0 int
+            .reg r1 int
+            TYPEOF r1, 33554433
+            RET r1
         }
-        .reg r0 Node
-        .reg r1 int
-        .reg r2 string
-        .reg r3 int
-        .reg r4 string
-        NEW r0, 33554433  ; line:1 col:77
-        LOAD_INT r1, 42
-        SET_FIELD r0, 0, r1
-        LOAD_STRING r2, 82
-        SET_FIELD r0, 1, r2
-        GET_FIELD r3, r0, 0  ; line:1 col:136
-        GET_FIELD r4, r0, 1  ; line:1 col:163
-        RET_VOID
+        .method "main" () -> void mut {
+            .locals {
+                r0: Node "n" [48, 70)
+                r3: int "v" [58, 70)
+                r4: string "s" [68, 70)
+            }
+            .reg r0 Node
+            .reg r1 int
+            .reg r2 string
+            .reg r3 int
+            .reg r4 string
+            NEW r0, 33554433  ; line:1 col:77
+            LOAD_INT r1, 42
+            SET_FIELD r0, 0, r1
+            LOAD_STRING r2, 177
+            SET_FIELD r0, 1, r2
+            GET_FIELD r3, r0, 0  ; line:1 col:136
+            GET_FIELD r4, r0, 1  ; line:1 col:163
+            RET_VOID
+        }
     }
-    // .export "Node" type 33554433
+    .export "Node" type 33554433
 }

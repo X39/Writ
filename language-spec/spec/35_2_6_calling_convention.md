@@ -1,5 +1,4 @@
-# Writ IL Specification
-## 2.6 Calling Convention
+# 2.6 Calling Convention
 
 Arguments are placed in **consecutive registers** starting from a base register in the caller's frame. The callee
 receives a fresh register file:

@@ -4,8 +4,8 @@
 //! defined in spec section 2.18, constructed in memory without reading
 //! any file from disk. It contains:
 //!
-//! - 17 contracts (Add, Sub, Mul, Div, Mod, Neg, Not, Eq, Ord, Index,
-//!   IndexSet, BitAnd, BitOr, Iterable, Iterator, Into, Error)
+//! - 18 contracts (Add, Sub, Mul, Div, Mod, Neg, Not, Eq, Ord, Index,
+//!   IndexSet, BitAnd, BitOr, Iterable, Iterator, Into, Error, Speaker)
 //! - Core types: Option<T>, Result<T,E>, Range<T>
 //! - Primitive pseudo-TypeDefs: Int, Float, Bool, String
 //! - Array<T> with methods and contract implementations
@@ -156,7 +156,19 @@ pub fn build_writ_runtime_module() -> Module {
     let _error_contract = builder.add_contract_def("Error", "writ");
     builder.add_contract_method("message", &[], 0);
 
-    // Specialization contracts 18-22 for generic dispatch (FIX-02).
+    // Contract 18: Speaker (no generic params) — optional display name override for dialogue
+    let _speaker_contract = builder.add_contract_def("Speaker", "writ");
+    builder.add_contract_method("speaker_name", &[], 0);
+
+    // Contract 19: Reflectable (no generic params) — runtime type query
+    let reflectable_contract = builder.add_contract_def("Reflectable", "writ");
+    builder.add_contract_method("get_type", &[], 0);
+
+    // Contract 20: Hashable (no generic params) — deterministic hash for primitive types (Phase 116)
+    let hashable_contract = builder.add_contract_def("Hashable", "writ");
+    builder.add_contract_method("hash", &[], 0);
+
+    // Specialization contracts 20-24 for generic dispatch (FIX-02).
     // Each represents a monomorphized specialization of a generic contract.
     // Distinct tokens allow build_dispatch_table to assign distinct type_args_hash
     // values (= impl_def.contract.0) per specialization, eliminating DispatchKey
@@ -314,6 +326,32 @@ pub fn build_writ_runtime_module() -> Module {
     builder.add_impl_def(string_type, into_string_spec); // String:Into<String>
     add_intrinsic_method(&mut builder, "string_into_string");
 
+    // --- Primitive Reflectable implementations (4) ---
+    builder.add_impl_def(int_type, reflectable_contract);
+    add_intrinsic_method(&mut builder, "int_get_type");
+
+    builder.add_impl_def(float_type, reflectable_contract);
+    add_intrinsic_method(&mut builder, "float_get_type");
+
+    builder.add_impl_def(bool_type, reflectable_contract);
+    add_intrinsic_method(&mut builder, "bool_get_type");
+
+    builder.add_impl_def(string_type, reflectable_contract);
+    add_intrinsic_method(&mut builder, "string_get_type");
+
+    // --- Primitive Hashable implementations (4) — Phase 116 ---
+    builder.add_impl_def(int_type, hashable_contract);
+    add_intrinsic_method(&mut builder, "int_hash");
+
+    builder.add_impl_def(float_type, hashable_contract);
+    add_intrinsic_method(&mut builder, "float_hash");
+
+    builder.add_impl_def(bool_type, hashable_contract);
+    add_intrinsic_method(&mut builder, "bool_hash");
+
+    builder.add_impl_def(string_type, hashable_contract);
+    add_intrinsic_method(&mut builder, "string_hash");
+
     // ────────────────────────────────────────────────────────────────
     // Section 5: Array<T> TypeDef and methods (spec section 2.18.6)
     // ────────────────────────────────────────────────────────────────
@@ -356,7 +394,296 @@ pub fn build_writ_runtime_module() -> Module {
     add_intrinsic_method(&mut builder, "entity_find_all");
 
     // ────────────────────────────────────────────────────────────────
-    // Section 7: Build and return
+    // Section 7: Builtin Attribute Declarations (UATTR-03)
+    // ────────────────────────────────────────────────────────────────
+    //
+    // Declares the parameter signature for each builtin attribute so the host
+    // can enumerate available attribute types via the query API. Each row uses
+    // owner_kind = ATTR_OWNER_KIND_DECL (3) and owner = MetadataToken::NULL.
+    //
+    // Signature blob format: u16 param count (LE) + one tag byte per param.
+    // ATTR_TAG_STRING (0x01), ATTR_TAG_INT (0x02), ATTR_TAG_BOOL (0x03).
+
+    use writ_module::attr::{ATTR_TAG_STRING};
+    use writ_module::tables::ATTR_OWNER_KIND_DECL;
+
+    // Deprecated(msg: string) — 1 string param
+    {
+        let mut sig = Vec::new();
+        sig.extend_from_slice(&1u16.to_le_bytes());
+        sig.push(ATTR_TAG_STRING);
+        builder.add_attribute_def(MetadataToken::NULL, ATTR_OWNER_KIND_DECL, "Deprecated", &sig);
+    }
+
+    // Conditional(name: string) — 1 string param
+    {
+        let mut sig = Vec::new();
+        sig.extend_from_slice(&1u16.to_le_bytes());
+        sig.push(ATTR_TAG_STRING);
+        builder.add_attribute_def(MetadataToken::NULL, ATTR_OWNER_KIND_DECL, "Conditional", &sig);
+    }
+
+    // Singleton — 0 params
+    {
+        let sig = 0u16.to_le_bytes();
+        builder.add_attribute_def(MetadataToken::NULL, ATTR_OWNER_KIND_DECL, "Singleton", &sig);
+    }
+
+    // Locale(tag: string) — 1 string param
+    {
+        let mut sig = Vec::new();
+        sig.extend_from_slice(&1u16.to_le_bytes());
+        sig.push(ATTR_TAG_STRING);
+        builder.add_attribute_def(MetadataToken::NULL, ATTR_OWNER_KIND_DECL, "Locale", &sig);
+    }
+
+    // ────────────────────────────────────────────────────────────────
+    // Section 8: Reflection contracts (Phase 103)
+    // ────────────────────────────────────────────────────────────────
+    //
+    // Each reflection method gets its own synthetic single-method contract,
+    // so the dispatch table can resolve CALL_VIRT on Type/FieldInfo/etc.
+    // methods to the correct IntrinsicId via the standard ImplDef pathway.
+    //
+    // Contract indices start at 24 (0-based).
+
+    // Type method contracts (5)
+    let type_fields_contract   = builder.add_contract_def("Type.fields",       "writ");
+    builder.add_contract_method("type_fields", &[], 0);
+
+    let type_methods_contract  = builder.add_contract_def("Type.methods",      "writ");
+    builder.add_contract_method("type_methods", &[], 0);
+
+    let type_attrs_contract    = builder.add_contract_def("Type.attributes",   "writ");
+    builder.add_contract_method("type_attributes", &[], 0);
+
+    let type_contracts_contract = builder.add_contract_def("Type.contracts",   "writ");
+    builder.add_contract_method("type_contracts", &[], 0);
+
+    let type_impl_contract     = builder.add_contract_def("Type.implements",   "writ");
+    builder.add_contract_method("type_implements", &[], 0);
+
+    // Type field accessor contracts (4)
+    let type_get_name_contract      = builder.add_contract_def("Type.get_name",       "writ");
+    builder.add_contract_method("type_get_name", &[], 0);
+
+    let type_get_ns_contract        = builder.add_contract_def("Type.get_namespace",  "writ");
+    builder.add_contract_method("type_get_namespace", &[], 0);
+
+    let type_get_kind_contract      = builder.add_contract_def("Type.get_kind",       "writ");
+    builder.add_contract_method("type_get_kind", &[], 0);
+
+    let type_get_is_generic_contract = builder.add_contract_def("Type.get_is_generic", "writ");
+    builder.add_contract_method("type_get_is_generic", &[], 0);
+
+    // FieldInfo method contracts (4)
+    let fieldinfo_get_contract          = builder.add_contract_def("FieldInfo.get",           "writ");
+    builder.add_contract_method("fieldinfo_get", &[], 0);
+
+    let fieldinfo_get_name_contract     = builder.add_contract_def("FieldInfo.get_name",      "writ");
+    builder.add_contract_method("fieldinfo_get_name", &[], 0);
+
+    let fieldinfo_get_type_contract     = builder.add_contract_def("FieldInfo.get_declared_type", "writ");
+    builder.add_contract_method("fieldinfo_get_declared_type", &[], 0);
+
+    let fieldinfo_get_mut_contract      = builder.add_contract_def("FieldInfo.get_is_mutable", "writ");
+    builder.add_contract_method("fieldinfo_get_is_mutable", &[], 0);
+
+    // MethodInfo method contracts (3)
+    let methodinfo_get_name_contract    = builder.add_contract_def("MethodInfo.get_name",       "writ");
+    builder.add_contract_method("methodinfo_get_name", &[], 0);
+
+    let methodinfo_get_ret_contract     = builder.add_contract_def("MethodInfo.get_return_type", "writ");
+    builder.add_contract_method("methodinfo_get_return_type", &[], 0);
+
+    let methodinfo_get_params_contract  = builder.add_contract_def("MethodInfo.get_parameters",  "writ");
+    builder.add_contract_method("methodinfo_get_parameters", &[], 0);
+
+    // ParameterInfo method contracts (2)
+    let paraminfo_get_name_contract     = builder.add_contract_def("ParameterInfo.get_name", "writ");
+    builder.add_contract_method("paraminfo_get_name", &[], 0);
+
+    let paraminfo_get_type_contract     = builder.add_contract_def("ParameterInfo.get_type", "writ");
+    builder.add_contract_method("paraminfo_get_type", &[], 0);
+
+    // AttributeInfo method contracts (2)
+    let attrinfo_get_name_contract      = builder.add_contract_def("AttributeInfo.get_name", "writ");
+    builder.add_contract_method("attrinfo_get_name", &[], 0);
+
+    let attrinfo_get_args_contract      = builder.add_contract_def("AttributeInfo.get_args", "writ");
+    builder.add_contract_method("attrinfo_get_args", &[], 0);
+
+    // ContractInfo method contracts (2)
+    let contractinfo_get_name_contract  = builder.add_contract_def("ContractInfo.get_name", "writ");
+    builder.add_contract_method("contractinfo_get_name", &[], 0);
+
+    let contractinfo_get_type_contract  = builder.add_contract_def("ContractInfo.get_type", "writ");
+    builder.add_contract_method("contractinfo_get_type", &[], 0);
+
+    // Phase 107: Dynamic invocation contracts (2)
+    let fieldinfo_set_contract          = builder.add_contract_def("FieldInfo.set",          "writ");
+    builder.add_contract_method("fieldinfo_set", &[], 0);
+
+    let methodinfo_invoke_contract      = builder.add_contract_def("MethodInfo.invoke",      "writ");
+    builder.add_contract_method("methodinfo_invoke", &[], 0);
+
+    // Phase 108: Generic reflection + per-member attributes (3)
+    let type_type_args_contract         = builder.add_contract_def("Type.type_args",         "writ");
+    builder.add_contract_method("type_type_args", &[], 0);
+
+    let methodinfo_attrs_contract       = builder.add_contract_def("MethodInfo.attributes",  "writ");
+    builder.add_contract_method("methodinfo_attributes", &[], 0);
+
+    let fieldinfo_attrs_contract        = builder.add_contract_def("FieldInfo.attributes",   "writ");
+    builder.add_contract_method("fieldinfo_attributes", &[], 0);
+
+    // ────────────────────────────────────────────────────────────────
+    // Section 9: Reflection TypeDefs (spec section 2.18.9)
+    // ────────────────────────────────────────────────────────────────
+    //
+    // 6 class-kind TypeDefs for the reflection API. Added in dependency
+    // order so cross-reference fields can encode the correct TypeDef index.
+    //
+    // TypeDef indices (0-based): Type=9, ParameterInfo=10, AttributeInfo=11,
+    // ContractInfo=12, FieldInfo=13, MethodInfo=14
+
+    // Type (index 9) — 5 fields: name(string), namespace(string), kind(string), is_generic(bool), type_args(Array<Type>)
+    // Array<Type> blob: [0x20, 0x10, 0x09, 0x00, 0x00, 0x00] — Array tag (0x20), TypeRef tag (0x10), Type idx 9
+    let type_type = builder.add_type_def("Type", "writ", TypeDefKind::Class, 0);
+    builder.add_field_def("name",       &[0x04], 0);                                  // string
+    builder.add_field_def("namespace",  &[0x04], 0);                                  // string
+    builder.add_field_def("kind",       &[0x04], 0);                                  // string
+    builder.add_field_def("is_generic", &[0x03], 0);                                  // bool
+    builder.add_field_def("type_args",  &[0x20, 0x10, 0x09, 0x00, 0x00, 0x00], 0);  // Array<Type>
+
+    // ParameterInfo (index 10) — 2 fields: name(string), parameter_type(Type)
+    // Type is at 0-based index 9 => TypeDef ref encoding: [0x10, 0x09, 0x00, 0x00, 0x00]
+    let param_info_type = builder.add_type_def("ParameterInfo", "writ", TypeDefKind::Class, 0);
+    builder.add_field_def("name",           &[0x04], 0);                          // string
+    builder.add_field_def("parameter_type", &[0x10, 0x09, 0x00, 0x00, 0x00], 0); // Type (index 9)
+
+    // AttributeInfo (index 11) — 2 fields: name(string), args(Array<void>)
+    // Using Array<void> ([0x20, 0x00]) as placeholder for Array<Box> per research.
+    let attr_info_type = builder.add_type_def("AttributeInfo", "writ", TypeDefKind::Class, 0);
+    builder.add_field_def("name", &[0x04], 0);          // string
+    builder.add_field_def("args", &[0x20, 0x00], 0);    // Array<void> (placeholder for Box[])
+
+    // ContractInfo (index 12) — 2 fields: name(string), type(Type)
+    let contract_info_type = builder.add_type_def("ContractInfo", "writ", TypeDefKind::Class, 0);
+    builder.add_field_def("name", &[0x04], 0);                           // string
+    builder.add_field_def("type", &[0x10, 0x09, 0x00, 0x00, 0x00], 0);  // Type (index 9)
+
+    // FieldInfo (index 13) — 3 fields: name(string), declared_type(Type), is_mutable(bool)
+    let field_info_type = builder.add_type_def("FieldInfo", "writ", TypeDefKind::Class, 0);
+    builder.add_field_def("name",          &[0x04], 0);                          // string
+    builder.add_field_def("declared_type", &[0x10, 0x09, 0x00, 0x00, 0x00], 0); // Type (index 9)
+    builder.add_field_def("is_mutable",    &[0x03], 0);                          // bool
+
+    // MethodInfo (index 14) — 3 fields: name(string), return_type(Type), parameters(Array<ParameterInfo>)
+    // ParameterInfo is at 0-based index 10 => Array<ParameterInfo> = [0x20, 0x10, 0x0A, 0x00, 0x00, 0x00]
+    let method_info_type = builder.add_type_def("MethodInfo", "writ", TypeDefKind::Class, 0);
+    builder.add_field_def("name",        &[0x04], 0);                                  // string
+    builder.add_field_def("return_type", &[0x10, 0x09, 0x00, 0x00, 0x00], 0);          // Type (index 9)
+    builder.add_field_def("parameters",  &[0x20, 0x10, 0x0A, 0x00, 0x00, 0x00], 0);   // Array<ParameterInfo> (index 10)
+
+    // ────────────────────────────────────────────────────────────────
+    // Section 10: Reflection ImplDef entries (Phase 103)
+    // ────────────────────────────────────────────────────────────────
+    //
+    // Link each reflection TypeDef to its synthetic method contracts.
+    // Each ImplDef is followed immediately by its intrinsic method.
+
+    // --- Type implementations (9) ---
+    builder.add_impl_def(type_type, type_fields_contract);
+    add_intrinsic_method(&mut builder, "type_fields");
+
+    builder.add_impl_def(type_type, type_methods_contract);
+    add_intrinsic_method(&mut builder, "type_methods");
+
+    builder.add_impl_def(type_type, type_attrs_contract);
+    add_intrinsic_method(&mut builder, "type_attributes");
+
+    builder.add_impl_def(type_type, type_contracts_contract);
+    add_intrinsic_method(&mut builder, "type_contracts");
+
+    builder.add_impl_def(type_type, type_impl_contract);
+    add_intrinsic_method(&mut builder, "type_implements");
+
+    builder.add_impl_def(type_type, type_get_name_contract);
+    add_intrinsic_method(&mut builder, "type_get_name");
+
+    builder.add_impl_def(type_type, type_get_ns_contract);
+    add_intrinsic_method(&mut builder, "type_get_namespace");
+
+    builder.add_impl_def(type_type, type_get_kind_contract);
+    add_intrinsic_method(&mut builder, "type_get_kind");
+
+    builder.add_impl_def(type_type, type_get_is_generic_contract);
+    add_intrinsic_method(&mut builder, "type_get_is_generic");
+
+    // --- ParameterInfo implementations (2) ---
+    builder.add_impl_def(param_info_type, paraminfo_get_name_contract);
+    add_intrinsic_method(&mut builder, "paraminfo_get_name");
+
+    builder.add_impl_def(param_info_type, paraminfo_get_type_contract);
+    add_intrinsic_method(&mut builder, "paraminfo_get_type");
+
+    // --- AttributeInfo implementations (2) ---
+    builder.add_impl_def(attr_info_type, attrinfo_get_name_contract);
+    add_intrinsic_method(&mut builder, "attrinfo_get_name");
+
+    builder.add_impl_def(attr_info_type, attrinfo_get_args_contract);
+    add_intrinsic_method(&mut builder, "attrinfo_get_args");
+
+    // --- ContractInfo implementations (2) ---
+    builder.add_impl_def(contract_info_type, contractinfo_get_name_contract);
+    add_intrinsic_method(&mut builder, "contractinfo_get_name");
+
+    builder.add_impl_def(contract_info_type, contractinfo_get_type_contract);
+    add_intrinsic_method(&mut builder, "contractinfo_get_type");
+
+    // --- FieldInfo implementations (4) ---
+    builder.add_impl_def(field_info_type, fieldinfo_get_contract);
+    add_intrinsic_method(&mut builder, "fieldinfo_get");
+
+    builder.add_impl_def(field_info_type, fieldinfo_get_name_contract);
+    add_intrinsic_method(&mut builder, "fieldinfo_get_name");
+
+    builder.add_impl_def(field_info_type, fieldinfo_get_type_contract);
+    add_intrinsic_method(&mut builder, "fieldinfo_get_declared_type");
+
+    builder.add_impl_def(field_info_type, fieldinfo_get_mut_contract);
+    add_intrinsic_method(&mut builder, "fieldinfo_get_is_mutable");
+
+    // --- MethodInfo implementations (3) ---
+    builder.add_impl_def(method_info_type, methodinfo_get_name_contract);
+    add_intrinsic_method(&mut builder, "methodinfo_get_name");
+
+    builder.add_impl_def(method_info_type, methodinfo_get_ret_contract);
+    add_intrinsic_method(&mut builder, "methodinfo_get_return_type");
+
+    builder.add_impl_def(method_info_type, methodinfo_get_params_contract);
+    add_intrinsic_method(&mut builder, "methodinfo_get_parameters");
+
+    // --- Phase 107: Dynamic invocation implementations (2) ---
+    builder.add_impl_def(field_info_type, fieldinfo_set_contract);
+    add_intrinsic_method(&mut builder, "fieldinfo_set");
+
+    builder.add_impl_def(method_info_type, methodinfo_invoke_contract);
+    add_intrinsic_method(&mut builder, "methodinfo_invoke");
+
+    // --- Phase 108: Generic reflection + per-member attributes (3) ---
+    builder.add_impl_def(type_type, type_type_args_contract);
+    add_intrinsic_method(&mut builder, "type_type_args");
+
+    builder.add_impl_def(method_info_type, methodinfo_attrs_contract);
+    add_intrinsic_method(&mut builder, "methodinfo_attributes");
+
+    builder.add_impl_def(field_info_type, fieldinfo_attrs_contract);
+    add_intrinsic_method(&mut builder, "fieldinfo_attributes");
+
+    // ────────────────────────────────────────────────────────────────
+    // Section 11: Build and return
     // ────────────────────────────────────────────────────────────────
 
     builder.build()
@@ -381,11 +708,15 @@ mod tests {
     }
 
     #[test]
-    fn has_exactly_22_contract_defs() {
+    fn has_exactly_51_contract_defs() {
         let module = build_writ_runtime_module();
-        // 17 base contracts + 5 specialization contracts (Into<Float>, Into<Int>,
-        // Into<String>, Index<Int>, Index<Range>) = 22
-        assert_eq!(module.contract_defs.len(), 22);
+        // 18 base contracts + Reflectable + 5 specialization contracts (Into<Float>, Into<Int>,
+        // Into<String>, Index<Int>, Index<Range>) = 24
+        // + 22 Phase 103 reflection method contracts = 46
+        // + 2 Phase 107 dynamic invocation contracts (FieldInfo.set, MethodInfo.invoke) = 48
+        // + 3 Phase 108 generic reflection contracts (Type.type_args, MethodInfo.attributes, FieldInfo.attributes) = 51
+        // + 1 Phase 116 Hashable contract = 52
+        assert_eq!(module.contract_defs.len(), 52);
     }
 
     #[test]
@@ -411,6 +742,8 @@ mod tests {
         assert!(names.contains(&"Iterator"));
         assert!(names.contains(&"Into"));
         assert!(names.contains(&"Error"));
+        assert!(names.contains(&"Speaker"));
+        assert!(names.contains(&"Reflectable"));
     }
 
     #[test]
@@ -425,8 +758,11 @@ mod tests {
     #[test]
     fn each_contract_has_one_method() {
         let module = build_writ_runtime_module();
-        // 22 contracts (17 base + 5 specializations), each with exactly one method.
-        assert_eq!(module.contract_methods.len(), 22);
+        // 51 contracts (18 base + Reflectable + 5 specializations + 22 reflection method contracts
+        // + 2 Phase 107 dynamic invocation contracts + 3 Phase 108 generic reflection contracts),
+        // each with exactly one method.
+        // + 1 Phase 116 Hashable contract = 52 total.
+        assert_eq!(module.contract_methods.len(), 52);
 
         // Verify slot assignments are all 0
         for cm in &module.contract_methods {
@@ -444,7 +780,7 @@ mod tests {
             "op_add", "op_sub", "op_mul", "op_div", "op_mod",
             "op_neg", "op_not", "op_eq", "op_lt",
             "op_index", "op_index_set", "op_bitand", "op_bitor",
-            "iterator", "next", "into", "message",
+            "iterator", "next", "into", "message", "speaker_name",
         ];
         for name in &expected {
             assert!(method_names.contains(name), "missing contract method: {}", name);
@@ -452,12 +788,12 @@ mod tests {
     }
 
     #[test]
-    fn type_defs_include_all_nine_types() {
+    fn type_defs_include_all_fifteen_types() {
         let module = build_writ_runtime_module();
         let type_names: Vec<&str> = module.type_defs.iter()
             .map(|t| str_from_heap(&module, t.name))
             .collect();
-        assert_eq!(module.type_defs.len(), 9);
+        assert_eq!(module.type_defs.len(), 15);
         assert!(type_names.contains(&"Option"));
         assert!(type_names.contains(&"Result"));
         assert!(type_names.contains(&"Range"));
@@ -467,6 +803,12 @@ mod tests {
         assert!(type_names.contains(&"String"));
         assert!(type_names.contains(&"Array"));
         assert!(type_names.contains(&"Entity"));
+        assert!(type_names.contains(&"Type"));
+        assert!(type_names.contains(&"ParameterInfo"));
+        assert!(type_names.contains(&"AttributeInfo"));
+        assert!(type_names.contains(&"ContractInfo"));
+        assert!(type_names.contains(&"FieldInfo"));
+        assert!(type_names.contains(&"MethodInfo"));
     }
 
     #[test]
@@ -557,12 +899,12 @@ mod tests {
     }
 
     #[test]
-    fn impl_defs_count_is_at_least_36() {
+    fn impl_defs_count_is_at_least_40() {
         let module = build_writ_runtime_module();
-        // 13 int + 10 float + 3 bool + 6 string + 4 array = 36
+        // 13 int + 10 float + 3 bool + 6 string + 4 array + 4 Reflectable = 40
         assert!(
-            module.impl_defs.len() >= 36,
-            "expected at least 36 ImplDef rows, got {}",
+            module.impl_defs.len() >= 40,
+            "expected at least 40 ImplDef rows, got {}",
             module.impl_defs.len()
         );
     }
@@ -681,6 +1023,7 @@ mod tests {
         assert_eq!(add_params.len(), 2, "Add should have 2 generic params");
 
         // Error contract (index 16, token row 17) should have 0 generic params
+        // (Speaker at index 17 also has 0 generic params)
         let error_token = MetadataToken::new(10, 17);
         let error_params: Vec<_> = module.generic_params.iter()
             .filter(|p| p.owner == error_token)
@@ -694,5 +1037,158 @@ mod tests {
             .collect();
         assert_eq!(neg_params.len(), 1, "Neg should have 1 generic param");
         assert_eq!(str_from_heap(&module, neg_params[0].name), "R");
+    }
+
+    // -- Reflection type tests (TYPE-01 through TYPE-08) --
+
+    /// Helper: get fields owned by a TypeDef at 0-based index.
+    fn get_type_fields<'a>(module: &'a Module, type_idx: usize) -> Vec<&'a str> {
+        let td = &module.type_defs[type_idx];
+        let field_start = td.field_list as usize - 1;
+        let field_end = if type_idx + 1 < module.type_defs.len() {
+            module.type_defs[type_idx + 1].field_list as usize - 1
+        } else {
+            module.field_defs.len()
+        };
+        module.field_defs[field_start..field_end].iter()
+            .map(|f| str_from_heap(module, f.name))
+            .collect()
+    }
+
+    #[test]
+    fn type_typedef_is_class_with_five_fields() {
+        // TYPE-01: Type class has 5 fields (Phase 108 added type_args)
+        let module = build_writ_runtime_module();
+        let idx = module.type_defs.iter()
+            .position(|t| str_from_heap(&module, t.name) == "Type")
+            .expect("Type typedef exists");
+        assert_eq!(module.type_defs[idx].kind, 4, "Type should be Class (kind=4)");
+        let fields = get_type_fields(&module, idx);
+        assert_eq!(fields.len(), 5, "Type should have 5 fields, got {:?}", fields);
+        assert!(fields.contains(&"name"));
+        assert!(fields.contains(&"namespace"));
+        assert!(fields.contains(&"kind"));
+        assert!(fields.contains(&"is_generic"));
+        assert!(fields.contains(&"type_args"));
+    }
+
+    #[test]
+    fn fieldinfo_typedef_is_class_with_three_fields() {
+        // TYPE-02: FieldInfo class has 3 fields
+        let module = build_writ_runtime_module();
+        let idx = module.type_defs.iter()
+            .position(|t| str_from_heap(&module, t.name) == "FieldInfo")
+            .expect("FieldInfo typedef exists");
+        assert_eq!(module.type_defs[idx].kind, 4, "FieldInfo should be Class (kind=4)");
+        let fields = get_type_fields(&module, idx);
+        assert_eq!(fields.len(), 3, "FieldInfo should have 3 fields, got {:?}", fields);
+        assert!(fields.contains(&"name"));
+        assert!(fields.contains(&"declared_type"));
+        assert!(fields.contains(&"is_mutable"));
+    }
+
+    #[test]
+    fn methodinfo_typedef_is_class_with_three_fields() {
+        // TYPE-03: MethodInfo class has 3 fields
+        let module = build_writ_runtime_module();
+        let idx = module.type_defs.iter()
+            .position(|t| str_from_heap(&module, t.name) == "MethodInfo")
+            .expect("MethodInfo typedef exists");
+        assert_eq!(module.type_defs[idx].kind, 4, "MethodInfo should be Class (kind=4)");
+        let fields = get_type_fields(&module, idx);
+        assert_eq!(fields.len(), 3, "MethodInfo should have 3 fields, got {:?}", fields);
+        assert!(fields.contains(&"name"));
+        assert!(fields.contains(&"return_type"));
+        assert!(fields.contains(&"parameters"));
+    }
+
+    #[test]
+    fn parameterinfo_typedef_is_class_with_two_fields() {
+        // TYPE-04: ParameterInfo class has 2 fields
+        let module = build_writ_runtime_module();
+        let idx = module.type_defs.iter()
+            .position(|t| str_from_heap(&module, t.name) == "ParameterInfo")
+            .expect("ParameterInfo typedef exists");
+        assert_eq!(module.type_defs[idx].kind, 4, "ParameterInfo should be Class (kind=4)");
+        let fields = get_type_fields(&module, idx);
+        assert_eq!(fields.len(), 2, "ParameterInfo should have 2 fields, got {:?}", fields);
+        assert!(fields.contains(&"name"));
+        assert!(fields.contains(&"parameter_type"));
+    }
+
+    #[test]
+    fn attributeinfo_typedef_is_class_with_two_fields() {
+        // TYPE-05: AttributeInfo class has 2 fields
+        let module = build_writ_runtime_module();
+        let idx = module.type_defs.iter()
+            .position(|t| str_from_heap(&module, t.name) == "AttributeInfo")
+            .expect("AttributeInfo typedef exists");
+        assert_eq!(module.type_defs[idx].kind, 4, "AttributeInfo should be Class (kind=4)");
+        let fields = get_type_fields(&module, idx);
+        assert_eq!(fields.len(), 2, "AttributeInfo should have 2 fields, got {:?}", fields);
+        assert!(fields.contains(&"name"));
+        assert!(fields.contains(&"args"));
+    }
+
+    #[test]
+    fn contractinfo_typedef_is_class_with_two_fields() {
+        // TYPE-06: ContractInfo class has 2 fields
+        let module = build_writ_runtime_module();
+        let idx = module.type_defs.iter()
+            .position(|t| str_from_heap(&module, t.name) == "ContractInfo")
+            .expect("ContractInfo typedef exists");
+        assert_eq!(module.type_defs[idx].kind, 4, "ContractInfo should be Class (kind=4)");
+        let fields = get_type_fields(&module, idx);
+        assert_eq!(fields.len(), 2, "ContractInfo should have 2 fields, got {:?}", fields);
+        assert!(fields.contains(&"name"));
+        assert!(fields.contains(&"type"));
+    }
+
+    #[test]
+    fn reflectable_contract_at_index_18_with_get_type() {
+        // TYPE-07: Reflectable at 0-based index 18, with get_type at slot 0
+        let module = build_writ_runtime_module();
+        assert!(module.contract_defs.len() > 18, "need at least 19 contract_defs");
+        let name = str_from_heap(&module, module.contract_defs[18].name);
+        assert_eq!(name, "Reflectable", "contract at index 18 should be Reflectable");
+
+        // Find the contract method for Reflectable (1-based method_list -> 0-based index)
+        let method_start = module.contract_defs[18].method_list as usize - 1;
+        let method_end = if 19 < module.contract_defs.len() {
+            module.contract_defs[19].method_list as usize - 1
+        } else {
+            module.contract_methods.len()
+        };
+        assert_eq!(method_end - method_start, 1, "Reflectable should have exactly 1 method");
+        let method = &module.contract_methods[method_start];
+        assert_eq!(str_from_heap(&module, method.name), "get_type");
+        assert_eq!(method.slot, 0, "get_type should be at slot 0");
+    }
+
+    #[test]
+    fn primitive_reflectable_impl_defs_exist() {
+        // TYPE-08: Int, Float, Bool, String each have a Reflectable ImplDef
+        let module = build_writ_runtime_module();
+
+        // Reflectable is at 0-based contract index 18 => 1-based token row 19
+        let reflectable_token = MetadataToken::new(10, 19);
+
+        let primitive_names = ["Int", "Float", "Bool", "String"];
+        let mut found = 0usize;
+
+        for prim_name in &primitive_names {
+            let type_idx = module.type_defs.iter()
+                .position(|t| str_from_heap(&module, t.name) == *prim_name)
+                .unwrap_or_else(|| panic!("{} type not found", prim_name));
+            // 1-based TypeDef token
+            let type_token = MetadataToken::new(2, type_idx as u32 + 1);
+
+            let has_impl = module.impl_defs.iter().any(|imp| {
+                imp.type_token == type_token && imp.contract == reflectable_token
+            });
+            assert!(has_impl, "{} should have a Reflectable ImplDef", prim_name);
+            found += 1;
+        }
+        assert_eq!(found, 4, "expected 4 primitive Reflectable ImplDefs");
     }
 }

@@ -27,8 +27,8 @@
         LOAD_INT r7, 1
         ARRAY_STORE r0, r7, r6
         ARRAY_LEN r8, r0  ; line:1 col:103
-        LOAD_INT r9, 99  ; line:1 col:135
-        ARRAY_ADD r0, r9
+        LOAD_INT r9, 5  ; line:1 col:135
+        ARRAY_RESIZE r0, r9
         RET_VOID
     }
 }

@@ -1,11 +1,10 @@
-# Writ IL Specification
-## 2.9 Memory Model
+# 2.9 Memory Model
 
 **Decision:** The IL and language assume a **garbage-collected runtime**. The spec does not mandate a specific GC
 algorithm (generational, tracing, etc.) — runtime implementors choose — but language semantics are designed for GC and
 do not expose manual memory management.
 
-### 2.9.1 Value Types vs Reference Types
+## 2.9.1 Value Types vs Reference Types
 
 | Type                   | Kind                       | Storage                                  | Assignment                                                          | GC Traced                           |
 |------------------------|----------------------------|------------------------------------------|---------------------------------------------------------------------|-------------------------------------|
@@ -26,7 +25,7 @@ stored inline (for value types) or as references (for reference-typed fields). `
 heap allocation. `Option<string>` is a tag + a string reference. Assignment copies the tag + all payload
 bits/references.
 
-### 2.9.2 Assignment and Mutability
+## 2.9.2 Assignment and Mutability
 
 `let` / `let mut` controls **binding mutability**, not object mutability:
 
@@ -43,7 +42,7 @@ b.gold += 50;      // a.gold is ALSO now 150
 
 This is standard GC-language behavior (Java classes, C# classes, Lua tables).
 
-### 2.9.3 Closure Captures
+## 2.9.3 Closure Captures
 
 **Immutable captures (`let`):** The value is copied into the capture struct. For value types, this is a bit copy. For
 reference types, this copies the reference (closure and outer scope share the same object, but neither can reassign the
@@ -80,14 +79,14 @@ class __closure_env_0 {
 
 No special runtime types are needed — this is purely a compiler transformation using a compiler-generated class type.
 
-### 2.9.4 String Handling
+## 2.9.4 String Handling
 
 - **Literals:** Stored in the module's string heap. Shared, interned. Zero GC pressure at runtime.
 - **Runtime strings** (concatenation, format strings, `Into<string>` results): Heap-allocated, GC-managed, not interned.
 - **Comparison:** Always by value (character content), regardless of interning. `CMP_EQ_S` compares content.
 - **Immutable:** All strings are immutable. Operations like concatenation produce new strings.
 
-### 2.9.5 Entity Lifecycle
+## 2.9.5 Entity Lifecycle
 
 Entities have **dual reachability** — they exist in the entity runtime's registry AND as GC-managed objects:
 
@@ -113,7 +112,7 @@ against the entity's `ComponentSlot` list from the TypeDef metadata — a type-t
 reference or `None`. Singleton entities (marked `[Singleton]`) should be maintained in a per-type registry indexed by
 TypeDef token; `GET_OR_CREATE` checks this registry first and falls through to full entity construction if absent.
 
-### 2.9.6 GC Roots
+## 2.9.6 GC Roots
 
 The GC traces from these roots:
 
@@ -123,7 +122,7 @@ The GC traces from these roots:
 3. **The entity registry** — all live (non-destroyed) entities.
 4. **The task handle tree** — handles to spawned tasks.
 
-### 2.9.7 Garbage Collection
+## 2.9.7 Garbage Collection
 
 The spec assumes garbage collection but does not prescribe a specific algorithm. The typed register model (§2.15.1)
 provides complete type information for every register at every program point, enabling **precise root scanning** — the
@@ -139,7 +138,7 @@ by the finalizing object are in a valid state or have not yet been finalized. De
 scheduling pass — not during the GC pause itself. This allows finalizer code to execute normally, including suspension
 at transition points.
 
-### 2.9.8 IL Implications
+## 2.9.8 IL Implications
 
 - `MOV` copies register contents. For reference types (classes, strings, arrays, entities, delegates), this copies the pointer -- no deep copy. For value types (int, float, bool, enums, structs), this copies the full value. For value-type structs, this is a multi-word copy of all fields.
 - No `FREE` / `DEALLOC` instructions exist. The GC handles all reclamation.

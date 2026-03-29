@@ -1,5 +1,6 @@
 use crate::value::{EntityId, HeapRef, Value};
 
+#[inline(always)]
 pub(super) fn extract_int(val: &Value) -> i64 {
     match val {
         Value::Int(n) => *n,
@@ -7,6 +8,7 @@ pub(super) fn extract_int(val: &Value) -> i64 {
     }
 }
 
+#[inline(always)]
 pub(super) fn extract_float(val: &Value) -> f64 {
     match val {
         Value::Float(f) => *f,
@@ -14,6 +16,7 @@ pub(super) fn extract_float(val: &Value) -> f64 {
     }
 }
 
+#[inline(always)]
 pub(super) fn extract_bool(val: &Value) -> bool {
     match val {
         Value::Bool(b) => *b,
@@ -21,6 +24,7 @@ pub(super) fn extract_bool(val: &Value) -> bool {
     }
 }
 
+#[inline(always)]
 pub(super) fn extract_ref(val: &Value) -> HeapRef {
     match val {
         Value::Ref(href) => *href,
@@ -28,6 +32,7 @@ pub(super) fn extract_ref(val: &Value) -> HeapRef {
     }
 }
 
+#[inline(always)]
 pub(super) fn extract_entity(val: &Value) -> EntityId {
     match val {
         Value::Entity(eid) => *eid,

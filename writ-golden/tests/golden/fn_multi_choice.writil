@@ -1,0 +1,50 @@
+.module "main" "0.1.0" {
+    .extern "writ-runtime" "1.0.0"
+    .type "Narrator" entity {
+    }
+    .type "__closure_0" class {
+    }
+    .impl Narrator : contract_167772179 {
+        .method "get_type" () -> Type pub {
+            .reg r0 int
+            .reg r1 int
+            TYPEOF r1, 33554433
+            RET r1
+        }
+        .method "__invoke_0" () -> void {
+            .reg r0 void
+            .reg r1 string
+            LOAD_STRING r1, 256  ; line:1 col:340
+            CALL_EXTERN r0, 268435457, r1, 1
+            RET_VOID
+        }
+        .method "helper" () -> int mut {
+            .reg r0 int
+            LOAD_INT r0, 42  ; line:1 col:259
+            RET r0
+        }
+        .method "main" () -> int pub mut {
+            .reg r0 int
+            .reg r1 array<int>
+            .reg r2 int
+            .reg r3 string
+            .reg r4 string
+            .reg r5 ?
+            .reg r6 void
+            .reg r7 int
+            LOAD_STRING r3, 241  ; line:1 col:292
+            LOAD_STRING r4, 251
+            LOAD_NULL r6
+            NEW_DELEGATE r5, 117440514, r6
+            CALL_EXTERN r2, 268435459, r3, 3
+            ARRAY_INIT r1, 0, 1, r2
+            CALL_EXTERN r0, 268435458, r1, 1
+            CALL r7, 117440515, r8, 0  ; line:1 col:375
+            RET r7
+        }
+    }
+    .extern_fn "log::info" (string) -> void "log::info"
+    .extern_fn "choice" (array<int>) -> int "choice"
+    .extern_fn "ChoiceOption" (string, string, ?) -> void "ChoiceOption"
+    .export "main" method 117440516
+}

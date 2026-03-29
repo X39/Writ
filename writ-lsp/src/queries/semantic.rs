@@ -108,7 +108,7 @@ pub fn collect_semantic_tokens(
                 }
                 collect_tokens_in_expr(value, interner, source, &mut tokens);
             }
-            // ExternFn, ExternStruct, ExternClass have no body
+            // ExternFn has no body
             _ => {}
         }
     }
@@ -416,6 +416,7 @@ mod tests {
         let (resolved, resolve_diags) = writ_compiler::resolve::resolve(
             &[(file_id, &ast)],
             &[(file_id, "test.writ")],
+            &[],
         );
         let resolve_errors: Vec<_> = resolve_diags
             .iter()
@@ -424,7 +425,7 @@ mod tests {
         assert!(resolve_errors.is_empty(), "resolve errors: {:?}", resolve_errors);
 
         let (typed_ast, interner, type_env, type_diags) =
-            writ_compiler::check::typecheck(resolved, &[(file_id, &ast)]);
+            writ_compiler::check::typecheck(resolved, &[(file_id, &ast)], &[]);
         let type_errors: Vec<_> = type_diags
             .iter()
             .filter(|d| d.severity == Severity::Error)
@@ -587,10 +588,11 @@ fn main() { let n: Npc = new Npc { hp: 10 }; n }
         let (resolved, _resolve_diags) = writ_compiler::resolve::resolve(
             &[(file_id, &ast)],
             &[(file_id, "test.writ")],
+            &[],
         );
         // Accept type errors (Entity.getOrCreate is a runtime builtin, unavailable in tests)
         let (typed_ast, interner, _type_env, _type_diags) =
-            writ_compiler::check::typecheck(resolved, &[(file_id, &ast)]);
+            writ_compiler::check::typecheck(resolved, &[(file_id, &ast)], &[]);
 
         let tokens = collect_semantic_tokens(&typed_ast, &interner, src, file_id);
 

@@ -101,6 +101,9 @@ pub struct ModuleBuilder {
     impl_def_def_ids: Vec<Option<DefId>>,
     generic_params: Vec<GenericParamEntry>,
     generic_constraints: Vec<GenericConstraintRow>,
+    /// DefIds of the constraint contracts, parallel to `generic_constraints`.
+    /// Resolved to MetadataTokens during finalize.
+    generic_constraint_contract_ids: Vec<DefId>,
     pub global_defs: Vec<GlobalDefRow>,
     global_def_def_ids: Vec<Option<DefId>>,
     pub extern_defs: Vec<ExternDefRow>,
@@ -117,6 +120,12 @@ pub struct ModuleBuilder {
     // Populated during collect_fn / collect_impl before body emission.
     // Used by emit_all_bodies to pre-allocate r0..r(n-1) for parameters.
     pub fn_param_map: FxHashMap<DefId, Vec<(String, crate::check::ty::Ty)>>,
+
+    // MethodDefHandle -> ordered (name, Ty) param list for impl methods.
+    // Impl methods share a DefId (the impl block's DefId), so fn_param_map
+    // cannot distinguish between them. This secondary map is indexed by
+    // MethodDefHandle for unambiguous per-method param lookup.
+    pub impl_method_param_map: FxHashMap<usize, Vec<(String, crate::check::ty::Ty)>>,
 
     // FIX-02: impl method DefId -> contract token mapping.
     // Populated by register_impl_method_contract() when contract impls are collected.
@@ -163,6 +172,7 @@ impl ModuleBuilder {
             impl_def_def_ids: Vec::new(),
             generic_params: Vec::new(),
             generic_constraints: Vec::new(),
+            generic_constraint_contract_ids: Vec::new(),
             global_defs: Vec::new(),
             global_def_def_ids: Vec::new(),
             extern_defs: Vec::new(),
@@ -173,6 +183,7 @@ impl ModuleBuilder {
             attribute_defs: Vec::new(),
             def_token_map: FxHashMap::default(),
             fn_param_map: FxHashMap::default(),
+            impl_method_param_map: FxHashMap::default(),
             method_to_contract: FxHashMap::default(),
             finalized: false,
             final_type_def_count: 0,
@@ -211,6 +222,19 @@ impl ModuleBuilder {
             min_version: ver_offset,
         });
         self.module_refs.len() - 1
+    }
+
+    /// Add a TypeRef row (cross-module type reference). Returns the 0-based row index.
+    pub fn add_type_ref(&mut self, module_ref_idx: usize, name: &str, namespace: &str) -> usize {
+        let scope = MetadataToken::new(TableId::ModuleRef, (module_ref_idx + 1) as u32);
+        let name_offset = self.string_heap.intern(name);
+        let ns_offset = self.string_heap.intern(namespace);
+        self.type_refs.push(TypeRefRow {
+            scope,
+            name: name_offset,
+            namespace: ns_offset,
+        });
+        self.type_refs.len() - 1
     }
 
     /// Add a TypeDef row. Returns a handle for child relationships.
@@ -337,16 +361,11 @@ impl ModuleBuilder {
         constraint_def_id: DefId,
     ) -> usize {
         self.generic_constraints.push(GenericConstraintRow {
-            param_row: param_index as u32, // will be remapped during finalize
-            constraint: MetadataToken::NULL, // will be resolved during finalize
+            param_row: param_index as u32, // provisional 0-based; remapped to 1-based in finalize
+            constraint: MetadataToken::NULL, // resolved in finalize via def_token_map
         });
-        // Store the DefId for later resolution
-        // We need a side table for this
-        let idx = self.generic_constraints.len() - 1;
-        // The constraint DefId will be resolved to a token during finalize
-        // For now, we store the raw param_index
-        let _ = constraint_def_id; // TODO: resolve during finalize
-        idx
+        self.generic_constraint_contract_ids.push(constraint_def_id);
+        self.generic_constraints.len() - 1
     }
 
     /// Add a ContractDef row.
@@ -403,6 +422,22 @@ impl ModuleBuilder {
         });
         self.impl_def_def_ids.push(def_id);
         ImplDefHandle(self.impl_defs.len() - 1)
+    }
+
+    /// Update an ImplDef row's method_list field after finalize.
+    ///
+    /// Used by the Reflectable auto-impl post-finalize fixup to set the correct
+    /// 1-based MethodDef row index for each synthetic get_type() method.
+    pub fn set_impl_def_method_list(&mut self, handle: ImplDefHandle, method_list: u32) {
+        self.impl_defs[handle.0].method_list = method_list;
+    }
+
+    /// Get the method_list value for a TypeDef (after finalize).
+    ///
+    /// Used to find the 1-based row index of the first MethodDef parented to a TypeDef.
+    /// Returns 0 if no methods are parented to this TypeDef.
+    pub fn typedef_method_list_by_handle(&self, handle: TypeDefHandle) -> u32 {
+        self.type_defs[handle.0].method_list
     }
 
     /// Add a GlobalDef row.
@@ -649,7 +684,19 @@ impl ModuleBuilder {
             }
         }
 
-        // 9. GenericConstraint: assign row indices.
+        // 9. GenericConstraint: resolve param_row to 1-based and constraint to MetadataToken.
+        for (i, row) in self.generic_constraints.iter_mut().enumerate() {
+            // Remap provisional 0-based GenericParam index to 1-based row index (spec section 2.16.5).
+            row.param_row = row.param_row + 1;
+            // Resolve contract DefId to MetadataToken via def_token_map.
+            if i < self.generic_constraint_contract_ids.len() {
+                let contract_def_id = self.generic_constraint_contract_ids[i];
+                row.constraint = self.def_token_map
+                    .get(&contract_def_id)
+                    .copied()
+                    .unwrap_or(MetadataToken::NULL);
+            }
+        }
         self.final_generic_constraint_count = self.generic_constraints.len() as u32;
 
         // 10. GlobalDef: map DefIds.
@@ -684,6 +731,29 @@ impl ModuleBuilder {
     /// Parameters are in declaration order, excluding self.
     pub fn get_fn_params(&self, def_id: DefId) -> Option<&Vec<(String, crate::check::ty::Ty)>> {
         self.fn_param_map.get(&def_id)
+    }
+
+    /// Get function parameters for an impl method by MethodDefHandle index.
+    /// Used when DefId-based lookup is ambiguous (all impl methods share impl_def_id).
+    pub fn get_fn_params_by_handle(&self, handle_idx: usize) -> Option<&Vec<(String, crate::check::ty::Ty)>> {
+        self.impl_method_param_map.get(&handle_idx)
+    }
+
+    /// Find the MethodDefHandle index for the Nth method of an impl block.
+    ///
+    /// Impl methods share a DefId, so we identify them by: finding all MethodDefs
+    /// whose def_id matches impl_def_id, then returning the Nth one's handle index.
+    pub fn find_impl_method_handle(&self, impl_def_id: DefId, method_idx: usize) -> Option<usize> {
+        let mut count = 0;
+        for (i, md) in self.method_defs.iter().enumerate() {
+            if md.def_id == Some(impl_def_id) {
+                if count == method_idx {
+                    return Some(i);
+                }
+                count += 1;
+            }
+        }
+        None
     }
 
     /// Get the number of TypeDef rows.
@@ -1055,30 +1125,55 @@ impl ModuleBuilder {
         self.method_to_contract.get(&def_id).copied()
     }
 
+    /// Look up the CALL_VIRT slot for a contract method by contract DefId and method name.
+    ///
+    /// Searches the ContractMethod entries for the ContractDef registered with `contract_def_id`,
+    /// returning the 0-based slot index of the entry whose name matches `method_name`.
+    /// Slots are assigned by `assign_vtable_slots` in declaration order (0, 1, 2, ...).
+    ///
+    /// Returns None if the contract is not registered or the method is not found.
+    pub fn contract_method_slot_by_name(&self, contract_def_id: DefId, method_name: &str) -> Option<u16> {
+        // Find the ContractDef index for this DefId
+        let contract_idx = self.contract_def_def_ids
+            .iter()
+            .position(|id| id.as_ref() == Some(&contract_def_id))?;
+        // Iterate the contract's methods in range order; slot = 0-based position
+        let range = self.contract_method_range(contract_idx);
+        for (slot, cm_idx) in range.enumerate() {
+            let name_in_heap = self.string_heap.get_str(self.contract_methods[cm_idx].row.name);
+            if name_in_heap == method_name {
+                return Some(slot as u16);
+            }
+        }
+        None
+    }
+
     /// Returns the type_idx token for the Range<T> type from the writ-runtime module.
     ///
     /// Range<T> is defined in the writ-runtime virtual module as the 3rd TypeDef
     /// (0-indexed: 2), after Option<T> and Result<T, E>. In user modules, Range is
     /// referenced via a cross-module TypeRef entry.
     ///
+    /// Look up a TypeRef token by name. Returns the encoded MetadataToken value, or 0
+    /// if no TypeRef with that name has been registered.
+    ///
+    /// Used by typeof() emission to resolve type_idx for primitives and runtime types.
+    pub fn type_ref_token_by_name(&self, name: &str) -> u32 {
+        for (i, tr) in self.type_refs.iter().enumerate() {
+            let heap_name = self.string_heap.get_str(tr.name);
+            if heap_name == name {
+                return MetadataToken::new(TableId::TypeRef, (i + 1) as u32).0;
+            }
+        }
+        0
+    }
+
     /// If a TypeRef for "Range" from the writ-runtime module has been registered in
     /// this builder, its encoded token is returned. Otherwise falls back to 0, which
     /// is acceptable for Phase 28 since the instruction SEQUENCE (New + SetField) is
     /// what matters for correctness; the exact type_idx is wired in a later pass.
-    ///
-    /// TODO: Wire to actual TypeRef for Range<T> in writ-runtime when cross-module
-    /// TypeRef registration is completed in Phase 29.
     pub fn range_type_token(&self) -> u32 {
-        // Search TypeRef entries for one named "Range" from the writ-runtime module.
-        for (i, tr) in self.type_refs.iter().enumerate() {
-            let name = self.string_heap.get_str(tr.name);
-            if name == "Range" {
-                // Return encoded TypeRef token (table 2 = TypeRef, 1-based row)
-                return MetadataToken::new(TableId::TypeRef, (i + 1) as u32).0;
-            }
-        }
-        // Fallback: 0 (placeholder, same pattern used by ArrayInit elem_type)
-        0
+        self.type_ref_token_by_name("Range")
     }
 }
 

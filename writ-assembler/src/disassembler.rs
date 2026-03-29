@@ -146,15 +146,19 @@ fn disassemble_inner(module: &Module, verbose: bool) -> String {
 
         writeln!(out, "    .impl {} : {} {{", type_name, contract_name).unwrap();
 
-        // Methods owned by this impl
+        // Methods owned by this impl.
+        // method_list is 1-based; 0 means "unset" (user impl blocks compiled with method_list=0).
+        // When method_list=0, saturating_sub(1)=0; for method_list=1, result=0 (first method).
         let method_start = id.method_list.saturating_sub(1) as usize;
-        let method_end = module.impl_defs.get(ii + 1)
+        let method_end_raw = module.impl_defs.get(ii + 1)
             .map(|next| next.method_list.saturating_sub(1) as usize)
             .unwrap_or_else(|| {
                 // Find the end: next impl or end of impl-owned methods
-                
                 find_last_impl_method_end(module, &impl_owned_methods)
             });
+        // Clamp to avoid invalid range when next impl's method_list < this impl's method_list
+        // (happens when user impl blocks have method_list=0 after a Reflectable impl with non-zero).
+        let method_end = method_end_raw.max(method_start);
 
         for (mi, md) in module.method_defs[method_start..method_end].iter().enumerate() {
             let real_idx = method_start + mi;
@@ -192,13 +196,11 @@ fn disassemble_inner(module: &Module, verbose: bool) -> String {
         }
     }
 
-    // ── 6. Extern functions (emitted as comments since parser doesn't support .extern fn) ──
-    // These are module-level extern function declarations (different from module refs).
-    // The parser only supports ".extern" as a module ref. Emitting extern defs as comments
-    // preserves the information but allows round-trip to succeed.
+    // ── 6. Extern functions ──
+    // Module-level extern function declarations (different from module refs).
     for ed in &module.extern_defs {
         let (params, ret) = decode_method_sig(&module.blob_heap, ed.signature, module, &[]);
-        writeln!(out, "    // .extern_fn {:?} ({}) -> {} {:?}",
+        writeln!(out, "    .extern_fn {:?} ({}) -> {} {:?}",
             s(ed.name),
             params.join(", "),
             ret,
@@ -231,7 +233,7 @@ fn disassemble_inner(module: &Module, verbose: bool) -> String {
         writeln!(out, "    }}").unwrap();
     }
 
-    // ── 8. Export defs (emitted as comments since parser doesn't support .export) ──
+    // ── 8. Export defs ──
     for ed in &module.export_defs {
         let item_kind_str = match ed.item_kind {
             0 => "method",
@@ -239,22 +241,22 @@ fn disassemble_inner(module: &Module, verbose: bool) -> String {
             2 => "global",
             _ => "unknown",
         };
-        writeln!(out, "    // .export {:?} {} {}", s(ed.name), item_kind_str, ed.item.0).unwrap();
+        writeln!(out, "    .export {:?} {} {}", s(ed.name), item_kind_str, ed.item.0).unwrap();
     }
 
-    // ── 9. Component slots (emitted as comments) ──
+    // ── 9. Component slots ──
     for cs in &module.component_slots {
-        writeln!(out, "    // .component_slot {} {}", cs.owner_entity.0, cs.component_type.0).unwrap();
+        writeln!(out, "    .component_slot {} {}", cs.owner_entity.0, cs.component_type.0).unwrap();
     }
 
-    // ── 10. Locale defs (emitted as comments) ──
+    // ── 10. Locale defs ──
     for ld in &module.locale_defs {
-        writeln!(out, "    // .locale {} {:?} {}", ld.dlg_method.0, s(ld.locale), ld.loc_method.0).unwrap();
+        writeln!(out, "    .locale {} {:?} {}", ld.dlg_method.0, s(ld.locale), ld.loc_method.0).unwrap();
     }
 
-    // ── 11. Attribute defs (emitted as comments) ──
+    // ── 11. Attribute defs ──
     for ad in &module.attribute_defs {
-        writeln!(out, "    // .attribute {} {:?}", ad.owner.0, s(ad.name)).unwrap();
+        writeln!(out, "    .attribute {} {} {:?}", ad.owner.0, ad.owner_kind, s(ad.name)).unwrap();
     }
 
     writeln!(out, "}}").unwrap();
@@ -286,7 +288,7 @@ fn compute_method_ownership(module: &Module) -> (HashSet<usize>, HashSet<usize>)
     // Impl-owned methods
     for (ii, id) in module.impl_defs.iter().enumerate() {
         let start = id.method_list.saturating_sub(1) as usize;
-        let end = module.impl_defs.get(ii + 1)
+        let end_raw = module.impl_defs.get(ii + 1)
             .map(|next| next.method_list.saturating_sub(1) as usize)
             .unwrap_or_else(|| {
                 // Last impl owns methods up to the first top-level method
@@ -294,6 +296,8 @@ fn compute_method_ownership(module: &Module) -> (HashSet<usize>, HashSet<usize>)
                 // is determined by what's left after all impls
                 module.method_defs.len()
             });
+        // Clamp to avoid invalid ranges when method_list=0 follows a non-zero method_list.
+        let end = end_raw.max(start);
         for mi in start..end {
             impl_owned.insert(mi);
         }
@@ -725,12 +729,22 @@ fn instr_to_text(instr: &Instruction) -> (String, Vec<String>) {
         Instruction::ArrayLoad { r_dst, r_arr, r_idx } => ("ARRAY_LOAD".into(), vec![r(*r_dst), r(*r_arr), r(*r_idx)]),
         Instruction::ArrayStore { r_arr, r_idx, r_val } => ("ARRAY_STORE".into(), vec![r(*r_arr), r(*r_idx), r(*r_val)]),
         Instruction::ArrayLen { r_dst, r_arr } => ("ARRAY_LEN".into(), vec![r(*r_dst), r(*r_arr)]),
-        Instruction::ArrayAdd { r_arr, r_val } => ("ARRAY_ADD".into(), vec![r(*r_arr), r(*r_val)]),
-        Instruction::ArrayRemove { r_arr, r_idx } => ("ARRAY_REMOVE".into(), vec![r(*r_arr), r(*r_idx)]),
-        Instruction::ArrayInsert { r_arr, r_idx, r_val } => ("ARRAY_INSERT".into(), vec![r(*r_arr), r(*r_idx), r(*r_val)]),
+        Instruction::ArrayResize { r_arr, r_new_len } => ("ARRAY_RESIZE".into(), vec![r(*r_arr), r(*r_new_len)]),
+        Instruction::ArrayCopy { r_dst_arr, r_dst_idx, r_src_arr, r_src_idx, r_len } => (
+            "ARRAY_COPY".into(),
+            vec![r(*r_dst_arr), r(*r_dst_idx), r(*r_src_arr), r(*r_src_idx), r(*r_len)],
+        ),
         Instruction::ArraySlice { r_dst, r_arr, r_start, r_end } => (
             "ARRAY_SLICE".into(),
             vec![r(*r_dst), r(*r_arr), r(*r_start), r(*r_end)],
+        ),
+        Instruction::NewArraySized { r_dst, elem_type, r_len } => (
+            "NEW_ARRAY_SIZED".into(),
+            vec![r(*r_dst), tok(*elem_type), r(*r_len)],
+        ),
+        Instruction::NewArrayFilled { r_dst, elem_type, r_len, r_fill } => (
+            "NEW_ARRAY_FILLED".into(),
+            vec![r(*r_dst), tok(*elem_type), r(*r_len), r(*r_fill)],
         ),
 
         // ── 0x0A Type Operations — Option ──
@@ -757,6 +771,9 @@ fn instr_to_text(instr: &Instruction) -> (String, Vec<String>) {
             "EXTRACT_FIELD".into(),
             vec![r(*r_dst), r(*r_enum), format!("{}", field_idx)],
         ),
+
+        // ── 0x0A Type Operations — Reflection ──
+        Instruction::TypeOf { r_dst, type_idx } => ("TYPEOF".into(), vec![r(*r_dst), tok(*type_idx)]),
 
         // ── 0x0B Concurrency ──
         Instruction::SpawnTask { r_dst, method_idx, r_base, argc } => (
@@ -800,6 +817,14 @@ fn instr_to_text(instr: &Instruction) -> (String, Vec<String>) {
             vec![r(*r_dst), format!("{}", count), r(*r_base)],
         ),
         Instruction::StrLen { r_dst, r_str } => ("STR_LEN".into(), vec![r(*r_dst), r(*r_str)]),
+        Instruction::StrTrim { r_dst, r_src } => ("STR_TRIM".into(), vec![r(*r_dst), r(*r_src)]),
+        Instruction::StrToUpper { r_dst, r_src } => ("STR_TO_UPPER".into(), vec![r(*r_dst), r(*r_src)]),
+        Instruction::StrToLower { r_dst, r_src } => ("STR_TO_LOWER".into(), vec![r(*r_dst), r(*r_src)]),
+        Instruction::StrStartsWith { r_dst, r_str, r_prefix } => ("STR_STARTS_WITH".into(), vec![r(*r_dst), r(*r_str), r(*r_prefix)]),
+        Instruction::StrEndsWith { r_dst, r_str, r_suffix } => ("STR_ENDS_WITH".into(), vec![r(*r_dst), r(*r_str), r(*r_suffix)]),
+        Instruction::StrContains { r_dst, r_str, r_sub } => ("STR_CONTAINS".into(), vec![r(*r_dst), r(*r_str), r(*r_sub)]),
+        Instruction::StrSplit { r_dst, r_str, r_sep } => ("STR_SPLIT".into(), vec![r(*r_dst), r(*r_str), r(*r_sep)]),
+        Instruction::StrReplace { r_dst, r_str, r_from, r_to } => ("STR_REPLACE".into(), vec![r(*r_dst), r(*r_str), r(*r_from), r(*r_to)]),
 
         // ── 0x0F Boxing ──
         Instruction::Box { r_dst, r_val } => ("BOX".into(), vec![r(*r_dst), r(*r_val)]),

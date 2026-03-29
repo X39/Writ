@@ -1,5 +1,4 @@
-# Writ IL Specification
-## 3.3 Float Arithmetic
+# 3.3 Float Arithmetic
 
 All operands are `float` (64-bit IEEE 754). IEEE 754 semantics apply throughout (inf, NaN propagation, no crash on /0).
 

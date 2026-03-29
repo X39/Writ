@@ -87,11 +87,11 @@ pub struct Module {
 }
 
 impl Module {
-    /// Create a new empty module with initialized heaps and format_version = 4.
+    /// Create a new empty module with initialized heaps and format_version = 5.
     pub fn new() -> Self {
         Module {
             header: ModuleHeader {
-                format_version: 4,
+                format_version: 5,
                 flags: 0,
                 module_name: 0,
                 module_version: 0,

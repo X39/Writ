@@ -1,5 +1,4 @@
-# Writ IL Specification
-## 2.1 Register-Based Virtual Machine
+# 2.1 Register-Based Virtual Machine
 
 **Decision:** Register-based (not stack-based).
 

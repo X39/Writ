@@ -1,0 +1,52 @@
+pub class Set<T: Eq> {
+    items: T[]
+}
+
+impl<T: Eq> Set<T> {
+    pub fn add(mut self, item: T) {
+        if self.has(item) { return; }
+        let old_len: int = self.items.len();
+        self.items.resize(old_len + 1);
+        self.items[old_len] = item;
+    }
+
+    pub fn remove(mut self, item: T) {
+        let mut i: int = 0;
+        while i < self.items.len() {
+            if self.items[i] == item {
+                let old_len: int = self.items.len();
+                let mut j: int = i;
+                while j < old_len - 1 {
+                    self.items[j] = self.items[j + 1];
+                    j = j + 1;
+                }
+                self.items.resize(old_len - 1);
+                return;
+            }
+            i = i + 1;
+        }
+    }
+
+    pub fn has(self, item: T) -> bool {
+        let mut i: int = 0;
+        while i < self.items.len() {
+            if self.items[i] == item { return true; }
+            i = i + 1;
+        }
+        false
+    }
+
+    pub fn len(self) -> int {
+        self.items.len()
+    }
+}
+
+fn main() {
+    let s: Set<int> = new Set<int> { items: [] };
+    s.add(1);
+    s.add(2);
+    s.add(1);
+    let _has: bool = s.has(1);
+    let _len: int = s.len();
+    s.remove(1);
+}

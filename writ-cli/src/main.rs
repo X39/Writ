@@ -58,6 +58,14 @@ enum Commands {
         /// Override the output module name (default: project.name from writ.toml)
         #[arg(long)]
         name: Option<String>,
+
+        /// Activate a named compilation condition (may be repeated); merged with writ.toml [conditions]
+        #[arg(long, action = clap::ArgAction::Append)]
+        condition: Vec<String>,
+
+        /// Treat warnings as errors (fail compilation if any warning is emitted)
+        #[arg(long)]
+        deny_warnings: bool,
     },
 
     /// Compile a .writ source file to a binary .writc module
@@ -68,6 +76,14 @@ enum Commands {
         /// Output .writc binary module (default: replaces .writ with .writc)
         #[arg(short, long)]
         output: Option<String>,
+
+        /// Activate a named compilation condition (may be repeated)
+        #[arg(long, action = clap::ArgAction::Append)]
+        condition: Vec<String>,
+
+        /// Treat warnings as errors (fail compilation if any warning is emitted)
+        #[arg(long)]
+        deny_warnings: bool,
     },
 
     /// Assemble a .writil text file to a binary .writc module
@@ -121,8 +137,8 @@ fn main() {
 
     let result = match cli.command {
         Commands::New { name } => commands::cmd_new(name),
-        Commands::Build { path, release, debug: _, name } => commands::cmd_build(path, release, name),
-        Commands::Compile { input, output } => commands::cmd_compile(input, output),
+        Commands::Build { path, release, debug: _, name, condition, deny_warnings } => commands::cmd_build(path, release, name, condition, deny_warnings),
+        Commands::Compile { input, output, condition, deny_warnings } => commands::cmd_compile(input, output, condition, deny_warnings),
         Commands::Assemble { input, output } => commands::cmd_assemble(input, output),
         Commands::Disasm { input, verbose } => commands::cmd_disasm(input, verbose),
         Commands::Run { input, entry, interactive, verbose } => {

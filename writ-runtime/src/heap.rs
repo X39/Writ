@@ -6,7 +6,13 @@ use crate::value::{HeapRef, Value};
 #[derive(Debug, Clone)]
 pub enum HeapObject {
     String(String),
-    Struct { fields: Vec<Value> },
+    /// Heap-allocated struct or class instance.
+    ///
+    /// `type_key` encodes the owning module and typedef index as
+    /// `(module_idx << 16) | typedef_row_0based`. It is `u32::MAX`
+    /// for allocations that do not need virtual-dispatch lookup
+    /// (e.g., entity data buffers).
+    Struct { type_key: u32, fields: Vec<Value> },
     Array { elem_type: u32, elements: Vec<Value> },
     Delegate { method_idx: usize, target: Option<Value> },
     Enum { type_idx: u32, tag: u16, fields: Vec<Value> },
@@ -36,9 +42,14 @@ impl BumpHeap {
     }
 
     /// Allocate a struct with `field_count` fields initialized to Void.
-    pub fn alloc_struct(&mut self, field_count: usize) -> HeapRef {
+    ///
+    /// `type_key` should be `(module_idx << 16) | typedef_row_0based` for
+    /// class instances that need virtual dispatch. Use `u32::MAX` for
+    /// entity data buffers and other allocations that do not need dispatch.
+    pub fn alloc_struct(&mut self, type_key: u32, field_count: usize) -> HeapRef {
         let idx = self.objects.len() as u32;
         self.objects.push(HeapObject::Struct {
+            type_key,
             fields: vec![Value::Void; field_count],
         });
         HeapRef(idx)
@@ -97,7 +108,7 @@ impl BumpHeap {
     /// Get a field value from a struct or enum heap object.
     pub fn get_field(&self, href: HeapRef, idx: usize) -> Result<Value, RuntimeError> {
         match self.objects.get(href.0 as usize) {
-            Some(HeapObject::Struct { fields }) => {
+            Some(HeapObject::Struct { fields, .. }) => {
                 fields.get(idx).cloned().ok_or_else(|| {
                     RuntimeError::ExecutionError(format!(
                         "field index {} out of range for struct with {} fields",
@@ -129,7 +140,7 @@ impl BumpHeap {
     /// Set a field value on a struct heap object.
     pub fn set_field(&mut self, href: HeapRef, idx: usize, val: Value) -> Result<(), RuntimeError> {
         match self.objects.get_mut(href.0 as usize) {
-            Some(HeapObject::Struct { fields }) => {
+            Some(HeapObject::Struct { fields, .. }) => {
                 if idx < fields.len() {
                     fields[idx] = val;
                     Ok(())
@@ -178,8 +189,8 @@ impl GcHeap for BumpHeap {
         BumpHeap::alloc_string(self, s)
     }
 
-    fn alloc_struct(&mut self, field_count: usize) -> HeapRef {
-        BumpHeap::alloc_struct(self, field_count)
+    fn alloc_struct(&mut self, type_key: u32, field_count: usize) -> HeapRef {
+        BumpHeap::alloc_struct(self, type_key, field_count)
     }
 
     fn alloc_array(&mut self, elem_type: u32) -> HeapRef {
@@ -255,7 +266,7 @@ mod tests {
     #[test]
     fn alloc_struct_and_fields() {
         let mut heap = BumpHeap::new();
-        let href = heap.alloc_struct(3);
+        let href = heap.alloc_struct(u32::MAX, 3);
 
         // Initially all Void
         assert_eq!(heap.get_field(href, 0).unwrap(), Value::Void);
@@ -270,7 +281,7 @@ mod tests {
     #[test]
     fn struct_field_out_of_range() {
         let mut heap = BumpHeap::new();
-        let href = heap.alloc_struct(2);
+        let href = heap.alloc_struct(u32::MAX, 2);
         assert!(heap.get_field(href, 5).is_err());
         assert!(heap.set_field(href, 5, Value::Void).is_err());
     }
@@ -278,7 +289,7 @@ mod tests {
     #[test]
     fn read_string_on_non_string_fails() {
         let mut heap = BumpHeap::new();
-        let href = heap.alloc_struct(1);
+        let href = heap.alloc_struct(u32::MAX, 1);
         assert!(heap.read_string(href).is_err());
     }
 

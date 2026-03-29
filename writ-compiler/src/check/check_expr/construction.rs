@@ -9,6 +9,7 @@ use super::check_expr;
 use super::super::error::TypeError;
 use super::super::ir::TypedExpr;
 use super::super::ty::TyKind;
+use writ_diagnostics::{Diagnostic, code};
 
 pub(super) fn check_new_construction(
     ctx: &mut CheckCtx,
@@ -57,6 +58,24 @@ pub(super) fn check_new_construction(
             };
         }
     };
+
+    // Emit W0006 if the constructed type is deprecated and defined in a different file.
+    if let Some(msg) = ctx.type_env.deprecated_items.get(&def_id) {
+        let entry = ctx.def_map.get_entry(def_id);
+        if entry.file_id != ctx.current_file {
+            let type_name = entry.name.clone();
+            let warning_msg = if msg.is_empty() {
+                format!("`{}` is deprecated", type_name)
+            } else {
+                format!("`{}` is deprecated: {}", type_name, msg)
+            };
+            ctx.diags.push(
+                Diagnostic::warning(code::W0006, warning_msg)
+                    .with_primary(ctx.current_file, span, "deprecated type constructed here")
+                    .build(),
+            );
+        }
+    }
 
     // Check each provided field
     let mut typed_fields = Vec::new();

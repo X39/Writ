@@ -1,5 +1,4 @@
-# Writ IL Specification
-## 2.13 Save/Load Serialization
+# 2.13 Save/Load Serialization
 
 **Status:** Resolved.
 
@@ -7,7 +6,7 @@ The runtime must be able to serialize and deserialize the entire VM state for ga
 to serialize or deserialize — this is not a runtime concern. The spec defines **what** must be serializable and *
 *recommends** strategies for version compatibility, but the save format and migration policies are runtime concerns.
 
-### 2.13.1 Spec Requirements
+## 2.13.1 Spec Requirements
 
 The runtime **must** support serializing and restoring the full VM state. The following state constitutes a complete
 save:
@@ -27,7 +26,7 @@ The runtime must not attempt to serialize while any extern call is in-flight. Th
 guarantees that the VM is at a well-defined transition point before the host can request a save, but the runtime must
 additionally ensure all pending host confirmations have resolved before serializing.
 
-### 2.13.2 Module Versioning
+## 2.13.2 Module Versioning
 
 Each compiled IL module carries a **version identifier** (format is runtime-defined — content hash, semantic version, or
 both). On deserialization, the runtime compares the saved module version against the currently loaded module.
@@ -51,7 +50,7 @@ The old code naturally drains out as functions return.
 - Game authors building moddable games should provide extern mechanisms like timers or event hooks that allow looping
   behavior to pass through function call boundaries, enabling IL transitions.
 
-### 2.13.3 Extern Calls During Serialization
+## 2.13.3 Extern Calls During Serialization
 
 Serialization must not occur while extern calls are outstanding. Since the suspend-and-confirm model suspends the VM on
 extern calls until the host confirms, a well-behaved host will not request a save while it has unconfirmed operations

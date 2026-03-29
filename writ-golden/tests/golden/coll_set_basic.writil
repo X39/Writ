@@ -1,0 +1,231 @@
+.module "main" "0.1.0" {
+    .extern "writ-runtime" "1.0.0"
+    .type "Set" class pub {
+        .field "items" array<?>
+    }
+    .impl Set : contract_167772179 {
+    }
+    .impl Set : ? {
+        .method "get_type" () -> Type pub {
+            .reg r0 int
+            .reg r1 int
+            TYPEOF r1, 33554433
+            RET r1
+        }
+        .method "add" (item: ?) -> void pub static {
+            .locals {
+                r0: ? "self" [0, 110)
+                r1: ? "item" [0, 110)
+                r5: int "old_len" [54, 110)
+            }
+            .reg r0 int
+            .reg r1 int
+            .reg r2 bool
+            .reg r3 void
+            .reg r4 array<?>
+            .reg r5 int
+            .reg r6 array<?>
+            .reg r7 int
+            .reg r8 int
+            .reg r9 void
+            .reg r10 array<?>
+            CALL r2, 117440516, r0, 2  ; line:1 col:107
+            BR_FALSE r2, 24
+            RET_VOID  ; line:1 col:127
+            MOV r3, r0
+            BR 10
+            NOP
+            GET_FIELD r4, r0, 0  ; line:1 col:145
+            ARRAY_LEN r5, r4
+            GET_FIELD r6, r0, 0  ; line:1 col:190
+            LOAD_INT r7, 1
+            ADD_I r8, r5, r7
+            ARRAY_RESIZE r6, r8
+            GET_FIELD r10, r0, 0  ; line:1 col:230
+            ARRAY_STORE r10, r5, r1
+            RET_VOID
+        }
+        .method "remove" (item: ?) -> void pub static {
+            .locals {
+                r0: ? "self" [0, 310)
+                r1: ? "item" [0, 310)
+                r2: int "i" [12, 310)
+                r11: int "old_len" [94, 310)
+            }
+            .reg r0 int
+            .reg r1 int
+            .reg r2 int
+            .reg r3 array<?>
+            .reg r4 int
+            .reg r5 bool
+            .reg r6 array<?>
+            .reg r7 ?
+            .reg r8 bool
+            .reg r9 void
+            .reg r10 array<?>
+            .reg r11 int
+            .reg r12 int
+            .reg r13 int
+            .reg r14 bool
+            .reg r15 array<?>
+            .reg r16 int
+            .reg r17 int
+            .reg r18 ?
+            .reg r19 array<?>
+            .reg r20 int
+            .reg r21 int
+            .reg r22 array<?>
+            .reg r23 int
+            .reg r24 int
+            .reg r25 void
+            .reg r26 int
+            .reg r27 int
+            LOAD_INT r2, 0  ; line:1 col:312
+            GET_FIELD r3, r0, 0  ; line:1 col:340
+            ARRAY_LEN r4, r3
+            CMP_LT_I r5, r2, r4
+            BR_FALSE r5, 272
+            GET_FIELD r6, r0, 0  ; line:1 col:381
+            ARRAY_LOAD r7, r6, r2
+            CMP_EQ_I r8, r7, r1
+            BR_FALSE r8, 202
+            GET_FIELD r10, r0, 0  ; line:1 col:424
+            ARRAY_LEN r11, r10
+            LOAD_INT r12, 1  ; line:1 col:513
+            SUB_I r13, r11, r12
+            CMP_LT_I r14, r2, r13
+            BR_FALSE r14, 98
+            GET_FIELD r15, r0, 0  ; line:1 col:557
+            LOAD_INT r16, 1
+            ADD_I r17, r2, r16
+            ARRAY_LOAD r18, r15, r17
+            GET_FIELD r19, r0, 0
+            ARRAY_STORE r19, r2, r18
+            LOAD_INT r20, 1  ; line:1 col:612
+            ADD_I r21, r2, r20
+            MOV r2, r21
+            BR -118
+            GET_FIELD r22, r0, 0  ; line:1 col:657
+            LOAD_INT r23, 1
+            SUB_I r24, r11, r23
+            ARRAY_RESIZE r22, r24
+            RET_VOID  ; line:1 col:705
+            MOV r9, r0
+            BR 10
+            NOP
+            LOAD_INT r26, 1  ; line:1 col:739
+            ADD_I r27, r2, r26
+            MOV r2, r27
+            BR -288
+            RET_VOID
+        }
+        .method "has" (item: ?) -> void pub {
+            .locals {
+                r0: ? "self" [0, 144)
+                r1: ? "item" [0, 144)
+                r2: int "i" [12, 144)
+            }
+            .reg r0 int
+            .reg r1 int
+            .reg r2 int
+            .reg r3 array<?>
+            .reg r4 int
+            .reg r5 bool
+            .reg r6 array<?>
+            .reg r7 ?
+            .reg r8 bool
+            .reg r9 void
+            .reg r10 bool
+            .reg r11 int
+            .reg r12 int
+            .reg r13 bool
+            LOAD_INT r2, 0  ; line:1 col:815
+            GET_FIELD r3, r0, 0  ; line:1 col:843
+            ARRAY_LEN r4, r3
+            CMP_LT_I r5, r2, r4
+            BR_FALSE r5, 100
+            GET_FIELD r6, r0, 0  ; line:1 col:884
+            ARRAY_LOAD r7, r6, r2
+            CMP_EQ_I r8, r7, r1
+            BR_FALSE r8, 30
+            LOAD_TRUE r10  ; line:1 col:911
+            RET r10
+            MOV r9, r0
+            BR 10
+            NOP
+            LOAD_INT r11, 1  ; line:1 col:938
+            ADD_I r12, r2, r11
+            MOV r2, r12
+            BR -116
+            LOAD_FALSE r13  ; line:1 col:967
+            RET r13
+        }
+        .method "len" () -> int pub {
+            .locals {
+                r0: ? "self" [0, 20)
+            }
+            .reg r0 int
+            .reg r1 array<?>
+            .reg r2 int
+            GET_FIELD r1, r0, 0  ; line:1 col:1018
+            ARRAY_LEN r2, r1
+            RET r2
+        }
+        .method "main" () -> void mut {
+            .locals {
+                r0: Set "s" [26, 220)
+                r14: bool "_has" [170, 220)
+                r18: int "_len" [182, 220)
+            }
+            .reg r0 Set
+            .reg r1 array<void>
+            .reg r2 void
+            .reg r3 int
+            .reg r4 Set
+            .reg r5 int
+            .reg r6 void
+            .reg r7 int
+            .reg r8 Set
+            .reg r9 int
+            .reg r10 void
+            .reg r11 int
+            .reg r12 Set
+            .reg r13 int
+            .reg r14 bool
+            .reg r15 int
+            .reg r16 Set
+            .reg r17 int
+            .reg r18 int
+            .reg r19 void
+            .reg r20 int
+            .reg r21 Set
+            .reg r22 int
+            NEW r0, 33554433  ; line:1 col:1060
+            NEW_ARRAY r1, 0
+            SET_FIELD r0, 0, r1
+            LOAD_INT r3, 1  ; line:1 col:1110
+            MOV r4, r0
+            MOV r5, r3
+            CALL r2, 117440514, r4, 2
+            LOAD_INT r7, 2  ; line:1 col:1124
+            MOV r8, r0
+            MOV r9, r7
+            CALL r6, 117440514, r8, 2
+            LOAD_INT r11, 1  ; line:1 col:1138
+            MOV r12, r0
+            MOV r13, r11
+            CALL r10, 117440514, r12, 2
+            LOAD_INT r15, 1  ; line:1 col:1152
+            MOV r16, r0
+            MOV r17, r15
+            CALL r14, 117440516, r16, 2
+            CALL r18, 117440517, r0, 1  ; line:1 col:1183
+            LOAD_INT r20, 1  ; line:1 col:1212
+            MOV r21, r0
+            MOV r22, r20
+            CALL r19, 117440515, r21, 2
+            RET_VOID
+        }
+    }
+    .export "Set" type 33554433
+}

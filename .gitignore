@@ -511,3 +511,9 @@ target/
 # Custom #
 ##########
 .claude
+
+# PGO profiling artifacts
+pgo-data/
+
+# GitHub Pages worktree
+gh-pages/

@@ -1,16 +1,17 @@
-# 1. Writ Language Specification
-## 1.21 Concurrency
+# 1.21 Concurrency
 
 All function calls implicitly yield if needed (coroutine-based). Script authors do not think about async/await for
 normal sequential code. Explicit concurrency primitives are provided for background tasks.
 
-### 1.21.1 Execution Model
+## 1.21.1 Execution Model
 
 Every function is implicitly a coroutine. When the runtime encounters a blocking operation (`wait()`, `say()`, player
 input), it yields control to the game engine. The engine resumes execution when appropriate. This is invisible to the
 script author.
 
-### 1.21.2 Concurrency Primitives
+The full task state machine and scheduling semantics are specified in the [IL Execution Model](../il-spec/execution.md).
+
+## 1.21.2 Concurrency Primitives
 
 | Primitive        | Syntax                | Behavior                                                                                        |
 |------------------|-----------------------|-------------------------------------------------------------------------------------------------|
@@ -20,7 +21,7 @@ script author.
 | `cancel`         | `cancel handle`       | Hard-terminate a task. Runs `defer` blocks.                                                     |
 | `defer`          | `defer { ... }`       | Cleanup code that runs on normal return or cancellation.                                        |
 
-```
+```writ
 dlg boulderScene {
     @Narrator The ground shakes...
     $ let task = spawn moveBoulder(vec2 { x: 10.0, y: 5.0 });
@@ -44,7 +45,7 @@ fn moveBoulder(target: vec2) {
 }
 ```
 
-### 1.21.3 Task Lifetime Rules
+## 1.21.3 Task Lifetime Rules
 
 Scoped tasks (`spawn`) are automatically cancelled when their parent scope exits (normal return, `->` transition, or
 cancellation). Detached tasks (`spawn detached`) run independently and must be explicitly cancelled or run to

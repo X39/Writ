@@ -7,8 +7,7 @@
 //! Resolution results are stored per-module in `ResolvedRefs` maps for
 //! O(1) lookup at runtime.
 
-use std::collections::HashMap;
-
+use rustc_hash::FxHashMap;
 use writ_module::heap::read_string;
 use writ_module::token::MetadataToken;
 
@@ -63,14 +62,14 @@ pub struct ResolvedContract {
 #[derive(Debug, Clone, Default)]
 pub struct ResolvedRefs {
     /// TypeRef row index (0-based) -> resolved (module_idx, typedef_idx).
-    pub types: HashMap<u32, ResolvedType>,
+    pub types: FxHashMap<u32, ResolvedType>,
     /// TypeRef row index (0-based) -> resolved (module_idx, contractdef_idx).
     /// For TypeRefs that resolve to a ContractDef rather than a TypeDef.
-    pub contracts: HashMap<u32, ResolvedContract>,
+    pub contracts: FxHashMap<u32, ResolvedContract>,
     /// MethodRef row index (0-based) -> resolved (module_idx, method_idx).
-    pub methods: HashMap<u32, ResolvedMethod>,
+    pub methods: FxHashMap<u32, ResolvedMethod>,
     /// FieldRef row index (0-based) -> resolved (module_idx, field_idx).
-    pub fields: HashMap<u32, ResolvedField>,
+    pub fields: FxHashMap<u32, ResolvedField>,
 }
 
 impl ResolvedRefs {
@@ -357,6 +356,147 @@ impl Domain {
         None
     }
 
+}
+
+// ──── Attribute Query API ──────────────────────────────────────────────
+
+/// A single attribute match returned by Domain query methods.
+///
+/// Carries the module index so callers can locate the owning module,
+/// the decoded arguments, and the owner token identifying the definition
+/// the attribute was applied to.
+#[derive(Debug, Clone)]
+pub struct DomainAttributeMatch {
+    /// Index into Domain::modules for the module that owns this attribute row.
+    pub module_idx: usize,
+    /// Attribute name (from the string heap of the owning module).
+    pub name: String,
+    /// Decoded argument list (empty vec when the attribute has no arguments).
+    pub args: Vec<writ_module::attr::AttrValue>,
+    /// Metadata token of the owner (type, method, field, etc.).
+    pub owner: writ_module::token::MetadataToken,
+    /// Owner kind discriminant: 0 = type, 1 = method, 2 = field/global.
+    /// Never 3 (ATTR_OWNER_KIND_DECL) — declaration rows are always filtered out.
+    pub owner_kind: u8,
+}
+
+impl Domain {
+    /// Return all attribute application rows across all loaded modules whose
+    /// name matches `attr_name`.
+    ///
+    /// Declaration rows (`owner_kind == ATTR_OWNER_KIND_DECL`) are always excluded.
+    /// Returns an empty vec if no matches are found.
+    pub fn query_attributes(&self, attr_name: &str) -> Vec<DomainAttributeMatch> {
+        use writ_module::tables::ATTR_OWNER_KIND_DECL;
+
+        let mut result = Vec::new();
+        for (module_idx, loaded) in self.modules.iter().enumerate() {
+            let module = &loaded.module;
+            for row in &module.attribute_defs {
+                if row.owner_kind == ATTR_OWNER_KIND_DECL {
+                    continue;
+                }
+                if writ_module::heap::read_string(&module.string_heap, row.name).ok()
+                    != Some(attr_name)
+                {
+                    continue;
+                }
+                result.push(DomainAttributeMatch {
+                    module_idx,
+                    name: attr_name.to_owned(),
+                    args: decode_row_args(module, row),
+                    owner: row.owner,
+                    owner_kind: row.owner_kind,
+                });
+            }
+        }
+        result
+    }
+
+    /// Return all attribute application rows on the TypeDef at 0-based `typedef_idx`
+    /// in the module at `module_idx`.
+    ///
+    /// Declaration rows are excluded. Returns an empty vec if `module_idx` is out of
+    /// range or if the typedef has no attributes.
+    pub fn query_attributes_on(
+        &self,
+        module_idx: usize,
+        typedef_idx: usize,
+    ) -> Vec<DomainAttributeMatch> {
+        use writ_module::tables::{TableId, ATTR_OWNER_KIND_DECL};
+
+        if module_idx >= self.modules.len() {
+            return Vec::new();
+        }
+        let module = &self.modules[module_idx].module;
+        let target_row = (typedef_idx + 1) as u32; // 0-based to 1-based
+
+        let mut result = Vec::new();
+        for row in &module.attribute_defs {
+            if row.owner_kind == ATTR_OWNER_KIND_DECL {
+                continue;
+            }
+            if row.owner.table_id() != TableId::TypeDef.as_u8() {
+                continue;
+            }
+            if row.owner.row_index() != Some(target_row) {
+                continue;
+            }
+            let name = writ_module::heap::read_string(&module.string_heap, row.name)
+                .unwrap_or("<unknown>")
+                .to_owned();
+            result.push(DomainAttributeMatch {
+                module_idx,
+                name,
+                args: decode_row_args(module, row),
+                owner: row.owner,
+                owner_kind: row.owner_kind,
+            });
+        }
+        result
+    }
+
+    /// Return the decoded arguments for the first attribute matching `attr_name`
+    /// on `owner_token` in the module at `module_idx`, or `None` if not found.
+    ///
+    /// Declaration rows are excluded. Returns `None` if `module_idx` is out of range.
+    pub fn query_attribute_value(
+        &self,
+        module_idx: usize,
+        owner_token: writ_module::token::MetadataToken,
+        attr_name: &str,
+    ) -> Option<Vec<writ_module::attr::AttrValue>> {
+        use writ_module::tables::ATTR_OWNER_KIND_DECL;
+
+        if module_idx >= self.modules.len() {
+            return None;
+        }
+        let module = &self.modules[module_idx].module;
+
+        module.attribute_defs.iter().find(|row| {
+            row.owner_kind != ATTR_OWNER_KIND_DECL
+                && row.owner == owner_token
+                && writ_module::heap::read_string(&module.string_heap, row.name).ok()
+                    == Some(attr_name)
+        }).map(|row| decode_row_args(module, row))
+    }
+}
+
+/// Decode attribute args from a single AttributeDefRow.
+///
+/// Blob offset 0 (null blob) means no args — returns empty vec without touching read_blob.
+/// On any decode failure, returns empty vec (never panics).
+fn decode_row_args(
+    module: &writ_module::Module,
+    row: &writ_module::tables::AttributeDefRow,
+) -> Vec<writ_module::attr::AttrValue> {
+    if row.value == 0 {
+        return Vec::new();
+    }
+    match writ_module::heap::read_blob(&module.blob_heap, row.value) {
+        Ok(blob) => writ_module::attr::decode_attr_args(blob).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    }
 }
 
 
@@ -646,9 +786,13 @@ mod tests {
 
         let table = domain.build_dispatch_table();
         // FIX-02: Specialization-specific contract tokens in the virtual module assign
-        // distinct type_args_hash values per generic specialization. All 36 ImplDef entries
+        // distinct type_args_hash values per generic specialization. All ImplDef entries
         // now produce distinct DispatchKeys (no collisions).
-        assert_eq!(table.len(), 36, "expected 36 dispatch entries (no generic collisions)");
+        // 36 original + 4 Reflectable impls + 22 Phase-103 reflection method impls
+        // + 2 Phase 107 dynamic invocation impls (FieldInfo.set, MethodInfo.invoke) = 64
+        // + 3 Phase 108 generic reflection impls (Type.type_args, MethodInfo.attributes, FieldInfo.attributes) = 67
+        // + 4 Phase 116 Hashable impls (int, float, bool, string) = 71
+        assert_eq!(table.len(), 71, "expected 71 dispatch entries (no generic collisions)");
     }
 
     #[test]
@@ -775,8 +919,12 @@ mod tests {
 
         let table = domain.build_dispatch_table();
 
-        // 36 unique entries (FIX-02: distinct specialization contract tokens eliminate collisions)
-        assert_eq!(table.len(), 36);
+        // 71 unique entries (FIX-02: distinct specialization contract tokens eliminate collisions)
+        // 36 original + 4 Reflectable primitive impls (Phase 102) + 22 reflection method impls (Phase 103)
+        // + 2 Phase 107 dynamic invocation impls (FieldInfo.set, MethodInfo.invoke) = 64
+        // + 3 Phase 108 generic reflection impls (Type.type_args, MethodInfo.attributes, FieldInfo.attributes) = 67
+        // + 4 Phase 116 Hashable impls (int, float, bool, string) = 71
+        assert_eq!(table.len(), 71);
 
         // Spot check specific entries using ContractDef-based keys
         let module = &domain.modules[0].module;

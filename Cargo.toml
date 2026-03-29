@@ -1,3 +1,19 @@
 [workspace]
 resolver = "3"
 members = ["writ-assembler", "writ-cli", "writ-compiler", "writ-dap", "writ-diagnostics", "writ-golden", "writ-lsp", "writ-module", "writ-parser", "writ-runtime"]
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+
+[workspace.lints.rustdoc]
+# Suppress warn-by-default rustdoc lints — pre-1.0 project, docs are
+# a best-effort baseline. Re-enable per-crate when docs are polished.
+broken_intra_doc_links = "allow"
+private_intra_doc_links = "allow"
+invalid_html_tags = "allow"
+bare_urls = "allow"
+redundant_explicit_links = "allow"
+invalid_codeblock_attributes = "allow"
+invalid_rust_codeblocks = "allow"

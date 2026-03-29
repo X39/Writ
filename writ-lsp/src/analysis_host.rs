@@ -90,7 +90,7 @@ impl AnalysisHost {
 
         // Stage 3: Resolve — wrapped in catch_unwind to prevent panics from crashing the server
         let resolve_result = std::panic::catch_unwind(|| {
-            writ_compiler::resolve::resolve(&asts_refs, &path_refs)
+            writ_compiler::resolve::resolve(&asts_refs, &path_refs, &[])
         });
 
         let resolved = match resolve_result {
@@ -111,7 +111,7 @@ impl AnalysisHost {
 
         if let Some(resolved) = resolved {
             let typecheck_result = std::panic::catch_unwind(|| {
-                writ_compiler::check::typecheck(resolved, &asts_refs)
+                writ_compiler::check::typecheck(resolved, &asts_refs, &[])
             });
 
             match typecheck_result {
@@ -330,7 +330,7 @@ impl AnalysisHost {
 
         // Stage 3: Resolve
         let resolve_result = std::panic::catch_unwind(|| {
-            writ_compiler::resolve::resolve(&asts_refs, &path_refs)
+            writ_compiler::resolve::resolve(&asts_refs, &path_refs, &[])
         });
 
         let resolved = match resolve_result {
@@ -351,7 +351,7 @@ impl AnalysisHost {
 
         if let Some(resolved) = resolved {
             let typecheck_result = std::panic::catch_unwind(|| {
-                writ_compiler::check::typecheck(resolved, &asts_refs)
+                writ_compiler::check::typecheck(resolved, &asts_refs, &[])
             });
 
             match typecheck_result {
@@ -451,7 +451,9 @@ fn try_runtime_diagnostic(
     use chumsky::span::SimpleSpan;
 
     // Stage 5: Emit — produce binary module bytes with debug info
-    let bytes = writ_compiler::emit_bodies(typed_ast, interner, asts, true, sources).ok()?;
+    // LSP always compiles with no active conditions (conditional compilation is a CLI concern).
+    let active_conditions = std::collections::HashSet::new();
+    let bytes = writ_compiler::emit_bodies(typed_ast, interner, asts, true, sources, &active_conditions).ok()?;
 
     // Parse the binary module
     let module = writ_module::Module::from_bytes(&bytes).ok()?;
@@ -1632,6 +1634,28 @@ version = "0.1.0"
         handle.join().unwrap();
     }
 
+    /// For-range loops should compile without runtime crash or error diagnostics.
+    ///
+    /// Regression test: previously, `for i in 0..5` fell through to Range struct
+    /// construction with type_idx=0 (unregistered), causing a VM crash surfaced
+    /// as a runtime error diagnostic in the LSP.
+    #[test]
+    fn test_for_range_no_runtime_crash() {
+        let handle = std::thread::Builder::new()
+            .stack_size(16 * 1024 * 1024)
+            .spawn(|| {
+                let src = "pub fn main() {\n    let mut sum = 0;\n    for i in 0..5 {\n        sum = sum + i;\n    }\n}";
+                let result = AnalysisHost::analyze_standalone(src.to_string(), "test.writ".to_string());
+                let errors: Vec<_> = result.diagnostics.iter()
+                    .filter(|d| d.severity == Severity::Error)
+                    .collect();
+                assert!(errors.is_empty(), "for-range should compile and run cleanly, got: {:?}",
+                    errors.iter().map(|d| &d.message).collect::<Vec<_>>());
+            })
+            .unwrap();
+        handle.join().unwrap();
+    }
+
     /// The primary span of a runtime crash diagnostic should point to the crash site.
     #[test]
     fn test_runtime_crash_primary_span_points_to_crash_site() {
@@ -1652,5 +1676,88 @@ version = "0.1.0"
             })
             .unwrap();
         handle.join().unwrap();
+    }
+
+    #[test]
+    fn test_incomplete_impl_class_receiver_shows_type_name() {
+        // Bug fix: E0123 should show "MyClass", not "impl#0"
+        let src = r#"
+pub contract MyContract {
+    fn implementedFunc(self);
+    fn notImplementedFunc(self);
+}
+pub class MyClass {}
+
+impl MyContract for MyClass {
+    fn implementedFunc(self){}
+}
+
+pub fn main() {
+    let c = new MyClass{};
+    c.implementedFunc();
+}
+"#.to_string();
+        let result = AnalysisHost::analyze_standalone(src, "test.writ".to_string());
+        let e0123 = result.diagnostics.iter()
+            .find(|d| d.code == "E0123" && d.severity == Severity::Error);
+        assert!(e0123.is_some(), "expected E0123 for incomplete impl");
+        let msg = &e0123.unwrap().message;
+        assert!(msg.contains("MyClass"), "E0123 should mention 'MyClass', got: {}", msg);
+        assert!(!msg.contains("impl#"), "E0123 should not mention 'impl#', got: {}", msg);
+    }
+
+    #[test]
+    fn test_complete_impl_class_receiver_no_crash() {
+        // Bug fix: complete impl with self methods should not crash the runtime
+        let src = r#"
+pub contract MyContract {
+    fn implementedFunc(self);
+    fn notImplementedFunc(self);
+}
+pub class MyClass {}
+
+impl MyContract for MyClass {
+    fn implementedFunc(self){}
+    fn notImplementedFunc(self){}
+}
+
+pub fn main() {
+    let c = new MyClass{};
+    c.implementedFunc();
+    c.notImplementedFunc();
+}
+"#.to_string();
+        let result = AnalysisHost::analyze_standalone(src, "test.writ".to_string());
+        let errors: Vec<_> = result.diagnostics.iter()
+            .filter(|d| d.severity == Severity::Error)
+            .collect();
+        assert!(errors.is_empty(), "complete impl should have no errors, got: {:?}",
+            errors.iter().map(|d| format!("{}: {}", d.code, d.message)).collect::<Vec<_>>());
+    }
+
+    /// DIAG-04: analyze_standalone must not panic when the source has a syntax error
+    /// (e.g. unterminated string literal). The lowerer handles Cst::Expr::Error nodes
+    /// by producing AstExpr::Error, so the pipeline continues and diagnostics are returned.
+    #[test]
+    fn test_analyze_standalone_partial_parse_no_panic() {
+        // Source with unterminated string — parser should recover partially
+        let source = "pub fn main() {\n    let x: int = 42;\n    let y: string = \"unterminated\n}\n".to_string();
+        let result = AnalysisHost::analyze_standalone(source, "test.writ".to_string());
+        // Must not panic — diagnostics should contain parse errors
+        assert!(!result.diagnostics.is_empty(), "should have parse errors");
+        // typed_ast may be Some (partial recovery) or None (total failure) — both acceptable
+    }
+
+    /// DIAG-04: analyze_standalone with valid items alongside one bad item must not panic.
+    /// The parser performs item-level error recovery, so good items continue lowering.
+    #[test]
+    fn test_analyze_standalone_valid_portion_has_typed_ast() {
+        // Source where most items are valid but one has a syntax error
+        let source = "pub fn good() -> int { 42 }\npub fn bad( { }\npub fn also_good() -> bool { true }\n".to_string();
+        let result = AnalysisHost::analyze_standalone(source, "test.writ".to_string());
+        // Should have parse errors but may still produce typed_ast from recovered items
+        assert!(result.diagnostics.iter().any(|d| d.severity == Severity::Error),
+            "should have at least one parse error");
+        // The key assertion: no panic occurred, server stays alive
     }
 }

@@ -1,5 +1,4 @@
-# Writ IL Specification
-## 3.2 Integer Arithmetic
+# 3.2 Integer Arithmetic
 
 All operands are `int` (64-bit signed). Using these instructions on non-int registers is undefined behavior in the IL (
 the compiler must not emit this).

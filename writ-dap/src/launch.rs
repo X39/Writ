@@ -5,7 +5,8 @@
 
 use writ_module::Module;
 
-/// Compile a `.writ` source file and return the decoded module plus its source text.
+/// Compile a `.writ` source file and return the decoded module plus its source text
+/// and the per-method FileId map.
 ///
 /// The source text is retained (as a `Box::leak`-ed `&'static str`) so that the
 /// caller can later perform breakpoint line-mapping against the raw source.
@@ -15,7 +16,9 @@ use writ_module::Module;
 ///
 /// # Errors
 /// Returns `Err(String)` with a human-readable message if any pipeline stage fails.
-pub fn compile_and_load(program_path: &str) -> Result<(Module, &'static str), String> {
+pub fn compile_and_load(
+    program_path: &str,
+) -> Result<(Module, &'static str, Vec<Option<writ_diagnostics::FileId>>), String> {
     let bytes = std::fs::read(program_path)
         .map_err(|e| format!("failed to read '{}': {}", program_path, e))?;
 
@@ -29,13 +32,17 @@ pub fn compile_and_load(program_path: &str) -> Result<(Module, &'static str), St
     let file_id = writ_diagnostics::FileId(0);
     let display_path = program_path.to_string();
 
-    let compiled_bytes =
+    let (compiled_bytes, _name_file_pairs) =
         run_pipeline(vec![(file_id, display_path, src)], true)?;
 
     let module = Module::from_bytes(&compiled_bytes)
         .map_err(|e| format!("failed to decode compiled module: {:?}", e))?;
 
-    Ok((module, src))
+    // Single-file: all methods come from FileId(0).
+    let method_file_ids: Vec<Option<writ_diagnostics::FileId>> =
+        vec![Some(writ_diagnostics::FileId(0)); module.method_defs.len()];
+
+    Ok((module, src, method_file_ids))
 }
 
 /// Compile a writ.toml project directory and return the decoded module plus
@@ -50,7 +57,7 @@ pub fn compile_and_load(program_path: &str) -> Result<(Module, &'static str), St
 /// or any pipeline stage fails.
 pub fn compile_and_load_project(
     project_root: &std::path::Path,
-) -> Result<(Module, Vec<(writ_diagnostics::FileId, String)>), String> {
+) -> Result<(Module, Vec<(writ_diagnostics::FileId, String)>, Vec<Option<writ_diagnostics::FileId>>), String> {
     let config = writ_compiler::config::load_config(project_root)
         .map_err(|e| format!("failed to load writ.toml: {}", e))?;
 
@@ -76,21 +83,41 @@ pub fn compile_and_load_project(
         file_id_paths.push((file_id, display_path));
     }
 
-    let compiled_bytes = run_pipeline(file_sources, true)?;
+    let (compiled_bytes, name_file_pairs) = run_pipeline(file_sources, true)?;
     let module = Module::from_bytes(&compiled_bytes)
         .map_err(|e| format!("failed to decode compiled module: {:?}", e))?;
 
-    Ok((module, file_id_paths))
+    // Build method_file_ids by matching each method_def name against the
+    // name->FileId pairs collected during compilation. Since overloads within a
+    // single file share the same FileId, name-based lookup is safe.
+    let method_file_ids: Vec<Option<writ_diagnostics::FileId>> = module
+        .method_defs
+        .iter()
+        .map(|def| {
+            let name = writ_module::heap::read_string(&module.string_heap, def.name)
+                .unwrap_or("");
+            name_file_pairs
+                .iter()
+                .find(|(n, _)| n == name)
+                .map(|(_, fid)| *fid)
+        })
+        .collect();
+
+    Ok((module, file_id_paths, method_file_ids))
 }
 
 /// Run the 5-stage Writ compilation pipeline.
 ///
 /// `file_sources`: Vec of (FileId, display_path, source_str).
 /// `emit_debug_info`: always `true` for DAP (we need SourceSpan data).
+///
+/// Returns the compiled bytes and a list of (method_name, FileId) pairs
+/// for all top-level fn/dlg declarations across all files. Used by callers
+/// to build `method_file_ids` after `Module::from_bytes`.
 fn run_pipeline(
     file_sources: Vec<(writ_diagnostics::FileId, String, &'static str)>,
     emit_debug_info: bool,
-) -> Result<Vec<u8>, String> {
+) -> Result<(Vec<u8>, Vec<(String, writ_diagnostics::FileId)>), String> {
     let sources_for_render: Vec<(writ_diagnostics::FileId, &str, &str)> = file_sources
         .iter()
         .map(|(fid, path, src)| (*fid, path.as_str(), *src))
@@ -129,6 +156,14 @@ fn run_pipeline(
         per_file_asts.push((*file_id, ast));
     }
 
+    // Collect (method_name, FileId) for all top-level fn/dlg declarations.
+    // Dlg is lowered to Fn by this point, so we only need to match AstDecl::Fn.
+    // Entity methods are also collected (they produce MethodDefs too).
+    let mut name_file_pairs: Vec<(String, writ_diagnostics::FileId)> = Vec::new();
+    for (file_id, ast) in &per_file_asts {
+        collect_decl_names(&ast.items, *file_id, &mut name_file_pairs);
+    }
+
     // Build reference slices for stages 3-5
     let asts_refs: Vec<(writ_diagnostics::FileId, &writ_compiler::Ast)> = per_file_asts
         .iter()
@@ -141,7 +176,7 @@ fn run_pipeline(
 
     // Stage 3: Name resolution
     let (resolved, resolve_diags) =
-        writ_compiler::resolve::resolve(&asts_refs, &path_refs);
+        writ_compiler::resolve::resolve(&asts_refs, &path_refs, &[]);
     let has_resolve_errors = resolve_diags
         .iter()
         .any(|d| d.severity == writ_diagnostics::Severity::Error);
@@ -157,7 +192,7 @@ fn run_pipeline(
 
     // Stage 4: Type checking
     let (typed_ast, interner, _type_env, type_diags) =
-        writ_compiler::check::typecheck(resolved, &asts_refs);
+        writ_compiler::check::typecheck(resolved, &asts_refs, &[]);
     let has_type_errors = type_diags
         .iter()
         .any(|d| d.severity == writ_diagnostics::Severity::Error);
@@ -177,8 +212,11 @@ fn run_pipeline(
         .map(|(fid, _, src)| (*fid, *src))
         .collect();
 
+    // DAP always compiles with no active conditions (debug/release conditions are
+    // not yet supported in DAP launch; use writ build for conditional compilation).
+    let active_conditions = std::collections::HashSet::new();
     let bytes =
-        writ_compiler::emit_bodies(&typed_ast, &interner, &asts_refs, emit_debug_info, &sources)
+        writ_compiler::emit_bodies(&typed_ast, &interner, &asts_refs, emit_debug_info, &sources, &active_conditions)
             .map_err(|diags| {
                 eprint!(
                     "{}",
@@ -187,7 +225,55 @@ fn run_pipeline(
                 format!("{} codegen error(s)", diags.len())
             })?;
 
-    Ok(bytes)
+    Ok((bytes, name_file_pairs))
+}
+
+/// Collect top-level fn/entity method names from a list of AST declarations,
+/// recording the FileId each was declared in.
+///
+/// This is used to build the method_name -> FileId map for `method_file_ids`.
+fn collect_decl_names(
+    decls: &[writ_compiler::ast::AstDecl],
+    file_id: writ_diagnostics::FileId,
+    out: &mut Vec<(String, writ_diagnostics::FileId)>,
+) {
+    use writ_compiler::ast::AstDecl;
+    use writ_compiler::ast::decl::{AstImplMember, AstNamespaceDecl};
+    for decl in decls {
+        match decl {
+            AstDecl::Fn(f) => {
+                out.push((f.name.clone(), file_id));
+            }
+            AstDecl::Entity(e) => {
+                // Entity inherent impl methods also produce MethodDefs.
+                if let Some(impl_decl) = &e.inherent_impl {
+                    for member in &impl_decl.members {
+                        if let AstImplMember::Fn(f) = member {
+                            out.push((f.name.clone(), file_id));
+                        }
+                    }
+                }
+                // Entity hooks also produce MethodDefs.
+                for hook in &e.hooks {
+                    out.push((hook.method.name.clone(), file_id));
+                }
+            }
+            AstDecl::Impl(i) => {
+                for member in &i.members {
+                    if let AstImplMember::Fn(f) = member {
+                        out.push((f.name.clone(), file_id));
+                    }
+                }
+            }
+            AstDecl::Namespace(ns) => {
+                // Recurse into namespace blocks.
+                if let AstNamespaceDecl::Block { items, .. } = ns {
+                    collect_decl_names(items, file_id, out);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Strip a UTF-8 BOM (0xEF 0xBB 0xBF) from bytes if present, then decode to String.

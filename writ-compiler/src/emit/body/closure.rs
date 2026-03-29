@@ -192,7 +192,8 @@ fn scan_expr_for_lambdas(
         | TypedExpr::SelfRef { .. }
         | TypedExpr::Path { .. }
         | TypedExpr::Error { .. }
-        | TypedExpr::Crash { .. } => {}
+        | TypedExpr::Crash { .. }
+        | TypedExpr::TypeOf { .. } => {}
     }
 }
 

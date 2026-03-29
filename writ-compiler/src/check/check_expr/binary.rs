@@ -35,6 +35,20 @@ pub(super) fn check_binary(
     let result_ty = match op {
         // Arithmetic: both same numeric, result same type
         BinaryOp::Add | BinaryOp::Sub | BinaryOp::Mul | BinaryOp::Div | BinaryOp::Mod => {
+            // Resolve InferVars before matching — when one operand is a concrete type
+            // and the other is an unresolved InferVar (e.g., for-in binding elem_ty),
+            // attempt to unify them so the result type is the concrete type.
+            let left_resolved = ctx.unify.resolve_ty(left_ty, &ctx.interner);
+            let right_resolved = ctx.unify.resolve_ty(right_ty, &ctx.interner);
+            // If either side is still an InferVar after resolution, unify with the other.
+            if let TyKind::Infer(_) = ctx.interner.kind(left_resolved).clone() {
+                let _ = ctx.unify.unify(left_ty, right_ty, &mut ctx.interner);
+            } else if let TyKind::Infer(_) = ctx.interner.kind(right_resolved).clone() {
+                let _ = ctx.unify.unify(left_ty, right_ty, &mut ctx.interner);
+            }
+            // Re-resolve after potential unification.
+            let left_ty = ctx.unify.resolve_ty(left_ty, &ctx.interner);
+            let right_ty = ctx.unify.resolve_ty(right_ty, &ctx.interner);
             let left_kind = ctx.interner.kind(left_ty).clone();
             let right_kind = ctx.interner.kind(right_ty).clone();
             match (&left_kind, &right_kind) {

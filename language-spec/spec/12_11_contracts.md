@@ -1,10 +1,9 @@
-# 1. Writ Language Specification
-## 1.11 Contracts
+# 1.11 Contracts
 
 Contracts define a set of methods and/or operators that a type must implement. They serve the role of interfaces/traits
 and are the foundation for bounded generics, operator overloading, and component polymorphism.
 
-```
+```writ
 contract Interactable {
     fn onInteract(mut self, who: Entity);
 }
@@ -27,7 +26,7 @@ fn interactWith(mut thing: Interactable) {
 }
 ```
 
-### 1.11.1 Builtin Contracts
+## 1.11.1 Builtin Contracts
 
 These contracts are implicitly defined by the compiler and map to operator syntax or special behavior:
 
@@ -90,11 +89,11 @@ These contracts are implicitly defined by the compiler and map to operator synta
 **Compound assignment:** Operators `+=`, `-=`, `*=`, `/=`, `%=` are syntactic sugar. `a += b` desugars to `a = a + b`
 and dispatches through the corresponding arithmetic contract. They are not independently overloadable.
 
-### 1.11.2 Into\<T\> — Type Conversion
+## 1.11.2 Into\<T\> — Type Conversion
 
 The `Into<T>` contract is the universal conversion mechanism. A type may implement `Into<T>` for multiple target types.
 
-```
+```writ
 struct HealthInfo {
     current: int,
     max: int,
@@ -115,7 +114,7 @@ impl Into<float> for HealthInfo {
 
 **Calling convention:** Conversions are always invoked with an explicit type parameter on the call site:
 
-```
+```writ
 let label = hp.into<string>();    // "75/100"
 let ratio = hp.into<float>();     // 0.75
 ```
@@ -127,7 +126,7 @@ assignment or argument boundaries — the caller must be explicit.
 inside `$"..."` or dialogue text), the compiler implicitly calls `.into<string>()`. This is the only context where
 `Into<T>` is invoked without an explicit call.
 
-```
+```writ
 let hp = new HealthInfo { current: 75, max: 100 };
 let msg = $"HP: {hp}";
 // Equivalent to: $"HP: {hp.into<string>()}"
@@ -136,14 +135,14 @@ let msg = $"HP: {hp}";
 > **Note:** All primitive types (`int`, `float`, `bool`, `string`) have built-in `Into<string>` implementations provided
 > by the compiler.
 
-### 1.11.3 Iterable\<T\> — For Loop Support
+## 1.11.3 Iterable\<T\> — For Loop Support
 
 The `Iterable<T>` and `Iterator<T>` contracts enable any type to be used with `for` loops.
 
 `Iterable<T>` is implemented on the collection. It returns an `Iterator<T>`, which produces elements one at a time via
 `next()`. When `next()` returns `null`, iteration ends.
 
-```
+```writ
 // A for loop:
 for item in collection {
     process(item);
@@ -171,7 +170,7 @@ The following types have compiler-provided `Iterable<T>` implementations:
 
 User-defined types can implement `Iterable<T>` to participate in `for` loops:
 
-```
+```writ
 impl Iterable<Entity> for Party {
     fn iterator(self) -> Iterator<Entity> {
         self.members.iterator()
@@ -185,6 +184,70 @@ for member in party {
     }
 }
 ```
+
+## 1.11.4 Contract-as-Type
+
+A contract name may appear anywhere a type annotation is valid. This means contracts can be used as the declared type of variables, function parameters, and return types. When a contract name is used as a type, the binding holds a value of some concrete type that implements the contract, with the specific concrete type erased at the annotation site.
+
+### Type Annotation Syntax
+
+```writ
+contract Speakable {
+    fn speak(self) -> string;
+}
+
+// Variable declaration
+let s: Speakable = someNpc;
+
+// Parameter
+fn greet(speaker: Speakable) {
+    say(speaker.speak());
+}
+
+// Return type
+fn getGreeter() -> Speakable {
+    return someNpc;
+}
+```
+
+### Assignability Rules
+
+A value of concrete type `T` is assignable to a binding of contract type `C` if and only if `T` implements `C`. If `T` does not implement `C`, the compiler emits a type error. This rule applies uniformly at variable initialization, assignment, argument passing, and return statements.
+
+```writ
+contract Speakable {
+    fn speak(self) -> string;
+}
+
+struct Villager { name: string }
+
+impl Speakable for Villager {
+    fn speak(self) -> string {
+        return $"Hello, I'm {self.name}";
+    }
+}
+
+struct Rock { weight: int }
+// Rock does NOT implement Speakable
+
+let a: Speakable = new Villager { name: "Ada" };  // OK — Villager implements Speakable
+let b: Speakable = new Rock { weight: 50 };        // Error — Rock does not implement Speakable
+```
+
+### Virtual Dispatch
+
+When a method is called on a value whose static type is a contract, the call dispatches virtually at runtime. The runtime determines the concrete type of the underlying value and invokes the corresponding method implementation. At the IL level, these calls are emitted as `CALL_VIRT` instructions rather than `CALL`, carrying the contract index and method slot to enable runtime dispatch through the contract's vtable.
+
+```writ
+fn makeSpeak(s: Speakable) {
+    // s.speak() dispatches virtually — the runtime looks up the concrete
+    // type's implementation of Speakable.speak and calls it via CALL_VIRT
+    let message = s.speak();
+    say(message);
+}
+```
+
+> **Note:** Contract-typed values do not support direct field access — only methods declared in the contract are callable through the contract type. To access type-specific members, the value must be used through its concrete type.
 
 ---
 

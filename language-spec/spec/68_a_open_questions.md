@@ -1,5 +1,4 @@
-# Appendix
-## A. Open Questions
+# A. Open Questions
 
 The following design questions remain unresolved and are tracked for future specification revisions.
 

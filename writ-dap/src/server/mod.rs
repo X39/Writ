@@ -45,6 +45,9 @@ pub struct DapServer<I: Read, O: Write> {
     pub(super) configuration_done: bool,
     /// Whether launch has been processed (runtime is ready but execution not yet started).
     pub(super) launch_done: bool,
+    /// Per-frame source file attribution: maps method_idx to FileId.
+    /// Indexed in parallel to module.method_defs. None = synthetic method (lambda, etc).
+    pub(super) method_file_ids: Vec<Option<writ_diagnostics::FileId>>,
 }
 
 impl<I: Read, O: Write> DapServer<I, O> {
@@ -60,6 +63,7 @@ impl<I: Read, O: Write> DapServer<I, O> {
             stop_on_entry: false,
             configuration_done: false,
             launch_done: false,
+            method_file_ids: Vec::new(),
         }
     }
 

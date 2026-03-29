@@ -29,6 +29,8 @@ pub enum AstDecl {
     Extern(AstExternDecl),
     Const(AstConstDecl),
     Global(AstGlobalDecl),
+    /// User-defined attribute declaration: `attribute Name(name: type, ...);`
+    Attribute(AstAttributeDecl),
     /// Bare top-level statement
     Stmt(AstStmt),
 }
@@ -401,15 +403,11 @@ pub enum AstComponentMember {
 // Extern
 // =========================================================
 
-/// Extern declaration: `extern fn|struct|component ...`
+/// Extern declaration: `extern fn|component ...`
 #[derive(Debug, Clone, PartialEq)]
 pub enum AstExternDecl {
     /// Extern function (signature only): `[vis] extern fn name(...) [-> type];`
     Fn(Option<AstVisibility>, AstFnSig),
-    /// Extern struct: `[vis] extern struct Name { fields }`
-    Struct(Option<AstVisibility>, AstStructDecl),
-    /// Extern class: `[vis] extern class Name { fields }`
-    Class(Option<AstVisibility>, AstClassDecl),
     /// Extern component: `[vis] extern component Name { fields }`
     Component(Option<AstVisibility>, AstComponentDecl),
 }
@@ -439,5 +437,16 @@ pub struct AstGlobalDecl {
     pub name_span: SimpleSpan,
     pub ty: AstType,
     pub value: AstExpr,
+    pub span: SimpleSpan,
+}
+
+/// User-defined attribute declaration: `[attrs] [vis] attribute Name(name: type, ...);`
+#[derive(Debug, Clone, PartialEq)]
+pub struct AstAttributeDecl {
+    pub attrs: Vec<AstAttribute>,
+    pub vis: Option<AstVisibility>,
+    pub name: String,
+    pub name_span: SimpleSpan,
+    pub params: Vec<AstParam>,
     pub span: SimpleSpan,
 }

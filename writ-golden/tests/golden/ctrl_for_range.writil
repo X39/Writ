@@ -1,0 +1,25 @@
+.module "main" "0.1.0" {
+    .extern "writ-runtime" "1.0.0"
+    .method "main" () -> void mut {
+        .locals {
+            r0: int "sum" [12, 96)
+        }
+        .reg r0 int
+        .reg r1 int
+        .reg r2 int
+        .reg r3 bool
+        .reg r4 int
+        .reg r5 int
+        LOAD_INT r0, 0  ; line:1 col:18
+        LOAD_INT r1, 0  ; line:1 col:40
+        LOAD_INT r2, 5
+        CMP_LT_I r3, r1, r2
+        BR_FALSE r3, 50
+        ADD_I r4, r0, r1  ; line:1 col:65
+        MOV r0, r4
+        LOAD_INT r5, 1
+        ADD_I r1, r1, r5
+        BR -50
+        RET_VOID
+    }
+}

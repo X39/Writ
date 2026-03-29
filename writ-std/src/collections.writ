@@ -1,0 +1,353 @@
+// writ-std/src/collections.writ
+// Standard library collection types for Writ.
+// All four collections are pure Writ source backed by arrays.
+//
+// Note: `new` is a keyword in Writ; factory methods are named `create()`.
+// Callers use: new List<int> { items: [] } or List::create()
+
+// ─── List<T> ─────────────────────────────────────────────────────────────────
+// A growable ordered list backed by a T[] array.
+// API: add(item), get(i), set(i, v), len(), remove_at(i), has(item)
+
+pub class List<T> {
+    items: T[]
+}
+
+impl<T> List<T> {
+    pub fn add(mut self, item: T) {
+        let old_len: int = self.items.len();
+        self.items.resize(old_len + 1);
+        self.items[old_len] = item;
+    }
+
+    pub fn get(self, index: int) -> T {
+        self.items[index]
+    }
+
+    pub fn set(mut self, index: int, item: T) {
+        self.items[index] = item;
+    }
+
+    pub fn len(self) -> int {
+        self.items.len()
+    }
+
+    pub fn remove_at(mut self, index: int) {
+        let old_len: int = self.items.len();
+        let mut j: int = index;
+        while j < old_len - 1 {
+            self.items[j] = self.items[j + 1];
+            j = j + 1;
+        }
+        self.items.resize(old_len - 1);
+    }
+
+    pub fn has(self, item: T) -> bool {
+        let mut i: int = 0;
+        while i < self.items.len() {
+            if self.items[i] == item { return true; }
+            i = i + 1;
+        }
+        false
+    }
+
+    pub fn map(self, f: fn(T) -> T) -> List<T> {
+        let result: List<T> = new List<T> { items: [] };
+        let mut i: int = 0;
+        while i < self.items.len() {
+            result.add(f(self.items[i]));
+            i = i + 1;
+        }
+        result
+    }
+
+    pub fn filter(self, f: fn(T) -> bool) -> List<T> {
+        let result: List<T> = new List<T> { items: [] };
+        let mut i: int = 0;
+        while i < self.items.len() {
+            if f(self.items[i]) {
+                result.add(self.items[i]);
+            }
+            i = i + 1;
+        }
+        result
+    }
+
+    pub fn reduce(self, initial: T, f: fn(T, T) -> T) -> T {
+        let mut acc: T = initial;
+        let mut i: int = 0;
+        while i < self.items.len() {
+            acc = f(acc, self.items[i]);
+            i = i + 1;
+        }
+        acc
+    }
+}
+
+// ─── ListIterator<T> ─────────────────────────────────────────────────────────
+// Cursor type for List<T> iteration. Implements Iterator<T> contract.
+
+pub class ListIterator<T> {
+    source: T[],
+    index: int
+}
+
+impl<T> ListIterator<T> {
+    pub fn next(mut self) -> T? {
+        if self.index >= self.source.len() {
+            return null;
+        }
+        let item: T = self.source[self.index];
+        self.index = self.index + 1;
+        item
+    }
+}
+
+impl<T> Iterator<T> for ListIterator<T> {
+    pub fn next(mut self) -> T? {
+        if self.index >= self.source.len() {
+            return null;
+        }
+        let item: T = self.source[self.index];
+        self.index = self.index + 1;
+        item
+    }
+}
+
+impl<T> Iterable<T> for List<T> {
+    pub fn iterator(self) -> Iterator<T> {
+        new ListIterator<T> { source: self.items, index: 0 }
+    }
+}
+
+// ─── Map<K, V> ───────────────────────────────────────────────────────────────
+// An ordered key-value map backed by two parallel arrays.
+// API: set(k, v), get(k), has(k), remove(k), len()
+// Note: O(n) linear scan for Phase 117 (binary search deferred to COLL-07).
+
+pub class Map<K: Ord + Eq, V> {
+    keys: K[],
+    values: V[]
+}
+
+impl<K: Ord + Eq, V> Map<K, V> {
+    pub fn len(self) -> int {
+        self.keys.len()
+    }
+
+    pub fn has(self, key: K) -> bool {
+        let mut i: int = 0;
+        while i < self.keys.len() {
+            if self.keys[i] == key { return true; }
+            i = i + 1;
+        }
+        false
+    }
+
+    pub fn get(self, key: K) -> V {
+        let mut i: int = 0;
+        while i < self.keys.len() {
+            if self.keys[i] == key { return self.values[i]; }
+            i = i + 1;
+        }
+        // Fallback — caller must check has() first
+        self.values[0]
+    }
+
+    pub fn set(mut self, key: K, value: V) {
+        let mut i: int = 0;
+        while i < self.keys.len() {
+            if self.keys[i] == key {
+                self.values[i] = value;
+                return;
+            }
+            i = i + 1;
+        }
+        let old_len: int = self.keys.len();
+        self.keys.resize(old_len + 1);
+        self.values.resize(old_len + 1);
+        self.keys[old_len] = key;
+        self.values[old_len] = value;
+    }
+
+    pub fn remove(mut self, key: K) {
+        let mut i: int = 0;
+        while i < self.keys.len() {
+            if self.keys[i] == key {
+                let old_len: int = self.keys.len();
+                let mut j: int = i;
+                while j < old_len - 1 {
+                    self.keys[j] = self.keys[j + 1];
+                    self.values[j] = self.values[j + 1];
+                    j = j + 1;
+                }
+                self.keys.resize(old_len - 1);
+                self.values.resize(old_len - 1);
+                return;
+            }
+            i = i + 1;
+        }
+    }
+
+    pub fn get_keys(self) -> K[] {
+        self.keys
+    }
+
+    pub fn get_values(self) -> V[] {
+        self.values
+    }
+}
+
+// ─── Set<T> ──────────────────────────────────────────────────────────────────
+// An unordered set with duplicate-prevention backed by a T[] array.
+// API: add(v), remove(v), has(v), len()
+
+pub class Set<T: Eq> {
+    items: T[]
+}
+
+impl<T: Eq> Set<T> {
+    pub fn add(mut self, item: T) {
+        if self.has(item) { return; }
+        let old_len: int = self.items.len();
+        self.items.resize(old_len + 1);
+        self.items[old_len] = item;
+    }
+
+    pub fn remove(mut self, item: T) {
+        let mut i: int = 0;
+        while i < self.items.len() {
+            if self.items[i] == item {
+                let old_len: int = self.items.len();
+                let mut j: int = i;
+                while j < old_len - 1 {
+                    self.items[j] = self.items[j + 1];
+                    j = j + 1;
+                }
+                self.items.resize(old_len - 1);
+                return;
+            }
+            i = i + 1;
+        }
+    }
+
+    pub fn has(self, item: T) -> bool {
+        let mut i: int = 0;
+        while i < self.items.len() {
+            if self.items[i] == item { return true; }
+            i = i + 1;
+        }
+        false
+    }
+
+    pub fn len(self) -> int {
+        self.items.len()
+    }
+}
+
+// ─── SetIterator<T: Eq> ──────────────────────────────────────────────────────
+// Cursor type for Set<T> iteration. Implements Iterator<T> contract.
+
+pub class SetIterator<T: Eq> {
+    source: T[],
+    index: int
+}
+
+impl<T: Eq> SetIterator<T> {
+    pub fn next(mut self) -> T? {
+        if self.index >= self.source.len() {
+            return null;
+        }
+        let item: T = self.source[self.index];
+        self.index = self.index + 1;
+        item
+    }
+}
+
+impl<T: Eq> Iterator<T> for SetIterator<T> {
+    pub fn next(mut self) -> T? {
+        if self.index >= self.source.len() {
+            return null;
+        }
+        let item: T = self.source[self.index];
+        self.index = self.index + 1;
+        item
+    }
+}
+
+impl<T: Eq> Iterable<T> for Set<T> {
+    pub fn iterator(self) -> Iterator<T> {
+        new SetIterator<T> { source: self.items, index: 0 }
+    }
+}
+
+// ─── HashMap<K, V> ───────────────────────────────────────────────────────────
+// A hash-keyed map backed by two parallel arrays.
+// Uses K: Hashable constraint (contract 20, auto-impl for int/string/bool/float).
+// API: set(k, v), get(k), has(k), remove(k), len()
+// Note: O(n) linear scan for Phase 117 (hash bucketing deferred).
+
+pub class HashMap<K: Hashable, V> {
+    keys: K[],
+    values: V[]
+}
+
+impl<K: Hashable, V> HashMap<K, V> {
+    pub fn len(self) -> int {
+        self.keys.len()
+    }
+
+    pub fn has(self, key: K) -> bool {
+        let mut i: int = 0;
+        while i < self.keys.len() {
+            if self.keys[i] == key { return true; }
+            i = i + 1;
+        }
+        false
+    }
+
+    pub fn get(self, key: K) -> V {
+        let mut i: int = 0;
+        while i < self.keys.len() {
+            if self.keys[i] == key { return self.values[i]; }
+            i = i + 1;
+        }
+        // Fallback — caller must check has() first
+        self.values[0]
+    }
+
+    pub fn set(mut self, key: K, value: V) {
+        let mut i: int = 0;
+        while i < self.keys.len() {
+            if self.keys[i] == key {
+                self.values[i] = value;
+                return;
+            }
+            i = i + 1;
+        }
+        let old_len: int = self.keys.len();
+        self.keys.resize(old_len + 1);
+        self.values.resize(old_len + 1);
+        self.keys[old_len] = key;
+        self.values[old_len] = value;
+    }
+
+    pub fn remove(mut self, key: K) {
+        let mut i: int = 0;
+        while i < self.keys.len() {
+            if self.keys[i] == key {
+                let old_len: int = self.keys.len();
+                let mut j: int = i;
+                while j < old_len - 1 {
+                    self.keys[j] = self.keys[j + 1];
+                    self.values[j] = self.values[j + 1];
+                    j = j + 1;
+                }
+                self.keys.resize(old_len - 1);
+                self.values.resize(old_len - 1);
+                return;
+            }
+            i = i + 1;
+        }
+    }
+}

@@ -1,17 +1,17 @@
 # Project Research Summary
 
-**Project:** Writ v7.0 — Cross-Language Benchmark Suite
-**Domain:** Docker-containerized benchmark harness comparing Writ against Lua, Squirrel, Python, Node.js, and native Rust
-**Researched:** 2026-03-20
+**Project:** Writ v13.0 Standard Library & Language Ergonomics
+**Domain:** Language toolchain feature extension — generic constraints, stdlib collections, iterator protocol, string utilities, diagnostics polish
+**Researched:** 2026-03-29
 **Confidence:** HIGH
 
 ## Executive Summary
 
-This milestone adds a cross-language benchmark suite to an already-mature 9-crate Rust workspace (v6.1, 74,997 LOC). The existing `writ-cli`, `writ-compiler`, and `writ-runtime` crates are subjects under test — nothing in the core toolchain changes. The new infrastructure consists of benchmark source programs in six languages, a Docker-based execution harness, a Python chart generator, and a GitHub Actions CI workflow. The recommended approach follows established prior art (kostya/benchmarks, drujensen/fib, Are-We-Fast-Yet): Docker for reproducibility, hyperfine for timing, JSON as the canonical results format, and SVG charts generated on the host after the container exits. The architecture is a clean one-way pipeline: source files enter the Docker container, `raw.json` exits via a volume mount, and `generate.py` on the host produces SVG and markdown.
+Writ v13.0 is a capability-completion milestone on an existing, fully functional 10-crate Rust language toolchain. The codebase already contains the foundation for every v13.0 feature: generic bounds are parsed and type-checked but never emitted to IL; array mutation instructions exist in the VM but are not surfaced as compiler-resolvable dot-call methods; the `Iterable<T>` and `Iterator<T>` contracts are declared in the virtual module but the for-in emitter falls through to a `Nop` stub for non-array receivers; 11 string utility methods are absent from the `IntrinsicId` enum despite Rust `std::str` providing all implementations directly. The recommended approach is disciplined, additive surgery on existing subsystems — no new external dependencies, no new IL opcodes, no format version bump — filling the precise gaps that separate what the language can represent from what it can compile and run.
 
-The most critical design constraint is measurement fairness. Writ has an explicit AOT compile step that other interpreted languages do not; this must be reported as a separate `compile_ms` metric so Writ `execution_ms` is directly comparable to Lua/Python/Node execution time. Node.js requires warmup before TurboFan JIT activates; without it, Node.js appears 5-10x slower than steady-state. Squirrel is not in Ubuntu apt repositories and must be built from source in Docker — its inclusion carries high implementation risk and must be validated early. Statistical rigor (median over mean, minimum 30 iterations, inter-quartile range reported alongside median) is non-negotiable for publishable results that can withstand external scrutiny.
+The correct build order is determined entirely by dependency chains: generic constraints must come first because `Map<K,V>`, `Set<T>`, and `List<T>.contains()` all require `<T: Eq>` or `<T: Hashable>` bound enforcement. Array primitives and string utilities can be developed in parallel as they are self-contained compiler-emitter and virtual-module extension work respectively. Collections are pure-Writ source files in a new `writ-std/` directory that compile exactly like user code — no compiler special-casing — and are loaded via the already-present `RuntimeBuilder.libraries` field. Iterator desugaring wires the existing `Iterable<T>` contract machinery into a new match arm in `check_stmt.rs` and `emit_for_loop`. Diagnostics polish is a capstone quality layer with no functional prerequisites.
 
-The implementation risk is concentrated in three areas: Squirrel build reliability in CI, per-language measurement methodology correctness (warmup, startup separation, anonymous RSS for memory), and CI runner variance making committed numbers misleading. All three are avoidable by front-loading the Docker environment and harness design phases before writing any benchmark programs. A note on a specific gap: STACK.md and ARCHITECTURE.md give conflicting information on whether `squirrel3` is in Ubuntu 24.04 apt — STACK.md says it must be built from source, ARCHITECTURE.md lists `apt-get install squirrel3`. This must be validated with a single `docker run` test before Phase 2 planning.
+The dominant risks are correctness traps at integration seams. Constraint enforcement that is syntax-only silently compiles broken IL. Iterator desugaring that generates an immutable binding for a `mut self` method produces compiler-internal mutability errors on every for-in loop. GC transitive tracing must be verified before collection classes depend on it. ariadne panics when a multi-span diagnostic's secondary label references a file absent from the renderer's sources slice. Every one of these risks has a concrete prevention strategy: write the failing test first, resolve the API contract design question before writing any code that depends on it, and audit integration points before enabling features that exercise them.
 
 ---
 
@@ -19,152 +19,141 @@ The implementation risk is concentrated in three areas: Squirrel build reliabili
 
 ### Recommended Stack
 
-The benchmark suite requires no changes to existing workspace crates. New infrastructure lives in `benchmark/` (top-level directory). The harness is implemented as a shell script (`bench_runner.sh`) inside the Docker container using `hyperfine` for timing and `jq` for JSON assembly, with chart generation handled by a Python script (`generate.py`) using `pygal` on the host. Criterion is explicitly ruled out: it cannot time external processes and is an in-process Rust-only tool. A `writ-bench` Rust crate is optional; the shell-based approach is fully sufficient and avoids adding a new crate.
+The entire v13.0 feature set is addressable within the existing locked dependency set. No new `Cargo.toml` entries are required or recommended. All Rust-side string implementations delegate to `std::str`. Array backing uses the existing `Vec`-backed `HeapObject::Array`. The IL binary format stays at `format_version 4` — table 14 (`GenericConstraintRow`) is already defined but was never written during emission. Adding 12 `IntrinsicId` variants is additive with no reader/writer changes. The `writ-std` crate holds pure-Writ source files compiled by the existing pipeline.
 
-**Core technologies:**
-- `hyperfine` 1.18.0 — subprocess timing with JSON export; installed from GitHub Releases `.deb` (NOT in Ubuntu apt)
-- `ubuntu:24.04` multi-stage Docker — reproducible runtime environment; matches GitHub Actions `ubuntu-latest` since January 2025
-- `pygal` (Python, pip) — headless SVG bar chart generation; no system GUI dependencies; pure Python
-- `jq` (apt) — JSON assembly inside the shell runner script
-- `squirrel3` — must be built from source via CMake OR may be in Ubuntu 24.04 apt (validate before Phase 2)
-- Rust 1.85+ stable — needed in Docker builder stage only; final image does not need the Rust toolchain
-- `actions/checkout@v4` + `actions/upload-artifact@v4` — standard CI artifact pipeline
-- `plotters` 0.3.7 + `plotters-svg` 0.3.7 — alternative to pygal if chart generation moves into a Rust binary
+**Core technologies (all existing, all unchanged):**
+- `writ-parser` / `chumsky 0.12` — generic bounds syntax already parsed; `GenericParam.bounds` populated in CST
+- `writ-compiler` (lower / resolve / check / emit) — five-pass pipeline; all v13.0 changes are additive match arms or new field reads, never rewrites
+- `writ-module` (IL binary, 21 tables) — `GenericConstraintRow` table 14 already defined; no format change needed
+- `writ-runtime` (register VM, virtual module, GC) — `IntrinsicId` variants additive-only; `GcMode::Manual` must not change
+- `ariadne 0.6.0` — no fix-suggestion API; fix hints rendered as `with_note` text; IDE fixes delivered via `lsp-types 0.94` `WorkspaceEdit`
+- `tower-lsp 0.20.0` — `CodeAction` with `WorkspaceEdit` is the correct fix-delivery mechanism for the LSP
 
-**What NOT to add:** `criterion`, `mlua`, `docker-compose`, Python `matplotlib`, `benchmark-action` on every PR, `squirrel-rs` FFI bindings.
+**What NOT to add:** No hash-map Rust intrinsic for `Map<K,V>` (breaks reflection/serialization inspection of map internals), no new opcodes for string methods (intrinsic dispatch path handles this without format changes), no `ariadne` version upgrade (0.7 is not stable), no automatic GC triggers alongside collection growth (unrooted HeapRef window during allocation).
 
 ### Expected Features
 
-**Must have (P1 — table stakes):**
-- Docker image with all 6 language runtimes at pinned versions — without this, nothing is reproducible
-- Compute benchmarks: fib(40) recursive + prime sieve (N=1,000,000) in all 6 languages — minimum viable comparison
-- Runner script producing structured JSON output — hub for all downstream reporting
-- Writ compile time reported separately from execution time (`compile_ms` distinct from `execution_ms`) — fairness requirement unique to Writ
-- Markdown table reporter (language, median_ms, memory_mb, relative-to-Rust ratio) — primary publishable artifact
-- SVG bar chart for compute category on log scale — visual proof for README; log scale required because Rust/interpreter gap spans 2-3 orders of magnitude
-- Methodology README disclosing hardware, language versions, run count, what is and is not measured
-- Statistical rigor: median + IQR (or MAD), minimum 30 iterations, outlier treatment
+Full detail in `.planning/research/FEATURES.md`.
 
-**Should have (P2 — add after compute pipeline validated):**
-- String processing category (concat loop, word count)
-- Data structures category (linked list 100K nodes, hash map 1M insert/lookup)
-- OOP/dispatch category (virtual method chain, closure/callback chain) — hardest to keep fair; add last
-- Memory measurement via anonymous RSS (not total RSS) — important for game context; requires correct cgroup v2 handling
-- GitHub Actions CI workflow with `workflow_dispatch` + weekly schedule
-- Matrix multiply benchmark (500x500)
+**Must have (table stakes — P1):**
+- `<T: Contract>` single and multiple bounds (`T: A + B`), enforced at call sites with `ConstraintNotSatisfied` error
+- Array primitives: surface all existing IL instructions as compiler-resolvable dot-call methods on `T[]` receivers
+- `List<T>` — push, pop, get, set, len, contains (with `T: Eq` bound), written in pure Writ
+- `List<T>` implements `Iterable<T>` — `for x in list` works end-to-end
+- `Map<K: Hashable, V>` — get, set, contains_key, remove, keys — primitive keys only in v13.0
+- `Set<T: Eq>` — add, remove, contains — primitives and structs with structural equality only
+- String utilities: `split`, `trim`, `trim_start`, `trim_end`, `starts_with`, `ends_with`, `contains`, `replace`, `to_upper`, `to_lower` — all as Rust intrinsics
+- Multi-span diagnostics used consistently at all new constraint-violation and non-iterable for-in error sites
 
-**Defer (v2+):**
-- CI baseline comparison with regression alerts — only useful after historical baseline exists
-- Per-run archival and trend tracking dashboards
-- Squirrel OOP variants — Squirrel OOP model complexity is high
-- Live web dashboard — maintenance burden, out of scope
+**Should have (competitive differentiators — P2):**
+- `List<T>.map<U>()`, `.filter()`, `.reduce<U>()` — pure Writ higher-order methods
+- LSP completions and hover type info for `List`, `Map`, `Set` variables
+- Diagnostics: `for x in expr` where expr is non-iterable shows secondary label pointing to the non-implementing type
+- `--deny-warnings` CLI flag for CI pipelines
+
+**Defer (v14+):**
+- `List<T>.sort()` — requires `Ord` bound enforcement and a sort algorithm written in Writ
+- Lazy iterator chains (Sequence/coroutine model)
+- Warning suppression pragmas
+- `EntityList<T>` with component query integration
+- Partial generic type-arg LSP completion
+
+**Confirmed anti-features (do not implement):**
+- HashMap backed by Rust FFI — breaks reflection, serialization, stdlib introspection
+- `any`-typed unparameterized `List` — destroys type safety; use `any[]` at reflection boundaries instead
+- Auto-GC triggers alongside collection growth — unrooted HeapRef allocation window
 
 ### Architecture Approach
 
-The system follows a clean separation: the Docker container handles all benchmark execution and produces `raw.json` via a volume-mounted results directory; chart generation and markdown table production run on the host after the container exits. This makes chart regeneration independent of benchmark re-runs and keeps the container image small (no Python charting dependencies inside). The multi-stage Docker build is critical: Rust benchmark binaries are pre-compiled in a builder stage so the runtime measurement excludes compilation overhead. Writ is measured in two separate hyperfine passes: `writ compile` and `writ run`.
+All v13.0 changes follow the existing five-layer pipeline (parser → lower → resolve → typecheck → emit → runtime) by adding narrow, non-breaking match arms to existing dispatch points. Collections are pure-Writ source files that compile like any user class — the compiler never special-cases `List`, `Map`, or `Set`. String utilities extend the virtual module via the established `add_intrinsic_method` / `IntrinsicId` / `execute_intrinsic` pattern. Generic constraint enforcement runs in `check_expr/call.rs` after `instantiate_generic_fn` + unification resolves `InferVar` values — critically, never during `TypeEnv::build` which sees a partially-populated `impl_index`. Iterator desugaring emits `CallVirt` for `.iterator()` and `.next()` in a new arm of `emit_for_loop`, leaving the existing Array and Range arms entirely untouched.
 
-**Major components:**
-1. `benchmark/cases/<suite>/` — six source files per benchmark suite (fib.writ, fib.lua, fib.nut, fib.py, fib.js, fib.rs); flat layout for direct visual comparison
-2. `benchmark/runner/Dockerfile` — multi-stage: writ-builder stage (Rust), rust-bench-builder stage (pre-compiled Rust benchmarks), final ubuntu:24.04 runtime image with hyperfine + language runtimes
-3. `benchmark/runner/bench_runner.sh` — runs inside container; calls hyperfine per language per suite; assembles raw.json via jq; handles Writ two-step compile+run measurement
-4. `benchmark/runner/run.sh` + `run.ps1` — host-side launchers; detect docker/podman; mount results volume; call generate.py after container exits
-5. `benchmark/chart_gen/generate.py` — reads raw.json; produces per-suite SVG charts (log scale, Y=0 baseline) + RESULTS.md markdown table
-6. `benchmark/results/YYYY-MM-DD/` — dated output directories; raw.json + charts/ + RESULTS.md; git-tracked
-7. `.github/workflows/benchmark.yml` — `workflow_dispatch` + weekly schedule; artifact upload; optional manual result commit
-
-**Key architectural patterns:**
-- Multi-stage Docker: Rust binaries pre-compiled in builder stage so runtime measurement is execution-only
-- Two-step Writ measurement: `writ compile` timed separately; only `writ_run_ms` in execution comparison chart
-- JSON as canonical format: SVG and markdown are derived outputs regenerable from any historical raw.json
-- Host-side chart generation: separates measurement environment from visualization tooling
-- Dated subdirectories for results: prevents overwrite, enables historical diff
+**Major components and their v13.0 delta:**
+1. `writ-parser` — add `bounds: Vec<Spanned<TypeExpr>>` to `GenericParam`; parse `: Contract + Contract` syntax
+2. `writ-compiler/lower` — propagate `AstGenericParam.bounds: Vec<AstType>` through the lowering pass
+3. `writ-compiler/check/env_build` — resolve bound names to `Vec<DefId>`, populate `FnSig.bounds`
+4. `writ-compiler/check/check_expr/call` — add bound-check loop after generic instantiation; emit `BoundNotSatisfied`
+5. `writ-compiler/check/check_stmt` — add `TyKind::Class/Struct` arm: check `impl_index` for `Iterable<T>` contract
+6. `writ-compiler/emit/body/stmt` — add `CallVirt` desugaring arm in `emit_for_loop` for contract-iterable types
+7. `writ-runtime/virtual_module` — register 11 string intrinsic methods + `ArrayIterator` class + `Hashable` builtin contract
+8. `writ-runtime/dispatch/intrinsics` — implement all 11 string + `ArrayIteratorNext` intrinsics using `std::str`
+9. `writ-diagnostics/diagnostic` — add `FixSuggestion { file_id, span, replacement }` struct + `with_fix()` builder method
+10. `writ-lsp/backend` — guard type-env access against partial-parse `None`; wire `CodeAction` for fix suggestions
+11. `writ-std/` (new crate or directory) — pure-Writ `List<T>`, `Map<K,V>`, `Set<T>`, iterator impls; loaded as library module
 
 ### Critical Pitfalls
 
-1. **Non-equivalent workloads across languages** — define a paradigm-neutral canonical algorithm spec (exact data structure, exact operation count, expected output checksum) before writing any language implementations. OOP benchmarks must allocate the same number of objects in each language; verify with allocation counters. This is the highest-cost pitfall to fix after the fact.
+Full detail with detection checklists and phase assignments in `.planning/research/PITFALLS.md`.
 
-2. **Writ compile time mixed into execution time** — always run `writ compile` as a pre-measurement step and report its time as `compile_ms`; the execution comparison chart must show only `writ_run_ms`. Must be a first-class constraint in the harness design, not an afterthought.
+1. **Bounds not enforced after unification (PITFALL 1 — CRITICAL)** — Parsing bounds and populating `FnSig.bounds` without connecting the enforcement step in `check_call` means constraint violations compile silently to runtime crashes with no source location. Prevention: the bounds check loop in `check_call` after `instantiate_generic_fn` + unify is mandatory; write a failing test (call generic fn with non-implementing type, expect `ConstraintNotSatisfied`) before writing any passing tests.
 
-3. **Node.js JIT warmup missing** — run at minimum 200-500 warmup iterations before the timed measurement window for Node.js; never use `--jitless`; verify TurboFan is active for the timed portion. Without warmup, Node.js appears 5-10x slower than realistic steady-state.
+2. **Constraint check during env_build sees partial impl_index (PITFALL 5 — CRITICAL)** — If bounds are validated during `TypeEnv::build`, impls declared after the constrained function produce order-dependent false errors. Prevention: all bound enforcement belongs in `check_call`/`check_decl`, never in `env_build`. Test: declare `impl MyContract for MyType` after the function requiring `<T: MyContract>` and verify no false error.
 
-4. **Squirrel not buildable in Docker CI** — validate the Squirrel CMake build (or apt availability) in Docker before committing to it as a benchmark target. If not reproducible, drop from CI and document as local-only rather than producing silent zero results.
+3. **Iterator desugaring generates immutable binding for a `mut self` method (PITFALL 6 — CRITICAL)** — The compiler's own for-in desugaring will fail the compiler's own mutability checker if `let iter` is generated but `Iterator<T>.next()` requires `mut self`. Prevention: resolve the `next()` contract signature before writing any desugaring code — either use value-returning `next()` semantics or generate `mut iter` in the desugaring lowering pass.
 
-5. **Memory metric includes OS page cache** — read anonymous RSS (`VmRSS - RssFile - RssShmem`) not total RSS; on cgroup v2 use `memory.stat` → `anon`; use a shared shell function for all languages so measurement method is identical across the comparison.
+4. **GC transitive tracing not verified before collections (PITFALL 3 — CRITICAL)** — A `List<T>` wrapping an inner `Array<T>` as a field depends on the GC tracing transitively through `HeapObject::Struct` fields. A shallow-tracing GC frees the inner array while the list is alive, causing non-deterministic corruption. Prevention: write and pass a `class-containing-array` GC correctness test before any collection class code exists.
 
-6. **GitHub Actions timing variance (10-30%)** — do not commit CI runner numbers as authoritative results; use CI only for regression detection with a minimum 15% threshold; generate publishable numbers locally in Docker on a stable machine.
+5. **ariadne panics on secondary label with missing FileId in sources slice (PITFALL 7 — MODERATE)** — Multi-span errors pointing to a definition in a different file crash the ariadne renderer and drop the LSP connection. Prevention: audit `render_diagnostics` sources slice construction before enabling any cross-file secondary labels; add graceful fallback (demote missing-file labels to notes).
 
-7. **Chart Y-axis truncation** — always set Y-axis minimum to 0 for bar charts; use log scale for charts including Rust native (label it explicitly); generate a second linear-scale chart showing only interpreted/VM languages so the interpreted-language comparison is legible.
+6. **String utilities via byte indexing corrupt non-ASCII (PITFALL 4 — CRITICAL)** — All 11 string utilities must be Rust intrinsics using Unicode-correct `str` methods. `to_upper`/`to_lower` must use `to_ascii_uppercase`/`to_ascii_lowercase` for locale-independence. Pure-Writ implementations using byte indexing produce corrupted output for any non-ASCII game content.
 
 ---
 
 ## Implications for Roadmap
 
-The dependency graph dictates a strict phase ordering: Docker environment and measurement methodology must be locked before benchmark programs are written; JSON pipeline must be proven before charts are generated; charts must be validated before CI is wired up. FEATURES.md identifies a clear MVP (compute category only) that proves the pipeline end-to-end before expanding to harder categories. The pitfalls research reinforces this conservative ordering — every major pitfall has its root cause in a later phase assuming earlier phases were correct.
+Based on the dependency chain established in the architecture research, five phases are recommended. Phases 1-3 form the P1 core. Phases 4-5 are P2 completions.
 
-### Phase 1: Algorithm Specifications and Benchmark Design
-**Rationale:** Research (Are-We-Fast-Yet methodology) shows that algorithm specification must precede any language implementation. Locking the canonical algorithm spec — exact parameters, expected output checksum, operation counts — prevents the most expensive pitfall: discovering non-equivalent implementations after all six language versions are written.
-**Delivers:** Written spec document for each benchmark category (compute, string, data structures, OOP/dispatch) covering exact algorithm, parameters, expected output, object allocation count (for OOP parity). No code written yet. Writ compile/run separation policy documented here.
-**Addresses:** Compute-heavy MVP (fib(40), prime sieve); algorithm specs for remaining categories
-**Avoids:** Pitfall 1 (non-equivalent workloads — prevented by locking spec before implementation); Pitfall 2 (compile/run separation is specified here, not discovered later)
-**Research flag:** Standard — algorithm selection and parameterization is exhaustively documented in prior art (AWFY, kostya/benchmarks, drujensen/fib). No additional research phase needed.
+### Phase 1: Generic Constraints Foundation
+**Rationale:** Every downstream feature has a hard dependency here. `Map<K,V>` requires `K: Hashable`, `Set<T>` requires `T: Eq`, `List<T>.contains()` requires `T: Eq`. This phase touches the most layers (parser through type-checker through IL emitter) and sets the correctness baseline. The critical pitfalls (bounds-not-enforced after unification, premature env_build checking) are most safely addressed when this is the only active front with a focused test suite.
+**Delivers:** `<T: Contract>` and `<T: A + B>` enforced at call sites; `BoundNotSatisfied` error with multi-span pointing to definition site and call site; IL emission for `GenericConstraintRow` table 14 (closes the existing latent bug); fix suggestions on bound errors ("consider implementing ContractName for Type").
+**Addresses:** FEATURES P1 — generic bounds; STACK area 1 — constraint emission gap.
+**Avoids:** PITFALL 1 (bounds-not-enforced — test-first approach mandatory), PITFALL 5 (env_build premature checking — bounds enforcement only in `check_call`/`check_decl`).
+**Research flag:** Standard patterns. No per-phase research needed.
 
-### Phase 2: Docker Environment and Measurement Harness
-**Rationale:** Docker environment and measurement methodology are the foundation everything else depends on. Squirrel build risk must be confronted here, not discovered after benchmark programs exist. The measurement protocol (warmup, startup separation, anonymous RSS, iteration count) must be locked before any benchmark programs are written against it, because the protocol determines how each language's benchmark script must be structured.
-**Delivers:** Working multi-stage Dockerfile with all 6 language runtimes at pinned versions; `bench_runner.sh` with correct per-language measurement protocol (Node.js warmup, Writ two-step, Python self-timing); validated Squirrel build or explicit fallback; version-check assertions at container startup; raw.json schema defined and validated with a stub benchmark
-**Uses:** `ubuntu:24.04`, `hyperfine` 1.18.0 (from GitHub Releases `.deb`), `jq`, multi-stage Docker build, Squirrel 3.2
-**Implements:** Docker container component, bench_runner.sh component
-**Avoids:** Pitfall 3 (LuaJIT/PUC Lua conflation — version assertions in container startup); Pitfall 4 (Squirrel build); Pitfall 5 (memory metric — anonymous RSS function shared across all languages); Pitfall 6 (Python startup separation); Pitfall 2 (Node.js warmup protocol)
-**Research flag:** Squirrel availability needs early validation — run `docker run ubuntu:24.04 apt-cache show squirrel3` before planning Phase 2 in detail. STACK.md and ARCHITECTURE.md conflict on this point.
+### Phase 2: Array Primitives + String Utilities
+**Rationale:** Array primitive surfacing — compiler dot-call resolution for the existing `ArrayAdd`/`Remove`/`Insert`/`Contains`/`Slice` VM instructions — is the prerequisite for writing `List<T>` in pure Writ. String utilities are independent, high user-value, and validate the `IntrinsicId` extension pattern at low risk before the larger virtual-module iterator work. These two tracks share no code and can be developed in parallel within the phase.
+**Delivers:** `.add(x)`, `.remove_at(i)`, `.insert(i, x)`, `.contains(x)`, `.slice(r)` usable on `T[]` receivers in the type-checker and emitter; 11 new `string` methods as Rust intrinsics; `ArrayIterator` class registered in virtual module; `Hashable` builtin contract auto-implemented for primitives.
+**Addresses:** FEATURES P1 — array primitives, string utilities; STACK areas 2, 4.
+**Avoids:** PITFALL 4 (all string utilities as intrinsics from day one; non-ASCII test required for each), PITFALL 10 (`to_ascii_*` variants for case methods, not Unicode-aware `to_uppercase`/`to_lowercase`).
+**Research flag:** Standard patterns. Virtual module extension and IntrinsicId patterns are fully established.
 
-### Phase 3: Benchmark Programs — Compute Category (MVP)
-**Rationale:** Implement only the compute category (fib + prime sieve) across all six languages first. This validates the end-to-end pipeline with the simplest, most well-understood algorithms before tackling harder categories. Output checksum verification confirms algorithmic equivalence before any timing begins.
-**Delivers:** `benchmark/cases/fib/` and `benchmark/cases/sieve/` with six source files each; output checksums verified across all six languages; `writ compile` + `writ run` both succeed; raw.json produced with correct `compile_ms` and `execution_ms` separation; statistical rigor validated (N>=30, median + IQR)
-**Addresses:** P1 compute benchmarks; Writ compile-time separation; statistical rigor
-**Avoids:** Pitfall 1 (output checksums verified before timing begins); Pitfall 10 (insufficient iterations — adaptive harness ensures N>=30)
-**Research flag:** Standard — fib(40) and prime sieve are the most benchmarked algorithms in existence. No research needed.
+### Phase 3: Collections (List, Map, Set)
+**Rationale:** Depends on Phase 1 (bound enforcement for `Eq`/`Hashable`) and Phase 2 (array dot-call methods confirmed stable). Pure-Writ implementation exercises the "stdlib as library module" integration path end-to-end for the first time. `Map` and `Set` are scoped conservatively — primitive-only keys for `Map`, primitives + structs with structural equality for `Set` — to avoid the reference-equality and hash correctness traps that arise from using class instances as keys.
+**Delivers:** `List<T>` (push, pop, get, set, len, contains), `Map<K: Hashable, V>` (get, set, contains_key, remove, keys), `Set<T: Eq>` (add, remove, contains) — all written in pure Writ, compiled as a library module, loaded before user code. GC correctness test for nested heap objects passes before any collection class is written.
+**Addresses:** FEATURES P1 — collections; STACK area 6; ARCHITECTURE — stdlib as library module.
+**Avoids:** PITFALL 3 (GC correctness test for class-containing-array passes before collection work begins), PITFALL 8 (primitive-only Map keys with `Hashable` constraint), PITFALL 11 (GcMode::Manual confirmed before growth path written), PITFALL 13 (Set restricted to Equatable types).
+**Research flag:** One pre-work spike needed: compile a stub `.writ` file as a library module and verify `writ-cli` loads it before user code. This is a one-day validation, not a research gap.
 
-### Phase 4: Chart Generation and Results Pipeline
-**Rationale:** With compute benchmarks producing raw.json, build the full reporting pipeline before expanding to more benchmark categories. Locking chart configuration (Y-axis-zero policy, log scale, units) in version-controlled code prevents the chart Y-axis truncation pitfall and ensures all future categories automatically get correct charts without per-category manual configuration.
-**Delivers:** `generate.py` producing per-suite SVG charts (log scale, Y=0 baseline enforced, units labeled) + linear-scale interpreted-languages-only chart + RESULTS.md markdown table; `run.sh` + `run.ps1` host launchers; validated end-to-end: one command from repo root produces committed results in `benchmark/results/YYYY-MM-DD/`
-**Uses:** `pygal` (headless SVG, pip), Python 3.12, dated subdirectory results structure
-**Implements:** chart_gen component, host runner scripts, results/ directory structure
-**Avoids:** Pitfall 9 (Y-axis truncation — enforced in code with automated SVG assertion); anti-pattern of flat results directory (dated subdirectories used)
-**Research flag:** Standard — pygal SVG generation is well-documented. No research phase needed.
+### Phase 4: Iterator Protocol + Higher-Order Collection Methods
+**Rationale:** Depends on Phase 3 (`List<T>` must exist to validate `for x in list`). The `for-in` desugaring change in `check_stmt.rs` and `emit_for_loop` is narrow but requires concrete `Iterable<T>` implementors to test against. `map`/`filter`/`reduce` are pure-Writ stdlib additions that complete the collection ergonomics story.
+**Delivers:** `for x in collection` works for any type implementing `Iterable<T>`; `List<T>.map<U>()`, `.filter()`, `.reduce<U>()` as stdlib methods; LSP completions for collection types with inferred element type hover.
+**Addresses:** FEATURES P1 — for-in Iterable desugaring; FEATURES P2 — map/filter/reduce, LSP completions.
+**Avoids:** PITFALL 2 (document no-implicit-yield semantics in spec before implementation; do not auto-insert yield points), PITFALL 6 (`next()` mutability contract design must be resolved as a spec decision before any desugaring code is written), PITFALL 15 (`Option<T>` boxing overhead — use value/sentinel design for tight iteration loops).
+**Research flag:** Design decision required before implementation begins: `Iterator<T>.next()` contract signature (value-returning vs. `mut self`). The cooperative-scheduler no-yield note must be in the spec. Neither is a research gap — both are deliberate choices that must be made and documented first.
 
-### Phase 5: Benchmark Programs — Remaining Categories
-**Rationale:** Expand from compute-only MVP to full four-category suite after the pipeline is proven. String processing is added first (medium complexity), then data structures (moderate — Squirrel requires hand-rolled structures), then OOP/dispatch last (highest fairness risk). Each category is gated by the same parity verification used in Phase 3 before any timing.
-**Delivers:** `string_processing/`, `data_structures/`, `dispatch/` cases in all six languages; expanded raw.json with all four suites; updated charts and RESULTS.md; memory measurement added (anonymous RSS via shared shell function)
-**Addresses:** P2 features: string processing, data structures, OOP/dispatch, memory measurement, matrix multiply
-**Avoids:** Pitfall 1 (parity checklist from "Looks Done But Isn't" applied per category); Pitfall 5 (memory measurement with correct cgroup v2 anonymous RSS)
-**Research flag:** OOP/dispatch category needs a targeted research spike before implementation — Squirrel OOP (metatables), Lua OOP (metatables), Python (native classes), Writ (struct + entity model), Rust (traits), Node.js (class syntax) all have different dispatch overhead profiles. Need to confirm canonical equivalence before writing code.
-
-### Phase 6: GitHub Actions CI Workflow
-**Rationale:** CI is added last, after the pipeline is locally validated and results are trusted. Adding CI before results are stable creates noise and burns CI minutes unnecessarily. The variance policy (15% regression threshold, no auto-commit of authoritative numbers from shared runners) must be encoded in the workflow design.
-**Delivers:** `.github/workflows/benchmark.yml` with `workflow_dispatch` + weekly `schedule` trigger; artifact upload of raw.json + SVG charts; conditional result commit only on manual dispatch; CI variance documented in results README; regression threshold set to 15%
-**Uses:** `actions/checkout@v4`, `actions/upload-artifact@v4`, `actions/setup-python@v5`, Docker (pre-installed on ubuntu-24.04 runners)
-**Avoids:** Pitfall 7 (CI runner variance — 15% threshold, no auto-commit of authoritative numbers); anti-pattern of running benchmarks on every push
-**Research flag:** Standard — GitHub Actions patterns are well-documented. No research phase needed.
+### Phase 5: Diagnostics Polish + LSP Hardening
+**Rationale:** No functional dependencies — benefits from all previous phases being complete because all new error types are now present. The fix-suggestion infrastructure and LSP partial-parse guard are pure quality improvements that make the entire v13.0 feature set more ergonomic.
+**Delivers:** Structured `FixSuggestion { file_id, span, replacement }` field on `Diagnostic`; `DiagnosticBuilder::with_fix()` method; LSP `CodeAction` with `WorkspaceEdit` for applicable fix suggestions; LSP partial-parse hardening (last-good AST preserved for completions/hover during editing); consistent multi-span secondary labels on all v13.0 error types; `--deny-warnings` CLI flag.
+**Addresses:** FEATURES P2 — diagnostics polish; STACK area 5; ARCHITECTURE — diagnostics data model gaps.
+**Avoids:** PITFALL 7 (ariadne sources slice completeness audit before enabling cross-file secondary labels), PITFALL 9 (fresh `CheckCtx` per analysis invocation; invariant documented in `check/mod.rs`), PITFALL 12 (dedicated fix-target span separate from primary span; golden test for each suggestion), PITFALL 14 (explicit `== Warning` check for `--deny-warnings`; Note severity unaffected).
+**Research flag:** Standard patterns. ariadne 0.6.0 fix API gap resolved by text-note approach + LSP WorkspaceEdit.
 
 ### Phase Ordering Rationale
 
-- Algorithm spec precedes code (Phase 1 before Phase 3) because fixing non-equivalent implementations after all six language versions are written is the highest-cost recovery in the pitfalls list.
-- Docker and harness precede benchmark programs (Phase 2 before Phase 3) because the measurement protocol determines how benchmark programs must be structured (self-timing approach, warmup protocol, output format).
-- MVP compute category precedes expanded categories (Phase 3 before Phase 5) because it validates the end-to-end pipeline with the least implementation risk before tackling Squirrel OOP or hash map fairness across six languages.
-- Chart pipeline comes before expanded categories (Phase 4 before Phase 5) because chart configuration must be version-controlled code — not a one-off session — to guarantee consistent presentation for all future categories.
-- CI comes last (Phase 6) because it is only useful after local results are trusted and the pipeline is stable. Adding CI earlier creates noise before the signal exists.
+- **Constraints before collections:** `Map`, `Set`, and `List.contains()` all require bound enforcement. Shipping collections without working bounds means they cannot correctly use their own contracts at call sites.
+- **Primitives before stdlib:** The array dot-call emitter gap must be closed before pure-Writ collection code can use `array.add()` and `array.remove_at()`. String utilities exercise the IntrinsicId extension pattern at low cost, validating the pattern before iterator intrinsics depend on it.
+- **Collections before iterator desugaring:** The type-checker needs concrete `Iterable<T>` implementors to validate the for-in extension path. Writing desugaring without a real collection to iterate produces incomplete integration coverage.
+- **Diagnostics last:** The quality capstone is independent of all functional features and benefits from having all new error sites in place before the polish pass begins.
 
 ### Research Flags
 
-Phases needing deeper investigation before or during planning:
+Phases requiring a design decision or one-day spike before planning:
+- **Phase 3 (Collections):** Write and pass the `class-containing-array` GC correctness test before any collection class code. Validate `writ-cli` library module pre-loading with a stub `.writ` file. Neither is a research gap — both are pre-work that blocks implementation.
+- **Phase 4 (Iterator Protocol):** `Iterator<T>.next()` contract signature must be resolved as a spec decision before any desugaring code is written. The cooperative-scheduler no-yield note must be in the spec first.
 
-- **Phase 2 (pre-planning):** Squirrel `squirrel3` apt availability in Ubuntu 24.04. Run `docker run ubuntu:24.04 apt-cache show squirrel3` immediately. If available: Phase 2 Dockerfile is simpler. If not: plan for a 3-5 minute CMake build layer and verify it on arm64 if needed.
-- **Phase 5 (OOP/dispatch):** Canonical OOP benchmark implementation across six languages. Squirrel metatables, Lua metatables, Python native classes, Writ struct model, and Rust traits all have meaningfully different dispatch overhead profiles. Needs a targeted research spike to confirm canonical equivalence before any OOP benchmark code is written.
-
-Phases with standard patterns (skip research-phase):
-- **Phase 1:** Algorithm selection and parameterization is exhaustively documented in AWFY, kostya, drujensen/fib.
-- **Phase 3:** fib(40) and prime sieve are the most benchmarked algorithms in existence.
-- **Phase 4:** pygal SVG generation and markdown table generation are straightforward.
-- **Phase 6:** GitHub Actions patterns are well-documented official documentation.
+Phases with standard, established patterns (no research needed):
+- **Phase 1 (Generic Constraints):** Bound enforcement at call sites is a well-documented pattern; all infrastructure exists; Pitfalls 1 and 5 are known and preventable.
+- **Phase 2 (String Utilities):** IntrinsicId extension pattern is fully established with zero ambiguity.
+- **Phase 5 (Diagnostics):** ariadne fix API gap is resolved; LSP WorkspaceEdit patterns are standard.
 
 ---
 
@@ -172,52 +161,51 @@ Phases with standard patterns (skip research-phase):
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | All core technologies verified against official docs and repos. One gap: Squirrel apt availability conflicts between research files — needs a one-line validation before Phase 2. Node.js LTS version has a minor conflict (STACK.md says 20 LTS, FEATURES.md says 22 LTS; use 22 to avoid immediate EOL). |
-| Features | HIGH | Prior art is abundant and consistent across five reference suites. MVP definition (compute category first) is well-supported. Feature priority matrix is clear with explicit P1/P2/P3 assignments. |
-| Architecture | HIGH | Component boundaries and data flow are fully specified with working code examples in all four research files. Multi-stage Docker pattern, two-step Writ measurement, and host-side chart generation are all validated against official docs and reference suites. |
-| Pitfalls | HIGH | All 10 pitfalls are grounded in peer-reviewed literature (2025-2026), official V8/Docker/cgroup documentation, and direct measurement studies. Prevention strategies are specific, actionable, and include concrete "warning signs" for early detection. |
+| Stack | HIGH | All findings from direct codebase inspection; all Cargo.lock versions confirmed; no external research required |
+| Features | HIGH | Primary sources: codebase + official C#/Kotlin/Swift/GDScript docs; feature gaps verified against actual missing IntrinsicId variants and absent match arms in source |
+| Architecture | HIGH | All integration points identified from direct source inspection; data flow diagrams derived from actual types at each pipeline boundary; no assumptions about unread code |
+| Pitfalls | HIGH | Derived from codebase inspection of actual partial implementations and GC design; cross-checked against CLR and Kotlin generics patterns; 14 pitfalls with specific file/function context |
 
 **Overall confidence:** HIGH
 
 ### Gaps to Address
 
-- **Squirrel apt availability conflict:** STACK.md states Squirrel must be built from source; ARCHITECTURE.md lists `apt-get install squirrel3`. Validate with `docker run ubuntu:24.04 apt-cache show squirrel3` before Phase 2 planning. The answer determines Dockerfile complexity.
-- **Node.js LTS version:** STACK.md recommends Node.js 20 LTS (EOL April 2026); FEATURES.md mentions Node.js 22 LTS. Use Node.js 22 LTS to avoid an EOL migration in the near term.
-- **Writ benchmark program syntax:** Benchmark authors writing `.writ` files must be familiar with the current Writ language feature set (no generics, explicit `self`, `new Type {}` construction syntax, entity-component model). Validate each `.writ` file with `writ compile` on the current build before the Docker image is finalized.
-- **Memory measurement on non-Linux hosts:** The anonymous RSS approach is Linux-only. Local development workflows on macOS/Windows will report `0` for memory. Document this clearly so developers do not file bugs about missing memory values in local non-Docker runs.
-- **OOP/dispatch canonical algorithm:** The exact dispatch pattern to use across Squirrel metatables, Lua metatables, Python classes, and Writ structs is not resolved in the current research. This must be resolved (via a research spike in Phase 5) before any OOP benchmark code is written.
+- **`Iterator<T>.next()` contract signature:** Research identified the mutability conflict (Pitfall 6) but prescribes two valid solutions — value-returning `(Option<T>, Self)` semantics vs. `mut self` with generated `mut iter`. This must be resolved as a spec/design decision at the start of Phase 4, not left to the implementing developer.
+
+- **`writ-std` crate location and build integration:** Research recommends `writ-std/` as a new top-level crate or a `stdlib/` directory inside `writ-runtime`. The choice affects `writ-cli` pre-compile coordination. Validate with a stub `.writ` library file at the start of Phase 3 before writing any collection code.
+
+- **`Hashable` contract scope:** The `Hashable` builtin contract does not yet exist in the virtual module. Phase 2 must define it as a builtin contract auto-implemented for `int`, `string`, `bool`, `float` only. This is a one-day virtual module addition, not a research gap, but it must be in Phase 2's scope definition.
+
+- **`Option<T>` allocation in iterator tight loops (Pitfall 15):** `Iterator<T>.next()` returning `Option<T>` allocates a heap object on each call. For game-loop iteration over large collections this is a per-frame allocation budget concern. The Phase 4 spec decision on `next()` semantics must address this — prefer a value-sentinel design or an intrinsic-backed next that avoids boxing.
 
 ---
 
 ## Sources
 
-### Primary (HIGH confidence)
-- `github.com/kostya/benchmarks` — methodology, Docker approach, median+MAD reporting, memory measurement, idiomatic implementation requirement
-- `github.com/smarr/are-we-fast-yet` + ACM DLS paper — paradigm-neutral algorithm design, cross-language fairness methodology (peer-reviewed)
-- `github.com/drujensen/fib` — compile-time vs runtime separation pattern, 5-run average, Docker approach; widely cited
-- `github.com/bdrung/startup-time` — startup time measurement, 1000-run averaging methodology
-- `v8.dev/blog/maglev` — V8 JIT tier pipeline (Ignition → Sparkplug → Maglev → TurboFan), official V8 blog
-- `docs.docker.com/engine/containers/runmetrics/` — cgroup v1/v2 memory accounting, anonymous RSS vs total RSS
-- `runs-on.com/benchmarks/github-actions-cpu-performance/` — direct measurement of 20%+ CPU variance on GitHub Actions shared runners
-- `arxiv:2501.12878` — statistical methods for reliable benchmarks, median over mean (IEEE/ACM 2025, peer-reviewed)
-- `arxiv:2511.03533` — process isolation in benchmarking, Docker measurement variance (IEEE/ACM 2025, peer-reviewed)
-- `github.com/sharkdp/hyperfine` — JSON export schema, v1.18.0 installation, timing methodology
-- `github.com/plotters-rs/plotters` — 0.3.7 SVGBackend API, September 2024 release confirmed
-- `packages.ubuntu.com/lua5.4` — Lua 5.4 availability in Ubuntu 24.04 confirmed
-- `github.com/albertodemichelis/squirrel` — official Squirrel repo, v3.2 tag, CMake build required, last commit February 2026
-- `github.com/actions/runner-images/issues/10636` — ubuntu-latest = ubuntu-24.04 confirmed January 2025
+### Primary (HIGH confidence — direct codebase inspection)
+- `A:/dev/git/Writ/writ-compiler/src/check/env_build.rs` — `build_generic_bounds`, `FnSig.bounds` populated but unused downstream
+- `A:/dev/git/Writ/writ-compiler/src/check/check_expr/call.rs` — `check_contract_bounds` + `instantiate_generic_fn` confirmed; `add_generic_constraint()` exists with no callsite
+- `A:/dev/git/Writ/writ-compiler/src/emit/body/stmt.rs` — `emit_for_loop` Array + Range handled; `_ => Nop` stub confirmed
+- `A:/dev/git/Writ/writ-runtime/src/virtual_module.rs` — `Iterable<T>` contract 14, `Iterator<T>` contract 15 confirmed; no `ArrayIterator` class present
+- `A:/dev/git/Writ/writ-runtime/src/dispatch/mod.rs` — full `IntrinsicId` enum; no split/trim/starts_with/etc. variants present
+- `A:/dev/git/Writ/writ-module/src/instruction.rs` — array opcodes 0x0900–0x0908 sufficient; no new array opcodes needed
+- `A:/dev/git/Writ/writ-diagnostics/src/diagnostic.rs` — `DiagnosticBuilder`: `with_secondary`, `with_help`, `with_note` present; no `with_fix`
+- `A:/dev/git/Writ/writ-diagnostics/src/render.rs` — ariadne rendering confirmed; no fix suggestion output
+- `A:/dev/git/Writ/Cargo.lock` — all locked versions confirmed
+- `A:/dev/git/Writ/.planning/PROJECT.md` — v13.0 scope and out-of-scope boundaries
 
-### Secondary (MEDIUM confidence)
-- `crates.io/crates/procfs` 0.17 — VmRSS and peak RSS in Status struct (alternative to shell-based memory measurement)
-- `github.com/benchmark-action/github-action-benchmark` — CI regression detection patterns
-- `pypi.org/project/pygal` — headless SVG generation, no system GUI dependency confirmed
-- `codspeed.io/blog/benchmarks-in-ci-without-noise` — 15% regression threshold for sub-1% false positive rate on shared runners
-- `nodesource.com/blog/State-of-Nodejs-Performance-2024` — Node.js v22 Maglev tier behavior
-- `github.com/RafaelGSS/bench-node` — official Node.js benchmarking library with warmup handling
+### Secondary (HIGH confidence — official external docs)
+- [Microsoft Docs: Constraints on type parameters (C#)](https://learn.microsoft.com/en-us/dotnet/csharp/programming-guide/generics/constraints-on-type-parameters) — generic bounds patterns and multi-constraint syntax
+- [Kotlin Docs: Iterators](https://kotlinlang.org/docs/iterators.html) — `Iterable`/`Iterator` two-method protocol, `hasNext()` + `next()` design
+- [Swift: IteratorProtocol (Apple Developer)](https://developer.apple.com/documentation/swift/iteratorprotocol) — value-returning `next() -> T?` design; confirms Option-sentinel approach
+- [GDScript reference (Godot 4)](https://docs.godotengine.org/en/stable/tutorials/scripting/gdscript/gdscript_basics.html) — confirms for-in works only on built-in Array/Dictionary; user-defined iteration not supported
+- [ariadne crate docs (0.6.0)](https://docs.rs/ariadne/latest/ariadne/) — confirmed no fix-suggestion API in 0.6.0; secondary label and multi-file rendering confirmed
+- [Microsoft Docs: String.Split](https://learn.microsoft.com/en-us/dotnet/api/system.string.split) — split return type conventions
 
-### Tertiary (LOW confidence — needs validation)
-- Squirrel `squirrel3` package in Ubuntu 24.04 apt — conflicting signals between research files; validate with `docker run` before Phase 2 planning begins
+### Tertiary (context cross-checks)
+- CLR generics implementation patterns — constraint erasure after type-check; no IL-level enforcement needed at runtime
+- Rust `str` method docs — `to_uppercase` is Unicode-aware and locale-sensitive; `to_ascii_uppercase` is stable and locale-independent; game scripts need the latter
 
 ---
-*Research completed: 2026-03-20*
+*Research completed: 2026-03-29*
 *Ready for roadmap: yes*

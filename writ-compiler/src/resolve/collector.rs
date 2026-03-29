@@ -8,18 +8,21 @@ use crate::ast::decl::{AstDecl, AstExternDecl, AstNamespaceDecl, AstVisibility};
 use crate::ast::Ast;
 use crate::resolve::def_map::{DefEntry, DefKind, DefMap, DefVis};
 use crate::resolve::error::ResolutionError;
-use crate::resolve::prelude::is_prelude_name;
+use crate::resolve::prelude::{is_builtin_attribute_name, is_prelude_name};
 use chumsky::span::SimpleSpan;
 use writ_diagnostics::{Diagnostic, FileId};
 
 /// Collect all top-level declarations from multiple files into a DefMap.
 ///
+/// Populates the provided `def_map` (which may already contain library-injected entries).
 /// `file_paths` maps each FileId to its file path (for W0004 namespace/path mismatch).
+///
+/// Returns only `Vec<Diagnostic>` since `def_map` is passed in.
 pub fn collect_declarations(
     asts: &[(FileId, &Ast)],
     file_paths: &[(FileId, &str)],
-) -> (DefMap, Vec<Diagnostic>) {
-    let mut def_map = DefMap::new();
+    def_map: &mut DefMap,
+) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     let mut impl_counter: usize = 0;
 
@@ -35,10 +38,10 @@ pub fn collect_declarations(
             namespace: String::new(),
             impl_counter: &mut impl_counter,
         };
-        collect_items(&ast.items, &mut ctx, &mut def_map, &mut diags);
+        collect_items(&ast.items, &mut ctx, def_map, &mut diags);
     }
 
-    (def_map, diags)
+    diags
 }
 
 struct CollectorContext<'a> {
@@ -245,36 +248,6 @@ fn collect_items(
                         diags,
                     );
                 }
-                AstExternDecl::Struct(vis, s) => {
-                    let vis = ast_vis_to_def_vis(vis.as_ref());
-                    let generics = s.generics.iter().map(|g| g.name.clone()).collect();
-                    try_insert(
-                        &s.name,
-                        s.name_span,
-                        s.span,
-                        DefKind::ExternStruct,
-                        vis,
-                        generics,
-                        ctx,
-                        def_map,
-                        diags,
-                    );
-                }
-                AstExternDecl::Class(vis, c) => {
-                    let vis = ast_vis_to_def_vis(vis.as_ref());
-                    let generics = c.generics.iter().map(|g| g.name.clone()).collect();
-                    try_insert(
-                        &c.name,
-                        c.name_span,
-                        c.span,
-                        DefKind::ExternClass,
-                        vis,
-                        generics,
-                        ctx,
-                        def_map,
-                        diags,
-                    );
-                }
                 AstExternDecl::Component(vis, c) => {
                     let vis = ast_vis_to_def_vis(vis.as_ref());
                     try_insert(
@@ -313,6 +286,33 @@ fn collect_items(
                     g.name_span,
                     g.span,
                     DefKind::Global,
+                    vis,
+                    Vec::new(),
+                    ctx,
+                    def_map,
+                    diags,
+                );
+            }
+
+            AstDecl::Attribute(a) => {
+                // UATTR-04: Builtin attribute names are reserved
+                if is_builtin_attribute_name(&a.name) {
+                    diags.push(
+                        ResolutionError::BuiltinAttributeShadow {
+                            name: a.name.clone(),
+                            file: ctx.file_id,
+                            span: a.name_span,
+                        }
+                        .into(),
+                    );
+                    continue; // do not insert — name is reserved
+                }
+                let vis = ast_vis_to_def_vis(a.vis.as_ref());
+                try_insert(
+                    &a.name,
+                    a.name_span,
+                    a.span,
+                    DefKind::AttributeDef,
                     vis,
                     Vec::new(),
                     ctx,

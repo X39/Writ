@@ -6,8 +6,7 @@
 //! - GC-04: GC runs at safe points when host triggers it (Manual mode)
 //! - GC-05: GcHeap trait — BumpHeap and MarkSweepHeap both work
 
-use std::cell::RefCell;
-use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use writ_module::module::MethodBody;
 use writ_module::tables::TypeDefKind;
 use writ_module::Instruction;
@@ -31,12 +30,12 @@ fn encode(instrs: &[Instruction]) -> Vec<u8> {
 
 /// A host that records on_gc_complete calls.
 struct RecordingHost {
-    gc_stats: Rc<RefCell<Vec<GcStats>>>,
+    gc_stats: Arc<Mutex<Vec<GcStats>>>,
 }
 
 impl RecordingHost {
-    fn new() -> (Self, Rc<RefCell<Vec<GcStats>>>) {
-        let stats = Rc::new(RefCell::new(Vec::new()));
+    fn new() -> (Self, Arc<Mutex<Vec<GcStats>>>) {
+        let stats = Arc::new(Mutex::new(Vec::new()));
         (RecordingHost { gc_stats: stats.clone() }, stats)
     }
 }
@@ -59,7 +58,7 @@ impl RuntimeHost for RecordingHost {
     fn on_log(&mut self, _level: LogLevel, _message: &str) {}
 
     fn on_gc_complete(&mut self, stats: &GcStats) {
-        self.gc_stats.borrow_mut().push(stats.clone());
+        self.gc_stats.lock().unwrap().push(stats.clone());
     }
 }
 
@@ -218,7 +217,7 @@ fn gc_on_gc_complete_callback_fires() {
 
     runtime.collect_garbage();
 
-    let log = stats_log.borrow();
+    let log = stats_log.lock().unwrap();
     assert_eq!(log.len(), 1, "on_gc_complete should have been called once");
 }
 
@@ -338,4 +337,69 @@ fn gc_multiple_collections_progressive() {
     let stats2 = runtime.collect_garbage();
     assert_eq!(stats2.objects_freed, 0);
     assert_eq!(stats2.heap_after, 1);
+}
+
+#[test]
+fn gc_class_containing_array_field_survives() {
+    // Build a module with a Class type (kind=4) that has one field.
+    // The test method:
+    //   r0 = new MyClass (heap object stored as Value::Ref)
+    //   r1 = new int[] array
+    //   r2 = 42 (int literal)
+    //   r1.add(r2)
+    //   r0.field[0] = r1  (store array ref inside class instance field)
+    //   global[0] = r0   (make class a GC root after task completes)
+    //   r1 = null        (remove direct ref to array — only reachable via r0.field[0])
+    //   RetVoid
+    //
+    // After task completion: GC with class as global root.
+    // The array must be traced transitively through the class field.
+    let mut builder = ModuleBuilder::new("test");
+    // Add the class type (TypeDef row 1).
+    let class_token = builder.add_type_def("MyClass", "", TypeDefKind::Class, 0);
+    // Add one field "items" (type blob [0x01] — only field count matters for allocation).
+    builder.add_field_def("items", &[0x01], 0);
+    // Add a global to hold the class ref so it survives as a GC root after task completion.
+    builder.add_global_def("g", &[0x01], 0, &[]);
+    let body = MethodBody {
+        register_types: vec![0; 4],
+        code: encode(&[
+            // r0 = new MyClass (Value::Ref on heap, kind=Class)
+            Instruction::New { r_dst: 0, type_idx: class_token.0 },
+            // r1 = new int[] (empty array, elem_type=0x01 for int)
+            Instruction::NewArray { r_dst: 1, elem_type: 0x01 },
+            // resize to 1 so we can store an element
+            Instruction::LoadInt { r_dst: 2, value: 1 },
+            Instruction::ArrayResize { r_arr: 1, r_new_len: 2 },
+            // r2 = 42; store at index 0
+            Instruction::LoadInt { r_dst: 2, value: 42 },
+            Instruction::LoadInt { r_dst: 3, value: 0 },
+            Instruction::ArrayStore { r_arr: 1, r_idx: 3, r_val: 2 },
+            // r0.field[0] = r1 (store array ref as class field)
+            Instruction::SetField { r_obj: 0, field_idx: 0, r_val: 1 },
+            // Store class ref in global so it's a GC root after task completes
+            Instruction::StoreGlobal { global_idx: 0, r_src: 0 },
+            // Null out r1 — array is now ONLY reachable via r0.field[0]
+            Instruction::LoadNull { r_dst: 1 },
+            Instruction::RetVoid,
+        ]),
+        debug_locals: vec![],
+        source_spans: vec![],
+    };
+    builder.add_method("main", &[0], 0, 4, body);
+    let module = builder.build();
+    let mut runtime = RuntimeBuilder::new(module).with_gc().build().unwrap();
+
+    let tid = runtime.spawn_task(0, vec![]).unwrap();
+    runtime.tick(0.0, ExecutionLimit::None);
+    assert_eq!(runtime.task_state(tid), Some(TaskState::Completed));
+
+    // Heap should have 2 objects: the class instance (Struct) and the array.
+    assert_eq!(runtime.heap().heap_size(), 2, "heap should contain class + array before GC");
+
+    // Collect: class is reachable via global; array is reachable via class.field[0].
+    let stats = runtime.collect_garbage();
+    assert_eq!(stats.objects_freed, 0, "GC must trace array through class field — nothing freed");
+    assert_eq!(stats.heap_after, 2, "both class and array must survive GC");
+    assert_eq!(stats.objects_traced, 2, "both objects should be traced");
 }

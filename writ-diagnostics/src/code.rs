@@ -11,6 +11,9 @@ pub const E0004: &str = "E0004"; // ambiguous name
 pub const E0005: &str = "E0005"; // visibility violation
 pub const E0006: &str = "E0006"; // invalid attribute target
 pub const E0007: &str = "E0007"; // invalid speaker
+pub const E0008: &str = "E0008"; // builtin attribute shadow
+pub const E0009: &str = "E0009"; // missing [Conditional] fallback
+pub const E0010: &str = "E0010"; // ambiguous active conditions
 
 // Type error codes (E01xx series)
 pub const E0100: &str = "E0100"; // type mismatch
@@ -35,9 +38,14 @@ pub const E0118: &str = "E0118"; // not iterable
 pub const E0119: &str = "E0119"; // closure capture error
 pub const E0120: &str = "E0120"; // None used without type annotation
 pub const E0121: &str = "E0121"; // recursive struct has infinite size
+pub const E0122: &str = "E0122"; // contract used as type annotation
+pub const E0123: &str = "E0123"; // incomplete contract implementation
+pub const E0124: &str = "E0124"; // ambiguous overloaded call
 
 // Warning codes
 pub const W0001: &str = "W0001"; // unused import
 pub const W0002: &str = "W0002"; // import shadow
 pub const W0003: &str = "W0003"; // generic shadow
 pub const W0004: &str = "W0004"; // namespace path mismatch
+pub const W0005: &str = "W0005"; // array-wrapped range in for loop
+pub const W0006: &str = "W0006"; // deprecated item reference

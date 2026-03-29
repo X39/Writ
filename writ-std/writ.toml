@@ -1,0 +1,5 @@
+[project]
+name = "writ-std"
+
+[compiler]
+sources = ["src/"]

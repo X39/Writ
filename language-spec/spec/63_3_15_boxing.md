@@ -1,5 +1,4 @@
-# Writ IL Specification
-## 3.15 Boxing
+# 3.15 Boxing
 
 Boxing is required when value types (`int`, `float`, `bool`, enums, structs) pass through generic parameters. The compiler emits
 `BOX` before passing a value type to a generic parameter and `UNBOX` when extracting a concrete value type from a

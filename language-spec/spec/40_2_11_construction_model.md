@@ -1,5 +1,4 @@
-# Writ IL Specification
-## 2.11 Construction Model
+# 2.11 Construction Model
 
 **Decision:** Construction uses the `new` keyword with brace-syntax for all types. No user-defined constructors.
 `spawn` is reserved for task concurrency only.

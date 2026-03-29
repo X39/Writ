@@ -12,6 +12,8 @@ use crate::lower::expr::lower_expr;
 /// Each `StringSegment::Expr(e)` becomes `AstExpr::GenericCall` wrapping
 /// the lowered expression with `.into<string>()`.
 ///
+/// When `is_raw` is true, text segments are used verbatim (no escape processing).
+///
 /// Invariants:
 /// - Empty segment list → `AstExpr::StringLit { value: "", span: outer_span }`
 /// - All synthetic `Binary` nodes carry `outer_span` (not tombstone `0..0`)
@@ -19,6 +21,7 @@ use crate::lower::expr::lower_expr;
 pub(crate) fn lower_fmt_string(
     segments: Vec<Spanned<StringSegment<'_>>>,
     outer_span: SimpleSpan,
+    is_raw: bool,
     ctx: &mut LoweringContext,
 ) -> AstExpr {
     if segments.is_empty() {
@@ -31,10 +34,15 @@ pub(crate) fn lower_fmt_string(
     let parts: Vec<AstExpr> = segments
         .into_iter()
         .map(|(seg, seg_span)| match seg {
-            StringSegment::Text(s) => AstExpr::StringLit {
-                value: s.to_string(),
-                span: seg_span,
-            },
+            StringSegment::Text(s) => {
+                let value = if is_raw {
+                    s.to_string()
+                } else {
+                    writ_parser::process_escapes(s)
+                        .unwrap_or_else(|_| s.to_string())
+                };
+                AstExpr::StringLit { value, span: seg_span }
+            }
             StringSegment::Expr(inner_expr) => {
                 // Recursively lower the interpolated expression so any nested
                 // sugar (compound assigns, null literals, nested fmt strings)

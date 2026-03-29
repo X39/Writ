@@ -1,0 +1,8 @@
+struct Alpha { a: int }
+struct Beta { b: int }
+
+fn main() -> bool {
+    let same = typeof(Alpha) == typeof(Alpha);
+    let diff = typeof(Alpha) == typeof(Beta);
+    same
+}

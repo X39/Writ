@@ -24,7 +24,9 @@ fn workspace_file(relative: &str) -> String {
 /// Helper: compile a fixture, build a LoadedModule, and return both.
 fn compile_fixture(fixture: &str) -> (writ_module::Module, &'static str) {
     let path = workspace_file(fixture);
-    compile_and_load(&path).unwrap_or_else(|e| panic!("compile_and_load failed: {}", e))
+    let (module, src, _method_file_ids) =
+        compile_and_load(&path).unwrap_or_else(|e| panic!("compile_and_load failed: {}", e));
+    (module, src)
 }
 
 // ─── Byte-offset PC translation tests ─────────────────────────────────────────

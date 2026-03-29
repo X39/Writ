@@ -15,3 +15,6 @@ writ-runtime = { path = "../writ-runtime" }
 writ-module = { path = "../writ-module" }
 writ-diagnostics = { path = "../writ-diagnostics" }
 writ-parser = { path = "../writ-parser" }
+
+[lints]
+workspace = true

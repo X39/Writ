@@ -2,6 +2,8 @@
 ///
 /// Each test: assemble text -> Module (m1) -> disassemble -> text2 -> assemble -> Module (m2)
 /// Then assert m1 and m2 have the same table counts.
+///
+/// Also includes TYPEOF-specific tests for the Reflection sub-range.
 
 fn round_trip(src: &str) -> (writ_module::Module, writ_module::Module, String) {
     let m1 = writ_assembler::assemble(src).unwrap_or_else(|errs| {
@@ -199,4 +201,20 @@ fn round_trip_multiple_types_and_impls() {
     assert_eq!(m1.contract_defs.len(), m2.contract_defs.len(), "contract_defs count must match");
     assert_eq!(m1.impl_defs.len(), m2.impl_defs.len(), "impl_defs count must match");
     assert_eq!(m1.method_defs.len(), m2.method_defs.len(), "method_defs count must match");
+}
+
+#[test]
+fn test_typeof_disasm_round_trip() {
+    let src = r#"
+.module "test" "1.0.0" {
+    .method "main" () -> void {
+        .reg r0 int
+        TYPEOF r0, 1
+        RET_VOID
+    }
+}
+"#;
+    let module = writ_assembler::assemble(src).unwrap();
+    let text = writ_assembler::disassemble(&module);
+    assert!(text.contains("TYPEOF"), "disassembly should contain TYPEOF mnemonic: {}", text);
 }

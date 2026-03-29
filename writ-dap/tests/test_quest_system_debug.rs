@@ -173,7 +173,7 @@ fn test_quest_system_compiles() {
     let result = writ_dap::launch::compile_and_load(&fixture_path);
 
     match result {
-        Ok((module, src)) => {
+        Ok((module, src, _method_file_ids)) => {
             assert!(!src.is_empty(), "source text should be non-empty");
             assert!(
                 !module.method_defs.is_empty(),

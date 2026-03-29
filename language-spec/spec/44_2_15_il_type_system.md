@@ -1,5 +1,4 @@
-# Writ IL Specification
-## 2.15 IL Type System
+# 2.15 IL Type System
 
 The IL preserves the full Writ type system in metadata. Types are not erased — the runtime has access to complete type
 information for dispatch, serialization, and reflection.
@@ -13,7 +12,7 @@ information for dispatch, serialization, and reflection.
 (Option, Result, etc.) are provided by the `writ-runtime` module (§2.16.8) and referenced via standard cross-module
 TypeRef resolution. The blob heap format, register type table, and all metadata tables are specified in §2.16.
 
-### 2.15.1 Register Model
+## 2.15.1 Register Model
 
 IL functions operate on a set of **typed registers**. Each register holds exactly one value of its declared type. The
 compiler emits type declarations for all registers in the method body metadata (see B3 in il-todo.md).
@@ -31,7 +30,7 @@ This means the IL does not concern itself with "how many bytes is an enum regist
 the runtime allocates whatever storage it needs for that type, and instructions like `NEW_ENUM`, `GET_TAG`, and
 `EXTRACT_FIELD` operate on that register as a single unit.
 
-### 2.15.2 Primitive Type Tags
+## 2.15.2 Primitive Type Tags
 
 Primitives have fixed type tags in the type reference encoding:
 
@@ -42,18 +41,19 @@ Primitives have fixed type tags in the type reference encoding:
 | `0x02`   | `float`  | Value     | 64-bit IEEE 754                                |
 | `0x03`   | `bool`   | Value     | Logical 0/1                                    |
 | `0x04`   | `string` | Reference | GC pointer to heap-allocated, immutable string |
+| `0x05`   | `Entity` | Value     | Opaque entity handle (generation-indexed)      |
 
 `bool` occupies a full register slot at runtime even though it is logically 1 bit. The spec does not mandate
 bit-packing.
 
-### 2.15.3 Type Reference Encoding
+## 2.15.3 Type Reference Encoding
 
 A **TypeRef** is a variable-length encoded type descriptor stored in the blob heap. TypeRefs appear wherever the
 metadata references a type: field types, parameter types, return types, register type declarations, generic arguments.
 
 | Kind (u8)     | Payload                      | Meaning                                                                                                               |
 |---------------|------------------------------|-----------------------------------------------------------------------------------------------------------------------|
-| `0x00`–`0x04` | —                            | Primitive (void, int, float, bool, string)                                                                            |
+| `0x00`–`0x05` | —                            | Primitive (void, int, float, bool, string, Entity)                                                                    |
 | `0x10`        | TypeDef index (`u32`)        | Named type — struct, class, enum, entity, or component. The TypeDef entry carries a `kind` flag distinguishing these. |
 | `0x11`        | TypeSpec index (`u32`)       | Instantiated generic type (e.g., `List<int>`, `Option<Guard>`)                                                        |
 | `0x12`        | GenericParam ordinal (`u16`) | Open type parameter — the Nth generic param on the enclosing TypeDef or MethodDef                                     |
@@ -72,7 +72,7 @@ metadata references a type: field types, parameter types, return types, register
 - **Recursive encoding.** TypeRefs nest: `Array<Option<int>>` encodes as `0x20` → `0x11` →
   TypeSpec(Option_TypeDef, [`0x01`]).
 
-### 2.15.4 Generic Representation
+## 2.15.4 Generic Representation
 
 **In metadata:**
 
@@ -112,7 +112,7 @@ indexed by `(concrete_type_tag, contract_id, method_slot)` for O(1) dispatch. A 
 recommended approach for predictable performance. Polymorphic inline caching at `CALL_VIRT` sites is a permitted
 optimization for hot call sites.
 
-### 2.15.5 Enum Representation
+## 2.15.5 Enum Representation
 
 Enums are value types. An enum value consists of a **tag** and an optional **payload**.
 

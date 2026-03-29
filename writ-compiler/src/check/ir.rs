@@ -20,6 +20,12 @@ pub struct TypedAst {
     /// Maps struct DefId -> ordered list of (field_name, field_ty).
     /// Used by the emitter for field-by-field structural equality emission.
     pub struct_field_types: FxHashMap<DefId, Vec<(String, Ty)>>,
+    /// Condition-name map for [Conditional] functions. Empty when no conditions are used.
+    /// Transferred from TypeEnv after type checking for downstream emit consumption.
+    pub conditional_fns: FxHashMap<DefId, String>,
+    /// Conditional fn -> fallback fn mapping. Empty when no conditions are used.
+    /// Transferred from TypeEnv after type checking for downstream emit consumption.
+    pub fallback_for_conditional: FxHashMap<DefId, DefId>,
 }
 
 /// A typed expression. Every variant carries `ty: Ty` and `span: SimpleSpan`.
@@ -174,6 +180,14 @@ pub enum TypedExpr {
         ty: Ty,
         span: SimpleSpan,
     },
+    /// typeof(expr) — static compile-time type query.
+    /// `ty` is always TyKind::ReflectionType(static_ty).
+    /// `static_ty` is the compile-time type of the inner expression (used by the emitter).
+    TypeOf {
+        ty: Ty,
+        span: SimpleSpan,
+        static_ty: Ty,
+    },
 }
 
 impl TypedExpr {
@@ -204,7 +218,8 @@ impl TypedExpr {
             | TypedExpr::Path { ty, .. }
             | TypedExpr::Return { ty, .. }
             | TypedExpr::Crash { ty, .. }
-            | TypedExpr::Error { ty, .. } => *ty,
+            | TypedExpr::Error { ty, .. }
+            | TypedExpr::TypeOf { ty, .. } => *ty,
         }
     }
 
@@ -235,7 +250,8 @@ impl TypedExpr {
             | TypedExpr::Path { span, .. }
             | TypedExpr::Return { span, .. }
             | TypedExpr::Crash { span, .. }
-            | TypedExpr::Error { span, .. } => *span,
+            | TypedExpr::Error { span, .. }
+            | TypedExpr::TypeOf { span, .. } => *span,
         }
     }
 }
@@ -269,6 +285,12 @@ pub enum TypedStmt {
         iterable: TypedExpr,
         body: Vec<TypedStmt>,
         span: SimpleSpan,
+        /// Contract DefId for Iterable<T> — set when iterating a class type.
+        /// None for array/range iteration.
+        iterable_contract_def_id: Option<DefId>,
+        /// Contract DefId for Iterator<T> — set when iterating a class type.
+        /// None for array/range iteration.
+        iterator_contract_def_id: Option<DefId>,
     },
     While {
         condition: TypedExpr,
@@ -339,14 +361,11 @@ pub enum TypedDecl {
     ExternFn {
         def_id: DefId,
     },
-    ExternStruct {
-        def_id: DefId,
-    },
-    /// Extern class declaration (reference type, heap-allocated).
-    ExternClass {
-        def_id: DefId,
-    },
     ExternComponent {
+        def_id: DefId,
+    },
+    /// A user-defined attribute declaration (type-checking is a passthrough).
+    AttributeDef {
         def_id: DefId,
     },
 }

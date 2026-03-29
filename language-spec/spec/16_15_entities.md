@@ -1,13 +1,12 @@
-# 1. Writ Language Specification
-## 1.15 Entities
+# 1.15 Entities
 
 Entities are game objects declared with the `entity` keyword. They combine properties, components (`use`), lifecycle
 hooks (`on`), and methods. Entities lower to classes with component fields, auto-generated contract implementations, and
 engine registrations.
 
-### 1.15.1 Entity Declaration
+## 1.15.1 Entity Declaration
 
-```
+```writ
 entity Guard {
     // Properties (with defaults)
     name: string = "Guard",
@@ -59,12 +58,14 @@ entity Guard {
 }
 ```
 
-### 1.15.2 Creating Entities
+Components are always extern and data-only. See [Components](components.md) for the full component declaration syntax.
+
+## 1.15.2 Creating Entities
 
 Entities are constructed with the `new` keyword and brace syntax. The compiler knows the type is an entity and generates
 the appropriate IL (entity registration, component attachment, lifecycle hooks). Properties can be overridden.
 
-```
+```writ
 let guard = new Guard {
     name: "Steve",
     patrolRoute: [new vec2 { x: 0, y: 0 }, new vec2 { x: 10, y: 0 }],
@@ -74,13 +75,13 @@ let guard = new Guard {
 let defaultGuard = new Guard {};
 ```
 
-### 1.15.3 Component Access
+## 1.15.3 Component Access
 
 Components are accessed via `[]` indexing by type. Components are extern and data-only — script code reads and writes
 their fields directly. For components declared in the entity definition, access is guaranteed non-null. For arbitrary
 Entity references, component access returns `Option`.
 
-```
+```writ
 // On a known entity type — guaranteed, no optional
 guard[Sprite].visible = false;
 guard[Collider].width = 48;
@@ -101,13 +102,13 @@ let hp = target[Health]!.current;
 > **Note:** If two components have a field with the same name, accessing it directly on the entity is a compile error.
 > Use explicit component access: `self[Health].current` vs `self[Mana].current`.
 
-### 1.15.4 Singleton Entities
+## 1.15.4 Singleton Entities
 
 Entities marked with the `[Singleton]` attribute are guaranteed to have at most one instance. They are accessed via
 `Entity.getOrCreate<T>()`, which returns the existing instance or creates one. This is the mechanism used for
 globally-referenced speakers in dialogue.
 
-```
+```writ
 [Singleton]
 entity Narrator {
     use Speaker {
@@ -147,12 +148,12 @@ dlg shopDialog(customer: Entity) {
 }
 ```
 
-### 1.15.5 Entity References & EntityList
+## 1.15.5 Entity References & EntityList
 
 Entities reference each other by handle. The `EntityList<T>` type provides a typed collection for managing groups of
 entities.
 
-```
+```writ
 entity Party {
     leader: Player,
     members: EntityList<Entity> = EntityList::new(),
@@ -171,7 +172,7 @@ entity Party {
 }
 ```
 
-### 1.15.5.1 Entity Handles
+## 1.15.5.1 Entity Handles
 
 Entity references are runtime-managed **handles** — opaque identifiers that the runtime resolves against its internal
 entity registry. Unlike classes (which are direct GC references to heap objects), entity handles add an indirection
@@ -189,7 +190,7 @@ The GC manages the handle objects themselves. An entity's memory is only collect
 explicitly destroyed) AND unreachable from all GC roots. A dead handle that is still referenced keeps the handle object
 alive in the GC, but the underlying entity state is gone.
 
-```
+```writ
 let guard = new Guard {};
 let ref = guard;                // both guard and ref hold handles to the same entity
 Entity.destroy(guard);          // entity destroyed — on_destroy fires, marked dead
@@ -197,7 +198,7 @@ Entity.isAlive(ref);            // false
 // ref.name;                    // would crash — dead handle
 ```
 
-### 1.15.5.2 Entity Static Methods
+## 1.15.5.2 Entity Static Methods
 
 The `Entity` namespace provides static methods for entity lifecycle and queries:
 
@@ -211,12 +212,12 @@ The `Entity` namespace provides static methods for entity lifecycle and queries:
 `Entity.destroy` and `Entity.isAlive` lower to dedicated IL instructions (`DESTROY_ENTITY`, `ENTITY_IS_ALIVE`).
 `Entity.getOrCreate` and `Entity.findAll` lower to `GET_OR_CREATE` and `FIND_ALL` respectively.
 
-### 1.15.6 Lifecycle Hooks
+## 1.15.6 Lifecycle Hooks
 
 Entities support all the universal lifecycle hooks (shared with classes) plus entity-specific hooks. All hooks receive
 an implicit `mut self` parameter.
 
-#### 1.15.6.1 Universal Hooks
+### 1.15.6.1 Universal Hooks
 
 | Hook             | When                                            | Purpose                                 |
 |------------------|-------------------------------------------------|-----------------------------------------|
@@ -225,7 +226,7 @@ an implicit `mut self` parameter.
 | `on serialize`   | Before the entity is serialized                 | Park native state                       |
 | `on deserialize` | After the entity is deserialized                | Recreate native state                   |
 
-#### 1.15.6.2 Entity-Specific Hooks
+### 1.15.6.2 Entity-Specific Hooks
 
 | Hook                       | When                               | Purpose                                           |
 |----------------------------|------------------------------------|---------------------------------------------------|
@@ -251,11 +252,11 @@ game logic, `on finalize` handles native resource cleanup (file handles, connect
 The runtime must log the failure to the host via the runtime logging interface (see IL spec §1.14.7). An `on destroy`
 crash still marks the entity as destroyed — the entity does not "survive" a failed destructor.
 
-### 1.15.7 Entity Lowering
+## 1.15.7 Entity Lowering
 
 An entity declaration lowers to a TypeDef with fields, component slots, methods, and lifecycle hook registrations.
 
-#### 1.15.7.1 TypeDef Generation
+### 1.15.7.1 TypeDef Generation
 
 Each `entity` declaration produces a TypeDef in the IL metadata with kind `Entity`. The TypeDef contains:
 
@@ -267,7 +268,7 @@ Each `entity` declaration produces a TypeDef in the IL metadata with kind `Entit
 - **Component overrides:** Field overrides specified in `use Health { current: 80, max: 80 }` are stored in the TypeDef
   metadata and applied to the component instance during entity construction.
 
-```
+```writ
 // entity Guard { name: string = "Guard", health: int = 80, use Sprite { ... }, ... }
 // produces:
 //   TypeDef(Guard, kind=Entity)
@@ -276,17 +277,17 @@ Each `entity` declaration produces a TypeDef in the IL metadata with kind `Entit
 //     component_overrides: [Speaker.displayName="Guard", Sprite.texture="res://...", ...]
 ```
 
-#### 1.15.7.2 Method Lowering
+### 1.15.7.2 Method Lowering
 
 Entity methods lower to regular functions with the entity handle as explicit `self`:
 
-```
+```writ
 // fn greet(self) -> string { $"Halt! I am {self.name}" }
 // lowers to:
 //   MethodDef(Guard::greet, params=[self: Guard], returns=string)
 ```
 
-#### 1.15.7.3 Lifecycle Hook Lowering
+### 1.15.7.3 Lifecycle Hook Lowering
 
 Lifecycle hooks lower to registered callback functions with implicit `mut self`:
 
@@ -302,7 +303,7 @@ Lifecycle hooks lower to registered callback functions with implicit `mut self`:
 The runtime stores these as method indices in the TypeDef metadata. `INIT_ENTITY` invokes `__on_create`.
 `DESTROY_ENTITY` invokes `__on_destroy`. The host fires `on_interact` through the runtime-host interface.
 
-#### 1.15.7.4 Component Access Lowering
+### 1.15.7.4 Component Access Lowering
 
 Component access via `[]` lowers to IL instructions based on context:
 
@@ -311,11 +312,11 @@ Component access via `[]` lowers to IL instructions based on context:
 - `target[Health]` on a generic `Entity` reference → `GET_COMPONENT r_dst, r_target, Health_type`. Returns
   `Option<Health>` because the entity may not have that component.
 
-#### 1.15.7.5 Construction Sequence
+### 1.15.7.5 Construction Sequence
 
 `new Guard { name: "Steve" }` compiles to the following IL:
 
-```
+```writ
 SPAWN_ENTITY  r0, Guard_type      // 1. Allocate entity, notify host to create components
                                    //    with defaults and overrides
 LOAD_STRING   r1, "Steve"_idx     // 2. Load override value

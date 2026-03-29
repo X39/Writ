@@ -56,7 +56,7 @@ pub fn from_bytes(bytes: &[u8]) -> Result<Module, DecodeError> {
 
     // Version and flags
     let format_version = cur.read_u16::<LittleEndian>()?;
-    if format_version != 4 {
+    if format_version != 5 {
         return Err(DecodeError::UnsupportedVersion(format_version));
     }
     let flags = cur.read_u16::<LittleEndian>()?;

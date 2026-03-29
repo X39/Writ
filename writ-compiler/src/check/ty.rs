@@ -24,7 +24,12 @@ pub enum TyKind {
     /// Class type (reference type, heap-allocated).
     Class(DefId),
     Entity(DefId),
+    /// Base Entity type — any specific entity type is assignable to this.
+    /// Used for parameters like `say(speaker: Entity, ...)` that accept any entity.
+    AnyEntity,
     Enum(DefId),
+    /// Contract type — a value whose concrete type implements this contract.
+    Contract(DefId),
     Array(Ty),
     Func { params: Vec<Ty>, ret: Ty },
     Option(Ty),
@@ -36,6 +41,10 @@ pub enum TyKind {
     Infer(InferVar),
     /// Poison type: suppresses cascading errors.
     Error,
+    /// Reflection type: the result of `typeof(expr)`.
+    /// The inner Ty is the static type of the queried expression.
+    /// At runtime this produces a Type heap object (writ-runtime builtin class).
+    ReflectionType(Ty),
 }
 
 /// An inference variable used during type unification.
@@ -142,11 +151,20 @@ impl TyInterner {
     pub fn array(&mut self, elem: Ty) -> Ty {
         self.intern(TyKind::Array(elem))
     }
+    pub fn any_entity(&mut self) -> Ty {
+        self.intern(TyKind::AnyEntity)
+    }
     pub fn task_handle(&mut self, inner: Ty) -> Ty {
         self.intern(TyKind::TaskHandle(inner))
     }
     pub fn func(&mut self, params: Vec<Ty>, ret: Ty) -> Ty {
         self.intern(TyKind::Func { params, ret })
+    }
+    pub fn contract(&mut self, def_id: DefId) -> Ty {
+        self.intern(TyKind::Contract(def_id))
+    }
+    pub fn reflection_type(&mut self, inner: Ty) -> Ty {
+        self.intern(TyKind::ReflectionType(inner))
     }
 
     /// Format a type as a human-readable string.
@@ -160,7 +178,9 @@ impl TyInterner {
             TyKind::Struct(_) => "struct".to_string(),
             TyKind::Class(_) => "class".to_string(),
             TyKind::Entity(_) => "entity".to_string(),
+            TyKind::AnyEntity => "Entity".to_string(),
             TyKind::Enum(_) => "enum".to_string(),
+            TyKind::Contract(_) => "contract".to_string(),
             TyKind::Array(elem) => format!("{}[]", self.display(*elem)),
             TyKind::Func { params, ret } => {
                 let ps: Vec<String> = params.iter().map(|p| self.display(*p)).collect();
@@ -174,6 +194,7 @@ impl TyInterner {
             TyKind::GenericParam(idx) => format!("T{}", idx),
             TyKind::Infer(var) => format!("?{}", var.0),
             TyKind::Error => "<error>".to_string(),
+            TyKind::ReflectionType(_) => "Type".to_string(),
         }
     }
 
@@ -186,7 +207,8 @@ impl TyInterner {
             TyKind::Struct(def_id)
             | TyKind::Class(def_id)
             | TyKind::Entity(def_id)
-            | TyKind::Enum(def_id) => {
+            | TyKind::Enum(def_id)
+            | TyKind::Contract(def_id) => {
                 def_map.get_entry(*def_id).name.clone()
             }
             TyKind::Array(elem) => format!("{}[]", self.display_named(*elem, def_map)),

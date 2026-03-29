@@ -1,0 +1,300 @@
+.module "main" "0.1.0" {
+    .extern "writ-runtime" "1.0.0"
+    .type "ListIterator" class pub {
+        .field "source" array<?>
+        .field "index" int
+    }
+    .type "List" class pub {
+        .field "items" array<?>
+    }
+    .impl ListIterator : contract_167772179 {
+    }
+    .impl ListIterator : ? {
+    }
+    .impl ListIterator : ? {
+        .method "get_type" () -> Type pub {
+            .reg r0 int
+            .reg r1 int
+            TYPEOF r1, 33554433
+            RET r1
+        }
+        .method "next" () -> ? pub static {
+            .locals {
+                r0: ? "self" [0, 144)
+                r10: ? "item" [100, 144)
+            }
+            .reg r0 int
+            .reg r1 int
+            .reg r2 array<?>
+            .reg r3 int
+            .reg r4 bool
+            .reg r5 bool
+            .reg r6 void
+            .reg r7 ?
+            .reg r8 array<?>
+            .reg r9 int
+            .reg r10 ?
+            .reg r11 int
+            .reg r12 int
+            .reg r13 int
+            GET_FIELD r1, r0, 1  ; line:1 col:132
+            GET_FIELD r2, r0, 0
+            ARRAY_LEN r3, r2
+            CMP_LT_I r4, r1, r3
+            NOT r5, r4
+            BR_FALSE r5, 30
+            LOAD_NULL r7  ; line:1 col:181
+            RET r7
+            MOV r6, r0
+            BR 10
+            NOP
+            GET_FIELD r8, r0, 0  ; line:1 col:212
+            GET_FIELD r9, r0, 1
+            ARRAY_LOAD r10, r8, r9
+            GET_FIELD r11, r0, 1  ; line:1 col:259
+            LOAD_INT r12, 1
+            ADD_I r13, r11, r12
+            SET_FIELD r0, 1, r13
+            RET r10  ; line:1 col:296
+        }
+        .method "next" () -> ? pub static {
+            .locals {
+                r0: ? "self" [0, 144)
+                r10: ? "item" [100, 144)
+            }
+            .reg r0 int
+            .reg r1 int
+            .reg r2 array<?>
+            .reg r3 int
+            .reg r4 bool
+            .reg r5 bool
+            .reg r6 void
+            .reg r7 ?
+            .reg r8 array<?>
+            .reg r9 int
+            .reg r10 ?
+            .reg r11 int
+            .reg r12 int
+            .reg r13 int
+            GET_FIELD r1, r0, 1  ; line:1 col:394
+            GET_FIELD r2, r0, 0
+            ARRAY_LEN r3, r2
+            CMP_LT_I r4, r1, r3
+            NOT r5, r4
+            BR_FALSE r5, 30
+            LOAD_NULL r7  ; line:1 col:443
+            RET r7
+            MOV r6, r0
+            BR 10
+            NOP
+            GET_FIELD r8, r0, 0  ; line:1 col:474
+            GET_FIELD r9, r0, 1
+            ARRAY_LOAD r10, r8, r9
+            GET_FIELD r11, r0, 1  ; line:1 col:521
+            LOAD_INT r12, 1
+            ADD_I r13, r11, r12
+            SET_FIELD r0, 1, r13
+            RET r10  ; line:1 col:558
+        }
+    }
+    .impl List : contract_167772179 {
+    }
+    .impl List : ? {
+    }
+    .impl List : ? {
+        .method "get_type" () -> Type pub {
+            .reg r0 int
+            .reg r1 int
+            TYPEOF r1, 33554433
+            RET r1
+        }
+        .method "next" () -> ? pub static {
+            .locals {
+                r0: ? "self" [0, 144)
+                r10: ? "item" [100, 144)
+            }
+            .reg r0 int
+            .reg r1 int
+            .reg r2 array<?>
+            .reg r3 int
+            .reg r4 bool
+            .reg r5 bool
+            .reg r6 void
+            .reg r7 ?
+            .reg r8 array<?>
+            .reg r9 int
+            .reg r10 ?
+            .reg r11 int
+            .reg r12 int
+            .reg r13 int
+            GET_FIELD r1, r0, 1  ; line:1 col:132
+            GET_FIELD r2, r0, 0
+            ARRAY_LEN r3, r2
+            CMP_LT_I r4, r1, r3
+            NOT r5, r4
+            BR_FALSE r5, 30
+            LOAD_NULL r7  ; line:1 col:181
+            RET r7
+            MOV r6, r0
+            BR 10
+            NOP
+            GET_FIELD r8, r0, 0  ; line:1 col:212
+            GET_FIELD r9, r0, 1
+            ARRAY_LOAD r10, r8, r9
+            GET_FIELD r11, r0, 1  ; line:1 col:259
+            LOAD_INT r12, 1
+            ADD_I r13, r11, r12
+            SET_FIELD r0, 1, r13
+            RET r10  ; line:1 col:296
+        }
+        .method "next" () -> ? pub static {
+            .locals {
+                r0: ? "self" [0, 144)
+                r10: ? "item" [100, 144)
+            }
+            .reg r0 int
+            .reg r1 int
+            .reg r2 array<?>
+            .reg r3 int
+            .reg r4 bool
+            .reg r5 bool
+            .reg r6 void
+            .reg r7 ?
+            .reg r8 array<?>
+            .reg r9 int
+            .reg r10 ?
+            .reg r11 int
+            .reg r12 int
+            .reg r13 int
+            GET_FIELD r1, r0, 1  ; line:1 col:394
+            GET_FIELD r2, r0, 0
+            ARRAY_LEN r3, r2
+            CMP_LT_I r4, r1, r3
+            NOT r5, r4
+            BR_FALSE r5, 30
+            LOAD_NULL r7  ; line:1 col:443
+            RET r7
+            MOV r6, r0
+            BR 10
+            NOP
+            GET_FIELD r8, r0, 0  ; line:1 col:474
+            GET_FIELD r9, r0, 1
+            ARRAY_LOAD r10, r8, r9
+            GET_FIELD r11, r0, 1  ; line:1 col:521
+            LOAD_INT r12, 1
+            ADD_I r13, r11, r12
+            SET_FIELD r0, 1, r13
+            RET r10  ; line:1 col:558
+        }
+        .method "get_type" () -> Type pub {
+            .reg r0 int
+            .reg r1 int
+            TYPEOF r1, 33554434
+            RET r1
+        }
+        .method "add" (item: ?) -> void pub static {
+            .locals {
+                r0: ? "self" [0, 72)
+                r1: ? "item" [0, 72)
+                r3: int "old_len" [16, 72)
+            }
+            .reg r0 int
+            .reg r1 int
+            .reg r2 array<?>
+            .reg r3 int
+            .reg r4 array<?>
+            .reg r5 int
+            .reg r6 int
+            .reg r7 void
+            .reg r8 array<?>
+            GET_FIELD r2, r0, 0  ; line:1 col:672
+            ARRAY_LEN r3, r2
+            GET_FIELD r4, r0, 0  ; line:1 col:717
+            LOAD_INT r5, 1
+            ADD_I r6, r3, r5
+            ARRAY_RESIZE r4, r6
+            GET_FIELD r8, r0, 0  ; line:1 col:757
+            ARRAY_STORE r8, r3, r1
+            RET_VOID
+        }
+        .method "len" () -> int pub {
+            .locals {
+                r0: ? "self" [0, 20)
+            }
+            .reg r0 int
+            .reg r1 array<?>
+            .reg r2 int
+            GET_FIELD r1, r0, 0  ; line:1 col:830
+            ARRAY_LEN r2, r1
+            RET r2
+        }
+        .method "iterator" () -> ? pub {
+            .locals {
+                r0: ? "self" [0, 54)
+            }
+            .reg r0 int
+            .reg r1 ListIterator
+            .reg r2 array<?>
+            .reg r3 int
+            NEW r1, 33554433  ; line:1 col:941
+            GET_FIELD r2, r0, 0
+            SET_FIELD r1, 0, r2
+            LOAD_INT r3, 0
+            SET_FIELD r1, 1, r3
+            RET r1
+        }
+        .method "main" () -> void mut {
+            .locals {
+                r0: List "list" [26, 222)
+                r14: int "sum" [146, 222)
+            }
+            .reg r0 List
+            .reg r1 array<void>
+            .reg r2 void
+            .reg r3 int
+            .reg r4 List
+            .reg r5 int
+            .reg r6 void
+            .reg r7 int
+            .reg r8 List
+            .reg r9 int
+            .reg r10 void
+            .reg r11 int
+            .reg r12 List
+            .reg r13 int
+            .reg r14 int
+            .reg r15 void
+            .reg r16 void
+            .reg r17 bool
+            .reg r18 int
+            .reg r19 int
+            NEW r0, 33554434  ; line:1 col:1019
+            NEW_ARRAY r1, 0
+            SET_FIELD r0, 0, r1
+            LOAD_INT r3, 10  ; line:1 col:1074
+            MOV r4, r0
+            MOV r5, r3
+            CALL r2, 117440517, r4, 2
+            LOAD_INT r7, 20  ; line:1 col:1092
+            MOV r8, r0
+            MOV r9, r7
+            CALL r6, 117440517, r8, 2
+            LOAD_INT r11, 30  ; line:1 col:1110
+            MOV r12, r0
+            MOV r13, r11
+            CALL r10, 117440517, r12, 2
+            LOAD_INT r14, 0  ; line:1 col:1128
+            CALL_VIRT r15, r0, 167772174, 0, r0, 1  ; line:1 col:1154
+            CALL_VIRT r16, r15, 167772175, 0, r15, 1
+            IS_NONE r17, r16
+            BR_TRUE r17, 36
+            UNWRAP r18, r16
+            ADD_I r19, r14, r18  ; line:1 col:1178
+            MOV r14, r19
+            BR -50
+            RET_VOID  ; line:1 col:1203
+        }
+    }
+    .export "List" type 33554434
+    .export "ListIterator" type 33554433
+}

@@ -87,6 +87,39 @@ pub(super) fn check_member_access(
                 field: field.to_string(),
             }
         }
+        TyKind::Contract(contract_def_id) => {
+            // Contract types have no fields — only methods from the contract definition.
+            if let Some(methods) = ctx.type_env.contract_methods.get(&contract_def_id) {
+                for method_sig in methods {
+                    if method_sig.name == field {
+                        // Build Func type from the method signature (excluding self param).
+                        let param_tys: Vec<_> = method_sig.params.iter().map(|(_, t)| *t).collect();
+                        let fn_ty = ctx.interner.func(param_tys, method_sig.ret);
+                        return TypedExpr::Field {
+                            ty: fn_ty,
+                            span,
+                            receiver: Box::new(typed_obj),
+                            field: field.to_string(),
+                        };
+                    }
+                }
+            }
+
+            // Method not found on contract
+            let contract_name = ctx.def_map.get_entry(contract_def_id).name.clone();
+            let err_ty = ctx.emit_error(TypeError::UnknownField {
+                ty_name: contract_name,
+                field_name: field.to_string(),
+                span: field_span,
+                file: ctx.current_file,
+            });
+            TypedExpr::Field {
+                ty: err_ty,
+                span,
+                receiver: Box::new(typed_obj),
+                field: field.to_string(),
+            }
+        }
         TyKind::Option(inner_ty) => {
             let bool_ty = ctx.interner.bool_ty();
             let fn_ty = match field {
@@ -149,10 +182,56 @@ pub(super) fn check_member_access(
             let int_ty = ctx.interner.int();
             let fn_ty = match field {
                 "len" => ctx.interner.func(vec![], int_ty),
-                "push" => ctx.interner.func(vec![elem_ty], void_ty),
                 "slice" => {
                     let arr_ty = ctx.interner.intern(TyKind::Array(elem_ty));
                     ctx.interner.func(vec![int_ty, int_ty], arr_ty)
+                }
+                "resize" => ctx.interner.func(vec![int_ty], void_ty),
+                "copy_from" => {
+                    // copy_from(src: T[], src_idx: int, dst_idx: int, len: int) -> void
+                    let arr_ty = ctx.interner.intern(TyKind::Array(elem_ty));
+                    ctx.interner.func(vec![arr_ty, int_ty, int_ty, int_ty], void_ty)
+                }
+                _ => {
+                    let ty_name = ctx.display_ty(obj_ty);
+                    let err_ty = ctx.emit_error(TypeError::UnknownField {
+                        ty_name,
+                        field_name: field.to_string(),
+                        span: field_span,
+                        file: ctx.current_file,
+                    });
+                    return TypedExpr::Field {
+                        ty: err_ty,
+                        span,
+                        receiver: Box::new(typed_obj),
+                        field: field.to_string(),
+                    };
+                }
+            };
+            TypedExpr::Field {
+                ty: fn_ty,
+                span,
+                receiver: Box::new(typed_obj),
+                field: field.to_string(),
+            }
+        }
+        TyKind::AnyEntity => {
+            // Entity namespace static methods: getOrCreate, destroy, isAlive, findAll
+            let entity_ty = ctx.interner.any_entity();
+            let void_ty = ctx.interner.void();
+            let bool_ty = ctx.interner.bool_ty();
+            let fn_ty = match field {
+                "getOrCreate" => {
+                    // Generic: fn<T>() -> T — the return type is resolved at the call site
+                    // via check_generic_call. For member access, return fn() -> Entity.
+                    ctx.interner.func(vec![], entity_ty)
+                }
+                "destroy" => ctx.interner.func(vec![entity_ty], void_ty),
+                "isAlive" => ctx.interner.func(vec![entity_ty], bool_ty),
+                "findAll" => {
+                    // Generic: fn<T>() -> EntityList<T> — simplified as fn() -> Entity[]
+                    let arr_ty = ctx.interner.array(entity_ty);
+                    ctx.interner.func(vec![], arr_ty)
                 }
                 _ => {
                     let ty_name = ctx.display_ty(obj_ty);
@@ -224,6 +303,26 @@ pub(super) fn check_member_access(
                 "into_bool" => {
                     let bool_ty = ctx.interner.bool_ty();
                     ctx.interner.func(vec![], bool_ty)
+                }
+                "trim" => ctx.interner.func(vec![], string_ty),
+                "to_upper" => ctx.interner.func(vec![], string_ty),
+                "to_lower" => ctx.interner.func(vec![], string_ty),
+                "starts_with" => {
+                    let bool_ty = ctx.interner.bool_ty();
+                    ctx.interner.func(vec![string_ty], bool_ty)
+                }
+                "ends_with" => {
+                    let bool_ty = ctx.interner.bool_ty();
+                    ctx.interner.func(vec![string_ty], bool_ty)
+                }
+                "contains" => {
+                    let bool_ty = ctx.interner.bool_ty();
+                    ctx.interner.func(vec![string_ty], bool_ty)
+                }
+                "replace" => ctx.interner.func(vec![string_ty, string_ty], string_ty),
+                "split" => {
+                    let arr_string_ty = ctx.interner.intern(TyKind::Array(string_ty));
+                    ctx.interner.func(vec![string_ty], arr_string_ty)
                 }
                 _ => {
                     let ty_name = ctx.display_ty(obj_ty);

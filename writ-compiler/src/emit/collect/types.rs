@@ -1,4 +1,4 @@
-//! Type definition collection: struct, entity, enum, class, extern struct.
+//! Type definition collection: struct, entity, enum, class.
 
 use rustc_hash::FxHashMap;
 use writ_diagnostics::{Diagnostic, FileId};
@@ -12,7 +12,7 @@ use crate::emit::metadata::{TypeDefKind, HookKind, field_flags, method_flags};
 use crate::emit::module_builder::{ModuleBuilder, TypeDefHandle};
 
 use super::encoding::{encode_type_from_ast, encode_empty_sig, emit_generics_for_typedef, encode_hook_sig};
-use super::lookup::{find_struct_decl, find_entity_decl, find_enum_decl, find_class_decl, find_extern_struct_decl};
+use super::lookup::{find_struct_decl, find_entity_decl, find_enum_decl, find_class_decl};
 
 pub(super) fn collect_struct(
     def_id: DefId,
@@ -194,35 +194,3 @@ pub(super) fn collect_class(
     }
 }
 
-pub(super) fn collect_extern_struct(
-    def_id: DefId,
-    def_map: &DefMap,
-    asts: &[(FileId, &Ast)],
-    interner: &TyInterner,
-    builder: &mut ModuleBuilder,
-    typedef_handles: &mut FxHashMap<DefId, TypeDefHandle>,
-    _diags: &mut Vec<Diagnostic>,
-) {
-    let entry = def_map.get_entry(def_id);
-    let is_pub = matches!(entry.vis, DefVis::Pub);
-
-    let handle = builder.add_typedef(
-        &entry.name,
-        &entry.namespace,
-        TypeDefKind::Struct,
-        if is_pub { 1 } else { 0 },
-        Some(def_id),
-    );
-    typedef_handles.insert(def_id, handle);
-
-    if let Some(struct_decl) = find_extern_struct_decl(asts, entry) {
-        for member in &struct_decl.members {
-            if let AstStructMember::Field(f) = member {
-                let is_field_pub = matches!(f.vis, Some(AstVisibility::Pub));
-                let flags = field_flags(is_field_pub, false, false);
-                let type_blob = encode_type_from_ast(&f.ty, interner, &entry.generics, builder);
-                builder.add_fielddef(handle, &f.name, type_blob, flags);
-            }
-        }
-    }
-}

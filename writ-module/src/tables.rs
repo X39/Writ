@@ -271,6 +271,9 @@ pub struct ExportDefRow {
     pub item: MetadataToken,
 }
 
+/// owner_kind value for attribute *declarations* (vs. applications which use 0/1/2).
+pub const ATTR_OWNER_KIND_DECL: u8 = 3;
+
 /// Table 20: Metadata attributes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AttributeDefRow {

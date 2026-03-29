@@ -1,58 +1,80 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
+    .type "Narrator" entity {
+    }
     .type "__closure_0" class {
     }
     .type "__closure_1" class {
     }
-    // .extern_fn "log::info" (string) -> void "log::info"
-    // .extern_fn "say" (string) -> void "say"
-    // .extern_fn "choice" (array<int>) -> int "choice"
-    // .extern_fn "ChoiceOption" (string, string, ?) -> void "ChoiceOption"
-    .method "__invoke_1" () -> void {
-        RET r0
+    .impl Narrator : contract_167772179 {
+        .method "get_type" () -> Type pub {
+            .reg r0 int
+            .reg r1 int
+            TYPEOF r1, 33554433
+            RET r1
+        }
+        .method "__invoke_0" () -> void {
+            RET_VOID
+        }
+        .method "__invoke_1" () -> void {
+            RET_VOID
+        }
+        .method "main" () -> void pub mut {
+            .locals {
+                r0: Narrator "speaker" [8, 204)
+            }
+            .reg r0 Narrator
+            .reg r1 void
+            .reg r2 string
+            .reg r3 void
+            .reg r4 string
+            .reg r5 Narrator
+            .reg r6 string
+            .reg r7 void
+            .reg r8 string
+            .reg r9 int
+            .reg r10 array<int>
+            .reg r11 int
+            .reg r12 string
+            .reg r13 string
+            .reg r14 ?
+            .reg r15 void
+            .reg r16 int
+            .reg r17 string
+            .reg r18 string
+            .reg r19 ?
+            .reg r20 void
+            .reg r21 int
+            .reg r22 int
+            GET_OR_CREATE r0, 33554433  ; line:1 col:46
+            LOAD_STRING r2, 267  ; line:1 col:105
+            CALL_EXTERN r1, 268435457, r2, 1
+            LOAD_STRING r4, 282  ; line:1 col:138
+            MOV r5, r0
+            MOV r6, r4
+            CALL_EXTERN r3, 268435458, r5, 2
+            LOAD_STRING r8, 290  ; line:1 col:167
+            CALL_EXTERN r7, 268435457, r8, 1
+            LOAD_STRING r12, 308  ; line:1 col:203
+            LOAD_STRING r13, 320
+            LOAD_NULL r15
+            NEW_DELEGATE r14, 117440514, r15
+            CALL_EXTERN r11, 268435460, r12, 3
+            LOAD_STRING r17, 329
+            LOAD_STRING r18, 341
+            LOAD_NULL r20
+            NEW_DELEGATE r19, 117440515, r20
+            CALL_EXTERN r16, 268435460, r17, 3
+            MOV r21, r11
+            MOV r22, r16
+            ARRAY_INIT r10, 0, 2, r21
+            CALL_EXTERN r9, 268435459, r10, 1
+            RET r9
+        }
     }
-    .method "main" () -> void pub mut {
-        .reg r0 void
-        .reg r1 string
-        .reg r2 void
-        .reg r3 string
-        .reg r4 void
-        .reg r5 string
-        .reg r6 int
-        .reg r7 array<int>
-        .reg r8 int
-        .reg r9 string
-        .reg r10 string
-        .reg r11 ?
-        .reg r12 void
-        .reg r13 int
-        .reg r14 string
-        .reg r15 string
-        .reg r16 ?
-        .reg r17 void
-        .reg r18 int
-        .reg r19 int
-        LOAD_STRING r1, 160  ; line:1 col:24
-        CALL_EXTERN r0, 268435457, r1, 1
-        LOAD_STRING r3, 177  ; line:1 col:57
-        CALL_EXTERN r2, 268435458, r3, 1
-        LOAD_STRING r5, 187  ; line:1 col:77
-        CALL_EXTERN r4, 268435457, r5, 1
-        LOAD_STRING r9, 207  ; line:1 col:113
-        LOAD_STRING r10, 221
-        LOAD_NULL r12
-        NEW_DELEGATE r11, 117440513, r12
-        CALL_EXTERN r8, 268435460, r9, 3
-        LOAD_STRING r14, 232
-        LOAD_STRING r15, 246
-        LOAD_NULL r17
-        NEW_DELEGATE r16, 117440514, r17
-        CALL_EXTERN r13, 268435460, r14, 3
-        MOV r18, r8
-        MOV r19, r13
-        ARRAY_INIT r7, 0, 2, r18
-        CALL_EXTERN r6, 268435459, r7, 1
-        RET r6
-    }
-    // .export "main" method 117440515
+    .extern_fn "log::info" (string) -> void "log::info"
+    .extern_fn "say" (?) -> void "say"
+    .extern_fn "choice" (array<int>) -> int "choice"
+    .extern_fn "ChoiceOption" (string, string, ?) -> void "ChoiceOption"
+    .export "main" method 117440516
 }

@@ -647,6 +647,9 @@ where
                 let try_expr = just(Token::KwTry)
                     .ignore_then(expr.clone())
                     .map_with(|e, extra| (cst::Expr::Try(Box::new(e)), extra.span()));
+                let typeof_expr = just(Token::KwTypeof)
+                    .ignore_then(expr.clone().delimited_by(just(Token::LParen), just(Token::RParen)))
+                    .map_with(|e, extra| (cst::Expr::TypeOf(Box::new(e)), extra.span()));
 
                 // New construction: new Type { field: value, ... }
                 let new_field = select! { Token::Ident(name) => name }
@@ -746,6 +749,8 @@ where
                     cancel_expr,
                     defer_expr,
                     try_expr,
+                    // Reflection keyword
+                    typeof_expr,
                     // New construction: new Type { ... }
                     new_expr,
                     // Block-bodied expressions
@@ -2193,6 +2198,31 @@ where
                 value,
             });
 
+        // --- attribute_decl parser ---
+        // attribute Name(name: type, ...) ;
+        let attribute_decl = just(Token::KwAttribute)
+            .ignore_then(
+                select! { Token::Ident(name) => name }
+                    .map_with(|n, e| (n, e.span())),
+            )
+            .then(
+                fn_param
+                    .clone()
+                    .separated_by(just(Token::Comma))
+                    .allow_trailing()
+                    .collect::<Vec<_>>()
+                    .delimited_by(just(Token::LParen), just(Token::RParen))
+                    .or_not(),
+            )
+            .then_ignore(just(Token::Semi))
+            .map_with(|(name, params), e| cst::AttributeDecl {
+                attrs: Vec::new(),
+                vis: None,
+                name,
+                params: params.unwrap_or_default(),
+                span: e.span(),
+            });
+
         // --- struct_decl parser ---
         // [vis] struct Name [<generics>] { [vis] field: type [= default], ... }
         let struct_field = visibility.clone().or_not()
@@ -2659,7 +2689,7 @@ where
             });
 
         // --- extern_decl parser ---
-        // extern fn ...; | extern struct ... { } | extern component ... { }
+        // extern fn ...; | extern component ... { }
         let extern_fn = just(Token::KwFn)
             .ignore_then(
                 // Try dotted name: Type.method
@@ -2697,58 +2727,6 @@ where
                 ))
             });
 
-        let extern_struct = just(Token::KwStruct)
-            .ignore_then(
-                select! { Token::Ident(name) => name }
-                    .map_with(|n, e| (n, e.span())),
-            )
-            .then(generic_params().or_not())
-            .then(
-                struct_member.clone()
-                    .separated_by(just(Token::Comma))
-                    .allow_trailing()
-                    .collect::<Vec<_>>()
-                    .delimited_by(just(Token::LBrace), just(Token::RBrace)),
-            )
-            .map_with(|((name, generics), members), e| {
-                cst::ExternDecl::Struct(None, (
-                    cst::StructDecl {
-                        attrs: Vec::new(),
-                        vis: None,
-                        name,
-                        generics,
-                        members,
-                    },
-                    e.span(),
-                ))
-            });
-
-        let extern_class = just(Token::KwClass)
-            .ignore_then(
-                select! { Token::Ident(name) => name }
-                    .map_with(|n, e| (n, e.span())),
-            )
-            .then(generic_params().or_not())
-            .then(
-                class_member.clone()
-                    .separated_by(just(Token::Comma))
-                    .allow_trailing()
-                    .collect::<Vec<_>>()
-                    .delimited_by(just(Token::LBrace), just(Token::RBrace)),
-            )
-            .map_with(|((name, generics), members), e| {
-                cst::ExternDecl::Class(None, (
-                    cst::ClassDecl {
-                        attrs: Vec::new(),
-                        vis: None,
-                        name,
-                        generics,
-                        members,
-                    },
-                    e.span(),
-                ))
-            });
-
         let extern_component = just(Token::KwComponent)
             .ignore_then(
                 select! { Token::Ident(name) => name }
@@ -2775,8 +2753,6 @@ where
         let extern_decl = just(Token::KwExtern)
             .ignore_then(choice((
                 extern_fn,
-                extern_struct,
-                extern_class,
                 extern_component,
             )));
 
@@ -2833,6 +2809,10 @@ where
                 dlg_decl.map_with(|dd, e| {
                     (cst::Item::Dlg(dd), e.span())
                 }),
+                // attribute -> Item::Attribute
+                attribute_decl.map_with(|ad, e| {
+                    (cst::Item::Attribute((ad, e.span())), e.span())
+                }),
             )))
             .map_with(|((attr_list, vis), (mut item, _inner_span)), e| {
                 // Attach attrs and vis to the inner declaration
@@ -2877,6 +2857,10 @@ where
                         dd.attrs = attr_list;
                         dd.vis = vis;
                     }
+                    cst::Item::Attribute((ad, _)) => {
+                        ad.attrs = attr_list;
+                        ad.vis = vis;
+                    }
                     _ => {}
                 }
                 (item, e.span())
@@ -2901,14 +2885,6 @@ where
                 match &mut ed {
                     cst::ExternDecl::Fn(v, (sig, _)) => {
                         sig.attrs = attr_list;
-                        *v = vis;
-                    }
-                    cst::ExternDecl::Struct(v, (sd, _)) => {
-                        sd.attrs = attr_list;
-                        *v = vis;
-                    }
-                    cst::ExternDecl::Class(v, (cd, _)) => {
-                        cd.attrs = attr_list;
                         *v = vis;
                     }
                     cst::ExternDecl::Component(v, (cd, _)) => {

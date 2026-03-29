@@ -39,7 +39,7 @@ fn test_compile_and_load_produces_module_with_methods() {
         result.err()
     );
 
-    let (module, src) = result.unwrap();
+    let (module, src, _method_file_ids) = result.unwrap();
 
     // method_defs must be non-empty (fn_multi_return.writ defines abs and main).
     assert!(
@@ -140,7 +140,7 @@ version = "0.1.0"
         result.err()
     );
 
-    let (module, file_id_paths) = result.unwrap();
+    let (module, file_id_paths, _method_file_ids) = result.unwrap();
 
     // Both source files should be tracked
     assert_eq!(

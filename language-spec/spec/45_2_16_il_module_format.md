@@ -1,11 +1,10 @@
-# Writ IL Specification
-## 2.16 IL Module Format
+# 2.16 IL Module Format
 
 The compiled IL is stored in a binary module format. Each module is a self-contained compilation unit that may reference
 types and methods from other modules. At load time, the runtime loads all modules into a single domain and resolves
 cross-module references by name.
 
-### 2.16.1 Binary Container
+## 2.16.1 Binary Container
 
 **Magic and version:**
 
@@ -15,7 +14,7 @@ Bytes 4–5:   u16 format_version    (starts at 1, bumps on incompatible layout 
 Bytes 6–7:   u16 flags             (bit 0 = debug info present, rest reserved)
 ```
 
-**Format version history:** Version 1 — initial format (MethodDef row: 20 bytes). Version 2 — added `param_count(u16)` to MethodDef (row: 24 bytes, padded from 22). Version 3 — TypeDef.kind=4 (class) added; kind=0 (struct) now means value type.
+**Format version history:** Version 1 — initial format (MethodDef row: 20 bytes). Version 2 — added `param_count(u16)` to MethodDef (row: 24 bytes, padded from 22). Version 3 — TypeDef.kind=4 (class) added; kind=0 (struct) now means value type. Version 4 — TYPEOF opcode added (reflection; section 3.10, section 4.2 0x0A30); format_version=3 modules are rejected at load time with UnsupportedVersion.
 
 **Module header** (fixed layout, immediately after the magic):
 
@@ -43,7 +42,7 @@ method signatures, constant values, and component override data.
 
 **Byte order:** Little-endian throughout (§2.5). Table rows are aligned to 4-byte boundaries.
 
-### 2.16.2 Multi-Module Architecture
+## 2.16.2 Multi-Module Architecture
 
 Modules may depend on other modules. Dependencies are declared in the **ModuleRef** table and must form a directed
 acyclic graph (DAG) — circular dependencies are forbidden. The runtime loads all modules into a single domain and
@@ -65,7 +64,7 @@ paid once at load time.
 TypeRef, MethodRef, and FieldRef entries. This is analogous to include paths — the build system provides paths to
 dependency modules, and the compiler reads their metadata tables.
 
-### 2.16.3 Module Versioning
+## 2.16.3 Module Versioning
 
 Each module declares its version as a **Semantic Versioning 3.0.0** (semver) string in the format `MAJOR.MINOR.PATCH`:
 
@@ -86,7 +85,7 @@ requirement.
 satisfies the requirement. On failure, the runtime logs the mismatch (§2.14.7) and may refuse to load or proceed at the
 host's discretion.
 
-### 2.16.4 Metadata Tokens
+## 2.16.4 Metadata Tokens
 
 Instructions and metadata entries reference types, methods, and fields via **metadata tokens** — u32 values encoding
 both the target table and the row index:
@@ -110,7 +109,7 @@ This gives 24-bit row indices (up to 16,777,215 rows per table per module).
 After load-time resolution, the runtime may remap cross-module tokens internally. The token encoding is a
 storage/interchange format — the runtime's internal representation is implementation-defined.
 
-### 2.16.5 Metadata Tables
+## 2.16.5 Metadata Tables
 
 All tables have **fixed-size rows**. References to heaps are u32 offsets. References to other tables are metadata tokens
 (§2.16.4). Tables use the **list ownership** pattern: a parent's `xxx_list` field gives the index of the first child
@@ -134,7 +133,7 @@ row, and the range extends to the next parent's `xxx_list` value (or end of tabl
 | 13 | **GenericParam**      | owner(token), owner_kind(u8), ordinal(u16), name(str)                                    | Type parameters on types/methods                      |
 | 14 | **GenericConstraint** | param(row:GenericParam), constraint(token)                                               | Bounds on type parameters                             |
 | 15 | **GlobalDef**         | name(str), type_sig(blob), flags(u16), init_value(blob)                                  | Constants and `global mut` variables                  |
-| 16 | **ExternDef**         | name(str), signature(blob), import_name(str), flags(u16)                                 | Extern function/type declarations                     |
+| 16 | **ExternDef**         | name(str), signature(blob), import_name(str), flags(u16)                                 | Extern function declarations                          |
 | 17 | **ComponentSlot**     | owner_entity(token:TypeDef), component_type(token)                                       | Entity → component bindings                           |
 | 18 | **LocaleDef**         | dlg_method(token:MethodDef), locale(str), loc_method(token:MethodDef)                    | Dialogue locale dispatch                              |
 | 19 | **ExportDef**         | name(str), item_kind(u8), item(token)                                                    | Convenience index of pub-visible items                |
@@ -150,7 +149,7 @@ implementations (§2.16.8).
 
 **MethodDef.param_count:** The number of parameter registers at method entry — registers `r0` through `r(param_count-1)` hold argument values as described in §2.16.6. For methods with an explicit `self`, `r0` is `self` and counts toward `param_count`. For free functions, `r0` is the first regular parameter. This field allows tooling to determine the register layout without parsing the method body or counting entries in the ParamDef table.
 
-### 2.16.6 Method Body Layout
+## 2.16.6 Method Body Layout
 
 Each method body starts at the MethodDef's `body_offset` and occupies `body_size` bytes:
 
@@ -168,7 +167,7 @@ MethodBody {
 }
 ```
 
-#### Register layout
+### Register layout
 
 Registers are numbered `r0` through `r(reg_count-1)`. Their layout within a method's register file follows a fixed
 convention:
@@ -191,7 +190,7 @@ calling convention.
 
 Consequently, a void method with no parameters may have `reg_count = 0` — no register file is needed at all.
 
-#### Register type table
+### Register type table
 
 `reg_count` (from MethodDef) entries, each a `u32` blob heap offset pointing to a TypeRef encoding (§2.15.3). The
 runtime reads these at method load to determine per-register storage requirements (primitive storage width, reference
@@ -201,7 +200,7 @@ The register type table covers every register in the frame. The disassembler use
 declarations; the verifier uses it to type-check instructions; the GC uses it to identify reference-typed slots for
 scanning. For value-type struct registers, the runtime uses the TypeRef to locate the struct's TypeDef and FieldDef list, enabling multi-word copy on MOV and precise GC tracing of embedded reference fields.
 
-#### Debug info (optional)
+### Debug info (optional)
 
 Present only when the module's debug flag (bit 0 of the container flags, §2.16.1) is set. Stripped in release builds.
 
@@ -229,12 +228,12 @@ A register with no DebugLocal entry is a compiler-generated temporary with no so
 SourceSpan entries are sorted by `pc`. An instruction with no entry inherits the nearest preceding entry's location.
 Debuggers and disassemblers use SourceSpan to display source context alongside instructions.
 
-#### No exception or defer tables
+### No exception or defer tables
 
 No defer table or exception table is needed in the method body. The defer stack is runtime state managed by
 `DEFER_PUSH`/`DEFER_POP` instructions. Writ has no try/catch, so no exception handler table.
 
-### 2.16.7 Entity Construction Buffering
+## 2.16.7 Entity Construction Buffering
 
 During entity construction, component field writes are **buffered** by the runtime and delivered to the host as a single
 batch when `INIT_ENTITY` executes. This avoids per-field round-trips through suspend-and-confirm (§2.14.2) during
@@ -258,7 +257,7 @@ the `new Entity { ... }` lowering.
 **After construction:** `SET_FIELD` on component fields goes to the host immediately via suspend-and-confirm (§2.14.2).
 Buffering applies only during the SPAWN_ENTITY → INIT_ENTITY construction window.
 
-### 2.16.8 The `writ-runtime` Module
+## 2.16.8 The `writ-runtime` Module
 
 The `writ-runtime` module is a **runtime-provided module** containing core type definitions that the compiler and IL
 instructions depend on. Unlike normal modules, `writ-runtime` is not compiled from Writ source — the runtime provides

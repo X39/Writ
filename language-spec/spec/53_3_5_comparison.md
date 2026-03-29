@@ -1,5 +1,4 @@
-# Writ IL Specification
-## 3.5 Comparison
+# 3.5 Comparison
 
 All comparison instructions produce a `bool` result in r_dst.
 

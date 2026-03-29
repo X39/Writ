@@ -5,6 +5,7 @@ use crate::error::{CrashInfo, RuntimeError};
 use crate::gc::{GcHeap, GcStats, MarkSweepHeap};
 use crate::heap::BumpHeap;
 use crate::host::{HostRequest, HostResponse, NullHost, RequestId, RuntimeHost};
+use crate::reflection::ReflectionIndex;
 use crate::scheduler::Scheduler;
 use crate::task::{SuspendReason, TaskState};
 use crate::value::{HeapRef, TaskId, Value};
@@ -42,18 +43,35 @@ pub struct PendingRequest {
 /// Builder for constructing a Runtime with configurable host.
 pub struct RuntimeBuilder<H: RuntimeHost = NullHost> {
     module: writ_module::Module,
+    libraries: Vec<writ_module::Module>,
     host: H,
     use_gc: bool,
 }
 
 impl RuntimeBuilder<NullHost> {
-    /// Create a new builder with the given module and a default NullHost.
+    /// Create a new builder with the given user module and a default NullHost.
     pub fn new(module: writ_module::Module) -> Self {
         RuntimeBuilder {
             module,
+            libraries: Vec::new(),
             host: NullHost,
             use_gc: false,
         }
+    }
+
+    /// Create a builder by compiling Writ source code on the fly.
+    ///
+    /// Requires the `compiler` feature: `writ-runtime = { features = ["compiler"] }`.
+    ///
+    /// The source string must be `'static` (use `Box::leak` if needed). For large
+    /// programs, consider spawning on a thread with 16 MB stack.
+    #[cfg(feature = "compiler")]
+    pub fn from_source(src: &'static str) -> Result<Self, RuntimeError> {
+        let bytes = writ_compiler::compile_source(src)
+            .map_err(RuntimeError::LoadError)?;
+        let module = writ_module::Module::from_bytes(&bytes)
+            .map_err(|e| RuntimeError::LoadError(format!("deserialize: {}", e)))?;
+        Ok(Self::new(module))
     }
 }
 
@@ -62,9 +80,33 @@ impl<H: RuntimeHost> RuntimeBuilder<H> {
     pub fn with_host<H2: RuntimeHost>(self, host: H2) -> RuntimeBuilder<H2> {
         RuntimeBuilder {
             module: self.module,
+            libraries: self.libraries,
             host,
             use_gc: self.use_gc,
         }
+    }
+
+    /// Add a pre-compiled library module. Libraries are loaded between the
+    /// `writ-runtime` virtual module and the user module, so the user module
+    /// can reference types and functions defined in libraries.
+    ///
+    /// Call this multiple times to add several libraries. They are loaded in
+    /// the order they are added.
+    pub fn with_library(mut self, library: writ_module::Module) -> Self {
+        self.libraries.push(library);
+        self
+    }
+
+    /// Add a library module by compiling Writ source code on the fly.
+    ///
+    /// Requires the `compiler` feature.
+    #[cfg(feature = "compiler")]
+    pub fn with_library_source(self, src: &'static str) -> Result<Self, RuntimeError> {
+        let bytes = writ_compiler::compile_source(src)
+            .map_err(RuntimeError::LoadError)?;
+        let module = writ_module::Module::from_bytes(&bytes)
+            .map_err(|e| RuntimeError::LoadError(format!("deserialize: {}", e)))?;
+        Ok(self.with_library(module))
     }
 
     /// Use MarkSweepHeap instead of the default BumpHeap.
@@ -73,13 +115,27 @@ impl<H: RuntimeHost> RuntimeBuilder<H> {
         self
     }
 
-    /// Build the Runtime, loading the virtual module and user module into a Domain.
-    pub fn build(self) -> Result<Runtime<H>, RuntimeError> {
+    /// Build the Runtime, loading the virtual module, libraries, and user module into a Domain.
+    pub fn build(mut self) -> Result<Runtime<H>, RuntimeError> {
         let mut domain = Domain::new();
 
         // Add virtual module at index 0
         domain.add_module(crate::virtual_module::build_writ_runtime_module())?;
-        // Add user module at index 1
+        // Add library modules at indices 1..N
+        for lib in self.libraries {
+            domain.add_module(lib)?;
+        }
+        // Fire pre-load hook for user module only (virtual module and libraries are trusted)
+        {
+            let view = crate::host::ModuleAttributeView::new(&self.module);
+            if let Err(reason) = self.host.on_module_load(&view) {
+                return Err(RuntimeError::LoadError(format!(
+                    "module rejected by host: {}",
+                    reason
+                )));
+            }
+        }
+        // Add user module last
         let user_idx = domain.add_module(self.module)?;
         // Resolve cross-module references
         domain.resolve_refs()?;
@@ -106,6 +162,7 @@ impl<H: RuntimeHost> RuntimeBuilder<H> {
             heap,
             host: self.host,
             next_request_id: 1,
+            reflection: ReflectionIndex::new(),
         })
     }
 }
@@ -120,6 +177,7 @@ pub struct Runtime<H: RuntimeHost = NullHost> {
     pub(crate) heap: Box<dyn GcHeap>,
     pub(crate) host: H,
     pub(crate) next_request_id: u32,
+    pub(crate) reflection: ReflectionIndex,
 }
 
 impl<H: RuntimeHost> Runtime<H> {
@@ -155,6 +213,7 @@ impl<H: RuntimeHost> Runtime<H> {
                 &mut self.host,
                 per_task_limit,
                 &mut self.next_request_id,
+                &mut self.reflection,
             );
             if result.is_some() {
                 ran_any = true;
@@ -231,16 +290,21 @@ impl<H: RuntimeHost> Runtime<H> {
 
         let task = self.scheduler.tasks.get_mut(&task_id).unwrap();
 
-        // Deliver the response value to the task's frame
+        // Deliver the response value to the task's destination register
+        let r_dst = task.pending_r_dst as usize;
         match &response {
             HostResponse::Value(val) => {
                 if let Some(frame) = task.call_stack.last_mut() {
-                    frame.registers[0] = val.clone();
+                    if r_dst < frame.registers.len() {
+                        frame.registers[r_dst] = val.clone();
+                    }
                 }
             }
             HostResponse::EntityHandle(eid) => {
                 if let Some(frame) = task.call_stack.last_mut() {
-                    frame.registers[0] = Value::Entity(*eid);
+                    if r_dst < frame.registers.len() {
+                        frame.registers[r_dst] = Value::Entity(*eid);
+                    }
                 }
             }
             HostResponse::Confirmed => {
@@ -254,6 +318,9 @@ impl<H: RuntimeHost> Runtime<H> {
                     "host request failed: {:?}",
                     e
                 )));
+            }
+            HostResponse::Suspend => {
+                // Suspend inside confirm() is nonsensical — treat as confirmed
             }
         }
 
@@ -300,6 +367,8 @@ impl<H: RuntimeHost> Runtime<H> {
                 &mut self.scheduler.globals,
                 &mut self.next_request_id,
                 &mut self.scheduler.entity_registry,
+                &mut self.scheduler.pool,
+                &mut self.reflection,
             );
 
             // Cancel scoped children, mirrors the non-debug crash path in scheduler.rs.
@@ -315,6 +384,7 @@ impl<H: RuntimeHost> Runtime<H> {
                     self.heap.as_mut(),
                     &mut self.host,
                     &mut self.next_request_id,
+                    &mut self.reflection,
                 );
             }
 
@@ -416,6 +486,7 @@ impl<H: RuntimeHost> Runtime<H> {
             &mut self.host,
             per_task_limit,
             &mut self.next_request_id,
+            &mut self.reflection,
         );
 
         self.classify_tick_result(true)
@@ -456,6 +527,7 @@ impl<H: RuntimeHost> Runtime<H> {
                 &mut self.host,
                 0, // no limit
                 &mut self.next_request_id,
+                &mut self.reflection,
             );
 
             match self.scheduler.task_state(task_id) {
@@ -559,6 +631,9 @@ impl<H: RuntimeHost> Runtime<H> {
             }
         }
 
+        // Reflection index: cached Type/FieldInfo/MethodInfo/etc. heap objects are permanent roots
+        self.reflection.collect_roots(&mut roots);
+
         roots
     }
 
@@ -598,6 +673,22 @@ impl<H: RuntimeHost> Runtime<H> {
         self.user_module_idx
     }
 
+    /// Find a top-level method in the user module by name.
+    ///
+    /// Returns the method index suitable for `spawn_task()` or `call_sync()`.
+    /// Returns `None` if no method with that name exists.
+    pub fn find_method(&self, name: &str) -> Option<usize> {
+        let module = &self.domain.modules[self.user_module_idx].module;
+        for (idx, md) in module.method_defs.iter().enumerate() {
+            if let Ok(md_name) = writ_module::heap::read_string(&module.string_heap, md.name) {
+                if md_name == name {
+                    return Some(idx);
+                }
+            }
+        }
+        None
+    }
+
     /// Get the suspend reason for a task (used by the DAP server).
     ///
     /// Returns `None` if the task does not exist or has no suspend reason set.
@@ -633,6 +724,124 @@ impl<H: RuntimeHost> Runtime<H> {
             .filter(|t| !matches!(t.state, TaskState::Completed | TaskState::Cancelled))
             .map(|t| t.id)
             .collect()
+    }
+
+    /// Cancel a task and its entire subtree. Used by embedders to clean up
+    /// app tasks on close (e.g., LePhone's WritBackend::on_close).
+    pub fn cancel_app_tasks(&mut self, task_id: TaskId) {
+        self.scheduler.cancel_task_tree(
+            task_id,
+            &self.domain.modules,
+            self.user_module_idx,
+            &self.dispatch_table,
+            self.heap.as_mut(),
+            &mut self.host,
+            &mut self.next_request_id,
+            &mut self.reflection,
+        );
+    }
+
+    /// Construct a Writ struct or class value by type name with field validation.
+    ///
+    /// Looks up `type_name` in the user module's type_defs, validates the provided
+    /// `fields` slice against the type's expected field count and types, then
+    /// allocates and returns a heap-backed Value.
+    ///
+    /// # Errors
+    ///
+    /// - `"type 'X' not found"` — no type with that name exists in the user module
+    /// - `"type 'X' has N fields but M were provided"` — wrong field count (HOST-03)
+    /// - `"field N of type 'X': type mismatch"` — field value incompatible with declared type (HOST-03)
+    /// - `"type 'X' is not a struct or class"` — type is an enum
+    pub fn construct_value(
+        &mut self,
+        type_name: &str,
+        fields: Vec<Value>,
+    ) -> Result<Value, String> {
+        let user_module = &self.domain.modules[self.user_module_idx];
+        let module = &user_module.module;
+
+        // Step 1: Find the type by name
+        let mut found_idx: Option<usize> = None;
+        for (idx, td) in module.type_defs.iter().enumerate() {
+            if let Ok(name) = writ_module::heap::read_string(&module.string_heap, td.name) {
+                if name == type_name {
+                    found_idx = Some(idx);
+                    break;
+                }
+            }
+        }
+
+        let type_idx = found_idx
+            .ok_or_else(|| format!("type '{}' not found", type_name))?;
+
+        let type_def = &module.type_defs[type_idx];
+
+        // Step 2: Check TypeDefKind — only Struct (0) is constructible.
+        // Enum (1) is not supported. Entity (2) and Component (3) are treated as Struct.
+        let kind = type_def.kind;
+        if kind == 1 {
+            return Err(format!("type '{}' is not a struct or class", type_name));
+        }
+
+        // Step 3: Compute field count using field_list idiom
+        let field_start = type_def.field_list.saturating_sub(1) as usize;
+        let field_end = if type_idx + 1 < module.type_defs.len() {
+            module.type_defs[type_idx + 1].field_list.saturating_sub(1) as usize
+        } else {
+            module.field_defs.len()
+        };
+        let expected_count = field_end.saturating_sub(field_start);
+
+        // Step 4: Validate field count
+        if fields.len() != expected_count {
+            return Err(format!(
+                "type '{}' has {} fields but {} were provided",
+                type_name,
+                expected_count,
+                fields.len()
+            ));
+        }
+
+        // Step 5: Shallow type-kind validation per field
+        for (i, field_val) in fields.iter().enumerate() {
+            let field_idx = field_start + i;
+            if field_idx < module.field_defs.len() {
+                let field_def = &module.field_defs[field_idx];
+                if let Ok(sig_bytes) =
+                    writ_module::heap::read_blob(&module.blob_heap, field_def.type_sig)
+                {
+                    if !sig_bytes.is_empty() {
+                        let expected_kind = sig_bytes[0];
+                        let ok = match (expected_kind, field_val) {
+                            (_, Value::Void) => true,             // Void accepted as uninitialized
+                            (0x08, Value::Int(_)) => true,        // int32
+                            (0x0D, Value::Float(_)) => true,      // float64
+                            (0x02, Value::Bool(_)) => true,       // bool
+                            (0x0E, Value::Ref(_)) => true,        // string (heap ref)
+                            (0x01, _) => true,                    // void sig: accept anything
+                            (_, Value::Ref(_)) => true,           // ref types: accept ref
+                            _ => false,
+                        };
+                        if !ok {
+                            return Err(format!(
+                                "field {} of type '{}': type mismatch",
+                                i, type_name
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Step 6: Allocate on heap
+        let heap = self.heap.as_mut();
+        let obj_ref = heap.alloc_struct(type_idx as u32, expected_count);
+        for (i, val) in fields.into_iter().enumerate() {
+            let _ = heap.set_field(obj_ref, i, val);
+        }
+
+        Ok(Value::Ref(obj_ref))
     }
 }
 

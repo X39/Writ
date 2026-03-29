@@ -1,16 +1,15 @@
-# Writ IL Specification
-## 4.2 Opcode Assignment Table
+# 4.2 Opcode Assignment Table
 
 Opcodes are partitioned by category in the high byte (see §2.5 for the scheme).
 
-### 0x00 — Meta
+## 0x00 — Meta
 
 | Opcode   | Mnemonic | Shape |
 |----------|----------|-------|
 | `0x0000` | NOP      | N     |
 | `0x0001` | CRASH    | R     |
 
-### 0x01 — Data Movement
+## 0x01 — Data Movement
 
 | Opcode   | Mnemonic    | Shape |
 |----------|-------------|-------|
@@ -22,7 +21,7 @@ Opcodes are partitioned by category in the high byte (see §2.5 for the scheme).
 | `0x0105` | LOAD_STRING | RI32  |
 | `0x0106` | LOAD_NULL   | R     |
 
-### 0x02 — Integer Arithmetic
+## 0x02 — Integer Arithmetic
 
 | Opcode   | Mnemonic | Shape |
 |----------|----------|-------|
@@ -33,7 +32,7 @@ Opcodes are partitioned by category in the high byte (see §2.5 for the scheme).
 | `0x0204` | MOD_I    | RRR   |
 | `0x0205` | NEG_I    | RR    |
 
-### 0x03 — Float Arithmetic
+## 0x03 — Float Arithmetic
 
 | Opcode   | Mnemonic | Shape |
 |----------|----------|-------|
@@ -44,7 +43,7 @@ Opcodes are partitioned by category in the high byte (see §2.5 for the scheme).
 | `0x0304` | MOD_F    | RRR   |
 | `0x0305` | NEG_F    | RR    |
 
-### 0x04 — Bitwise & Logical
+## 0x04 — Bitwise & Logical
 
 | Opcode   | Mnemonic | Shape |
 |----------|----------|-------|
@@ -54,7 +53,7 @@ Opcodes are partitioned by category in the high byte (see §2.5 for the scheme).
 | `0x0403` | SHR      | RRR   |
 | `0x0404` | NOT      | RR    |
 
-### 0x05 — Comparison
+## 0x05 — Comparison
 
 | Opcode   | Mnemonic | Shape |
 |----------|----------|-------|
@@ -65,7 +64,7 @@ Opcodes are partitioned by category in the high byte (see §2.5 for the scheme).
 | `0x0504` | CMP_LT_I | RRR   |
 | `0x0505` | CMP_LT_F | RRR   |
 
-### 0x06 — Control Flow
+## 0x06 — Control Flow
 
 | Opcode   | Mnemonic | Shape |
 |----------|----------|-------|
@@ -76,7 +75,7 @@ Opcodes are partitioned by category in the high byte (see §2.5 for the scheme).
 | `0x0604` | RET      | R     |
 | `0x0605` | RET_VOID | N     |
 
-### 0x07 — Calls & Delegates
+## 0x07 — Calls & Delegates
 
 | Opcode   | Mnemonic      | Shape |
 |----------|---------------|-------|
@@ -87,7 +86,7 @@ Opcodes are partitioned by category in the high byte (see §2.5 for the scheme).
 | `0x0704` | CALL_INDIRECT | var   |
 | `0x0705` | TAIL_CALL     | var   |
 
-### 0x08 — Object Model
+## 0x08 — Object Model
 
 | Opcode   | Mnemonic        | Shape |
 |----------|-----------------|-------|
@@ -102,21 +101,22 @@ Opcodes are partitioned by category in the high byte (see §2.5 for the scheme).
 | `0x0808` | DESTROY_ENTITY  | R     |
 | `0x0809` | ENTITY_IS_ALIVE | RR    |
 
-### 0x09 — Arrays
+## 0x09 — Arrays
 
-| Opcode   | Mnemonic     | Shape |
-|----------|--------------|-------|
-| `0x0900` | NEW_ARRAY    | RI32  |
-| `0x0901` | ARRAY_INIT   | var   |
-| `0x0902` | ARRAY_LOAD   | RRR   |
-| `0x0903` | ARRAY_STORE  | RRR   |
-| `0x0904` | ARRAY_LEN    | RR    |
-| `0x0905` | ARRAY_ADD    | RR    |
-| `0x0906` | ARRAY_REMOVE | RR    |
-| `0x0907` | ARRAY_INSERT | RRR   |
-| `0x0908` | ARRAY_SLICE  | var   |
+| Opcode   | Mnemonic          | Shape |
+|----------|-------------------|-------|
+| `0x0900` | NEW_ARRAY         | RI32  |
+| `0x0901` | ARRAY_INIT        | var   |
+| `0x0902` | ARRAY_LOAD        | RRR   |
+| `0x0903` | ARRAY_STORE       | RRR   |
+| `0x0904` | ARRAY_LEN         | RR    |
+| `0x0905` | ARRAY_RESIZE      | RR    |
+| `0x0906` | ARRAY_COPY        | var   |
+| `0x0907` | ARRAY_SLICE       | var   |
+| `0x0908` | NEW_ARRAY_SIZED   | var   |
+| `0x0909` | NEW_ARRAY_FILLED  | var   |
 
-### 0x0A — Type Operations
+## 0x0A — Type Operations
 
 **Option (0x0A00–0x0A0F):**
 
@@ -146,7 +146,13 @@ Opcodes are partitioned by category in the high byte (see §2.5 for the scheme).
 | `0x0A21` | GET_TAG       | RR    |
 | `0x0A22` | EXTRACT_FIELD | var   |
 
-### 0x0B — Concurrency
+**Reflection (0x0A30-0x0A3F):**
+
+| Opcode   | Mnemonic | Shape |
+|----------|----------|-------|
+| `0x0A30` | TYPEOF   | RI32  |
+
+## 0x0B — Concurrency
 
 | Opcode   | Mnemonic       | Shape |
 |----------|----------------|-------|
@@ -158,7 +164,7 @@ Opcodes are partitioned by category in the high byte (see §2.5 for the scheme).
 | `0x0B05` | DEFER_POP      | N     |
 | `0x0B06` | DEFER_END      | N     |
 
-### 0x0C — Globals & Atomics
+## 0x0C — Globals & Atomics
 
 | Opcode   | Mnemonic     | Shape |
 |----------|--------------|-------|
@@ -167,7 +173,7 @@ Opcodes are partitioned by category in the high byte (see §2.5 for the scheme).
 | `0x0C02` | ATOMIC_BEGIN | N     |
 | `0x0C03` | ATOMIC_END   | N     |
 
-### 0x0D — Conversion
+## 0x0D — Conversion
 
 | Opcode   | Mnemonic | Shape |
 |----------|----------|-------|
@@ -178,7 +184,7 @@ Opcodes are partitioned by category in the high byte (see §2.5 for the scheme).
 | `0x0D04` | B2S      | RR    |
 | `0x0D05` | CONVERT  | var   |
 
-### 0x0E — Strings
+## 0x0E — Strings
 
 | Opcode   | Mnemonic   | Shape |
 |----------|------------|-------|
@@ -186,7 +192,7 @@ Opcodes are partitioned by category in the high byte (see §2.5 for the scheme).
 | `0x0E01` | STR_BUILD  | var   |
 | `0x0E02` | STR_LEN    | RR    |
 
-### 0x0F — Boxing
+## 0x0F — Boxing
 
 | Opcode   | Mnemonic | Shape |
 |----------|----------|-------|

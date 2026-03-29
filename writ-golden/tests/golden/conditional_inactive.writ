@@ -1,0 +1,12 @@
+[Conditional("debug")]
+pub fn greet() {
+    log::info("Debug greeting");
+}
+
+pub fn greet() {
+    log::info("Default greeting");
+}
+
+pub fn main() {
+    greet();
+}

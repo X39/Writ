@@ -224,9 +224,12 @@ fn test_emit_returns_bytes_for_valid_ast() {
         }],
         def_map,
         struct_field_types: FxHashMap::default(),
+        conditional_fns: FxHashMap::default(),
+        fallback_for_conditional: FxHashMap::default(),
     };
 
-    let result = emit::emit_bodies(&typed_ast, &interner, &[], true, &[]);
+    let active_conditions = std::collections::HashSet::new();
+    let result = emit::emit_bodies(&typed_ast, &interner, &[], true, &[], &active_conditions);
     assert!(result.is_ok(), "emit_bodies should return Ok for valid AST, got {:?}", result.err());
     let bytes = result.unwrap();
     assert!(!bytes.is_empty(), "emitted bytes should not be empty");
@@ -252,8 +255,11 @@ fn test_emit_returns_err_for_error_nodes() {
         }],
         def_map,
         struct_field_types: FxHashMap::default(),
+        conditional_fns: FxHashMap::default(),
+        fallback_for_conditional: FxHashMap::default(),
     };
 
-    let result = emit::emit_bodies(&typed_ast, &interner, &[], true, &[]);
+    let active_conditions = std::collections::HashSet::new();
+    let result = emit::emit_bodies(&typed_ast, &interner, &[], true, &[], &active_conditions);
     assert!(result.is_err(), "emit_bodies should return Err for AST with Error nodes");
 }

@@ -1,10 +1,9 @@
-# Writ IL Specification
-## 2.12 Delegate Model (Closures & Function Values)
+# 2.12 Delegate Model (Closures & Function Values)
 
 All function values in Writ — named function references, closures, and bound method references — are **delegates**. This
 borrows from the C# delegate model.
 
-### 2.12.1 Delegate Structure
+## 2.12.1 Delegate Structure
 
 A delegate is a GC-managed object containing:
 
@@ -15,7 +14,7 @@ Delegate {
 }
 ```
 
-### 2.12.2 Creation Scenarios
+## 2.12.2 Creation Scenarios
 
 **Plain function reference** (no target):
 
@@ -47,7 +46,7 @@ NEW_DELEGATE  r_f, method_idx(__closure_body), r_null   // target = null, no env
 NEW_DELEGATE  r_greet, method_idx(Merchant::greet), r_merchant  // target = self
 ```
 
-### 2.12.3 Invocation
+## 2.12.3 Invocation
 
 All delegates are called with `CALL_INDIRECT`:
 
@@ -64,13 +63,13 @@ The runtime:
 
 The callee does not know or care whether it was called directly, through a delegate, or through a closure.
 
-### 2.12.4 Virtual Method References
+## 2.12.4 Virtual Method References
 
 `NEW_DELEGATE` always takes a **concrete method index**. For virtual/contract methods, the compiler resolves the
 dispatch at delegate creation time. If that's not possible (rare), the compiler generates a small wrapper closure that
 performs the virtual call internally.
 
-### 2.12.5 Relationship to Function Types
+## 2.12.5 Relationship to Function Types
 
 The language spec's `fn(int, int) -> int` type corresponds to a delegate in the IL. Every value of a function type is a
 delegate. No language spec change is needed beyond documenting this representation.

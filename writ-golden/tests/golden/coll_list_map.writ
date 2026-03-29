@@ -1,0 +1,39 @@
+pub class List<T> {
+    items: T[]
+}
+
+impl<T> List<T> {
+    pub fn add(mut self, item: T) {
+        let old_len: int = self.items.len();
+        self.items.resize(old_len + 1);
+        self.items[old_len] = item;
+    }
+
+    pub fn get(self, index: int) -> T {
+        self.items[index]
+    }
+
+    pub fn len(self) -> int {
+        self.items.len()
+    }
+
+    pub fn map(self, f: fn(T) -> T) -> List<T> {
+        let result: List<T> = new List<T> { items: [] };
+        let mut i: int = 0;
+        while i < self.items.len() {
+            result.add(f(self.items[i]));
+            i = i + 1;
+        }
+        result
+    }
+}
+
+fn main() {
+    let list: List<int> = new List<int> { items: [] };
+    list.add(1);
+    list.add(2);
+    list.add(3);
+    let doubled: List<int> = list.map(fn(x: int) -> int { x * 2 });
+    let _v: int = doubled.get(0);
+    let _len: int = doubled.len();
+}

@@ -1,10 +1,9 @@
-# 1. Writ Language Specification
-## 1.10 Enums
+# 1.10 Enums
 
 Enums are tagged unions. Each variant can optionally carry named data fields. Pattern matching via `match` is
 exhaustive — the compiler enforces that all variants are handled.
 
-```
+```writ
 enum QuestStatus {
     NotStarted,
     InProgress(currentStep: int),
@@ -22,11 +21,11 @@ fn describeQuest(status: QuestStatus) -> string {
 }
 ```
 
-### 1.10.1 Builtin Enums
+## 1.10.1 Builtin Enums
 
 The following enums are compiler-known and have special syntax support:
 
-```
+```writ
 // Option<T> — nullable values. T? is sugar for Option<T>.
 enum Option<T> {
     None,
@@ -40,12 +39,12 @@ enum Result<T, E: Error> {
 }
 ```
 
-### 1.10.2 if let (Optional Pattern Matching)
+## 1.10.2 if let (Optional Pattern Matching)
 
 The `if let` construct provides a concise way to match a single pattern, particularly useful for `Option` and
 single-variant checks.
 
-```
+```writ
 if let Option::Some(healer) = party.healer {
     healer.heal(player);
 }
@@ -58,15 +57,15 @@ if let Option::Some(quest) = activeQuest {
 }
 ```
 
-### 1.10.3 Patterns
+## 1.10.3 Patterns
 
 Patterns appear in `match` arms and `if let` bindings. Writ supports seven pattern forms.
 
-#### 1.10.3.1 Literal Patterns
+### 1.10.3.1 Literal Patterns
 
 Integer, string, boolean, and null literals match by value.
 
-```
+```writ
 match command {
     42 => { handleSpecial(); }
     "quit" => { exit(); }
@@ -75,44 +74,44 @@ match command {
 }
 ```
 
-#### 1.10.3.2 Wildcard
+### 1.10.3.2 Wildcard
 
 `_` matches any value and discards it. Commonly used as a catch-all arm.
 
-```
+```writ
 match status {
     QuestStatus::Completed => { reward(player); }
     _ => { log("Not complete yet"); }
 }
 ```
 
-#### 1.10.3.3 Variable Binding
+### 1.10.3.3 Variable Binding
 
 A bare identifier matches any value and binds it to a new variable within the arm body.
 
-```
+```writ
 match damage {
     0 => { log("Miss!"); }
     amount => { log($"Took {amount} damage"); }
 }
 ```
 
-#### 1.10.3.4 Enum Destructuring
+### 1.10.3.4 Enum Destructuring
 
 Qualified enum variants with parenthesized sub-patterns destructure variant payloads.
 
-```
+```writ
 match result {
     Result::Ok(val) => { use(val); }
     Result::Err(err) => { log(err.message); }
 }
 ```
 
-#### 1.10.3.5 Nested Destructuring
+### 1.10.3.5 Nested Destructuring
 
 Patterns nest arbitrarily — sub-patterns can themselves be enum destructuring, wildcards, literals, or bindings.
 
-```
+```writ
 match result {
     Result::Ok(QuestStatus::InProgress(step)) => { log($"On step {step}"); }
     Result::Ok(QuestStatus::Completed) => { reward(player); }
@@ -121,22 +120,22 @@ match result {
 }
 ```
 
-#### 1.10.3.6 Or-Patterns
+### 1.10.3.6 Or-Patterns
 
 Multiple patterns separated by `|` share a single arm body.
 
-```
+```writ
 match status {
     QuestStatus::Completed | QuestStatus::Failed(_) => { removeFromActive(); }
     _ => { log("Still in progress"); }
 }
 ```
 
-#### 1.10.3.7 Range Patterns
+### 1.10.3.7 Range Patterns
 
 Inclusive ranges (`..=`) match any value within the range. Useful for numeric thresholds.
 
-```
+```writ
 match health {
     0 => { die(); }
     1..=25 => { log("Critical!"); }

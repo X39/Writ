@@ -4,22 +4,30 @@
         .field "x" int
         .field "y" int
     }
-    .method "main" () -> void mut {
-        .locals {
-            r0: Point "p" [52, 64)
-            r3: int "px" [62, 64)
+    .impl Point : contract_167772179 {
+        .method "get_type" () -> Type pub {
+            .reg r0 int
+            .reg r1 int
+            TYPEOF r1, 33554433
+            RET r1
         }
-        .reg r0 Point
-        .reg r1 int
-        .reg r2 int
-        .reg r3 int
-        NEW r0, 33554433  ; line:1 col:68
-        LOAD_INT r1, 1
-        SET_FIELD r0, 0, r1
-        LOAD_INT r2, 2
-        SET_FIELD r0, 1, r2
-        GET_FIELD r3, r0, 0  ; line:1 col:114
-        RET_VOID
+        .method "main" () -> void mut {
+            .locals {
+                r0: Point "p" [52, 64)
+                r3: int "px" [62, 64)
+            }
+            .reg r0 Point
+            .reg r1 int
+            .reg r2 int
+            .reg r3 int
+            NEW r0, 33554433  ; line:1 col:68
+            LOAD_INT r1, 1
+            SET_FIELD r0, 0, r1
+            LOAD_INT r2, 2
+            SET_FIELD r0, 1, r2
+            GET_FIELD r3, r0, 0  ; line:1 col:114
+            RET_VOID
+        }
     }
-    // .export "Point" type 33554433
+    .export "Point" type 33554433
 }

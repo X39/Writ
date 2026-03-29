@@ -12,6 +12,7 @@
 //! - `token`       -- MetadataToken type for table row references
 //! - `writer`      -- Binary serialization from Module to bytes
 
+pub mod attr;
 pub mod builder;
 pub mod error;
 pub mod heap;
@@ -22,6 +23,7 @@ pub mod tables;
 pub mod token;
 pub(crate) mod writer;
 
+pub use attr::AttrValue;
 pub use builder::ModuleBuilder;
 pub use error::{DecodeError, EncodeError, ModuleError};
 pub use instruction::Instruction;
