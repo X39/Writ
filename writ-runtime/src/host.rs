@@ -200,7 +200,7 @@ pub struct ModuleAttributeView<'a> {
 
 impl<'a> ModuleAttributeView<'a> {
     /// Create a new view over the given module.
-    pub(crate) fn new(module: &'a writ_module::Module) -> Self {
+    pub fn new(module: &'a writ_module::Module) -> Self {
         ModuleAttributeView { module }
     }
 

@@ -12,6 +12,7 @@ COPY writ-lsp/ writ-lsp/
 COPY writ-module/ writ-module/
 COPY writ-parser/ writ-parser/
 COPY writ-runtime/ writ-runtime/
+COPY writ-std/ writ-std/
 RUN cargo build --release --bin writ
 
 # Stage 2: Pre-compile Rust benchmark stubs

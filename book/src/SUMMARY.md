@@ -6,33 +6,33 @@
 
 - [Installation](getting-started/installation.md)
 - [Hello World](getting-started/hello-world.md)
+- [Editor Setup](getting-started/editor-setup.md)
 - [CLI Reference](getting-started/cli-reference.md)
 
-# Architecture
+# Tutorials
 
-- [Compiler Pipeline](architecture/compiler-pipeline.md)
-- [Crate Map](architecture/crate-map.md)
+- [Your First Dialogue](tutorials/first-dialogue.md)
+- [Entities & Components](tutorials/entities-and-components.md)
+- [Building a Quest System](tutorials/quest-system.md)
 
 # Language Reference
 
 - [Overview](language-ref/overview.md)
-- [Project Configuration](language-ref/project-config.md)
-- [Naming Conventions](language-ref/naming-conventions.md)
 - [Lexical Structure](language-ref/lexical.md)
-- [Type System](language-ref/type-system.md)
 - [Primitive Types](language-ref/primitives.md)
 - [Variables & Constants](language-ref/variables.md)
+- [Type System](language-ref/type-system.md)
 - [Structs](language-ref/structs.md)
 - [Classes](language-ref/classes.md)
 - [Enums](language-ref/enums.md)
-- [Contracts](language-ref/contracts.md)
 - [Generics](language-ref/generics.md)
+- [Contracts](language-ref/contracts.md)
 - [Functions (fn)](language-ref/functions.md)
 - [Dialogue Blocks (dlg)](language-ref/dialogue.md)
+- [Operators & Overloading](language-ref/operators.md)
 - [Entities](language-ref/entities.md)
 - [Components](language-ref/components.md)
 - [Attributes](language-ref/attributes.md)
-- [Operators & Overloading](language-ref/operators.md)
 - [Error Handling](language-ref/error-handling.md)
 - [Nullability & Optionals](language-ref/nullability.md)
 - [Concurrency](language-ref/concurrency.md)
@@ -44,6 +44,22 @@
 - [Standard Library](language-ref/stdlib.md)
 - [Grammar Summary (EBNF)](language-ref/grammar.md)
 - [Lowering Reference](language-ref/lowering.md)
+- [Naming Conventions](language-ref/naming-conventions.md)
+- [Project Configuration](language-ref/project-config.md)
+
+# Tooling
+
+- [VS Code Extension](tooling/vscode.md)
+- [Debugging with DAP](tooling/debugging.md)
+
+# Embedding Writ
+
+- [Runtime Integration](embedding/runtime-integration.md)
+
+# Architecture
+
+- [Compiler Pipeline](architecture/compiler-pipeline.md)
+- [Crate Map](architecture/crate-map.md)
 
 # IL Specification
 
