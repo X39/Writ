@@ -91,7 +91,7 @@ jobs:
 
       - name: Skip Marketplace publish (no secret)
         if: env.HAS_VSCE_PAT != 'true'
-        run: echo "::warning::VSCE_PAT secret not set — skipping Marketplace publish"
+        run: echo "::warning::VSCE_PAT secret not set - skipping Marketplace publish"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
