@@ -913,10 +913,9 @@ version = "0.1.0"
     #[test]
     fn test_resolve_trigger_file_id_standalone() {
         use url::Url;
-        let file_sources = vec![
-            (FileId(0), "C:\\test\\foo.writ".to_string(), String::new()),
-        ];
-        let uri = Url::from_file_path("C:\\test\\foo.writ").unwrap();
+        let path = std::env::temp_dir().join("writ_lsp_test_resolve_trigger_file_id").join("foo.writ");
+        let file_sources = vec![(FileId(0), path.to_string_lossy().into_owned(), String::new())];
+        let uri = Url::from_file_path(&path).unwrap();
         let fid = crate::backend::resolve_trigger_file_id(
             &file_sources,
             &uri.to_string(),
@@ -928,12 +927,13 @@ version = "0.1.0"
     #[test]
     fn test_resolve_trigger_file_id_case_insensitive() {
         use url::Url;
-        // file_sources has uppercase drive letter
-        let file_sources = vec![
-            (FileId(0), "D:\\Projects\\test.writ".to_string(), String::new()),
-        ];
-        // URI uses lowercase drive letter
-        let uri = Url::from_file_path("d:\\Projects\\test.writ").unwrap();
+        // Use a non-existent path so resolution exercises the string fallback,
+        // which is intentionally case-insensitive for unsaved buffers and
+        // Windows drive-letter casing differences.
+        let path = std::env::temp_dir().join("Writ_LSP_Case_Test").join("Test.writ");
+        let path_lower = std::path::PathBuf::from(path.to_string_lossy().to_ascii_lowercase());
+        let file_sources = vec![(FileId(0), path.to_string_lossy().into_owned(), String::new())];
+        let uri = Url::from_file_path(&path_lower).unwrap();
         let fid = crate::backend::resolve_trigger_file_id(
             &file_sources,
             &uri.to_string(),
