@@ -7,13 +7,13 @@
         .reg r2 string
         .reg r3 void
         .reg r4 string
-        DEFER_PUSH r0, 18  ; line:1 col:18
+        DEFER_PUSH r0, 18  ; line:2 col:5
         DEFER_POP
         BR 30
-        LOAD_STRING r2, 152  ; line:1 col:35
+        LOAD_STRING r2, 152  ; line:3 col:9
         CALL_EXTERN r1, 268435457, r2, 1
         DEFER_END
-        LOAD_STRING r4, 163  ; line:1 col:71
+        LOAD_STRING r4, 163  ; line:5 col:5
         CALL_EXTERN r3, 268435457, r4, 1
         RET_VOID
     }

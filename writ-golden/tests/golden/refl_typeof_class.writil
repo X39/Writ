@@ -15,7 +15,7 @@
                 r0: ? "t" [8, 10)
             }
             .reg r0 ?
-            TYPEOF r0, 33554433  ; line:1 col:53
+            TYPEOF r0, 33554433  ; line:6 col:5
             RET_VOID
         }
     }

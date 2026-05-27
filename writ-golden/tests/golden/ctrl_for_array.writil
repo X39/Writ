@@ -14,16 +14,16 @@
         .reg r6 bool
         .reg r7 int
         .reg r8 int
-        LOAD_INT r1, 10  ; line:1 col:18
+        LOAD_INT r1, 10  ; line:2 col:5
         LOAD_INT r2, 20
         LOAD_INT r3, 30
         ARRAY_INIT r0, 0, 3, r1
-        ARRAY_LEN r4, r0  ; line:1 col:56
+        ARRAY_LEN r4, r0  ; line:3 col:5
         LOAD_INT r5, 0
         CMP_LT_I r6, r5, r4
         BR_FALSE r6, 44
         ARRAY_LOAD r7, r0, r5
-        LOAD_INT r8, 1  ; line:1 col:82
+        LOAD_INT r8, 1  ; line:4 col:9
         ADD_I r5, r5, r8
         BR -44
         RET_VOID

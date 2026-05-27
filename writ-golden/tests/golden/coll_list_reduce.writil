@@ -29,13 +29,13 @@
             .reg r6 int
             .reg r7 void
             .reg r8 array<?>
-            GET_FIELD r2, r0, 0  ; line:1 col:107
+            GET_FIELD r2, r0, 0  ; line:7 col:9
             ARRAY_LEN r3, r2
-            GET_FIELD r4, r0, 0  ; line:1 col:153
+            GET_FIELD r4, r0, 0  ; line:8 col:9
             LOAD_INT r5, 1
             ADD_I r6, r3, r5
             ARRAY_RESIZE r4, r6
-            GET_FIELD r8, r0, 0  ; line:1 col:194
+            GET_FIELD r8, r0, 0  ; line:9 col:9
             ARRAY_STORE r8, r3, r1
             RET_VOID
         }
@@ -46,7 +46,7 @@
             .reg r0 int
             .reg r1 array<?>
             .reg r2 int
-            GET_FIELD r1, r0, 0  ; line:1 col:271
+            GET_FIELD r1, r0, 0  ; line:13 col:9
             ARRAY_LEN r2, r1
             RET r2
         }
@@ -71,28 +71,28 @@
             .reg r11 ?
             .reg r12 int
             .reg r13 int
-            LOAD_INT r3, 0  ; line:1 col:403
-            GET_FIELD r4, r0, 0  ; line:1 col:432
+            LOAD_INT r3, 0  ; line:18 col:9
+            GET_FIELD r4, r0, 0  ; line:19 col:9
             ARRAY_LEN r5, r4
             CMP_LT_I r6, r3, r5
             BR_FALSE r6, 88
-            GET_FIELD r8, r0, 0  ; line:1 col:474
+            GET_FIELD r8, r0, 0  ; line:20 col:13
             ARRAY_LOAD r9, r8, r3
             MOV r10, r1
             MOV r11, r9
             CALL_INDIRECT r7, r2, r10, 2
             MOV r1, r7
-            LOAD_INT r12, 1  ; line:1 col:516
+            LOAD_INT r12, 1  ; line:21 col:13
             ADD_I r13, r3, r12
             MOV r3, r13
             BR -104
-            RET r1  ; line:1 col:547
+            RET r1  ; line:23 col:9
         }
         .method "__invoke_0" () -> void {
             .reg r0 int
             .reg r1 int
             .reg r2 int
-            ADD_I r2, r0, r1  ; line:1 col:752
+            ADD_I r2, r0, r1  ; line:32 col:66
             RET r2
         }
         .method "main" () -> void mut {
@@ -121,22 +121,22 @@
             .reg r18 List
             .reg r19 int
             .reg r20 ?
-            NEW r0, 33554433  ; line:1 col:581
+            NEW r0, 33554433  ; line:28 col:5
             NEW_ARRAY r1, 0
             SET_FIELD r0, 0, r1
-            LOAD_INT r3, 1  ; line:1 col:637
+            LOAD_INT r3, 1  ; line:29 col:5
             MOV r4, r0
             MOV r5, r3
             CALL r2, 117440514, r4, 2
-            LOAD_INT r7, 2  ; line:1 col:655
+            LOAD_INT r7, 2  ; line:30 col:5
             MOV r8, r0
             MOV r9, r7
             CALL r6, 117440514, r8, 2
-            LOAD_INT r11, 3  ; line:1 col:673
+            LOAD_INT r11, 3  ; line:31 col:5
             MOV r12, r0
             MOV r13, r11
             CALL r10, 117440514, r12, 2
-            LOAD_INT r15, 0  ; line:1 col:691
+            LOAD_INT r15, 0  ; line:32 col:5
             LOAD_NULL r17
             NEW_DELEGATE r16, 117440517, r17
             MOV r18, r0

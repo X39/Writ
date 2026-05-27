@@ -8,7 +8,7 @@
         .reg r0 int
         .reg r1 void
         .reg r2 string
-        I2S r2, r0  ; line:1 col:32
+        I2S r2, r0  ; line:2 col:5
         CALL_EXTERN r1, 268435457, r2, 1
         RET_VOID
     }
@@ -18,7 +18,7 @@
         }
         .reg r0 string
         .reg r1 void
-        CALL_EXTERN r1, 268435457, r0, 1  ; line:1 col:95
+        CALL_EXTERN r1, 268435457, r0, 1  ; line:6 col:5
         RET_VOID
     }
     .method "main" () -> void mut {
@@ -26,9 +26,9 @@
         .reg r1 int
         .reg r2 void
         .reg r3 string
-        LOAD_INT r1, 42  ; line:1 col:141
+        LOAD_INT r1, 42  ; line:10 col:5
         CALL r0, 117440513, r1, 1
-        LOAD_STRING r3, 169  ; line:1 col:156
+        LOAD_STRING r3, 169  ; line:11 col:5
         CALL r2, 117440514, r3, 1
         RET_VOID
     }

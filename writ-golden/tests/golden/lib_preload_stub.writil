@@ -18,10 +18,10 @@
             .reg r0 Stub
             .reg r1 int
             .reg r2 int
-            NEW r0, 33554433  ; line:1 col:57
+            NEW r0, 33554433  ; line:6 col:5
             LOAD_INT r1, 42
             SET_FIELD r0, 0, r1
-            GET_FIELD r2, r0, 0  ; line:1 col:100
+            GET_FIELD r2, r0, 0  ; line:7 col:5
             RET_VOID
         }
     }

@@ -35,28 +35,28 @@
         .reg r20 string
         .reg r21 string
         .reg r22 string
-        LOAD_STRING r0, 139  ; line:1 col:32
+        LOAD_STRING r0, 139  ; line:3 col:5
         LOAD_STRING r1, 154
         STR_SPLIT r2, r0, r1
-        ARRAY_LEN r3, r2  ; line:1 col:75
-        LOAD_STRING r4, 159  ; line:1 col:126
+        ARRAY_LEN r3, r2  ; line:4 col:5
+        LOAD_STRING r4, 159  ; line:7 col:5
         STR_TRIM r5, r4
-        LOAD_STRING r6, 169  ; line:1 col:197
+        LOAD_STRING r6, 169  ; line:10 col:5
         LOAD_STRING r7, 178
         STR_STARTS_WITH r8, r6, r7
-        LOAD_STRING r9, 169  ; line:1 col:240
+        LOAD_STRING r9, 169  ; line:11 col:5
         LOAD_STRING r10, 185
         STR_ENDS_WITH r11, r9, r10
-        LOAD_STRING r12, 139  ; line:1 col:300
+        LOAD_STRING r12, 139  ; line:14 col:5
         LOAD_STRING r13, 192
         STR_CONTAINS r14, r12, r13
-        LOAD_STRING r15, 169  ; line:1 col:367
+        LOAD_STRING r15, 169  ; line:17 col:5
         LOAD_STRING r16, 201
         LOAD_STRING r17, 206
         STR_REPLACE r18, r15, r16, r17
-        LOAD_STRING r19, 169  ; line:1 col:445
+        LOAD_STRING r19, 169  ; line:20 col:5
         STR_TO_UPPER r20, r19
-        LOAD_STRING r21, 211  ; line:1 col:483
+        LOAD_STRING r21, 211  ; line:21 col:5
         STR_TO_LOWER r22, r21
         RET_VOID
     }

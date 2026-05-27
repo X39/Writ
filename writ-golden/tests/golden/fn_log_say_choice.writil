@@ -46,16 +46,16 @@
             .reg r20 void
             .reg r21 int
             .reg r22 int
-            GET_OR_CREATE r0, 33554433  ; line:1 col:46
-            LOAD_STRING r2, 267  ; line:1 col:105
+            GET_OR_CREATE r0, 33554433  ; line:5 col:5
+            LOAD_STRING r2, 267  ; line:6 col:5
             CALL_EXTERN r1, 268435457, r2, 1
-            LOAD_STRING r4, 282  ; line:1 col:138
+            LOAD_STRING r4, 282  ; line:7 col:5
             MOV r5, r0
             MOV r6, r4
             CALL_EXTERN r3, 268435458, r5, 2
-            LOAD_STRING r8, 290  ; line:1 col:167
+            LOAD_STRING r8, 290  ; line:8 col:5
             CALL_EXTERN r7, 268435457, r8, 1
-            LOAD_STRING r12, 308  ; line:1 col:203
+            LOAD_STRING r12, 308  ; line:9 col:5
             LOAD_STRING r13, 320
             LOAD_NULL r15
             NEW_DELEGATE r14, 117440514, r15

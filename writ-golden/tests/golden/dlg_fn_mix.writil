@@ -13,7 +13,7 @@
         .reg r4 string
         .reg r5 string
         .reg r6 string
-        LOAD_STRING r1, 313  ; line:1 col:426
+        LOAD_STRING r1, 313  ; line:8 col:5
         LOAD_STRING r2, 326
         MOV r3, r1
         MOV r4, r0
@@ -29,7 +29,7 @@
         .reg r0 int
         .reg r1 int
         .reg r2 int
-        MUL_I r2, r0, r1  ; line:1 col:557
+        MUL_I r2, r0, r1  ; line:13 col:5
         RET r2
     }
     .method "greet" (npc: ?, player_name: string) -> void mut {
@@ -55,19 +55,19 @@
         .reg r13 int
         .reg r14 void
         .reg r15 string
-        LOAD_STRING r3, 331  ; line:1 col:699
+        LOAD_STRING r3, 331  ; line:18 col:5
         MOV r4, r0
         MOV r5, r3
         CALL_EXTERN r2, 268435458, r4, 2
-        CALL r6, 117440513, r1, 1  ; line:1 col:728
-        LOAD_STRING r8, 351  ; line:1 col:786
+        CALL r6, 117440513, r1, 1  ; line:19 col:7
+        LOAD_STRING r8, 351  ; line:20 col:5
         MOV r9, r0
         MOV r10, r8
         CALL_EXTERN r7, 268435458, r9, 2
-        LOAD_INT r12, 10  ; line:1 col:817
+        LOAD_INT r12, 10  ; line:21 col:7
         LOAD_INT r13, 3
         CALL r11, 117440514, r12, 2
-        LOAD_STRING r15, 373  ; line:1 col:863
+        LOAD_STRING r15, 373  ; line:22 col:7
         CALL_EXTERN r14, 268435457, r15, 1
         RET_VOID
     }
@@ -85,15 +85,15 @@
         .reg r7 int
         .reg r8 string
         .reg r9 void
-        LOAD_STRING r2, 392  ; line:1 col:994
+        LOAD_STRING r2, 392  ; line:27 col:5
         MOV r3, r0
         MOV r4, r2
         CALL_EXTERN r1, 268435458, r3, 2
-        LOAD_STRING r6, 422  ; line:1 col:1036
+        LOAD_STRING r6, 422  ; line:28 col:5
         MOV r7, r0
         MOV r8, r6
         CALL_EXTERN r5, 268435458, r7, 2
-        TAIL_CALL 117440517, r0, 1  ; line:1 col:1066
+        TAIL_CALL 117440517, r0, 1  ; line:29 col:5
         RET_VOID
     }
     .method "quest_start" (narrator: ?) -> void mut {
@@ -111,12 +111,12 @@
         .reg r7 string
         .reg r8 int
         .reg r9 string
-        LOAD_STRING r2, 440  ; line:1 col:1167
+        LOAD_STRING r2, 440  ; line:34 col:5
         MOV r3, r0
         MOV r4, r2
         CALL_EXTERN r1, 268435458, r3, 2
-        LOAD_INT r5, 0  ; line:1 col:1206
-        LOAD_STRING r7, 465  ; line:1 col:1234
+        LOAD_INT r5, 0  ; line:35 col:7
+        LOAD_STRING r7, 465  ; line:36 col:5
         MOV r8, r0
         MOV r9, r7
         CALL_EXTERN r6, 268435458, r8, 2
@@ -131,7 +131,7 @@
         .reg r2 string
         .reg r3 int
         .reg r4 string
-        LOAD_STRING r2, 495  ; line:1 col:1373
+        LOAD_STRING r2, 495  ; line:41 col:5
         MOV r3, r0
         MOV r4, r2
         CALL r1, 117440515, r3, 2
@@ -140,7 +140,7 @@
     .method "main" () -> void mut {
         .reg r0 void
         .reg r1 string
-        LOAD_STRING r1, 503  ; line:1 col:1416
+        LOAD_STRING r1, 503  ; line:45 col:5
         CALL_EXTERN r0, 268435457, r1, 1
         RET_VOID
     }

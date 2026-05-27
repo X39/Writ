@@ -9,15 +9,15 @@
         .reg r2 bool
         .reg r3 void
         .reg r4 int
-        LOAD_INT r1, 0  ; line:1 col:34
+        LOAD_INT r1, 0  ; line:2 col:5
         CMP_LT_I r2, r0, r1
         BR_FALSE r2, 32
-        NEG_I r4, r0  ; line:1 col:54
+        NEG_I r4, r0  ; line:3 col:9
         RET r4
         MOV r3, r0
         BR 10
         NOP
-        RET r0  ; line:1 col:77
+        RET r0  ; line:5 col:5
     }
     .method "main" () -> void mut {
         .locals {
@@ -26,7 +26,7 @@
         .reg r0 int
         .reg r1 int
         .reg r2 int
-        LOAD_INT r1, 5  ; line:1 col:102
+        LOAD_INT r1, 5  ; line:9 col:5
         NEG_I r2, r1
         CALL r0, 117440513, r2, 1
         RET_VOID

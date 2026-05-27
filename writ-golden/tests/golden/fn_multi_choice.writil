@@ -14,13 +14,13 @@
         .method "__invoke_0" () -> void {
             .reg r0 void
             .reg r1 string
-            LOAD_STRING r1, 256  ; line:1 col:340
+            LOAD_STRING r1, 256  ; line:10 col:53
             CALL_EXTERN r0, 268435457, r1, 1
             RET_VOID
         }
         .method "helper" () -> int mut {
             .reg r0 int
-            LOAD_INT r0, 42  ; line:1 col:259
+            LOAD_INT r0, 42  ; line:7 col:22
             RET r0
         }
         .method "main" () -> int pub mut {
@@ -32,14 +32,14 @@
             .reg r5 ?
             .reg r6 void
             .reg r7 int
-            LOAD_STRING r3, 241  ; line:1 col:292
+            LOAD_STRING r3, 241  ; line:10 col:5
             LOAD_STRING r4, 251
             LOAD_NULL r6
             NEW_DELEGATE r5, 117440514, r6
             CALL_EXTERN r2, 268435459, r3, 3
             ARRAY_INIT r1, 0, 1, r2
             CALL_EXTERN r0, 268435458, r1, 1
-            CALL r7, 117440515, r8, 0  ; line:1 col:375
+            CALL r7, 117440515, r8, 0  ; line:11 col:5
             RET r7
         }
     }

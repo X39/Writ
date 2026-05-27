@@ -65,55 +65,55 @@
         .reg r46 void
         .reg r47 int
         .reg r48 int
-        LOAD_INT r1, 1  ; line:1 col:18
+        LOAD_INT r1, 1  ; line:2 col:5
         LOAD_INT r2, 2
         LOAD_INT r3, 3
         ARRAY_INIT r0, 0, 3, r1
-        ARRAY_LEN r4, r0  ; line:1 col:91
-        LOAD_INT r5, 0  ; line:1 col:165
+        ARRAY_LEN r4, r0  ; line:5 col:5
+        LOAD_INT r5, 0  ; line:8 col:5
         ARRAY_LOAD r6, r0, r5
-        LOAD_INT r7, 42  ; line:1 col:191
+        LOAD_INT r7, 42  ; line:9 col:5
         LOAD_INT r8, 1
         ARRAY_STORE r0, r8, r7
-        LOAD_INT r9, 5  ; line:1 col:286
+        LOAD_INT r9, 5  ; line:12 col:5
         ARRAY_RESIZE r0, r9
-        ARRAY_LEN r11, r0  ; line:1 col:306
-        LOAD_INT r12, 3  ; line:1 col:344
+        ARRAY_LEN r11, r0  ; line:13 col:5
+        LOAD_INT r12, 3  ; line:14 col:5
         ARRAY_LOAD r13, r0, r12
-        LOAD_INT r14, 2  ; line:1 col:421
+        LOAD_INT r14, 2  ; line:17 col:5
         ARRAY_RESIZE r0, r14
-        ARRAY_LEN r16, r0  ; line:1 col:441
-        LOAD_INT r17, 0  ; line:1 col:519
+        ARRAY_LEN r16, r0  ; line:18 col:5
+        LOAD_INT r17, 0  ; line:21 col:5
         LOAD_INT r18, 2
         ARRAY_SLICE r19, r0, r17, r18
-        ARRAY_LEN r20, r19  ; line:1 col:551
-        LOAD_INT r22, 0  ; line:1 col:632
+        ARRAY_LEN r20, r19  ; line:22 col:5
+        LOAD_INT r22, 0  ; line:25 col:5
         LOAD_INT r23, 0
         LOAD_INT r24, 0
         LOAD_INT r25, 0
         LOAD_INT r26, 0
         ARRAY_INIT r21, 0, 5, r22
-        LOAD_INT r28, 10  ; line:1 col:675
+        LOAD_INT r28, 10  ; line:26 col:5
         LOAD_INT r29, 20
         LOAD_INT r30, 30
         ARRAY_INIT r27, 0, 3, r28
-        LOAD_INT r31, 0  ; line:1 col:711
+        LOAD_INT r31, 0  ; line:27 col:5
         LOAD_INT r32, 1
         LOAD_INT r33, 3
         ARRAY_COPY r21, r32, r27, r31, r33
-        LOAD_INT r35, 1  ; line:1 col:745
+        LOAD_INT r35, 1  ; line:28 col:5
         ARRAY_LOAD r36, r21, r35
-        LOAD_INT r38, 1  ; line:1 col:841
+        LOAD_INT r38, 1  ; line:31 col:5
         LOAD_INT r39, 2
         LOAD_INT r40, 3
         LOAD_INT r41, 4
         LOAD_INT r42, 5
         ARRAY_INIT r37, 0, 5, r38
-        LOAD_INT r43, 0  ; line:1 col:888
+        LOAD_INT r43, 0  ; line:32 col:5
         LOAD_INT r44, 1
         LOAD_INT r45, 3
         ARRAY_COPY r37, r44, r37, r43, r45
-        LOAD_INT r47, 1  ; line:1 col:930
+        LOAD_INT r47, 1  ; line:33 col:5
         ARRAY_LOAD r48, r37, r47
         RET_VOID
     }

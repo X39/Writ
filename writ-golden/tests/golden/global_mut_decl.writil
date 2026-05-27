@@ -6,6 +6,6 @@
             r0: int "x" [0, 2)
         }
         .reg r0 int
-        RET_VOID  ; line:1 col:50
+        RET_VOID  ; line:4 col:5
     }
 }

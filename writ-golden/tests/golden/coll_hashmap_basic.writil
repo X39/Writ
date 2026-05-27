@@ -20,7 +20,7 @@
             .reg r0 int
             .reg r1 array<?>
             .reg r2 int
-            GET_FIELD r1, r0, 0  ; line:1 col:153
+            GET_FIELD r1, r0, 0  ; line:8 col:9
             ARRAY_LEN r2, r1
             RET r2
         }
@@ -44,25 +44,25 @@
             .reg r11 int
             .reg r12 int
             .reg r13 bool
-            LOAD_INT r2, 0  ; line:1 col:227
-            GET_FIELD r3, r0, 0  ; line:1 col:256
+            LOAD_INT r2, 0  ; line:12 col:9
+            GET_FIELD r3, r0, 0  ; line:13 col:9
             ARRAY_LEN r4, r3
             CMP_LT_I r5, r2, r4
             BR_FALSE r5, 100
-            GET_FIELD r6, r0, 0  ; line:1 col:297
+            GET_FIELD r6, r0, 0  ; line:14 col:13
             ARRAY_LOAD r7, r6, r2
             CMP_EQ_I r8, r7, r1
             BR_FALSE r8, 30
-            LOAD_TRUE r10  ; line:1 col:322
+            LOAD_TRUE r10  ; line:14 col:38
             RET r10
             MOV r9, r0
             BR 10
             NOP
-            LOAD_INT r11, 1  ; line:1 col:350
+            LOAD_INT r11, 1  ; line:15 col:13
             ADD_I r12, r2, r11
             MOV r2, r12
             BR -116
-            LOAD_FALSE r13  ; line:1 col:381
+            LOAD_FALSE r13  ; line:17 col:9
             RET r13
         }
         .method "get" (key: ?) -> void pub {
@@ -88,26 +88,26 @@
             .reg r14 array<?>
             .reg r15 int
             .reg r16 ?
-            LOAD_INT r2, 0  ; line:1 col:442
-            GET_FIELD r3, r0, 0  ; line:1 col:471
+            LOAD_INT r2, 0  ; line:21 col:9
+            GET_FIELD r3, r0, 0  ; line:22 col:9
             ARRAY_LEN r4, r3
             CMP_LT_I r5, r2, r4
             BR_FALSE r5, 114
-            GET_FIELD r6, r0, 0  ; line:1 col:512
+            GET_FIELD r6, r0, 0  ; line:23 col:13
             ARRAY_LOAD r7, r6, r2
             CMP_EQ_I r8, r7, r1
             BR_FALSE r8, 44
-            GET_FIELD r10, r0, 1  ; line:1 col:537
+            GET_FIELD r10, r0, 1  ; line:23 col:38
             ARRAY_LOAD r11, r10, r2
             RET r11
             MOV r9, r0
             BR 10
             NOP
-            LOAD_INT r12, 1  ; line:1 col:575
+            LOAD_INT r12, 1  ; line:24 col:13
             ADD_I r13, r2, r12
             MOV r2, r13
             BR -130
-            GET_FIELD r14, r0, 1  ; line:1 col:606
+            GET_FIELD r14, r0, 1  ; line:26 col:9
             LOAD_INT r15, 0
             ARRAY_LOAD r16, r14, r15
             RET r16
@@ -146,38 +146,38 @@
             .reg r23 void
             .reg r24 array<?>
             .reg r25 array<?>
-            LOAD_INT r3, 0  ; line:1 col:685
-            GET_FIELD r4, r0, 0  ; line:1 col:714
+            LOAD_INT r3, 0  ; line:30 col:9
+            GET_FIELD r4, r0, 0  ; line:31 col:9
             ARRAY_LEN r5, r4
             CMP_LT_I r6, r3, r5
             BR_FALSE r6, 112
-            GET_FIELD r7, r0, 0  ; line:1 col:755
+            GET_FIELD r7, r0, 0  ; line:32 col:13
             ARRAY_LOAD r8, r7, r3
             CMP_EQ_I r9, r8, r1
             BR_FALSE r9, 42
-            GET_FIELD r11, r0, 1  ; line:1 col:797
+            GET_FIELD r11, r0, 1  ; line:33 col:17
             ARRAY_STORE r11, r3, r2
-            RET_VOID  ; line:1 col:838
+            RET_VOID  ; line:34 col:17
             MOV r10, r0
             BR 10
             NOP
-            LOAD_INT r12, 1  ; line:1 col:874
+            LOAD_INT r12, 1  ; line:36 col:13
             ADD_I r13, r3, r12
             MOV r3, r13
             BR -128
-            GET_FIELD r14, r0, 0  ; line:1 col:905
+            GET_FIELD r14, r0, 0  ; line:38 col:9
             ARRAY_LEN r15, r14
-            GET_FIELD r16, r0, 0  ; line:1 col:950
+            GET_FIELD r16, r0, 0  ; line:39 col:9
             LOAD_INT r17, 1
             ADD_I r18, r15, r17
             ARRAY_RESIZE r16, r18
-            GET_FIELD r20, r0, 1  ; line:1 col:990
+            GET_FIELD r20, r0, 1  ; line:40 col:9
             LOAD_INT r21, 1
             ADD_I r22, r15, r21
             ARRAY_RESIZE r20, r22
-            GET_FIELD r24, r0, 0  ; line:1 col:1032
+            GET_FIELD r24, r0, 0  ; line:41 col:9
             ARRAY_STORE r24, r15, r1
-            GET_FIELD r25, r0, 1  ; line:1 col:1067
+            GET_FIELD r25, r0, 1  ; line:42 col:9
             ARRAY_STORE r25, r15, r2
             RET_VOID
         }
@@ -225,50 +225,50 @@
             .reg r34 void
             .reg r35 int
             .reg r36 int
-            LOAD_INT r2, 0  ; line:1 col:1154
-            GET_FIELD r3, r0, 0  ; line:1 col:1183
+            LOAD_INT r2, 0  ; line:46 col:9
+            GET_FIELD r3, r0, 0  ; line:47 col:9
             ARRAY_LEN r4, r3
             CMP_LT_I r5, r2, r4
             BR_FALSE r5, 364
-            GET_FIELD r6, r0, 0  ; line:1 col:1224
+            GET_FIELD r6, r0, 0  ; line:48 col:13
             ARRAY_LOAD r7, r6, r2
             CMP_EQ_I r8, r7, r1
             BR_FALSE r8, 294
-            GET_FIELD r10, r0, 0  ; line:1 col:1266
+            GET_FIELD r10, r0, 0  ; line:49 col:17
             ARRAY_LEN r11, r10
-            LOAD_INT r12, 1  ; line:1 col:1356
+            LOAD_INT r12, 1  ; line:51 col:17
             SUB_I r13, r11, r12
             CMP_LT_I r14, r2, r13
             BR_FALSE r14, 154
-            GET_FIELD r15, r0, 0  ; line:1 col:1401
+            GET_FIELD r15, r0, 0  ; line:52 col:21
             LOAD_INT r16, 1
             ADD_I r17, r2, r16
             ARRAY_LOAD r18, r15, r17
             GET_FIELD r19, r0, 0
             ARRAY_STORE r19, r2, r18
-            GET_FIELD r20, r0, 1  ; line:1 col:1455
+            GET_FIELD r20, r0, 1  ; line:53 col:21
             LOAD_INT r21, 1
             ADD_I r22, r2, r21
             ARRAY_LOAD r23, r20, r22
             GET_FIELD r24, r0, 1
             ARRAY_STORE r24, r2, r23
-            LOAD_INT r25, 1  ; line:1 col:1513
+            LOAD_INT r25, 1  ; line:54 col:21
             ADD_I r26, r2, r25
             MOV r2, r26
             BR -174
-            GET_FIELD r27, r0, 0  ; line:1 col:1560
+            GET_FIELD r27, r0, 0  ; line:56 col:17
             LOAD_INT r28, 1
             SUB_I r29, r11, r28
             ARRAY_RESIZE r27, r29
-            GET_FIELD r31, r0, 1  ; line:1 col:1608
+            GET_FIELD r31, r0, 1  ; line:57 col:17
             LOAD_INT r32, 1
             SUB_I r33, r11, r32
             ARRAY_RESIZE r31, r33
-            RET_VOID  ; line:1 col:1658
+            RET_VOID  ; line:58 col:17
             MOV r9, r0
             BR 10
             NOP
-            LOAD_INT r35, 1  ; line:1 col:1694
+            LOAD_INT r35, 1  ; line:60 col:13
             ADD_I r36, r2, r35
             MOV r2, r36
             BR -380
@@ -309,33 +309,33 @@
             .reg r25 string
             .reg r26 HashMap
             .reg r27 string
-            NEW r0, 33554433  ; line:1 col:1746
+            NEW r0, 33554433  ; line:66 col:5
             NEW_ARRAY r1, 0
             SET_FIELD r0, 0, r1
             NEW_ARRAY r2, 0
             SET_FIELD r0, 1, r2
-            LOAD_STRING r4, 244  ; line:1 col:1833
+            LOAD_STRING r4, 244  ; line:67 col:5
             LOAD_INT r5, 10
             MOV r6, r0
             MOV r7, r4
             MOV r8, r5
             CALL r3, 117440517, r6, 3
-            LOAD_STRING r10, 249  ; line:1 col:1855
+            LOAD_STRING r10, 249  ; line:68 col:5
             LOAD_INT r11, 20
             MOV r12, r0
             MOV r13, r10
             MOV r14, r11
             CALL r9, 117440517, r12, 3
-            LOAD_STRING r16, 244  ; line:1 col:1877
+            LOAD_STRING r16, 244  ; line:69 col:5
             MOV r17, r0
             MOV r18, r16
             CALL r15, 117440516, r17, 2
-            LOAD_STRING r20, 249  ; line:1 col:1909
+            LOAD_STRING r20, 249  ; line:70 col:5
             MOV r21, r0
             MOV r22, r20
             CALL r19, 117440515, r21, 2
-            CALL r23, 117440514, r0, 1  ; line:1 col:1944
-            LOAD_STRING r25, 244  ; line:1 col:1975
+            CALL r23, 117440514, r0, 1  ; line:71 col:5
+            LOAD_STRING r25, 244  ; line:72 col:5
             MOV r26, r0
             MOV r27, r25
             CALL r24, 117440518, r26, 2

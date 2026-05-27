@@ -19,15 +19,15 @@
             .reg r3 int
             .reg r4 int
             .reg r5 int
-            GET_TAG r1, r0  ; line:1 col:85
+            GET_TAG r1, r0  ; line:8 col:5
             SWITCH r1, 18, 44, 70
-            LOAD_INT r3, 1  ; line:1 col:120
+            LOAD_INT r3, 1  ; line:9 col:25
             MOV r2, r3
             BR 60
-            LOAD_INT r4, 2  ; line:1 col:151
+            LOAD_INT r4, 2  ; line:10 col:27
             MOV r2, r4
             BR 34
-            LOAD_INT r5, 3  ; line:1 col:181
+            LOAD_INT r5, 3  ; line:11 col:26
             MOV r2, r5
             BR 8
             RET r2
@@ -38,7 +38,7 @@
             }
             .reg r0 int
             .reg r1 Color
-            LOAD_INT r1, 0  ; line:1 col:215
+            LOAD_INT r1, 0  ; line:16 col:5
             CALL r0, 117440514, r1, 1
             RET_VOID
         }

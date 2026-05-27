@@ -9,9 +9,9 @@
         .reg r1 int
         .reg r2 float
         .reg r3 float
-        LOAD_INT r0, 42  ; line:1 col:18
+        LOAD_INT r0, 42  ; line:2 col:5
         NEG_I r1, r0
-        LOAD_FLOAT r2, 3.14  ; line:1 col:41
+        LOAD_FLOAT r2, 3.14  ; line:3 col:5
         NEG_F r3, r2
         RET_VOID
     }

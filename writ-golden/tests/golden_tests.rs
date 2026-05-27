@@ -78,7 +78,7 @@ pub fn compile_and_disassemble(src: &str) -> String {
 
             // Stage 5: IL codegen (includes metadata + bodies + serialization)
             let active_conditions = std::collections::HashSet::new();
-            writ_compiler::emit_bodies(&typed_ast, &interner, &[(file_id, &ast)], true, &[], &active_conditions).map_err(
+            writ_compiler::emit_bodies(&typed_ast, &interner, &[(file_id, &ast)], true, &[(file_id, src_static)], &active_conditions).map_err(
                 |diags| {
                     let msgs: Vec<_> = diags.iter().map(|d| d.message.clone()).collect();
                     format!("{} codegen error(s): {}", diags.len(), msgs.join("; "))
@@ -156,7 +156,7 @@ pub fn compile_and_disassemble_with_conditions(src: &str, conditions: &[&str]) -
             }
 
             // Stage 5: IL codegen with active conditions
-            writ_compiler::emit_bodies(&typed_ast, &interner, &[(file_id, &ast)], true, &[], &active_conditions)
+            writ_compiler::emit_bodies(&typed_ast, &interner, &[(file_id, &ast)], true, &[(file_id, src_static)], &active_conditions)
                 .map_err(|diags| {
                     let msgs: Vec<_> = diags.iter().map(|d| d.message.clone()).collect();
                     format!("{} codegen error(s): {}", diags.len(), msgs.join("; "))

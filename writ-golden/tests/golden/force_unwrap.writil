@@ -18,10 +18,10 @@
         .reg r7 int
         .reg r8 bool
         .reg r9 bool
-        LOAD_INT r0, 1  ; line:1 col:22
+        LOAD_INT r0, 1  ; line:2 col:5
         WRAP_SOME r1, r0
-        UNWRAP r2, r1  ; line:1 col:50
-        IS_NONE r3, r1  ; line:1 col:75
+        UNWRAP r2, r1  ; line:3 col:5
+        IS_NONE r3, r1  ; line:4 col:5
         BR_FALSE r3, 34
         LOAD_STRING r5, 139
         CRASH r5
@@ -29,8 +29,8 @@
         BR 20
         UNWRAP r7, r1
         MOV r4, r7
-        IS_NONE r8, r1  ; line:1 col:92
-        IS_SOME r9, r1  ; line:1 col:118
+        IS_NONE r8, r1  ; line:5 col:5
+        IS_SOME r9, r1  ; line:6 col:5
         RET_VOID
     }
     .export "main" method 117440513

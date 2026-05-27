@@ -18,7 +18,7 @@
             }
             .reg r0 int
             .reg r1 ?
-            GET_FIELD r1, r0, 0  ; line:1 col:95
+            GET_FIELD r1, r0, 0  ; line:7 col:9
             RET r1
         }
         .method "set" (v: ?) -> void pub static {
@@ -28,7 +28,7 @@
             }
             .reg r0 int
             .reg r1 int
-            SET_FIELD r0, 0, r1  ; line:1 col:158
+            SET_FIELD r0, 0, r1  ; line:11 col:9
             RET_VOID
         }
         .method "main" () -> void mut {
@@ -37,7 +37,7 @@
             }
             .reg r0 Box
             .reg r1 int
-            NEW r0, 33554433  ; line:1 col:204
+            NEW r0, 33554433  ; line:16 col:5
             LOAD_INT r1, 42
             SET_FIELD r0, 0, r1
             RET_VOID

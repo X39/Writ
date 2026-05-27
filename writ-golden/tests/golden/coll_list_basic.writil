@@ -27,13 +27,13 @@
             .reg r6 int
             .reg r7 void
             .reg r8 array<?>
-            GET_FIELD r2, r0, 0  ; line:1 col:107
+            GET_FIELD r2, r0, 0  ; line:7 col:9
             ARRAY_LEN r3, r2
-            GET_FIELD r4, r0, 0  ; line:1 col:153
+            GET_FIELD r4, r0, 0  ; line:8 col:9
             LOAD_INT r5, 1
             ADD_I r6, r3, r5
             ARRAY_RESIZE r4, r6
-            GET_FIELD r8, r0, 0  ; line:1 col:194
+            GET_FIELD r8, r0, 0  ; line:9 col:9
             ARRAY_STORE r8, r3, r1
             RET_VOID
         }
@@ -46,7 +46,7 @@
             .reg r1 int
             .reg r2 array<?>
             .reg r3 ?
-            GET_FIELD r2, r0, 0  ; line:1 col:281
+            GET_FIELD r2, r0, 0  ; line:13 col:9
             ARRAY_LOAD r3, r2, r1
             RET r3
         }
@@ -60,7 +60,7 @@
             .reg r1 int
             .reg r2 int
             .reg r3 array<?>
-            GET_FIELD r3, r0, 0  ; line:1 col:366
+            GET_FIELD r3, r0, 0  ; line:17 col:9
             ARRAY_STORE r3, r1, r2
             RET_VOID
         }
@@ -71,7 +71,7 @@
             .reg r0 int
             .reg r1 array<?>
             .reg r2 int
-            GET_FIELD r1, r0, 0  ; line:1 col:441
+            GET_FIELD r1, r0, 0  ; line:21 col:9
             ARRAY_LEN r2, r1
             RET r2
         }
@@ -99,23 +99,23 @@
             .reg r15 int
             .reg r16 int
             .reg r17 void
-            GET_FIELD r2, r0, 0  ; line:1 col:522
+            GET_FIELD r2, r0, 0  ; line:25 col:9
             ARRAY_LEN r3, r2
-            LOAD_INT r4, 1  ; line:1 col:601
+            LOAD_INT r4, 1  ; line:27 col:9
             SUB_I r5, r3, r4
             CMP_LT_I r6, r1, r5
             BR_FALSE r6, 98
-            GET_FIELD r7, r0, 0  ; line:1 col:638
+            GET_FIELD r7, r0, 0  ; line:28 col:13
             LOAD_INT r8, 1
             ADD_I r9, r1, r8
             ARRAY_LOAD r10, r7, r9
             GET_FIELD r11, r0, 0
             ARRAY_STORE r11, r1, r10
-            LOAD_INT r12, 1  ; line:1 col:686
+            LOAD_INT r12, 1  ; line:29 col:13
             ADD_I r13, r1, r12
             MOV r1, r13
             BR -118
-            GET_FIELD r14, r0, 0  ; line:1 col:717
+            GET_FIELD r14, r0, 0  ; line:31 col:9
             LOAD_INT r15, 1
             SUB_I r16, r3, r15
             ARRAY_RESIZE r14, r16
@@ -141,25 +141,25 @@
             .reg r11 int
             .reg r12 int
             .reg r13 bool
-            LOAD_INT r2, 0  ; line:1 col:808
-            GET_FIELD r3, r0, 0  ; line:1 col:837
+            LOAD_INT r2, 0  ; line:35 col:9
+            GET_FIELD r3, r0, 0  ; line:36 col:9
             ARRAY_LEN r4, r3
             CMP_LT_I r5, r2, r4
             BR_FALSE r5, 100
-            GET_FIELD r6, r0, 0  ; line:1 col:879
+            GET_FIELD r6, r0, 0  ; line:37 col:13
             ARRAY_LOAD r7, r6, r2
             CMP_EQ_I r8, r7, r1
             BR_FALSE r8, 30
-            LOAD_TRUE r10  ; line:1 col:906
+            LOAD_TRUE r10  ; line:37 col:40
             RET r10
             MOV r9, r0
             BR 10
             NOP
-            LOAD_INT r11, 1  ; line:1 col:934
+            LOAD_INT r11, 1  ; line:38 col:13
             ADD_I r12, r2, r11
             MOV r2, r12
             BR -116
-            LOAD_FALSE r13  ; line:1 col:965
+            LOAD_FALSE r13  ; line:40 col:9
             RET r13
         }
         .method "main" () -> void mut {
@@ -202,37 +202,37 @@
             .reg r30 int
             .reg r31 List
             .reg r32 int
-            NEW r0, 33554433  ; line:1 col:1001
+            NEW r0, 33554433  ; line:45 col:5
             NEW_ARRAY r1, 0
             SET_FIELD r0, 0, r1
-            LOAD_INT r3, 10  ; line:1 col:1057
+            LOAD_INT r3, 10  ; line:46 col:5
             MOV r4, r0
             MOV r5, r3
             CALL r2, 117440514, r4, 2
-            LOAD_INT r7, 20  ; line:1 col:1076
+            LOAD_INT r7, 20  ; line:47 col:5
             MOV r8, r0
             MOV r9, r7
             CALL r6, 117440514, r8, 2
-            LOAD_INT r11, 30  ; line:1 col:1095
+            LOAD_INT r11, 30  ; line:48 col:5
             MOV r12, r0
             MOV r13, r11
             CALL r10, 117440514, r12, 2
-            LOAD_INT r15, 0  ; line:1 col:1114
+            LOAD_INT r15, 0  ; line:49 col:5
             MOV r16, r0
             MOV r17, r15
             CALL r14, 117440515, r16, 2
-            CALL r18, 117440517, r0, 1  ; line:1 col:1146
-            LOAD_INT r20, 20  ; line:1 col:1179
+            CALL r18, 117440517, r0, 1  ; line:50 col:5
+            LOAD_INT r20, 20  ; line:51 col:5
             MOV r21, r0
             MOV r22, r20
             CALL r19, 117440519, r21, 2
-            LOAD_INT r24, 1  ; line:1 col:1215
+            LOAD_INT r24, 1  ; line:52 col:5
             LOAD_INT r25, 25
             MOV r26, r0
             MOV r27, r24
             MOV r28, r25
             CALL r23, 117440516, r26, 3
-            LOAD_INT r30, 0  ; line:1 col:1237
+            LOAD_INT r30, 0  ; line:53 col:5
             MOV r31, r0
             MOV r32, r30
             CALL r29, 117440518, r31, 2

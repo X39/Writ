@@ -43,24 +43,24 @@
             .reg r10 int
             .reg r11 bool
             .reg r12 bool
-            NEW r0, 33554433  ; line:1 col:148
+            NEW r0, 33554433  ; line:13 col:5
             LOAD_INT r1, 1
             SET_FIELD r0, 0, r1
             LOAD_INT r2, 2
             SET_FIELD r0, 1, r2
-            NEW r3, 33554433  ; line:1 col:194
+            NEW r3, 33554433  ; line:14 col:5
             LOAD_INT r4, 1
             SET_FIELD r3, 0, r4
             LOAD_INT r5, 2
             SET_FIELD r3, 1, r5
-            GET_FIELD r6, r0, 0  ; line:1 col:240
+            GET_FIELD r6, r0, 0  ; line:15 col:5
             GET_FIELD r7, r3, 0
             CMP_EQ_I r8, r6, r7
             GET_FIELD r9, r0, 1
             GET_FIELD r10, r3, 1
             CMP_EQ_I r11, r9, r10
             BIT_AND r12, r8, r11
-            RET r12  ; line:1 col:272
+            RET r12  ; line:16 col:5
         }
         .method "test_neq" () -> bool mut {
             .locals {
@@ -83,17 +83,17 @@
             .reg r12 bool
             .reg r13 bool
             .reg r14 bool
-            NEW r0, 33554433  ; line:1 col:314
+            NEW r0, 33554433  ; line:20 col:5
             LOAD_INT r1, 1
             SET_FIELD r0, 0, r1
             LOAD_INT r2, 2
             SET_FIELD r0, 1, r2
-            NEW r3, 33554433  ; line:1 col:360
+            NEW r3, 33554433  ; line:21 col:5
             LOAD_INT r4, 3
             SET_FIELD r3, 0, r4
             LOAD_INT r5, 4
             SET_FIELD r3, 1, r5
-            GET_FIELD r6, r0, 0  ; line:1 col:406
+            GET_FIELD r6, r0, 0  ; line:22 col:5
             GET_FIELD r7, r3, 0
             CMP_EQ_I r8, r6, r7
             NOT r9, r8
@@ -102,7 +102,7 @@
             CMP_EQ_I r12, r10, r11
             NOT r13, r12
             BIT_OR r14, r9, r13
-            RET r14  ; line:1 col:438
+            RET r14  ; line:23 col:5
         }
         .method "main" () -> void mut {
             .locals {
@@ -111,8 +111,8 @@
             }
             .reg r0 bool
             .reg r1 bool
-            CALL r0, 117440515, r1, 0  ; line:1 col:468
-            CALL r1, 117440516, r2, 0  ; line:1 col:499
+            CALL r0, 117440515, r1, 0  ; line:27 col:5
+            CALL r1, 117440516, r2, 0  ; line:28 col:5
             RET_VOID
         }
     }

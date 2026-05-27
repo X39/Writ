@@ -32,13 +32,13 @@
             .reg r3 ?
             .reg r4 ?
             .reg r5 bool
-            TYPEOF r0, 33554433  ; line:1 col:73
+            TYPEOF r0, 33554433  ; line:5 col:5
             TYPEOF r1, 33554433
             CMP_EQ_I r2, r0, r1
-            TYPEOF r3, 33554433  ; line:1 col:120
+            TYPEOF r3, 33554433  ; line:6 col:5
             TYPEOF r4, 33554434
             CMP_EQ_I r5, r3, r4
-            RET r2  ; line:1 col:166
+            RET r2  ; line:7 col:5
         }
     }
 }

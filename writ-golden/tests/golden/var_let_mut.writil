@@ -6,8 +6,8 @@
         }
         .reg r0 int
         .reg r1 int
-        LOAD_INT r0, 10  ; line:1 col:18
-        LOAD_INT r1, 20  ; line:1 col:44
+        LOAD_INT r0, 10  ; line:2 col:5
+        LOAD_INT r1, 20  ; line:3 col:5
         MOV r0, r1
         RET_VOID
     }

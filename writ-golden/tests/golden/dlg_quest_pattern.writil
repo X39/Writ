@@ -31,15 +31,15 @@
             .reg r3 bool
             .reg r4 bool
             .reg r5 bool
-            GET_TAG r1, r0  ; line:1 col:691
+            GET_TAG r1, r0  ; line:22 col:5
             SWITCH r1, 18, 36, 54
-            LOAD_TRUE r3  ; line:1 col:742
+            LOAD_TRUE r3  ; line:23 col:37
             MOV r2, r3
             BR 44
-            LOAD_FALSE r4  ; line:1 col:782
+            LOAD_FALSE r4  ; line:24 col:33
             MOV r2, r4
             BR 26
-            LOAD_FALSE r5  ; line:1 col:826
+            LOAD_FALSE r5  ; line:25 col:36
             MOV r2, r5
             BR 8
             RET r2
@@ -51,7 +51,7 @@
             .reg r0 int
             .reg r1 int
             .reg r2 int
-            LOAD_INT r1, 2  ; line:1 col:928
+            LOAD_INT r1, 2  ; line:31 col:5
             MUL_I r2, r0, r1
             RET r2
         }
@@ -69,15 +69,15 @@
             .reg r7 int
             .reg r8 string
             .reg r9 void
-            LOAD_STRING r2, 340  ; line:1 col:1029
+            LOAD_STRING r2, 340  ; line:36 col:5
             MOV r3, r0
             MOV r4, r2
             CALL_EXTERN r1, 268435458, r3, 2
-            LOAD_STRING r6, 373  ; line:1 col:1074
+            LOAD_STRING r6, 373  ; line:37 col:5
             MOV r7, r0
             MOV r8, r6
             CALL_EXTERN r5, 268435458, r7, 2
-            TAIL_CALL 117440518, r0, 1  ; line:1 col:1115
+            TAIL_CALL 117440518, r0, 1  ; line:38 col:5
             RET_VOID
         }
         .method "merchant_quest" (merchant: ?) -> void mut {
@@ -102,20 +102,20 @@
             .reg r13 string
             .reg r14 int
             .reg r15 string
-            LOAD_INT r1, 0  ; line:1 col:1250
-            CALL r2, 117440515, r1, 1  ; line:1 col:1305
-            BR_FALSE r2, 86  ; line:1 col:1361
-            LOAD_STRING r5, 402  ; line:1 col:1382
+            LOAD_INT r1, 0  ; line:43 col:7
+            CALL r2, 117440515, r1, 1  ; line:44 col:7
+            BR_FALSE r2, 86  ; line:45 col:10
+            LOAD_STRING r5, 402  ; line:46 col:9
             MOV r6, r0
             MOV r7, r5
             CALL_EXTERN r4, 268435458, r6, 2
-            LOAD_STRING r9, 428  ; line:1 col:1424
+            LOAD_STRING r9, 428  ; line:47 col:9
             MOV r10, r0
             MOV r11, r9
             CALL_EXTERN r8, 268435458, r10, 2
             MOV r3, r8
             BR 46
-            LOAD_STRING r13, 475  ; line:1 col:1501
+            LOAD_STRING r13, 475  ; line:49 col:9
             MOV r14, r0
             MOV r15, r13
             CALL_EXTERN r12, 268435458, r14, 2
@@ -140,24 +140,24 @@
             .reg r10 string
             .reg r11 void
             .reg r12 string
-            LOAD_STRING r2, 520  ; line:1 col:1667
+            LOAD_STRING r2, 520  ; line:55 col:5
             MOV r3, r0
             MOV r4, r2
             CALL_EXTERN r1, 268435458, r3, 2
-            LOAD_INT r6, 50  ; line:1 col:1722
+            LOAD_INT r6, 50  ; line:56 col:7
             CALL r5, 117440516, r6, 1
-            LOAD_STRING r8, 561  ; line:1 col:1761
+            LOAD_STRING r8, 561  ; line:57 col:5
             MOV r9, r0
             MOV r10, r8
             CALL_EXTERN r7, 268435458, r9, 2
-            LOAD_STRING r12, 585  ; line:1 col:1799
+            LOAD_STRING r12, 585  ; line:58 col:7
             CALL_EXTERN r11, 268435457, r12, 1
             RET_VOID
         }
         .method "main" () -> void mut {
             .reg r0 void
             .reg r1 string
-            LOAD_STRING r1, 604  ; line:1 col:1854
+            LOAD_STRING r1, 604  ; line:62 col:5
             CALL_EXTERN r0, 268435457, r1, 1
             RET_VOID
         }

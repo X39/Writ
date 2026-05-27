@@ -17,7 +17,7 @@
         }
         .method "speak" () -> string pub mut {
             .reg r0 string
-            LOAD_STRING r0, 185  ; line:1 col:139
+            LOAD_STRING r0, 185  ; line:11 col:9
             RET r0
         }
         .method "main" () -> void mut {
@@ -30,11 +30,11 @@
             .reg r1 Dog
             .reg r2 string
             .reg r3 ?
-            TYPEOF r0, 167772161  ; line:1 col:171
-            NEW r1, 33554433  ; line:1 col:209
+            TYPEOF r0, 167772161  ; line:16 col:5
+            NEW r1, 33554433  ; line:17 col:5
             LOAD_STRING r2, 193
             SET_FIELD r1, 0, r2
-            TYPEOF r3, 33554433  ; line:1 col:248
+            TYPEOF r3, 33554433  ; line:18 col:5
             RET_VOID
         }
     }

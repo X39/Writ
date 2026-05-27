@@ -37,25 +37,25 @@
             .reg r11 int
             .reg r12 int
             .reg r13 int
-            GET_FIELD r1, r0, 1  ; line:1 col:139
+            GET_FIELD r1, r0, 1  ; line:8 col:9
             GET_FIELD r2, r0, 0
             ARRAY_LEN r3, r2
             CMP_LT_I r4, r1, r3
             NOT r5, r4
             BR_FALSE r5, 30
-            LOAD_NULL r7  ; line:1 col:189
+            LOAD_NULL r7  ; line:9 col:13
             RET r7
             MOV r6, r0
             BR 10
             NOP
-            GET_FIELD r8, r0, 0  ; line:1 col:222
+            GET_FIELD r8, r0, 0  ; line:11 col:9
             GET_FIELD r9, r0, 1
             ARRAY_LOAD r10, r8, r9
-            GET_FIELD r11, r0, 1  ; line:1 col:270
+            GET_FIELD r11, r0, 1  ; line:12 col:9
             LOAD_INT r12, 1
             ADD_I r13, r11, r12
             SET_FIELD r0, 1, r13
-            RET r10  ; line:1 col:308
+            RET r10  ; line:13 col:9
         }
         .method "next" () -> ? pub static {
             .locals {
@@ -76,25 +76,25 @@
             .reg r11 int
             .reg r12 int
             .reg r13 int
-            GET_FIELD r1, r0, 1  ; line:1 col:412
+            GET_FIELD r1, r0, 1  ; line:19 col:9
             GET_FIELD r2, r0, 0
             ARRAY_LEN r3, r2
             CMP_LT_I r4, r1, r3
             NOT r5, r4
             BR_FALSE r5, 30
-            LOAD_NULL r7  ; line:1 col:462
+            LOAD_NULL r7  ; line:20 col:13
             RET r7
             MOV r6, r0
             BR 10
             NOP
-            GET_FIELD r8, r0, 0  ; line:1 col:495
+            GET_FIELD r8, r0, 0  ; line:22 col:9
             GET_FIELD r9, r0, 1
             ARRAY_LOAD r10, r8, r9
-            GET_FIELD r11, r0, 1  ; line:1 col:543
+            GET_FIELD r11, r0, 1  ; line:23 col:9
             LOAD_INT r12, 1
             ADD_I r13, r11, r12
             SET_FIELD r0, 1, r13
-            RET r10  ; line:1 col:581
+            RET r10  ; line:24 col:9
         }
     }
     .impl List : contract_167772179 {
@@ -127,25 +127,25 @@
             .reg r11 int
             .reg r12 int
             .reg r13 int
-            GET_FIELD r1, r0, 1  ; line:1 col:139
+            GET_FIELD r1, r0, 1  ; line:8 col:9
             GET_FIELD r2, r0, 0
             ARRAY_LEN r3, r2
             CMP_LT_I r4, r1, r3
             NOT r5, r4
             BR_FALSE r5, 30
-            LOAD_NULL r7  ; line:1 col:189
+            LOAD_NULL r7  ; line:9 col:13
             RET r7
             MOV r6, r0
             BR 10
             NOP
-            GET_FIELD r8, r0, 0  ; line:1 col:222
+            GET_FIELD r8, r0, 0  ; line:11 col:9
             GET_FIELD r9, r0, 1
             ARRAY_LOAD r10, r8, r9
-            GET_FIELD r11, r0, 1  ; line:1 col:270
+            GET_FIELD r11, r0, 1  ; line:12 col:9
             LOAD_INT r12, 1
             ADD_I r13, r11, r12
             SET_FIELD r0, 1, r13
-            RET r10  ; line:1 col:308
+            RET r10  ; line:13 col:9
         }
         .method "next" () -> ? pub static {
             .locals {
@@ -166,25 +166,25 @@
             .reg r11 int
             .reg r12 int
             .reg r13 int
-            GET_FIELD r1, r0, 1  ; line:1 col:412
+            GET_FIELD r1, r0, 1  ; line:19 col:9
             GET_FIELD r2, r0, 0
             ARRAY_LEN r3, r2
             CMP_LT_I r4, r1, r3
             NOT r5, r4
             BR_FALSE r5, 30
-            LOAD_NULL r7  ; line:1 col:462
+            LOAD_NULL r7  ; line:20 col:13
             RET r7
             MOV r6, r0
             BR 10
             NOP
-            GET_FIELD r8, r0, 0  ; line:1 col:495
+            GET_FIELD r8, r0, 0  ; line:22 col:9
             GET_FIELD r9, r0, 1
             ARRAY_LOAD r10, r8, r9
-            GET_FIELD r11, r0, 1  ; line:1 col:543
+            GET_FIELD r11, r0, 1  ; line:23 col:9
             LOAD_INT r12, 1
             ADD_I r13, r11, r12
             SET_FIELD r0, 1, r13
-            RET r10  ; line:1 col:581
+            RET r10  ; line:24 col:9
         }
         .method "get_type" () -> Type pub {
             .reg r0 int
@@ -207,13 +207,13 @@
             .reg r6 int
             .reg r7 void
             .reg r8 array<?>
-            GET_FIELD r2, r0, 0  ; line:1 col:705
+            GET_FIELD r2, r0, 0  ; line:34 col:9
             ARRAY_LEN r3, r2
-            GET_FIELD r4, r0, 0  ; line:1 col:751
+            GET_FIELD r4, r0, 0  ; line:35 col:9
             LOAD_INT r5, 1
             ADD_I r6, r3, r5
             ARRAY_RESIZE r4, r6
-            GET_FIELD r8, r0, 0  ; line:1 col:792
+            GET_FIELD r8, r0, 0  ; line:36 col:9
             ARRAY_STORE r8, r3, r1
             RET_VOID
         }
@@ -224,7 +224,7 @@
             .reg r0 int
             .reg r1 array<?>
             .reg r2 int
-            GET_FIELD r1, r0, 0  ; line:1 col:869
+            GET_FIELD r1, r0, 0  ; line:40 col:9
             ARRAY_LEN r2, r1
             RET r2
         }
@@ -236,7 +236,7 @@
             .reg r1 ListIterator
             .reg r2 array<?>
             .reg r3 int
-            NEW r1, 33554433  ; line:1 col:986
+            NEW r1, 33554433  ; line:46 col:9
             GET_FIELD r2, r0, 0
             SET_FIELD r1, 0, r2
             LOAD_INT r3, 0
@@ -268,31 +268,31 @@
             .reg r17 bool
             .reg r18 int
             .reg r19 int
-            NEW r0, 33554434  ; line:1 col:1069
+            NEW r0, 33554434  ; line:51 col:5
             NEW_ARRAY r1, 0
             SET_FIELD r0, 0, r1
-            LOAD_INT r3, 10  ; line:1 col:1125
+            LOAD_INT r3, 10  ; line:52 col:5
             MOV r4, r0
             MOV r5, r3
             CALL r2, 117440517, r4, 2
-            LOAD_INT r7, 20  ; line:1 col:1144
+            LOAD_INT r7, 20  ; line:53 col:5
             MOV r8, r0
             MOV r9, r7
             CALL r6, 117440517, r8, 2
-            LOAD_INT r11, 30  ; line:1 col:1163
+            LOAD_INT r11, 30  ; line:54 col:5
             MOV r12, r0
             MOV r13, r11
             CALL r10, 117440517, r12, 2
-            LOAD_INT r14, 0  ; line:1 col:1182
-            CALL_VIRT r15, r0, 167772174, 0, r0, 1  ; line:1 col:1209
+            LOAD_INT r14, 0  ; line:55 col:5
+            CALL_VIRT r15, r0, 167772174, 0, r0, 1  ; line:56 col:5
             CALL_VIRT r16, r15, 167772175, 0, r15, 1
             IS_NONE r17, r16
             BR_TRUE r17, 36
             UNWRAP r18, r16
-            ADD_I r19, r14, r18  ; line:1 col:1234
+            ADD_I r19, r14, r18  ; line:57 col:9
             MOV r14, r19
             BR -50
-            RET_VOID  ; line:1 col:1261
+            RET_VOID  ; line:59 col:5
         }
     }
     .export "List" type 33554434

@@ -3,5 +3,10 @@
 *.sh text eol=lf
 *.bash text eol=lf
 
+# Golden test fixtures must be stable across Windows and Linux checkouts.
+*.writ text eol=lf
+*.writc text eol=lf
+*.writil text eol=lf
+
 # Keep default behavior for other files
 * text=auto

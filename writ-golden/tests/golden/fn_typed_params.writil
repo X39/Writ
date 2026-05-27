@@ -9,8 +9,8 @@
         .reg r0 int
         .reg r1 int
         .reg r2 int
-        ADD_I r2, r0, r1  ; line:1 col:42
-        RET r2  ; line:1 col:72
+        ADD_I r2, r0, r1  ; line:2 col:5
+        RET r2  ; line:3 col:5
     }
     .method "is_positive" (n: int) -> bool pub mut {
         .locals {
@@ -19,7 +19,7 @@
         .reg r0 int
         .reg r1 int
         .reg r2 bool
-        LOAD_INT r1, 0  ; line:1 col:127
+        LOAD_INT r1, 0  ; line:7 col:5
         CMP_LT_I r2, r1, r0
         RET r2
     }
@@ -32,10 +32,10 @@
         .reg r1 int
         .reg r2 int
         .reg r3 bool
-        LOAD_INT r1, 3  ; line:1 col:160
+        LOAD_INT r1, 3  ; line:11 col:5
         LOAD_INT r2, 4
         CALL r0, 117440513, r1, 2
-        CALL r3, 117440514, r0, 1  ; line:1 col:189
+        CALL r3, 117440514, r0, 1  ; line:12 col:5
         RET_VOID
     }
     .export "is_positive" method 117440514

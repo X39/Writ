@@ -9,11 +9,11 @@
         .reg r2 bool
         .reg r3 int
         .reg r4 int
-        LOAD_INT r0, 0  ; line:1 col:18
-        LOAD_INT r1, 10  ; line:1 col:43
+        LOAD_INT r0, 0  ; line:2 col:5
+        LOAD_INT r1, 10  ; line:3 col:5
         CMP_LT_I r2, r0, r1
         BR_FALSE r2, 42
-        LOAD_INT r3, 1  ; line:1 col:67
+        LOAD_INT r3, 1  ; line:4 col:9
         ADD_I r4, r0, r3
         MOV r0, r4
         BR -54

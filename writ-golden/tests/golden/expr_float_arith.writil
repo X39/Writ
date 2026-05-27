@@ -11,10 +11,10 @@
         .reg r1 float
         .reg r2 float
         .reg r3 float
-        LOAD_FLOAT r0, 1.5  ; line:1 col:18
-        LOAD_FLOAT r1, 2.5  ; line:1 col:43
-        ADD_F r2, r0, r1  ; line:1 col:68
-        MUL_F r3, r0, r1  ; line:1 col:95
+        LOAD_FLOAT r0, 1.5  ; line:2 col:5
+        LOAD_FLOAT r1, 2.5  ; line:3 col:5
+        ADD_F r2, r0, r1  ; line:4 col:5
+        MUL_F r3, r0, r1  ; line:5 col:5
         RET_VOID
     }
 }

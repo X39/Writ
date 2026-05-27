@@ -12,11 +12,11 @@
         .reg r2 bool
         .reg r3 bool
         .reg r4 int
-        LOAD_INT r0, 42  ; line:1 col:18
+        LOAD_INT r0, 42  ; line:2 col:5
         WRAP_SOME r1, r0
-        IS_SOME r2, r1  ; line:1 col:57
-        IS_NONE r3, r1  ; line:1 col:91
-        UNWRAP r4, r1  ; line:1 col:125
+        IS_SOME r2, r1  ; line:3 col:5
+        IS_NONE r3, r1  ; line:4 col:5
+        UNWRAP r4, r1  ; line:5 col:5
         RET_VOID
     }
 }

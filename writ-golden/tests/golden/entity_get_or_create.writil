@@ -15,7 +15,7 @@
                 r0: Guard "g" [8, 10)
             }
             .reg r0 Guard
-            GET_OR_CREATE r0, 33554433  ; line:1 col:76
+            GET_OR_CREATE r0, 33554433  ; line:7 col:5
             RET_VOID
         }
     }

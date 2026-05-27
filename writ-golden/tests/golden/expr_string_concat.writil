@@ -9,9 +9,9 @@
         .reg r0 string
         .reg r1 string
         .reg r2 string
-        LOAD_STRING r0, 139  ; line:1 col:18
-        LOAD_STRING r1, 148  ; line:1 col:48
-        STR_CONCAT r2, r0, r1  ; line:1 col:79
+        LOAD_STRING r0, 139  ; line:2 col:5
+        LOAD_STRING r1, 148  ; line:3 col:5
+        STR_CONCAT r2, r0, r1  ; line:4 col:5
         RET_VOID
     }
 }

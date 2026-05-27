@@ -22,16 +22,16 @@
         .reg r8 bool
         .reg r9 bool
         .reg r10 bool
-        CMP_EQ_I r2, r0, r1  ; line:1 col:47
-        CMP_EQ_I r3, r0, r1  ; line:1 col:75
+        CMP_EQ_I r2, r0, r1  ; line:2 col:5
+        CMP_EQ_I r3, r0, r1  ; line:3 col:5
         NOT r4, r3
-        CMP_LT_I r5, r0, r1  ; line:1 col:103
-        CMP_LT_I r6, r1, r0  ; line:1 col:130
-        CMP_LT_I r7, r1, r0  ; line:1 col:157
+        CMP_LT_I r5, r0, r1  ; line:4 col:5
+        CMP_LT_I r6, r1, r0  ; line:5 col:5
+        CMP_LT_I r7, r1, r0  ; line:6 col:5
         NOT r8, r7
-        CMP_LT_I r9, r0, r1  ; line:1 col:185
+        CMP_LT_I r9, r0, r1  ; line:7 col:5
         NOT r10, r9
-        RET r2  ; line:1 col:213
+        RET r2  ; line:8 col:5
     }
     .method "main" () -> void mut {
         .locals {
@@ -40,7 +40,7 @@
         .reg r0 bool
         .reg r1 int
         .reg r2 int
-        LOAD_INT r1, 3  ; line:1 col:239
+        LOAD_INT r1, 3  ; line:12 col:5
         LOAD_INT r2, 4
         CALL r0, 117440513, r1, 2
         RET_VOID

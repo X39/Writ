@@ -5,8 +5,8 @@
             r0: int "x" [14, 18)
         }
         .reg r0 int
-        ATOMIC_BEGIN  ; line:1 col:18
-        LOAD_INT r0, 42  ; line:1 col:36
+        ATOMIC_BEGIN  ; line:2 col:5
+        LOAD_INT r0, 42  ; line:3 col:9
         ATOMIC_END
         RET_VOID
     }

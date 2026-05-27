@@ -8,10 +8,10 @@
         .reg r1 int
         .reg r2 int
         .reg r3 int
-        LOAD_INT r2, 0  ; line:1 col:75
+        LOAD_INT r2, 0  ; line:3 col:27
         MOV r1, r2
         BR 34
-        LOAD_INT r3, 1  ; line:1 col:109
+        LOAD_INT r3, 1  ; line:4 col:30
         MOV r1, r3
         BR 8
         RET r1
@@ -26,9 +26,9 @@
         .reg r2 int
         .reg r3 bool
         .reg r4 ?
-        LOAD_NULL r1  ; line:1 col:143
+        LOAD_NULL r1  ; line:9 col:5
         CALL r0, 117440513, r1, 1
-        LOAD_TRUE r3  ; line:1 col:174
+        LOAD_TRUE r3  ; line:10 col:5
         WRAP_SOME r4, r3
         CALL r2, 117440513, r4, 1
         RET_VOID
