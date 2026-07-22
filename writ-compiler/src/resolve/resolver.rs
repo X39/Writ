@@ -262,13 +262,12 @@ fn resolve_decl_list(
             AstDecl::Fn(f) => {
                 let fqn = make_fqn(&scope.current_ns, &f.name);
                 // Use span-based lookup to get the correct DefId for each overload
-                if let Some(def_id) = scope.def_map.get_by_span(&fqn, f.name_span).or_else(|| {
-                    scope.def_map.get(&fqn)
-                }).or_else(|| {
-                    scope.def_map.file_private
-                        .get(&scope.current_file)
-                        .and_then(|m| m.get(&f.name).copied())
-                }) {
+                if let Some(def_id) = scope.def_map.get_fn_by_span(
+                    &fqn,
+                    scope.current_file,
+                    &f.name,
+                    f.name_span,
+                ) {
                     // Push generics
                     let generic_names: Vec<(String, SimpleSpan)> =
                         f.generics.iter().map(|g| (g.name.clone(), g.name_span)).collect();
@@ -586,13 +585,12 @@ fn resolve_decl_list(
                 AstExternDecl::Fn(_, sig) => {
                     let fqn = make_fqn(&scope.current_ns, &sig.name);
                     // Use span-based lookup to get the correct DefId for each overload
-                    if let Some(def_id) = scope.def_map.get_by_span(&fqn, sig.name_span).or_else(|| {
-                        scope.def_map.get(&fqn)
-                    }).or_else(|| {
-                        scope.def_map.file_private
-                            .get(&scope.current_file)
-                            .and_then(|m| m.get(&sig.name).copied())
-                    }) {
+                    if let Some(def_id) = scope.def_map.get_fn_by_span(
+                        &fqn,
+                        scope.current_file,
+                        &sig.name,
+                        sig.name_span,
+                    ) {
                         for param in &sig.params {
                             match param {
                                 AstFnParam::Regular(p) => { resolve_ast_type(&p.ty, scope, diags); }

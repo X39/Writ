@@ -146,21 +146,33 @@ impl DefMap {
         self.by_fqn.get(fqn).copied()
     }
 
-    /// Look up a public definition by FQN, disambiguating overloads by name_span.
-    pub fn get_by_span(&self, fqn: &str, name_span: SimpleSpan) -> Option<DefId> {
+    /// Look up one public or private function overload by declaration identity.
+    ///
+    /// Spans are file-local offsets, so both the file and span must match.
+    pub fn get_fn_by_span(
+        &self,
+        fqn: &str,
+        file_id: FileId,
+        name: &str,
+        name_span: SimpleSpan,
+    ) -> Option<DefId> {
         if let Some(overloads) = self.fn_overloads.get(fqn) {
             for &id in overloads {
-                if self.arena[id].name_span == name_span {
+                if self.arena[id].file_id == file_id && self.arena[id].name_span == name_span {
                     return Some(id);
                 }
             }
         }
         if let Some(&id) = self.by_fqn.get(fqn) {
-            if self.arena[id].name_span == name_span {
+            if self.arena[id].file_id == file_id && self.arena[id].name_span == name_span {
                 return Some(id);
             }
         }
-        None
+        self.get_private_fn_candidates(file_id, name)
+            .into_iter()
+            .find(|id| {
+                self.arena[*id].file_id == file_id && self.arena[*id].name_span == name_span
+            })
     }
 
     /// Get the entry for a DefId.

@@ -977,6 +977,70 @@ fn main() {
     assert_eq!(fn_count, 3, "expected 3 resolved Fn decls, got {}", fn_count);
 }
 
+#[test]
+fn public_overload_resolution_uses_file_and_span_identity() {
+    let (resolved, diags) = resolve_multi(&[
+        ("src/first.writ", "pub fn choose(value: int) {}", "first"),
+        ("src/second.writ", "pub fn choose(value: string) {}", "second"),
+    ]);
+    assert!(
+        !diags.iter().any(|diag| diag.severity == Severity::Error),
+        "unexpected diagnostics: {diags:?}"
+    );
+    let ids: Vec<_> = resolved
+        .decls
+        .iter()
+        .filter_map(|decl| match decl {
+            resolve::ir::ResolvedDecl::Fn { def_id } => Some(*def_id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ids.len(), 2);
+    assert_ne!(ids[0], ids[1], "equal numeric spans in different files are not equal declarations");
+    assert_eq!(resolved.def_map.get_entry(ids[0]).file_id, FileId(0));
+    assert_eq!(resolved.def_map.get_entry(ids[1]).file_id, FileId(1));
+}
+
+#[test]
+fn private_overload_resolution_uses_file_and_span_identity() {
+    let source = "fn choose(value: int) {}\nfn choose(value: string) {}";
+    let (resolved, diags) = resolve_multi(&[
+        ("src/first.writ", source, "first"),
+        ("src/second.writ", source, "second"),
+    ]);
+    assert!(
+        !diags.iter().any(|diag| diag.severity == Severity::Error),
+        "unexpected diagnostics: {diags:?}"
+    );
+    let ids: Vec<_> = resolved
+        .decls
+        .iter()
+        .filter_map(|decl| match decl {
+            resolve::ir::ResolvedDecl::Fn { def_id } => Some(*def_id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ids.len(), 4);
+    for (index, id) in ids.iter().enumerate() {
+        assert!(
+            ids.iter().skip(index + 1).all(|other| other != id),
+            "each private overload declaration must retain a distinct DefId"
+        );
+    }
+    assert_eq!(
+        ids.iter()
+            .filter(|id| resolved.def_map.get_entry(**id).file_id == FileId(0))
+            .count(),
+        2
+    );
+    assert_eq!(
+        ids.iter()
+            .filter(|id| resolved.def_map.get_entry(**id).file_id == FileId(1))
+            .count(),
+        2
+    );
+}
+
 // =========================================================
 // Attribute declaration collection (UATTR-01, UATTR-04)
 // =========================================================
