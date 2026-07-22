@@ -20,7 +20,11 @@ pub enum HeapObject {
         fields: Vec<Value>,
     },
     Array { elem_type: u32, elements: Vec<Value> },
-    Delegate { method_idx: usize, target: Option<Value> },
+    Delegate {
+        module_idx: usize,
+        method_idx: usize,
+        target: Option<Value>,
+    },
     Enum { type_idx: u32, tag: u16, fields: Vec<Value> },
     Boxed(Value),
 }
@@ -73,9 +77,18 @@ impl BumpHeap {
     }
 
     /// Allocate a delegate (function pointer with optional captured target).
-    pub fn alloc_delegate(&mut self, method_idx: usize, target: Option<Value>) -> HeapRef {
+    pub fn alloc_delegate(
+        &mut self,
+        module_idx: usize,
+        method_idx: usize,
+        target: Option<Value>,
+    ) -> HeapRef {
         let idx = self.objects.len() as u32;
-        self.objects.push(HeapObject::Delegate { method_idx, target });
+        self.objects.push(HeapObject::Delegate {
+            module_idx,
+            method_idx,
+            target,
+        });
         HeapRef(idx)
     }
 
@@ -204,8 +217,13 @@ impl GcHeap for BumpHeap {
         BumpHeap::alloc_array(self, elem_type)
     }
 
-    fn alloc_delegate(&mut self, method_idx: usize, target: Option<Value>) -> HeapRef {
-        BumpHeap::alloc_delegate(self, method_idx, target)
+    fn alloc_delegate(
+        &mut self,
+        module_idx: usize,
+        method_idx: usize,
+        target: Option<Value>,
+    ) -> HeapRef {
+        BumpHeap::alloc_delegate(self, module_idx, method_idx, target)
     }
 
     fn alloc_enum(&mut self, type_idx: u32, tag: u16, fields: Vec<Value>) -> HeapRef {
@@ -313,9 +331,14 @@ mod tests {
     #[test]
     fn alloc_delegate() {
         let mut heap = BumpHeap::new();
-        let href = heap.alloc_delegate(5, Some(Value::Int(10)));
+        let href = heap.alloc_delegate(2, 5, Some(Value::Int(10)));
         match heap.get_object(href).unwrap() {
-            HeapObject::Delegate { method_idx, target } => {
+            HeapObject::Delegate {
+                module_idx,
+                method_idx,
+                target,
+            } => {
+                assert_eq!(*module_idx, 2);
                 assert_eq!(*method_idx, 5);
                 assert_eq!(*target, Some(Value::Int(10)));
             }

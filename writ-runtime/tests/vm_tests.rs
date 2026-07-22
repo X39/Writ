@@ -838,8 +838,8 @@ fn call_and_ret_delivers_return_value() {
 fn call_with_methoddef_token() {
     // Regression test for BUG-17: the CALL instruction's method_idx field carries
     // a MethodDef metadata token (table_id=7, 1-based row_index encoded in bits 23-0),
-    // NOT a 0-based array index. This test verifies that decode_method_token correctly
-    // maps 0x07000002 (table_id=7, row_index=2) to decoded_bodies[1].
+    // NOT a 0-based array index. This test verifies that the centralized call-target
+    // resolver maps 0x07000002 (table_id=7, row_index=2) to decoded_bodies[1].
     //
     // method 0 (main): LoadInt 5, Call method 1 via token 0x07000002, Ret result
     // method 1 (callee): r0 has 5, AddI r1=r0+r0=10, Ret r1

@@ -285,27 +285,6 @@ pub(super) struct ExecContext<'a> {
     pub reflection: &'a mut ReflectionIndex,
 }
 
-/// Decode a MethodDef metadata token to a 0-based method body index.
-///
-/// The compiler emits MethodDef tokens (table_id=7, 1-based row_index) in CALL,
-/// TailCall, SpawnTask, SpawnDetached, and NewDelegate instructions. The runtime
-/// must strip the table_id byte and convert the 1-based row_index to a 0-based
-/// index for decoded_bodies/method_bodies array access.
-///
-/// Token layout: bits 31-24 = table_id, bits 23-0 = row_index (1-based).
-///
-/// Example: 0x07000001 → table_id=7, row_index=1 → array_index=0
-///           0x07000002 → table_id=7, row_index=2 → array_index=1
-#[inline]
-pub(super) fn decode_method_token(token: u32) -> Option<usize> {
-    let row_index = token & 0x00FF_FFFF;
-    if row_index == 0 {
-        None // null token
-    } else {
-        Some(row_index as usize - 1) // convert 1-based to 0-based
-    }
-}
-
 /// Look up the source line/col for a given PC in a method's source span table.
 /// Returns (0, 0) if no source span covers this PC.
 fn lookup_source_location(module: &LoadedModule, method_idx: usize, pc: u32) -> (u32, u16) {

@@ -362,21 +362,56 @@ pub(super) fn exec_new_delegate(
     method_idx: u32,
     r_target: u16,
 ) -> ExecutionResult {
+    let caller_register_count = ctx.task.call_stack.last().unwrap().registers.len();
+    let r_dst = match checked_register(
+        "NEW_DELEGATE",
+        caller_register_count,
+        r_dst,
+        "destination",
+    ) {
+        Ok(r_dst) => r_dst,
+        Err(message) => return ExecutionResult::Crash(message),
+    };
+    let r_target = match checked_register(
+        "NEW_DELEGATE",
+        caller_register_count,
+        r_target,
+        "target",
+    ) {
+        Ok(r_target) => r_target,
+        Err(message) => return ExecutionResult::Crash(message),
+    };
+
+    let (target_module_idx, method_idx) = match resolve_call_target(
+        method_idx,
+        ctx.modules,
+        ctx.current_module_idx,
+    ) {
+        Ok(target) => target,
+        Err(message) => return ExecutionResult::Crash(format!("NEW_DELEGATE: {message}")),
+    };
+    if let Err(message) = checked_method_register_count(
+        "NEW_DELEGATE",
+        ctx.modules,
+        target_module_idx,
+        method_idx,
+    ) {
+        return ExecutionResult::Crash(message);
+    }
+
     let target = {
         let frame = ctx.task.call_stack.last().unwrap();
-        if matches!(frame.registers[r_target as usize], Value::Void) {
+        if matches!(frame.registers[r_target], Value::Void) {
             None
         } else {
-            Some(frame.registers[r_target as usize])
+            Some(frame.registers[r_target])
         }
     };
-    let decoded_idx = match super::decode_method_token(method_idx) {
-        Some(idx) => idx,
-        None => return ExecutionResult::Crash("NewDelegate: null method token".into()),
-    };
-    let href = ctx.heap.alloc_delegate(decoded_idx, target);
+    let href = ctx
+        .heap
+        .alloc_delegate(target_module_idx, method_idx, target);
     let frame = ctx.task.call_stack.last_mut().unwrap();
-    frame.registers[r_dst as usize] = Value::Ref(href);
+    frame.registers[r_dst] = Value::Ref(href);
     ExecutionResult::Continue
 }
 
@@ -410,24 +445,33 @@ pub(super) fn exec_call_indirect(
     let delegate_ref = helpers::extract_ref(
         &ctx.task.call_stack.last().unwrap().registers[r_delegate],
     );
-    let (method_idx, _target) = match ctx.heap.get_object(delegate_ref) {
-        Ok(HeapObject::Delegate { method_idx, target }) => (*method_idx, *target),
+    let (target_module_idx, method_idx, target) = match ctx.heap.get_object(delegate_ref) {
+        Ok(HeapObject::Delegate {
+            module_idx,
+            method_idx,
+            target,
+        }) => (*module_idx, *method_idx, *target),
         _ => return ExecutionResult::Crash("CALL_INDIRECT: not a delegate".into()),
     };
 
-    let (reg_count, _param_count) = match checked_method_register_count(
+    let (reg_count, param_count) = match checked_method_register_count(
         "CALL_INDIRECT",
         ctx.modules,
-        ctx.current_module_idx,
+        target_module_idx,
         method_idx,
     ) {
         Ok(reg_count) => reg_count,
         Err(message) => return ExecutionResult::Crash(message),
     };
-    // Exact delegate arity depends on whether the stored delegate target supplies
-    // an implicit r0. It is validated when that target is applied.
+    let implicit_argc = usize::from(target.is_some());
+    let actual_param_count = argc as usize + implicit_argc;
     if let Err(message) =
-        validate_callee_register_capacity("CALL_INDIRECT", reg_count, argc, 0)
+        validate_method_param_count("CALL_INDIRECT", param_count, actual_param_count)
+    {
+        return ExecutionResult::Crash(message);
+    }
+    if let Err(message) =
+        validate_callee_register_capacity("CALL_INDIRECT", reg_count, argc, implicit_argc)
     {
         return ExecutionResult::Crash(message);
     }
@@ -435,7 +479,7 @@ pub(super) fn exec_call_indirect(
     // Push callee frame immediately, then use split_at_mut for disjoint caller/callee access
     ctx.task.call_stack.push(crate::frame::CallFrame::with_pool_in_module(
         ctx.pool,
-        ctx.current_module_idx,
+        target_module_idx,
         method_idx,
         reg_count,
         r_dst,
@@ -444,8 +488,11 @@ pub(super) fn exec_call_indirect(
     let (bottom, top) = ctx.task.call_stack.split_at_mut(stack_len - 1);
     let caller = bottom.last().unwrap();
     let callee = &mut top[0];
+    if let Some(target) = target {
+        callee.registers[0] = target;
+    }
     for i in 0..argc as usize {
-        callee.registers[i] = caller.registers[r_base as usize + i];
+        callee.registers[implicit_argc + i] = caller.registers[r_base as usize + i];
     }
 
     if ctx.host.debug_enabled() {

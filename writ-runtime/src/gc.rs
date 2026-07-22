@@ -26,7 +26,12 @@ pub trait GcHeap: Send + Sync {
     fn alloc_string(&mut self, s: &str) -> HeapRef;
     fn alloc_struct(&mut self, type_key: u32, field_count: usize) -> HeapRef;
     fn alloc_array(&mut self, elem_type: u32) -> HeapRef;
-    fn alloc_delegate(&mut self, method_idx: usize, target: Option<Value>) -> HeapRef;
+    fn alloc_delegate(
+        &mut self,
+        module_idx: usize,
+        method_idx: usize,
+        target: Option<Value>,
+    ) -> HeapRef;
     fn alloc_enum(&mut self, type_idx: u32, tag: u16, fields: Vec<Value>) -> HeapRef;
     fn alloc_boxed(&mut self, val: Value) -> HeapRef;
 
@@ -188,8 +193,17 @@ impl GcHeap for MarkSweepHeap {
         })
     }
 
-    fn alloc_delegate(&mut self, method_idx: usize, target: Option<Value>) -> HeapRef {
-        self.alloc_slot(HeapObject::Delegate { method_idx, target })
+    fn alloc_delegate(
+        &mut self,
+        module_idx: usize,
+        method_idx: usize,
+        target: Option<Value>,
+    ) -> HeapRef {
+        self.alloc_slot(HeapObject::Delegate {
+            module_idx,
+            method_idx,
+            target,
+        })
     }
 
     fn alloc_enum(&mut self, type_idx: u32, tag: u16, fields: Vec<Value>) -> HeapRef {
@@ -474,6 +488,24 @@ mod tests {
         assert_eq!(stats.objects_traced, 2);
         assert_eq!(stats.objects_freed, 0);
         assert_eq!(heap.read_string(child).unwrap(), "child");
+    }
+
+    #[test]
+    fn ms_collect_traces_delegate_target() {
+        let mut heap = MarkSweepHeap::new();
+        let target = GcHeap::alloc_string(&mut heap, "target");
+        let delegate = GcHeap::alloc_delegate(
+            &mut heap,
+            2,
+            5,
+            Some(Value::Ref(target)),
+        );
+
+        let stats = heap.collect(&[delegate]);
+
+        assert_eq!(stats.objects_traced, 2);
+        assert_eq!(stats.objects_freed, 0);
+        assert_eq!(heap.read_string(target).unwrap(), "target");
     }
 
     #[test]

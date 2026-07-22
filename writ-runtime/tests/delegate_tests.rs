@@ -1,0 +1,393 @@
+use writ_module::module::MethodBody;
+use writ_module::signature::{TypeSignature, encode_method_signature};
+use writ_module::tables::TypeDefKind;
+use writ_module::{Instruction, MetadataToken, Module, ModuleBuilder};
+use writ_runtime::{ExecutionLimit, RuntimeBuilder, TaskState, Value};
+
+const METHOD_STATIC: u16 = 1 << 1;
+
+fn body(instructions: &[Instruction], register_count: u16) -> MethodBody {
+    let mut code = Vec::new();
+    for instruction in instructions {
+        instruction.encode(&mut code).expect("encode instruction");
+    }
+    MethodBody {
+        register_types: vec![0; register_count as usize],
+        code,
+        debug_locals: vec![],
+        source_spans: vec![],
+    }
+}
+
+fn signature(params: &[TypeSignature], ret: TypeSignature) -> Vec<u8> {
+    encode_method_signature(params, &ret).expect("encode method signature")
+}
+
+fn row_index(token: MetadataToken) -> usize {
+    token.row_index().expect("non-null token") as usize - 1
+}
+
+fn assert_crash(module: Module, main: MetadataToken, expected: &str) {
+    let mut runtime = RuntimeBuilder::new(module).build().expect("build runtime");
+    let task = runtime
+        .spawn_task(row_index(main), vec![])
+        .expect("spawn main");
+    runtime.tick(0.0, ExecutionLimit::None);
+
+    assert_eq!(runtime.task_state(task), Some(TaskState::Cancelled));
+    let crash = runtime.crash_info(task).expect("delegate call must crash");
+    assert!(
+        crash.message.contains(expected),
+        "expected crash containing {expected:?}, got {:?}",
+        crash.message
+    );
+}
+
+#[test]
+fn call_indirect_prepends_captured_target_before_explicit_arguments() {
+    let mut builder = ModuleBuilder::new("delegate-capture");
+    let env = builder.add_type_def("Env", "test", TypeDefKind::Class, 0);
+    builder.add_field_def("captured", &[0x01], 0);
+
+    let invoke = builder.add_type_method(
+        env,
+        "invoke",
+        &signature(&[TypeSignature::Int], TypeSignature::Int),
+        0,
+        3,
+        body(
+            &[
+                Instruction::GetField {
+                    r_dst: 2,
+                    r_obj: 0,
+                    field_idx: 0,
+                },
+                Instruction::AddI {
+                    r_dst: 2,
+                    r_a: 2,
+                    r_b: 1,
+                },
+                Instruction::Ret { r_src: 2 },
+            ],
+            3,
+        ),
+    );
+    let main = builder.add_method(
+        "main",
+        &signature(&[], TypeSignature::Int),
+        0,
+        5,
+        body(
+            &[
+                Instruction::New {
+                    r_dst: 0,
+                    type_idx: env.0,
+                },
+                Instruction::LoadInt {
+                    r_dst: 1,
+                    value: 40,
+                },
+                Instruction::SetField {
+                    r_obj: 0,
+                    field_idx: 0,
+                    r_val: 1,
+                },
+                Instruction::NewDelegate {
+                    r_dst: 2,
+                    method_idx: invoke.0,
+                    r_target: 0,
+                },
+                Instruction::LoadInt { r_dst: 3, value: 2 },
+                Instruction::CallIndirect {
+                    r_dst: 4,
+                    r_delegate: 2,
+                    r_base: 3,
+                    argc: 1,
+                },
+                Instruction::Ret { r_src: 4 },
+            ],
+            5,
+        ),
+    );
+
+    let mut runtime = RuntimeBuilder::new(builder.build())
+        .build()
+        .expect("build runtime");
+    let task = runtime
+        .spawn_task(row_index(main), vec![])
+        .expect("spawn main");
+    runtime.tick(0.0, ExecutionLimit::None);
+
+    assert_eq!(runtime.task_state(task), Some(TaskState::Completed));
+    assert_eq!(runtime.return_value(task), Some(Value::Int(42)));
+}
+
+#[test]
+fn call_indirect_with_null_target_passes_only_explicit_arguments() {
+    let mut builder = ModuleBuilder::new("delegate-null-target");
+    let owner = builder.add_type_def("Functions", "test", TypeDefKind::Struct, 0);
+    let invoke = builder.add_type_method(
+        owner,
+        "invoke",
+        &signature(&[], TypeSignature::Int),
+        METHOD_STATIC,
+        1,
+        body(
+            &[
+                Instruction::LoadInt {
+                    r_dst: 0,
+                    value: 77,
+                },
+                Instruction::Ret { r_src: 0 },
+            ],
+            1,
+        ),
+    );
+    let main = builder.add_method(
+        "main",
+        &signature(&[], TypeSignature::Int),
+        0,
+        3,
+        body(
+            &[
+                Instruction::NewDelegate {
+                    r_dst: 1,
+                    method_idx: invoke.0,
+                    r_target: 0,
+                },
+                Instruction::CallIndirect {
+                    r_dst: 2,
+                    r_delegate: 1,
+                    r_base: 0,
+                    argc: 0,
+                },
+                Instruction::Ret { r_src: 2 },
+            ],
+            3,
+        ),
+    );
+
+    let mut runtime = RuntimeBuilder::new(builder.build())
+        .build()
+        .expect("build runtime");
+    let task = runtime
+        .spawn_task(row_index(main), vec![])
+        .expect("spawn main");
+    runtime.tick(0.0, ExecutionLimit::None);
+
+    assert_eq!(runtime.task_state(task), Some(TaskState::Completed));
+    assert_eq!(runtime.return_value(task), Some(Value::Int(77)));
+}
+
+#[test]
+fn delegate_resolves_cross_module_method_ref_when_created() {
+    let method_signature = signature(&[TypeSignature::Int], TypeSignature::Int);
+
+    let mut library = ModuleBuilder::new("delegate-library");
+    let exports = library.add_type_def("Exports", "lib", TypeDefKind::Struct, 0);
+    library.add_type_method(
+        exports,
+        "identity",
+        &method_signature,
+        METHOD_STATIC,
+        1,
+        body(&[Instruction::Ret { r_src: 0 }], 1),
+    );
+
+    let mut user = ModuleBuilder::new("delegate-user");
+    user.add_type_def("Main", "test", TypeDefKind::Struct, 0);
+    let library_ref = user.add_module_ref("delegate-library", "1.0.0");
+    let exports_ref = user.add_type_ref(library_ref, "Exports", "lib");
+    let identity_ref =
+        user.add_method_ref_with_flags(exports_ref, "identity", &method_signature, 0);
+    let main = user.add_method(
+        "main",
+        &signature(&[], TypeSignature::Int),
+        0,
+        4,
+        body(
+            &[
+                Instruction::NewDelegate {
+                    r_dst: 1,
+                    method_idx: identity_ref.0,
+                    r_target: 0,
+                },
+                Instruction::LoadInt {
+                    r_dst: 2,
+                    value: 91,
+                },
+                Instruction::CallIndirect {
+                    r_dst: 3,
+                    r_delegate: 1,
+                    r_base: 2,
+                    argc: 1,
+                },
+                Instruction::Ret { r_src: 3 },
+            ],
+            4,
+        ),
+    );
+
+    let mut runtime = RuntimeBuilder::new(user.build())
+        .with_library(library.build())
+        .build()
+        .expect("build runtime");
+    let task = runtime
+        .spawn_task(row_index(main), vec![])
+        .expect("spawn main");
+    runtime.tick(0.0, ExecutionLimit::None);
+
+    assert_eq!(runtime.task_state(task), Some(TaskState::Completed));
+    assert_eq!(runtime.return_value(task), Some(Value::Int(91)));
+}
+
+#[test]
+fn new_delegate_rejects_target_register_out_of_bounds() {
+    let mut builder = ModuleBuilder::new("delegate-target-bounds");
+    let owner = builder.add_type_def("Functions", "test", TypeDefKind::Struct, 0);
+    let invoke = builder.add_type_method(
+        owner,
+        "invoke",
+        &signature(&[], TypeSignature::Void),
+        METHOD_STATIC,
+        0,
+        body(&[Instruction::RetVoid], 0),
+    );
+    let main = builder.add_method(
+        "main",
+        &signature(&[], TypeSignature::Void),
+        0,
+        1,
+        body(
+            &[Instruction::NewDelegate {
+                r_dst: 0,
+                method_idx: invoke.0,
+                r_target: 1,
+            }],
+            1,
+        ),
+    );
+
+    assert_crash(builder.build(), main, "NEW_DELEGATE: target register r1");
+}
+
+#[test]
+fn new_delegate_rejects_mismatched_method_body_metadata() {
+    let mut builder = ModuleBuilder::new("delegate-method-metadata");
+    let owner = builder.add_type_def("Functions", "test", TypeDefKind::Struct, 0);
+    let invoke = builder.add_type_method(
+        owner,
+        "invoke",
+        &signature(&[], TypeSignature::Void),
+        METHOD_STATIC,
+        1,
+        body(&[Instruction::RetVoid], 1),
+    );
+    let main = builder.add_method(
+        "main",
+        &signature(&[], TypeSignature::Void),
+        0,
+        1,
+        body(
+            &[Instruction::NewDelegate {
+                r_dst: 0,
+                method_idx: invoke.0,
+                r_target: 0,
+            }],
+            1,
+        ),
+    );
+    let mut module = builder.build();
+    module.method_defs[row_index(invoke)].reg_count = 2;
+
+    assert_crash(
+        module,
+        main,
+        "NEW_DELEGATE: MethodDef.reg_count 2 does not match",
+    );
+}
+
+#[test]
+fn call_indirect_rejects_exact_arity_mismatch() {
+    let mut builder = ModuleBuilder::new("delegate-arity");
+    let owner = builder.add_type_def("Functions", "test", TypeDefKind::Struct, 0);
+    let invoke = builder.add_type_method(
+        owner,
+        "invoke",
+        &signature(&[TypeSignature::Int], TypeSignature::Void),
+        METHOD_STATIC,
+        1,
+        body(&[Instruction::RetVoid], 1),
+    );
+    let main = builder.add_method(
+        "main",
+        &signature(&[], TypeSignature::Void),
+        0,
+        2,
+        body(
+            &[
+                Instruction::NewDelegate {
+                    r_dst: 1,
+                    method_idx: invoke.0,
+                    r_target: 0,
+                },
+                Instruction::CallIndirect {
+                    r_dst: 0,
+                    r_delegate: 1,
+                    r_base: 0,
+                    argc: 0,
+                },
+            ],
+            2,
+        ),
+    );
+
+    assert_crash(
+        builder.build(),
+        main,
+        "CALL_INDIRECT: argument count 0 does not match MethodDef.param_count 1",
+    );
+}
+
+#[test]
+fn call_indirect_rejects_implicit_target_beyond_callee_registers() {
+    let mut builder = ModuleBuilder::new("delegate-target-capacity");
+    let owner = builder.add_type_def("Receiver", "test", TypeDefKind::Class, 0);
+    let invoke = builder.add_type_method(
+        owner,
+        "invoke",
+        &signature(&[], TypeSignature::Void),
+        0,
+        0,
+        body(&[Instruction::RetVoid], 0),
+    );
+    let main = builder.add_method(
+        "main",
+        &signature(&[], TypeSignature::Void),
+        0,
+        2,
+        body(
+            &[
+                Instruction::LoadInt { r_dst: 0, value: 1 },
+                Instruction::NewDelegate {
+                    r_dst: 1,
+                    method_idx: invoke.0,
+                    r_target: 0,
+                },
+                Instruction::CallIndirect {
+                    r_dst: 0,
+                    r_delegate: 1,
+                    r_base: 0,
+                    argc: 0,
+                },
+            ],
+            2,
+        ),
+    );
+
+    assert_crash(
+        builder.build(),
+        main,
+        "CALL_INDIRECT: 1 arguments exceed callee register count 0",
+    );
+}
