@@ -152,8 +152,10 @@ fn type_signature_to_ty(
 
 #[cfg(test)]
 mod tests {
-    use super::lookup_constructor;
+    use super::{impl_generic_param_count, lookup_constructor};
     use rustc_hash::FxHashMap;
+    use writ_module::module::MethodBody;
+    use writ_module::{MetadataToken, ModuleBuilder};
 
     #[test]
     fn namespaced_constructor_lookup_never_falls_back_to_short_name() {
@@ -164,6 +166,29 @@ mod tests {
         assert_eq!(lookup_constructor(&types, "alpha", "List"), Some(&2));
         assert_eq!(lookup_constructor(&types, "beta", "List"), None);
         assert_eq!(lookup_constructor(&types, "", "List"), Some(&1));
+    }
+
+    #[test]
+    fn impl_generic_prefix_uses_owned_method_generic_ordinals() {
+        let mut builder = ModuleBuilder::new("impl-prefix");
+        let implementation = builder.add_impl_def(MetadataToken::NULL, MetadataToken::NULL);
+        let method = builder.add_impl_method(
+            implementation,
+            "pick",
+            &[],
+            0,
+            0,
+            MethodBody {
+                register_types: vec![],
+                code: vec![],
+                debug_locals: vec![],
+                source_spans: vec![],
+            },
+        );
+        builder.add_generic_param(method, 1, 1, "U");
+        let module = builder.build();
+
+        assert_eq!(impl_generic_param_count(&module, [], &[0]), 1);
     }
 }
 
@@ -192,6 +217,88 @@ fn decode_type_from_blob(
             type_signature_to_ty(&signature, lib_type_token_map, lib_type_name_map, interner)
         }
         Err(_) => interner.error(),
+    }
+}
+
+fn decode_impl_type_token(
+    token: writ_module::MetadataToken,
+    module: &Module,
+    lib_type_token_map: &FxHashMap<u32, LibraryType>,
+    lib_type_name_map: &FxHashMap<String, LibraryType>,
+    interner: &mut TyInterner,
+) -> Option<Ty> {
+    match token.table_id() {
+        2 | 3 | 10 => lib_type_token_map
+            .get(&token.0)
+            .copied()
+            .map(|named| nominal_ty(named, interner)),
+        4 => {
+            let index = token.row_index()?.checked_sub(1)? as usize;
+            let type_spec = module.type_specs.get(index)?;
+            let blob = writ_module::heap::read_blob(&module.blob_heap, type_spec.signature).ok()?;
+            let signature = writ_module::signature::decode_type_signature(blob).ok()?;
+            Some(type_signature_to_ty(
+                &signature,
+                lib_type_token_map,
+                lib_type_name_map,
+                interner,
+            ))
+        }
+        _ => None,
+    }
+}
+
+fn impl_generic_param_count(
+    module: &Module,
+    tokens: impl IntoIterator<Item = writ_module::MetadataToken>,
+    owned_method_indices: &[usize],
+) -> u32 {
+    let descriptor_count = tokens
+        .into_iter()
+        .filter(|token| token.table_id() == 4)
+        .filter_map(|token| {
+            let index = token.row_index()?.checked_sub(1)? as usize;
+            let type_spec = module.type_specs.get(index)?;
+            let blob = writ_module::heap::read_blob(&module.blob_heap, type_spec.signature).ok()?;
+            writ_module::signature::decode_type_signature(blob).ok()
+        })
+        .filter_map(|signature| max_generic_param_ordinal(&signature))
+        .max()
+        .map_or(0, |ordinal| u32::from(ordinal) + 1);
+
+    // Method-level generic ordinals are emitted after the impl-generic
+    // prefix. This preserves the prefix even when an impl parameter does not
+    // occur in either the target or contract descriptor.
+    let method_prefix = module
+        .generic_params
+        .iter()
+        .filter(|param| param.owner_kind == 1)
+        .filter_map(|param| {
+            let method_idx = param.owner.row_index()?.checked_sub(1)? as usize;
+            owned_method_indices
+                .contains(&method_idx)
+                .then_some(u32::from(param.ordinal))
+        })
+        .min()
+        .unwrap_or(0);
+
+    descriptor_count.max(method_prefix)
+}
+
+fn max_generic_param_ordinal(signature: &TypeSignature) -> Option<u16> {
+    match signature {
+        TypeSignature::GenericParam(ordinal) => Some(*ordinal),
+        TypeSignature::Generic { args, .. } => args
+            .iter()
+            .filter_map(max_generic_param_ordinal)
+            .max(),
+        TypeSignature::Array(element) => max_generic_param_ordinal(element),
+        TypeSignature::Function { params, ret } => params
+            .iter()
+            .chain(std::iter::once(ret.as_ref()))
+            .filter_map(max_generic_param_ordinal)
+            .max(),
+        _ => None,
     }
 }
 
@@ -531,26 +638,47 @@ pub fn inject_library_sigs(
 
         // ---- Impl blocks (method signatures) ----
         for (impl_idx, impl_def) in module.impl_defs.iter().enumerate() {
-            // Get the type DefId this impl is for
-            let type_def_id = match impl_def.type_token.row_index() {
-                Some(row_1based) => {
-                    let token = writ_module::MetadataToken::new(2, row_1based);
-                    match lib_type_token_map.get(&token.0) {
-                        Some(named) => named.def_id,
-                        None => continue,
-                    }
-                }
+            let target_ty = match decode_impl_type_token(
+                impl_def.type_token,
+                module,
+                &lib_type_token_map,
+                &lib_type_name_map,
+                interner,
+            ) {
+                Some(ty) => ty,
                 None => continue,
             };
+            let type_def_id = match interner.kind(target_ty) {
+                TyKind::Struct(def_id)
+                | TyKind::Class(def_id)
+                | TyKind::Entity(def_id)
+                | TyKind::Enum(def_id) => *def_id,
+                _ => continue,
+            };
 
-            // Get the contract DefId (if any)
-            let contract_def_id = impl_def.contract.row_index()
-                .and_then(|row| lib_contract_def_id_map.get(&row).copied());
+            let contract_ty = (!impl_def.contract.is_null()).then(|| {
+                decode_impl_type_token(
+                    impl_def.contract,
+                    module,
+                    &lib_type_token_map,
+                    &lib_type_name_map,
+                    interner,
+                )
+            }).flatten();
+            let contract_def_id = contract_ty.and_then(|ty| match interner.kind(ty) {
+                TyKind::Contract(def_id) => Some(*def_id),
+                _ => None,
+            });
 
             let owned_methods = module.impl_method_indices(impl_idx);
             if owned_methods.is_empty() {
                 continue;
             }
+            let impl_generic_count = impl_generic_param_count(
+                module,
+                [impl_def.type_token, impl_def.contract],
+                &owned_methods,
+            );
 
             // Create a synthetic DefId for this impl block by allocating a DefEntry
             let impl_entry_def_id = {
@@ -569,7 +697,7 @@ pub fn inject_library_sigs(
             };
 
             let mut methods: Vec<(String, FnSig)> = Vec::new();
-            for method_idx in owned_methods {
+            for method_idx in owned_methods.iter().copied() {
                 let method = &module.method_defs[method_idx];
                 let method_name = writ_module::heap::read_string(&module.string_heap, method.name)
                     .unwrap_or("_")
@@ -603,32 +731,10 @@ pub fn inject_library_sigs(
 
             let impl_entry = ImplEntry {
                 impl_def_id: impl_entry_def_id,
-                impl_generic_count: def_map.get_entry(type_def_id).generics.len() as u32,
-                target_ty: {
-                    let named = library_type_for_def(type_def_id, def_map)
-                        .expect("ImplDef target must name an injected library type");
-                    let base = nominal_ty(named, interner);
-                    let target = def_map.get_entry(type_def_id);
-                    if target.generics.is_empty() {
-                        base
-                    } else {
-                        let args = (0..target.generics.len())
-                            .map(|ordinal| {
-                                interner.intern(TyKind::GenericParam(ordinal as u32))
-                            })
-                            .collect();
-                        interner.generic_instance(
-                            base,
-                            target.namespace.clone(),
-                            target.name.clone(),
-                            args,
-                        )
-                    }
-                },
+                impl_generic_count,
+                target_ty,
                 contract_def_id,
-                // ImplDef metadata currently stores only the ContractDef token.
-                // Preserve the nominal identity; source impls retain full arguments.
-                contract_ty: contract_def_id.map(|def_id| interner.contract(def_id)),
+                contract_ty,
                 methods,
             };
 

@@ -7,13 +7,33 @@ use super::{helpers, ExecContext, ExecutionResult};
 // ── Struct Object Model ────────────────────────────────────────
 
 pub(super) fn exec_new(ctx: &mut ExecContext<'_>, r_dst: u16, type_idx: u32) -> ExecutionResult {
-    let table_id = (type_idx >> 24) as u8;
-    let row = type_idx & 0x00FF_FFFF;
+    let token = writ_module::MetadataToken(type_idx);
+    let table_id = token.table_id();
+    let row = token.row_index().unwrap_or(0);
+    let type_spec = (table_id == 4).then_some((ctx.current_module_idx, type_idx));
+    if !matches!(table_id, 2 | 3 | 4) || row == 0 {
+        return ExecutionResult::Crash(format!(
+            "NEW: unsupported type token 0x{type_idx:08x}"
+        ));
+    }
 
     // Resolve the target module and typedef index.
     // TypeDef tokens (table 2) reference the current module directly.
     // TypeRef tokens (table 3) require cross-module resolution.
-    let (target_module_idx, target_typedef_idx) = if table_id == 3 {
+    let (target_module_idx, target_typedef_idx) = if table_id == 4 {
+        match crate::type_specs::resolve_type_location(
+            ctx.current_module_idx,
+            token,
+            ctx.modules,
+        ) {
+            Some(location) => location,
+            None => {
+                return ExecutionResult::Crash(format!(
+                    "NEW: TypeSpec token 0x{type_idx:08x} did not resolve to a TypeDef"
+                ));
+            }
+        }
+    } else if table_id == 3 {
         // TypeRef — resolve through the domain's cross-module resolution
         let module = &ctx.modules[ctx.current_module_idx];
         let typeref_row_0based = row.saturating_sub(1) as u32;
@@ -32,7 +52,7 @@ pub(super) fn exec_new(ctx: &mut ExecContext<'_>, r_dst: u16, type_idx: u32) -> 
     let target_module = &ctx.modules[target_module_idx];
     // For TypeRef tokens, build a synthetic TypeDef token for the resolved typedef index
     // so get_type_field_count can decode it correctly against the target module.
-    let resolved_type_idx = if table_id == 3 {
+    let resolved_type_idx = if table_id == 3 || table_id == 4 {
         // Encode as TypeDef token (table_id=2) with 1-based row in the target module
         (2u32 << 24) | ((target_typedef_idx as u32) + 1)
     } else {
@@ -40,13 +60,15 @@ pub(super) fn exec_new(ctx: &mut ExecContext<'_>, r_dst: u16, type_idx: u32) -> 
     };
     let field_count = helpers::get_type_field_count(&target_module.module, resolved_type_idx);
     let kind_u8 = target_module.module.type_defs.get(target_typedef_idx).map(|t| t.kind);
+    let runtime_type_key = ((target_module_idx as u32) << 16) | target_typedef_idx as u32;
 
     match kind_u8.and_then(writ_module::TypeDefKind::from_u8) {
         Some(writ_module::TypeDefKind::Struct) => {
             // kind=0: value-type struct — heap allocation with Copy-semantic HeapRef.
-            // The type_key is not needed in the HeapObject because type_idx is carried
-            // directly in Value::Struct for virtual dispatch.
-            let href = ctx.heap.alloc_struct(u32::MAX, field_count);
+            // Keep the canonical base key and optional TypeSpec on the heap so
+            // cross-module struct dispatch does not depend on a local token value.
+            let href = ctx.heap.alloc_struct(runtime_type_key, field_count);
+            attach_type_spec(ctx.heap, href, type_spec);
             let frame = ctx.task.call_stack.last_mut().unwrap();
             frame.registers[r_dst as usize] = Value::Struct { type_idx, href };
             ExecutionResult::Continue
@@ -55,8 +77,8 @@ pub(super) fn exec_new(ctx: &mut ExecContext<'_>, r_dst: u16, type_idx: u32) -> 
             // kind=4 (class) or kind=2 (entity): heap allocation.
             // Encode the type_key as (target_module_idx << 16) | target_typedef_idx so that
             // CALL_VIRT can resolve the dispatch table entry from the runtime object type.
-            let class_type_key = ((target_module_idx as u32) << 16) | (target_typedef_idx as u32);
-            let href = ctx.heap.alloc_struct(class_type_key, field_count);
+            let href = ctx.heap.alloc_struct(runtime_type_key, field_count);
+            attach_type_spec(ctx.heap, href, type_spec);
             let frame = ctx.task.call_stack.last_mut().unwrap();
             frame.registers[r_dst as usize] = Value::Ref(href);
             ExecutionResult::Continue
@@ -69,6 +91,18 @@ pub(super) fn exec_new(ctx: &mut ExecContext<'_>, r_dst: u16, type_idx: u32) -> 
             "NEW: type_idx {} is out of range",
             type_idx
         )),
+    }
+}
+
+fn attach_type_spec(
+    heap: &mut dyn crate::gc::GcHeap,
+    href: crate::value::HeapRef,
+    type_spec: Option<(usize, u32)>,
+) {
+    if let Some(type_spec) = type_spec
+        && let Ok(HeapObject::Struct { type_spec: stored, .. }) = heap.get_object_mut(href)
+    {
+        *stored = Some(type_spec);
     }
 }
 

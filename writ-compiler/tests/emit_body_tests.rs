@@ -954,6 +954,49 @@ fn test_object_model_entity_construction_sequence() {
 }
 
 #[test]
+fn test_generic_entity_spawn_keeps_base_typedef_token() {
+    let mut interner = make_interner();
+    let ty_int = interner.int();
+    let (_, entity_def_id) = make_def_id();
+    let entity_base = interner.intern(TyKind::Entity(entity_def_id));
+    let generic_entity = interner.intern(TyKind::GenericInstance {
+        base: entity_base,
+        namespace: String::new(),
+        name: "MyEntity".to_string(),
+        args: vec![ty_int],
+    });
+
+    let mut builder = ModuleBuilder::new();
+    builder.add_typedef(
+        "MyEntity",
+        "",
+        TypeDefKind::Entity,
+        0,
+        Some(entity_def_id),
+    );
+    let type_spec = builder.add_type_spec(generic_entity, 0);
+    builder.finalize();
+    let mut emitter = make_emitter(&builder, &interner);
+    let expression = TypedExpr::New {
+        ty: generic_entity,
+        span: dummy_span(),
+        target_def_id: entity_def_id,
+        fields: vec![],
+    };
+
+    emit_expr(&mut emitter, &expression);
+    let Instruction::SpawnEntity { type_idx, .. } = emitter.instructions[0] else {
+        panic!("generic entity construction must emit SpawnEntity");
+    };
+    assert_ne!(type_idx, type_spec.0, "SpawnEntity cannot consume TypeSpec yet");
+    assert_eq!(
+        MetadataToken(type_idx).table(),
+        TableId::TypeDef,
+        "entity registry and lifecycle hooks require a base TypeDef token"
+    );
+}
+
+#[test]
 fn test_object_model_field_read() {
     // obj.x -> GET_FIELD
     let mut interner = make_interner();

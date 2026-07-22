@@ -1,5 +1,6 @@
 use rustc_hash::FxHashMap;
 use writ_module::Instruction;
+use writ_module::signature::TypeSignature;
 
 use crate::entity::EntityRegistry;
 use crate::frame::RegisterPool;
@@ -26,10 +27,9 @@ mod objects;
 /// - `type_key = (module_idx << 16) | typedef_row_idx`
 /// - `contract_key = (module_idx << 16) | contractdef_row_idx`
 /// - `slot` is the method slot within the contract
-/// - `type_args_hash` is the raw ImplDef contract token value, used to
-///   distinguish generic specializations (e.g. `Into<Float>` vs `Into<String>`)
-///   that share the same base ContractDef but have different compiler-generated
-///   TypeRef tokens. Set to 0 for non-generic (non-specialized) lookups.
+/// - `type_args_hash` is a canonical legacy discriminator for TypeSpec shapes.
+///   CALL_VIRT uses structural target/contract matching so hash collisions and
+///   open generic parameters cannot select the wrong implementation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DispatchKey {
     pub type_key: u32,
@@ -92,33 +92,126 @@ pub enum IntrinsicId {
 
 /// The dispatch table for O(1) contract method resolution.
 pub struct DispatchTable {
-    table: FxHashMap<DispatchKey, DispatchTarget>,
+    table: FxHashMap<DispatchKey, Vec<DispatchTarget>>,
+    patterns: Vec<DispatchPatternEntry>,
+}
+
+struct DispatchPatternEntry {
+    type_key: u32,
+    contract_key: u32,
+    slot: u16,
+    target_pattern: Option<(usize, TypeSignature)>,
+    contract_pattern: Option<(usize, TypeSignature)>,
+    target: DispatchTarget,
 }
 
 impl DispatchTable {
     pub fn new() -> Self {
-        DispatchTable { table: FxHashMap::default() }
+        DispatchTable {
+            table: FxHashMap::default(),
+            patterns: Vec::new(),
+        }
     }
 
     pub fn insert(&mut self, key: DispatchKey, target: DispatchTarget) {
-        self.table.insert(key, target);
+        if key.type_key == u32::MAX || key.contract_key == u32::MAX {
+            return;
+        }
+        self.table.entry(key).or_default().push(target);
     }
 
-    /// Look up an entry by exact key (including type_args_hash).
-    ///
-    /// For CALL_VIRT dispatch, use the full key with type_args_hash from the instruction.
+    pub(crate) fn insert_pattern(
+        &mut self,
+        type_key: u32,
+        contract_key: u32,
+        slot: u16,
+        target_pattern: Option<(usize, TypeSignature)>,
+        contract_pattern: Option<(usize, TypeSignature)>,
+        target: DispatchTarget,
+    ) {
+        if type_key == u32::MAX || contract_key == u32::MAX {
+            return;
+        }
+        self.patterns.push(DispatchPatternEntry {
+            type_key,
+            contract_key,
+            slot,
+            target_pattern,
+            contract_pattern,
+            target,
+        });
+    }
+
+    /// Look up a unique legacy entry by exact key (including type_args_hash).
     pub fn get(&self, key: &DispatchKey) -> Option<&DispatchTarget> {
-        self.table.get(key)
+        if key.type_key == u32::MAX || key.contract_key == u32::MAX {
+            return None;
+        }
+        let targets = self.table.get(key)?;
+        (targets.len() == 1).then(|| &targets[0])
     }
 
     /// Look up an entry by (type_key, contract_key, slot), ignoring type_args_hash.
     ///
     /// Used for tests and legacy lookups where type_args_hash is not available.
-    /// Returns the first matching entry (arbitrary if multiple specializations exist).
+    /// Ambiguous matches fail closed instead of depending on map iteration order.
     pub fn get_any(&self, type_key: u32, contract_key: u32, slot: u16) -> Option<&DispatchTarget> {
-        self.table.iter()
-            .find(|(k, _)| k.type_key == type_key && k.contract_key == contract_key && k.slot == slot)
-            .map(|(_, v)| v)
+        if type_key == u32::MAX || contract_key == u32::MAX {
+            return None;
+        }
+        let mut targets = self
+            .table
+            .iter()
+            .filter(|(key, _)| {
+                key.type_key == type_key && key.contract_key == contract_key && key.slot == slot
+            })
+            .flat_map(|(_, targets)| targets);
+        let first = targets.next()?;
+        targets.next().is_none().then_some(first)
+    }
+
+    pub(crate) fn resolve_pattern(
+        &self,
+        type_key: u32,
+        target_type: Option<(usize, &TypeSignature)>,
+        contract_key: u32,
+        contract_type: Option<(usize, &TypeSignature)>,
+        slot: u16,
+        modules: &[LoadedModule],
+    ) -> Result<Option<&DispatchTarget>, usize> {
+        if type_key == u32::MAX || contract_key == u32::MAX {
+            return Ok(None);
+        }
+        let mut matches = self.patterns.iter().filter(|entry| {
+            entry.type_key == type_key
+                && entry.contract_key == contract_key
+                && entry.slot == slot
+                && crate::type_specs::matches_impl_specialization(
+                    entry
+                        .target_pattern
+                        .as_ref()
+                        .map(|(module, signature)| (*module, signature)),
+                    target_type,
+                    entry
+                        .contract_pattern
+                        .as_ref()
+                        .map(|(module, signature)| (*module, signature)),
+                    contract_type,
+                    modules,
+                )
+        });
+        let Some(first) = matches.next() else {
+            return Ok(None);
+        };
+        let mut count = 1;
+        for _ in matches {
+            count += 1;
+        }
+        if count == 1 {
+            Ok(Some(&first.target))
+        } else {
+            Err(count)
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -126,7 +219,7 @@ impl DispatchTable {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.table.is_empty()
+        self.table.is_empty() && self.patterns.is_empty()
     }
 }
 

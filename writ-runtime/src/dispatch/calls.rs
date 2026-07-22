@@ -2,7 +2,7 @@ use crate::heap::HeapObject;
 use crate::host::{LogLevel, RequestId};
 use crate::value::Value;
 
-use super::{helpers, intrinsics, DispatchKey, DispatchTarget, ExecContext, ExecutionResult};
+use super::{helpers, intrinsics, DispatchTarget, ExecContext, ExecutionResult};
 
 #[inline]
 pub(super) fn exec_call(
@@ -71,27 +71,75 @@ pub(super) fn exec_call_virt(
 
     // Determine type_key from the object value's runtime type
     let type_key = resolve_runtime_type_key(obj_val, ctx.heap, ctx.modules);
+    if type_key == u32::MAX {
+        return ExecutionResult::Crash(
+            "CALL_VIRT: receiver has no resolvable runtime type".to_string(),
+        );
+    }
+
+    let target_type = match resolve_runtime_type_spec(obj_val, ctx.heap) {
+        Some((module_idx, token)) => {
+            let Some(signature) = crate::type_specs::type_spec_signature(
+                module_idx,
+                token,
+                ctx.modules,
+            ) else {
+                return ExecutionResult::Crash(format!(
+                    "CALL_VIRT: malformed receiver TypeSpec token 0x{:08x}",
+                    token.0
+                ));
+            };
+            Some((module_idx, signature))
+        }
+        None => None,
+    };
 
     // Resolve contract_key from the contract_idx in the current module
     let contract_key = resolve_contract_key_from_idx(contract_idx, ctx.modules, ctx.current_module_idx);
+    if contract_key == u32::MAX {
+        return ExecutionResult::Crash(format!(
+            "CALL_VIRT: unresolved contract token 0x{contract_idx:08x}"
+        ));
+    }
 
-    // Derive type_args_hash from the resolved ContractDef token
-    let type_args_hash = resolve_type_args_hash(contract_idx, ctx.modules, ctx.current_module_idx);
-    let key = DispatchKey { type_key, contract_key, slot, type_args_hash };
+    let contract_token = writ_module::MetadataToken(contract_idx);
+    let contract_type = if contract_token.table_id() == 4 {
+        let Some(signature) = crate::type_specs::type_spec_signature(
+            ctx.current_module_idx,
+            contract_token,
+            ctx.modules,
+        ) else {
+            return ExecutionResult::Crash(format!(
+                "CALL_VIRT: malformed contract TypeSpec token 0x{contract_idx:08x}"
+            ));
+        };
+        Some((ctx.current_module_idx, signature))
+    } else {
+        None
+    };
 
-    // Primary lookup: exact match including type_args_hash
-    let resolved_target = ctx.dispatch_table.get(&key).or_else(|| {
-        if type_args_hash == 0 {
-            ctx.dispatch_table.get_any(type_key, contract_key, slot)
-        } else {
-            None
+    let resolved_target = match ctx.dispatch_table.resolve_pattern(
+        type_key,
+        target_type
+            .as_ref()
+            .map(|(module_idx, signature)| (*module_idx, signature)),
+        contract_key,
+        contract_type
+            .as_ref()
+            .map(|(module_idx, signature)| (*module_idx, signature)),
+        slot,
+        ctx.modules,
+    ) {
+        Ok(target) => target.copied(),
+        Err(count) => {
+            return ExecutionResult::Crash(format!(
+                "CALL_VIRT: ambiguous implementation ({count} matches) for type_key=0x{type_key:08x}, contract_key=0x{contract_key:08x}, slot={slot}"
+            ));
         }
-    });
+    };
 
     match resolved_target {
         Some(DispatchTarget::Method { module_idx, method_idx }) => {
-            let module_idx = *module_idx;
-            let method_idx = *method_idx;
             let target_module = &ctx.modules[module_idx];
             if method_idx >= target_module.decoded_bodies.len() {
                 return ExecutionResult::Crash(format!(
@@ -129,7 +177,6 @@ pub(super) fn exec_call_virt(
             ExecutionResult::Continue
         }
         Some(DispatchTarget::Intrinsic(id)) => {
-            let id = *id;
             intrinsics::execute_intrinsic(ctx, id, r_dst, r_obj, r_base, argc)
         }
         None => {
@@ -438,7 +485,28 @@ pub(super) fn resolve_runtime_type_key(
         }
         Value::Entity(_) => find_type_key_by_name(modules, 0, "Entity"),
         Value::Void => u32::MAX,
-        Value::Struct { type_idx, .. } => type_idx,
+        Value::Struct { href, .. } => match heap.get_object(href) {
+            Ok(HeapObject::Struct { type_key, .. }) => *type_key,
+            _ => u32::MAX,
+        },
+    }
+}
+/// Return the allocation-site TypeSpec retained on a generic class or struct.
+fn resolve_runtime_type_spec(
+    val: Value,
+    heap: &dyn crate::gc::GcHeap,
+) -> Option<(usize, writ_module::MetadataToken)> {
+    let href = match val {
+        Value::Ref(href) | Value::Struct { href, .. } => href,
+        _ => return None,
+    };
+    match heap.get_object(href).ok()? {
+        HeapObject::Struct {
+            type_spec: Some((module_idx, token)),
+            ..
+        } => Some((*module_idx, writ_module::MetadataToken(*token))),
+        HeapObject::Boxed(inner) => resolve_runtime_type_spec(*inner, heap),
+        _ => None,
     }
 }
 
@@ -467,24 +535,11 @@ pub(super) fn resolve_contract_key_from_idx(
     modules: &[crate::loader::LoadedModule],
     current_module_idx: usize,
 ) -> u32 {
-    let token = writ_module::MetadataToken(contract_idx);
-    let table_id = token.table_id();
-    let row = match token.row_index() {
-        Some(r) => r - 1,
-        None => return u32::MAX,
-    };
-
-    match table_id {
-        10 => ((current_module_idx as u32) << 16) | row,
-        3 => {
-            if let Some(resolved) = modules[current_module_idx].resolved_refs.contracts.get(&row) {
-                ((resolved.module_idx as u32) << 16) | (resolved.contractdef_idx as u32)
-            } else {
-                u32::MAX
-            }
-        }
-        _ => u32::MAX,
-    }
+    crate::type_specs::resolve_contract_key(
+        current_module_idx,
+        writ_module::MetadataToken(contract_idx),
+        modules,
+    )
 }
 
 /// Resolve an entity's display name, checking for Speaker contract override first.
@@ -665,35 +720,4 @@ fn find_contract_key_by_name(
         }
     }
     None
-}
-
-/// Derive the type_args_hash for CALL_VIRT dispatch from a contract_idx.
-pub(super) fn resolve_type_args_hash(
-    contract_idx: u32,
-    modules: &[crate::loader::LoadedModule],
-    current_module_idx: usize,
-) -> u32 {
-    if contract_idx == 0 {
-        return 0;
-    }
-
-    let token = writ_module::MetadataToken(contract_idx);
-    let table_id = token.table_id();
-    let row = match token.row_index() {
-        Some(r) => r - 1,
-        None => return 0,
-    };
-
-    match table_id {
-        10 => contract_idx,
-        3 => {
-            if let Some(resolved) = modules[current_module_idx].resolved_refs.contracts.get(&row) {
-                let contractdef_row_1based = (resolved.contractdef_idx as u32) + 1;
-                writ_module::MetadataToken::new(10, contractdef_row_1based).0
-            } else {
-                0
-            }
-        }
-        _ => 0,
-    }
 }

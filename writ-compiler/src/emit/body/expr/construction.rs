@@ -139,14 +139,18 @@ pub(super) fn emit_new(
     target_def_id: DefId,
     fields: &[(String, TypedExpr)],
 ) -> u16 {
-    let type_idx = emitter
-        .builder
-        .token_for_def(target_def_id)
-        .map(|t| t.0)
-        .unwrap_or(0);
+    let resolved_ty = emitter.interner.resolve_infer(ty);
 
-    match emitter.interner.kind(ty) {
+    match emitter.interner.kind(resolved_ty) {
         TyKind::Entity(_) => {
+            // EntityRegistry and lifecycle hooks store current-module TypeDef
+            // rows. Keep SPAWN_ENTITY nominal until those paths carry an
+            // explicit specialization descriptor of their own.
+            let type_idx = emitter
+                .builder
+                .token_for_def(target_def_id)
+                .map(|token| token.0)
+                .unwrap_or(0);
             // EMIT-11: Entity construction sequence per spec §2.16.7
             let r_entity = emitter.alloc_reg(ty);
             emitter.emit(Instruction::SpawnEntity { r_dst: r_entity, type_idx });
@@ -163,6 +167,12 @@ pub(super) fn emit_new(
             r_entity
         }
         _ => {
+            let type_idx = emitter
+                .builder
+                .type_spec_token_for_encoded_ty(resolved_ty, emitter.interner)
+                .or_else(|| emitter.builder.token_for_def(target_def_id))
+                .map(|token| token.0)
+                .unwrap_or(0);
             // EMIT-10: Struct construction
             let r_obj = emitter.alloc_reg(ty);
             emitter.emit(Instruction::New { r_dst: r_obj, type_idx });

@@ -28,6 +28,7 @@ pub mod host;
 pub mod error;
 pub mod domain;
 mod domain_dispatch;
+mod type_specs;
 pub mod loader;
 pub(crate) mod dispatch;
 pub mod scheduler;

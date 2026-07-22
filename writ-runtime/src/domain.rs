@@ -870,9 +870,9 @@ mod tests {
         domain.resolve_refs().unwrap();
 
         let table = domain.build_dispatch_table();
-        // FIX-02: Specialization-specific contract tokens in the virtual module assign
-        // distinct type_args_hash values per generic specialization. All ImplDef entries
-        // now produce distinct DispatchKeys (no collisions).
+        // Synthetic specialization contracts in the virtual module have distinct
+        // canonical contract keys. Compiler TypeSpecs are additionally indexed by
+        // structural target and contract patterns.
         // 36 original + 4 Reflectable impls + 22 Phase-103 reflection method impls
         // + 2 Phase 107 dynamic invocation impls (FieldInfo.set, MethodInfo.invoke) = 64
         // + 3 Phase 108 generic reflection impls (Type.type_args, MethodInfo.attributes, FieldInfo.attributes) = 67
@@ -905,7 +905,7 @@ mod tests {
             .expect("Add contract should exist");
         let contract_key = (0u32 << 16) | (add_idx as u32);
 
-        // Use get_any() since type_args_hash = impl_def.contract.0 (non-zero after FIX-02)
+        // Compatibility lookup ignores the legacy TypeSpec shape hash.
         let target = table.get_any(type_key, contract_key, 0)
             .expect("should have dispatch entry for Int:Add");
         match target {
@@ -938,7 +938,7 @@ mod tests {
             .expect("Eq contract should exist");
         let contract_key = (0u32 << 16) | (eq_idx as u32);
 
-        // Use get_any() since type_args_hash = impl_def.contract.0 (non-zero after FIX-02)
+        // Compatibility lookup ignores the legacy TypeSpec shape hash.
         let target = table.get_any(type_key, contract_key, 0)
             .expect("should have dispatch entry for Bool:Eq");
         match target {
@@ -983,7 +983,7 @@ mod tests {
 
         // type_key = (0 << 16) | typedef_idx(0)
         // contract_key = (0 << 16) | contractdef_idx(0)
-        // Use get_any() since type_args_hash = impl_def.contract.0 (non-zero after FIX-02)
+        // Compatibility lookup ignores the legacy TypeSpec shape hash.
         let target = table.get_any(0, 0, 0).expect("should have dispatch entry");
         match target {
             DispatchTarget::Method { module_idx, method_idx } => {
@@ -1021,7 +1021,7 @@ mod tests {
         let mul_idx = module.contract_defs.iter().enumerate()
             .find(|(_, cd)| read_string(&module.string_heap, cd.name).unwrap_or("") == "Mul")
             .map(|(i, _)| i).unwrap();
-        // Use get_any() since type_args_hash = impl_def.contract.0 (non-zero after FIX-02)
+        // Compatibility lookup ignores the legacy TypeSpec shape hash.
         match table.get_any(float_idx as u32, mul_idx as u32, 0) {
             Some(DispatchTarget::Intrinsic(IntrinsicId::FloatMul)) => {}
             other => panic!("expected Intrinsic(FloatMul), got {:?}", other),
@@ -1049,17 +1049,9 @@ mod tests {
     /// This mirrors the virtual module's `Int:Into<Float>` vs `Int:Into<String>`
     /// situation: both use the `into` contract but represent different specializations.
     ///
-    /// FIX-02 adds `type_args_hash` to DispatchKey using `impl_def.contract.0` as
-    /// the discriminator. Since both ImplDefs have the same contract token, the
-    /// virtual module needs to assign distinct contract tokens per specialization.
-    ///
-    /// For user code with a proper compiler: the compiler emits distinct TypeRef
-    /// tokens per specialization (e.g., `Into<Float>` and `Into<String>` are
-    /// different tokens), so `impl_def.contract.0` differs and they produce
-    /// distinct keys.
-    ///
-    /// This test uses distinct contract tokens (simulating compiler-generated output)
-    /// and verifies the two-entry result.
+    /// The virtual module uses distinct synthetic contract definitions for its
+    /// built-in monomorphizations. Compiler-emitted TypeSpecs instead use the
+    /// structural dispatch index exercised by integration tests.
     #[test]
     fn two_same_contract_different_token_specializations_produce_two_entries() {
         let mut domain = Domain::new();

@@ -20,6 +20,18 @@ pub fn encode_type(
     blob_heap: &mut BlobHeap,
 ) -> Vec<u8> {
     let _ = blob_heap;
+    encode_type_bytes(ty, interner, token_for_def)
+}
+
+/// Encode a `Ty` without borrowing a blob heap.
+///
+/// Collection uses this form when it must create a TypeSpec row before body
+/// serialization. The caller interns the returned descriptor in its own heap.
+pub fn encode_type_bytes(
+    ty: Ty,
+    interner: &TyInterner,
+    token_for_def: &dyn Fn(DefId) -> MetadataToken,
+) -> Vec<u8> {
     encode_type_signature(&type_signature_for_ty(ty, interner, token_for_def))
         .expect("compiler type signature exceeds module format limits")
 }

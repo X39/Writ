@@ -69,33 +69,38 @@ impl Iterable<int> for Counter {}
         .map(|implementation| implementation.contract_token)
         .collect();
 
-    let user_generic_contract = MetadataToken::new(TableId::ContractDef, 1);
-    let iterable_contract = MetadataToken::new(TableId::ContractDef, 14);
-    let iterator_contract = MetadataToken::new(TableId::ContractDef, 15);
-
-    assert!(
-        contracts.contains(&user_generic_contract),
-        "GenericContract<T> must resolve through its DefMap ContractDef"
-    );
-    assert_eq!(
-        contracts
-            .iter()
-            .filter(|token| **token == iterable_contract)
-            .count(),
-        2,
-        "both Iterable<T> and Iterable<int> must retain the Iterable contract token"
-    );
-    assert_eq!(
-        contracts
-            .iter()
-            .filter(|token| **token == iterator_contract)
-            .count(),
-        1,
-        "Iterator<T> must retain the Iterator contract token"
-    );
     assert!(
         contracts.iter().all(|token| !token.is_null()),
         "no declared contract impl may emit a NULL contract token: {contracts:?}"
+    );
+
+    let signatures: Vec<_> = builder
+        .finalized_type_specs()
+        .iter()
+        .filter_map(|type_spec| {
+            writ_module::heap::read_blob(builder.blob_heap.data(), type_spec.signature).ok()
+        })
+        .filter_map(|blob| writ_module::signature::decode_type_signature(blob).ok())
+        .collect();
+    assert!(signatures.iter().any(|signature| matches!(
+        signature,
+        writ_module::signature::TypeSignature::Generic { name, args, .. }
+            if name == "GenericContract"
+                && matches!(args.as_slice(), [writ_module::signature::TypeSignature::GenericParam(0)])
+    )), "generic user contract TypeSpec missing: {signatures:?}");
+    assert!(signatures.iter().any(|signature| matches!(
+        signature,
+        writ_module::signature::TypeSignature::Generic { name, args, .. }
+            if name == "Iterable"
+                && matches!(args.as_slice(), [writ_module::signature::TypeSignature::Int])
+    )), "concrete prelude contract TypeSpec missing: {signatures:?}");
+    assert_eq!(
+        contracts
+            .iter()
+            .filter(|token| token.table() == TableId::TypeSpec)
+            .count(),
+        4,
+        "every generic contract application must be addressed through TypeSpec"
     );
 }
 

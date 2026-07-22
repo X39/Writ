@@ -157,6 +157,8 @@ implementations (§2.16.8).
 
 **MethodDef.owner:** The authoritative owner of the method. A null token denotes a top-level function, a TypeDef token denotes a method declared directly on that type (including lifecycle hooks), and an ImplDef token denotes a method supplied by that implementation. The `method_list` fields retained on TypeDef and ImplDef are legacy display/index hints only; ownership and top-level classification must use `MethodDef.owner`.
 
+**ImplDef type tokens:** `ImplDef.type` names the implementation target. It is a TypeDef or TypeRef token for a bare nominal target and a TypeSpec token for an instantiated generic target. `ImplDef.contract` is null for an inherent implementation, a ContractDef or contract-resolving TypeRef token for a bare contract, and a TypeSpec token for an instantiated generic contract. A TypeSpec used in either field contains the complete recursive TypeRef descriptor, including any GenericParam occurrences for an open generic implementation. Consumers resolve the descriptor's constructor to the underlying TypeDef or ContractDef while retaining its arguments for specialization matching and dispatch.
+
 ### Method signature blobs
 
 The `signature` fields on MethodDef, MethodRef, ContractMethod, and ExternDef rows point to a complete blob with this layout:

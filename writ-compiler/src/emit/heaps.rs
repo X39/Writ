@@ -123,6 +123,11 @@ impl BlobHeap {
         offset
     }
 
+    /// Return the offset of an already-interned blob.
+    pub fn offset_of(&self, blob: &[u8]) -> Option<u32> {
+        self.dedup.get(blob).copied()
+    }
+
     /// Get the raw heap data.
     pub fn data(&self) -> &[u8] {
         &self.data

@@ -78,8 +78,19 @@ pub(super) fn collect_impl(
 
     // Find matching AST impl decl.
     if let Some(impl_decl) = find_impl_decl(asts, entry) {
+        let impl_entry_generics = def_map.get_entry(impl_def_id).generics.clone();
+
         // Resolve target type.
+        let target_def_id = ast_type_constructor_name(&impl_decl.target)
+            .and_then(|name| def_map.get(name));
         let target_type_handle = resolve_type_handle(&impl_decl.target, def_map, typedef_handles);
+        let target_ty = ast_type_to_ty_simple(
+            &impl_decl.target,
+            &impl_entry_generics,
+            def_map,
+            interner,
+        )
+        .ok();
 
         // Resolve the contract constructor, independent of whether it has type
         // arguments. Generic applications such as `Iterable<T>` retain the
@@ -102,7 +113,6 @@ pub(super) fn collect_impl(
             .filter_map(|m| if let crate::ast::decl::AstImplMember::Fn(f) = m { Some(f) } else { None })
             .collect();
 
-        let impl_entry_generics = def_map.get_entry(impl_def_id).generics.clone();
         let impl_is_pub = matches!(def_map.get_entry(impl_def_id).vis, DefVis::Pub);
         let mut owned_method_handles = Vec::new();
 
@@ -149,7 +159,7 @@ pub(super) fn collect_impl(
                 Some(*_method_def_id),
                 param_count,
             );
-            owned_method_handles.push(method_handle);
+            owned_method_handles.push((method_handle, *_method_def_id));
             methoddef_handles.insert(*_method_def_id, method_handle);
 
             // ParamDef
@@ -236,8 +246,14 @@ pub(super) fn collect_impl(
         }
 
         // ImplDef row linking type to contract.
-        let type_token = target_type_handle
-            .map(|h| MetadataToken::new(TableId::TypeDef, (h.0 + 1) as u32))
+        let type_token = target_ty
+            .filter(|ty| matches!(interner.full_kind(*ty), crate::check::ty::TyKind::GenericInstance { .. }))
+            .map(|ty| super::intern_type_spec_for_ty(ty, interner, builder))
+            .or_else(|| {
+                target_type_handle
+                    .map(|h| MetadataToken::new(TableId::TypeDef, (h.0 + 1) as u32))
+            })
+            .or_else(|| target_def_id.and_then(|id| builder.token_for_def(id)))
             .unwrap_or(MetadataToken::NULL);
         // Resolve contract token:
         // - User-defined contracts: use ContractDefHandle from contractdef_handles (available
@@ -247,7 +263,7 @@ pub(super) fn collect_impl(
         // - Prelude contracts Iterable and Iterator have no user-module DefId but their
         //   writ-runtime ContractDef rows are spec-locked at 14 and 15 (1-based). Use those
         //   hardcoded tokens so the dispatch table type_args_hash matches CALL_VIRT.
-        let contract_token = contract_def_id
+        let base_contract_token = contract_def_id
             .and_then(|id| {
                 contractdef_handles.get(&id).map(|h| {
                     MetadataToken::new(TableId::ContractDef, (h.0 + 1) as u32)
@@ -263,12 +279,28 @@ pub(super) fn collect_impl(
                 }
             })
             .unwrap_or(MetadataToken::NULL);
+        let contract_ty = impl_decl.contract.as_ref().and_then(|contract| {
+            ast_type_to_ty_simple(
+                contract,
+                &impl_entry_generics,
+                def_map,
+                interner,
+            )
+            .ok()
+        });
+        let contract_token = contract_ty
+            .filter(|ty| matches!(interner.full_kind(*ty), crate::check::ty::TyKind::GenericInstance { .. }))
+            .map(|ty| super::intern_type_spec_for_ty(ty, interner, builder))
+            .unwrap_or(base_contract_token);
 
         // The explicit MethodDef owner is authoritative in format version 6;
         // finalize derives method_list from these links for compatibility tooling.
         let impl_handle = builder.add_impl_def(type_token, contract_token, 0, Some(impl_def_id));
-        for method_handle in owned_method_handles {
+        for (method_handle, method_def_id) in owned_method_handles {
             builder.set_method_impl_owner(method_handle, impl_handle);
+            if !contract_token.is_null() {
+                builder.register_impl_method_contract(method_def_id, contract_token);
+            }
         }
     }
 }

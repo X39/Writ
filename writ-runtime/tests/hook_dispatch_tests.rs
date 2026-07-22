@@ -1,9 +1,9 @@
-//! TDD tests for FIX-01 (lifecycle hook dispatch) and FIX-02 (generic dispatch key).
+//! TDD tests for lifecycle hook dispatch and generic dispatch compatibility.
 //!
 //! FIX-01: INIT_ENTITY must push an on_create hook frame for entity types that define one.
 //!         DESTROY_ENTITY must push an on_destroy hook frame for entity types that define one.
-//! FIX-02: DispatchKey must include type_args_hash so generic specializations
-//!         (e.g. Into<Float> vs Into<String>) produce distinct dispatch table entries.
+//! Generic built-in specializations retain distinct compatibility entries; user
+//! TypeSpecs use structural target/contract matching in CALL_VIRT.
 
 use std::sync::{Arc, Mutex};
 use writ_module::module::MethodBody;

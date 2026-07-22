@@ -12,7 +12,13 @@ pub enum HeapObject {
     /// `(module_idx << 16) | typedef_row_0based`. It is `u32::MAX`
     /// for allocations that do not need virtual-dispatch lookup
     /// (e.g., entity data buffers).
-    Struct { type_key: u32, fields: Vec<Value> },
+    Struct {
+        type_key: u32,
+        /// Module-scoped TypeSpec token for a constructed generic instance.
+        /// `None` denotes a bare nominal allocation.
+        type_spec: Option<(usize, u32)>,
+        fields: Vec<Value>,
+    },
     Array { elem_type: u32, elements: Vec<Value> },
     Delegate { method_idx: usize, target: Option<Value> },
     Enum { type_idx: u32, tag: u16, fields: Vec<Value> },
@@ -50,6 +56,7 @@ impl BumpHeap {
         let idx = self.objects.len() as u32;
         self.objects.push(HeapObject::Struct {
             type_key,
+            type_spec: None,
             fields: vec![Value::Void; field_count],
         });
         HeapRef(idx)

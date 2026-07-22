@@ -2,6 +2,7 @@ use writ_module::error::DecodeError;
 use writ_module::heap;
 use writ_module::instruction::Instruction;
 use writ_module::module::{DebugLocal, MethodBody, Module};
+use writ_module::signature::{encode_type_signature, TypeSignature};
 use writ_module::tables::*;
 use writ_module::MetadataToken;
 
@@ -179,14 +180,31 @@ fn test_module_with_multiple_tables_round_trip() {
         generic_param_list: 0,
     });
 
+    // TypeSpecs used directly by ImplDef target and contract tokens.
+    for (name, argument) in [("Player", TypeSignature::Int), ("Updatable", TypeSignature::String)] {
+        let signature = encode_type_signature(&TypeSignature::Generic {
+            namespace: "game".to_string(),
+            name: name.to_string(),
+            args: vec![argument],
+        })
+        .unwrap();
+        module.type_specs.push(TypeSpecRow {
+            signature: heap::write_blob(&mut module.blob_heap, &signature),
+        });
+    }
+
     // ImplDef
     module.impl_defs.push(ImplDefRow {
-        type_token: MetadataToken::new(TableId::TypeDef.as_u8(), 1),
-        contract: MetadataToken::new(TableId::ContractDef.as_u8(), 1),
+        type_token: MetadataToken::new(TableId::TypeSpec.as_u8(), 1),
+        contract: MetadataToken::new(TableId::TypeSpec.as_u8(), 2),
         method_list: 1,
     });
 
     assert_round_trip(&module);
+
+    let decoded = Module::from_bytes(&module.to_bytes().unwrap()).unwrap();
+    assert_eq!(decoded.impl_defs[0].type_token.table_id(), TableId::TypeSpec.as_u8());
+    assert_eq!(decoded.impl_defs[0].contract.table_id(), TableId::TypeSpec.as_u8());
 }
 
 #[test]

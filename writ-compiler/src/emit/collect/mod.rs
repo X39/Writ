@@ -9,7 +9,7 @@ use rustc_hash::FxHashMap;
 use writ_diagnostics::FileId;
 
 use crate::check::ir::{TypedAst, TypedDecl};
-use crate::check::ty::TyInterner;
+use crate::check::ty::{Ty, TyInterner};
 use crate::resolve::def_map::{DefId, DefMap};
 
 use super::metadata::{MetadataToken, TableId};
@@ -30,7 +30,7 @@ use contracts::{collect_contract, collect_impl, collect_extern_component, emit_r
 pub(crate) use contracts::{ITERABLE_CONTRACT_TOKEN, ITERATOR_CONTRACT_TOKEN};
 use globals::{collect_const, collect_global};
 use encoding::{collect_exports, collect_attributes, collect_attribute_decl_defs, collect_locale_defs, collect_component_slots};
-use walker::collect_called_def_ids;
+use walker::{collect_addressable_generic_types, collect_called_def_ids};
 
 pub use builtins::{inject_log_extern_defs, inject_dialogue_extern_defs};
 
@@ -98,6 +98,9 @@ pub fn collect_defs(
     register_library_type_refs(library_modules, &library_module_refs, def_map, builder);
     register_library_method_refs(library_modules, def_map, builder);
     register_provisional_named_tokens(typed_ast, builder);
+    for ty in collect_addressable_generic_types(typed_ast, interner) {
+        intern_type_spec_for_ty(ty, interner, builder);
+    }
 
     // Pre-scan: compute the set of DefIds to skip at emit time.
     // Active conditional variant: emit the conditional fn, skip its fallback.
@@ -243,6 +246,29 @@ pub fn collect_defs(
     inject_dialogue_extern_defs(def_map, builder, &called_ids);
 
     reflectable_infos
+}
+
+/// Add a TypeSpec for a checked structural generic type, or reuse its token.
+pub(super) fn intern_type_spec_for_ty(
+    ty: Ty,
+    interner: &TyInterner,
+    builder: &mut ModuleBuilder,
+) -> MetadataToken {
+    let ty = interner.resolve_infer(ty);
+    if let Some(token) = builder.type_spec_token_for_ty(ty) {
+        return token;
+    }
+
+    let def_tokens = builder.def_token_map.clone();
+    let token_for_def = |def_id: DefId| {
+        def_tokens
+            .get(&def_id)
+            .copied()
+            .unwrap_or(MetadataToken::NULL)
+    };
+    let signature = crate::emit::type_sig::encode_type_bytes(ty, interner, &token_for_def);
+    let signature = builder.blob_heap.intern(&signature);
+    builder.add_type_spec(ty, signature)
 }
 
 fn register_provisional_named_tokens(typed_ast: &TypedAst, builder: &mut ModuleBuilder) {
@@ -428,7 +454,7 @@ fn register_library_method_refs(
             );
             let mut method_indices = module.type_method_indices(type_index);
             for (impl_index, impl_def) in module.impl_defs.iter().enumerate() {
-                if impl_def.type_token == type_token {
+                if impl_targets_type(module, impl_def.type_token, type_index, type_token) {
                     method_indices.extend(module.impl_method_indices(impl_index));
                 }
             }
@@ -451,6 +477,47 @@ fn register_library_method_refs(
                 builder.add_method_ref(parent, method_name, signature);
             }
         }
+    }
+}
+
+fn impl_targets_type(
+    module: &writ_module::Module,
+    token: writ_module::MetadataToken,
+    type_index: usize,
+    type_token: writ_module::MetadataToken,
+) -> bool {
+    if token == type_token {
+        return true;
+    }
+    if token.table_id() != writ_module::tables::TableId::TypeSpec.as_u8() {
+        return false;
+    }
+
+    let Some(type_spec_index) = token.row_index().map(|row| row.saturating_sub(1) as usize) else {
+        return false;
+    };
+    let Some(type_spec) = module.type_specs.get(type_spec_index) else {
+        return false;
+    };
+    let Ok(blob) = writ_module::heap::read_blob(&module.blob_heap, type_spec.signature) else {
+        return false;
+    };
+    let Ok(signature) = writ_module::signature::decode_type_signature(blob) else {
+        return false;
+    };
+
+    match signature {
+        writ_module::signature::TypeSignature::Named(named) => named == type_token,
+        writ_module::signature::TypeSignature::Generic { namespace, name, .. } => {
+            let Some(type_def) = module.type_defs.get(type_index) else {
+                return false;
+            };
+            writ_module::heap::read_string(&module.string_heap, type_def.name).ok()
+                == Some(name.as_str())
+                && writ_module::heap::read_string(&module.string_heap, type_def.namespace).ok()
+                    == Some(namespace.as_str())
+        }
+        _ => false,
     }
 }
 

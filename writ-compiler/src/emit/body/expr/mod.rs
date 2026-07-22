@@ -274,7 +274,8 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
             // - extract_type_def_id returns None for TyKind::Contract (falls to CALL_INDIRECT)
             if !is_static_call {
                 if let TypedExpr::Field { receiver, field, .. } = callee.as_ref() {
-                    if let TyKind::Contract(contract_def_id) = emitter.interner.kind(receiver.ty()).clone() {
+                    let receiver_ty = emitter.interner.resolve_infer(receiver.ty());
+                    if let TyKind::Contract(contract_def_id) = emitter.interner.kind(receiver_ty).clone() {
                         let TypedExpr::Call { ty, args, .. } = expr else { unreachable!() };
                         let r_dst_call = emitter.alloc_reg(*ty);
 
@@ -286,7 +287,10 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
                         let r_base = pack_args_consecutive(emitter, &arg_regs);
 
                         // Resolve contract token and slot by name (callee_def_id is None on this path)
-                        let contract_token = emitter.builder.token_for_def(contract_def_id)
+                        let contract_token = emitter
+                            .builder
+                            .type_spec_token_for_encoded_ty(receiver_ty, emitter.interner)
+                            .or_else(|| emitter.builder.token_for_def(contract_def_id))
                             .map(|t| t.0)
                             .unwrap_or(0);
                         let slot = emitter.builder.contract_method_slot_by_name(contract_def_id, field)

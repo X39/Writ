@@ -176,6 +176,7 @@ impl GcHeap for MarkSweepHeap {
     fn alloc_struct(&mut self, type_key: u32, field_count: usize) -> HeapRef {
         self.alloc_slot(HeapObject::Struct {
             type_key,
+            type_spec: None,
             fields: vec![Value::Void; field_count],
         })
     }

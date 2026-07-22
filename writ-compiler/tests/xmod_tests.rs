@@ -577,6 +577,116 @@ fn impl_method_generic_metadata_uses_combined_scope_ordinal() {
 }
 
 #[test]
+fn xmod_impl_typespecs_preserve_target_and_contract_arguments() {
+    let library_bytes = compile(
+        r#"
+        pub contract Carries<T> { fn get(self) -> T; }
+        pub class Crate<T> { pub value: T }
+        impl<T> Carries<T> for Crate<T> {
+            fn get(self) -> T { return self.value; }
+        }
+        impl Crate<int> {
+            fn int_only(self) -> int { return 1; }
+        }
+        "#,
+    );
+    let library = writ_module::Module::from_bytes(&library_bytes).unwrap();
+
+    let impl_signatures: Vec<_> = library
+        .impl_defs
+        .iter()
+        .flat_map(|implementation| [implementation.type_token, implementation.contract])
+        .filter(|token| token.table_id() == writ_module::tables::TableId::TypeSpec.as_u8())
+        .filter_map(|token| token.row_index())
+        .filter_map(|row| library.type_specs.get((row - 1) as usize))
+        .filter_map(|type_spec| {
+            writ_module::heap::read_blob(&library.blob_heap, type_spec.signature).ok()
+        })
+        .filter_map(|blob| writ_module::signature::decode_type_signature(blob).ok())
+        .collect();
+    assert!(impl_signatures.iter().any(|signature| matches!(
+        signature,
+        writ_module::signature::TypeSignature::Generic { name, args, .. }
+            if name == "Carries"
+                && matches!(args.as_slice(), [writ_module::signature::TypeSignature::GenericParam(0)])
+    )), "ImplDef contract TypeSpec signatures: {impl_signatures:?}");
+    assert!(impl_signatures.iter().any(|signature| matches!(
+        signature,
+        writ_module::signature::TypeSignature::Generic { name, args, .. }
+            if name == "Crate"
+                && matches!(args.as_slice(), [writ_module::signature::TypeSignature::Int])
+    )), "ImplDef target TypeSpec signatures: {impl_signatures:?}");
+
+    let valid = compile_with_libs(
+        r#"
+        pub fn use_impls(value: Crate<int>) -> int {
+            let carried: Carries<int> = value;
+            return carried.get() + value.int_only();
+        }
+        "#,
+        &[&library],
+    );
+    assert!(valid.is_ok(), "specialized library impls must remain usable: {:?}", valid.err());
+
+    let wrong_contract = compile_with_libs(
+        r#"
+        pub fn wrong(value: Crate<int>) {
+            let carried: Carries<string> = value;
+        }
+        "#,
+        &[&library],
+    );
+    assert!(wrong_contract.is_err(), "contract arguments must survive library decoding");
+
+    let wrong_target = compile_with_libs(
+        r#"
+        pub fn wrong(value: Crate<string>) -> int {
+            return value.int_only();
+        }
+        "#,
+        &[&library],
+    );
+    assert!(wrong_target.is_err(), "specialized impl targets must survive library decoding");
+}
+
+#[test]
+fn xmod_bare_imported_impl_target_uses_typeref_token() {
+    let library_bytes = compile(r#"pub class Foreign {}"#);
+    let library = writ_module::Module::from_bytes(&library_bytes).unwrap();
+
+    let user_bytes = compile_with_libs(
+        r#"
+        impl Foreign {
+            pub fn marker(self) -> int { return 1; }
+        }
+        "#,
+        &[&library],
+    )
+    .expect("foreign inherent impl must compile");
+    let user = writ_module::Module::from_bytes(&user_bytes).unwrap();
+    let marker = user
+        .method_defs
+        .iter()
+        .find(|method| {
+            writ_module::heap::read_string(&user.string_heap, method.name).ok()
+                == Some("marker")
+        })
+        .expect("marker MethodDef");
+    assert_eq!(
+        marker.owner.table_id(),
+        writ_module::tables::TableId::ImplDef.as_u8()
+    );
+    let impl_index = marker.owner.row_index().expect("ImplDef row") as usize - 1;
+    let target = user.impl_defs[impl_index].type_token;
+    assert!(!target.is_null(), "imported impl target must never be NULL");
+    assert_eq!(
+        target.table_id(),
+        writ_module::tables::TableId::TypeRef.as_u8(),
+        "bare imported target must retain its registered TypeRef"
+    );
+}
+
+#[test]
 fn xmod_named_signature_resolves_typeref_token_table() {
     let types_bytes = compile(r#"pub struct Remote {}"#);
     let types_module = writ_module::Module::from_bytes(&types_bytes).unwrap();

@@ -92,6 +92,8 @@ pub struct ModuleBuilder {
     type_def_def_ids: Vec<Option<DefId>>,
     type_refs: Vec<TypeRefRow>,
     type_specs: Vec<TypeSpecRow>,
+    type_spec_tokens: FxHashMap<crate::check::ty::Ty, MetadataToken>,
+    type_spec_signature_tokens: FxHashMap<u32, MetadataToken>,
     field_defs: Vec<FieldDefEntry>,
     field_refs: Vec<FieldRefRow>,
     method_defs: Vec<MethodDefEntry>,
@@ -163,6 +165,8 @@ impl ModuleBuilder {
             type_def_def_ids: Vec::new(),
             type_refs: Vec::new(),
             type_specs: Vec::new(),
+            type_spec_tokens: FxHashMap::default(),
+            type_spec_signature_tokens: FxHashMap::default(),
             field_defs: Vec::new(),
             field_refs: Vec::new(),
             method_defs: Vec::new(),
@@ -286,6 +290,72 @@ impl ModuleBuilder {
         });
         self.type_def_def_ids.push(def_id);
         TypeDefHandle(self.type_defs.len() - 1)
+    }
+
+    /// Add or reuse an addressable generic type specialization.
+    ///
+    /// TypeSpec rows are not reordered during finalization, so the returned
+    /// token is stable and can be stored directly in ImplDef rows and method
+    /// bodies collected later in the same emission pass.
+    pub fn add_type_spec(
+        &mut self,
+        ty: crate::check::ty::Ty,
+        signature: u32,
+    ) -> MetadataToken {
+        if let Some(token) = self.type_spec_tokens.get(&ty) {
+            return *token;
+        }
+        if let Some(token) = self.type_spec_signature_tokens.get(&signature).copied() {
+            self.type_spec_tokens.insert(ty, token);
+            return token;
+        }
+
+        let token = self.add_type_spec_signature(signature);
+        self.type_spec_tokens.insert(ty, token);
+        token
+    }
+
+    /// Add an addressable descriptor that has no compiler `Ty` identity.
+    ///
+    /// This is used when remapping a library TypeSpec into a consuming module.
+    pub fn add_type_spec_signature(&mut self, signature: u32) -> MetadataToken {
+        if let Some(token) = self.type_spec_signature_tokens.get(&signature) {
+            return *token;
+        }
+        let token = MetadataToken::new(TableId::TypeSpec, (self.type_specs.len() + 1) as u32);
+        self.type_specs.push(TypeSpecRow { signature });
+        self.type_spec_signature_tokens.insert(signature, token);
+        token
+    }
+
+    /// Return the TypeSpec token previously registered for `ty`.
+    pub fn type_spec_token_for_ty(
+        &self,
+        ty: crate::check::ty::Ty,
+    ) -> Option<MetadataToken> {
+        self.type_spec_tokens.get(&ty).copied()
+    }
+
+    /// Resolve a TypeSpec by its canonical descriptor, following inference
+    /// bindings recursively through nested generic arguments.
+    pub fn type_spec_token_for_encoded_ty(
+        &self,
+        ty: crate::check::ty::Ty,
+        interner: &crate::check::ty::TyInterner,
+    ) -> Option<MetadataToken> {
+        let token_for_def = |def_id| {
+            self.def_token_map
+                .get(&def_id)
+                .copied()
+                .unwrap_or(MetadataToken::NULL)
+        };
+        let signature = crate::emit::type_sig::encode_type_bytes(
+            ty,
+            interner,
+            &token_for_def,
+        );
+        let signature = self.blob_heap.offset_of(&signature)?;
+        self.type_spec_signature_tokens.get(&signature).copied()
     }
 
     /// Add a FieldDef row under a parent TypeDef.
@@ -1326,5 +1396,76 @@ impl std::fmt::Debug for ModuleBuilder {
             .field("generic_params", &self.generic_params.len())
             .field("finalized", &self.finalized)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::check::ty::{InferVar, TyInterner, TyKind};
+    use crate::resolve::def_map::{DefEntry, DefKind, DefMap, DefVis};
+    use chumsky::span::{SimpleSpan, Span as _};
+    use writ_diagnostics::FileId;
+
+    #[test]
+    fn encoded_typespec_lookup_normalizes_nested_inference() {
+        let span = SimpleSpan::new((), 0..0);
+        let mut def_map = DefMap::new();
+        let crate_id = def_map.arena.alloc(DefEntry {
+            id: None,
+            kind: DefKind::Class,
+            vis: DefVis::Pub,
+            file_id: FileId(0),
+            namespace: "test".to_string(),
+            name: "Crate".to_string(),
+            name_span: span,
+            generics: vec!["T".to_string()],
+            span,
+        });
+
+        let mut interner = TyInterner::new();
+        let int_ty = interner.int();
+        let inferred_ty = interner.intern(TyKind::Infer(InferVar(0)));
+        interner.record_infer_resolution(InferVar(0), int_ty);
+        let base = interner.intern(TyKind::Class(crate_id));
+        let unresolved = interner.intern(TyKind::GenericInstance {
+            base,
+            namespace: "test".to_string(),
+            name: "Crate".to_string(),
+            args: vec![inferred_ty],
+        });
+        let resolved = interner.intern(TyKind::GenericInstance {
+            base,
+            namespace: "test".to_string(),
+            name: "Crate".to_string(),
+            args: vec![int_ty],
+        });
+
+        let mut builder = ModuleBuilder::new();
+        builder.add_typedef(
+            "Crate",
+            "test",
+            TypeDefKind::Class,
+            0,
+            Some(crate_id),
+        );
+        builder.finalize();
+        let token_for_def = |def_id| {
+            builder
+                .token_for_def(def_id)
+                .unwrap_or(MetadataToken::NULL)
+        };
+        let descriptor = crate::emit::type_sig::encode_type_bytes(
+            unresolved,
+            &interner,
+            &token_for_def,
+        );
+        let descriptor = builder.blob_heap.intern(&descriptor);
+        let token = builder.add_type_spec(unresolved, descriptor);
+
+        assert_eq!(
+            builder.type_spec_token_for_encoded_ty(resolved, &interner),
+            Some(token)
+        );
     }
 }
