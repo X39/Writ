@@ -39,9 +39,21 @@ fn typedef_token(index: u32) -> u32 {
 /// `reg_count` specifies how many registers the method body has.
 /// Returns a Runtime ready for spawning tasks.
 fn build_runtime(instructions: &[Instruction], reg_count: u16) -> Runtime<NullHost> {
+    build_runtime_with_type_kind(instructions, reg_count, TypeDefKind::Struct)
+}
+
+fn build_entity_runtime(instructions: &[Instruction], reg_count: u16) -> Runtime<NullHost> {
+    build_runtime_with_type_kind(instructions, reg_count, TypeDefKind::Entity)
+}
+
+fn build_runtime_with_type_kind(
+    instructions: &[Instruction],
+    reg_count: u16,
+    type_kind: TypeDefKind,
+) -> Runtime<NullHost> {
     let mut builder = ModuleBuilder::new("test");
     // Add a type (required for method ownership)
-    builder.add_type_def("TestType", "", TypeDefKind::Struct, 0);
+    builder.add_type_def("TestType", "", type_kind, 0);
     // Add the method with body
     let body = MethodBody {
         register_types: vec![0; reg_count as usize],
@@ -61,6 +73,16 @@ fn run_simple(
     reg_count: u16,
 ) -> (Runtime<NullHost>, writ_runtime::TaskId) {
     let mut runtime = build_runtime(instructions, reg_count);
+    let task_id = runtime.spawn_task(0, vec![]).unwrap();
+    runtime.tick(0.0, ExecutionLimit::None);
+    (runtime, task_id)
+}
+
+fn run_entity_simple(
+    instructions: &[Instruction],
+    reg_count: u16,
+) -> (Runtime<NullHost>, writ_runtime::TaskId) {
+    let mut runtime = build_entity_runtime(instructions, reg_count);
     let task_id = runtime.spawn_task(0, vec![]).unwrap();
     runtime.tick(0.0, ExecutionLimit::None);
     (runtime, task_id)
@@ -1719,7 +1741,7 @@ fn spawn_task_with_args() {
 #[test]
 fn spawn_entity_creates_pending_and_init_commits() {
     // SPAWN_ENTITY r0 with the default type's TypeDef token, INIT_ENTITY r0, RET r0.
-    let (rt, tid) = run_simple(
+    let (rt, tid) = run_entity_simple(
         &[
             Instruction::SpawnEntity { r_dst: 0, type_idx: typedef_token(0) },
             Instruction::InitEntity { r_entity: 0 },
@@ -1740,7 +1762,7 @@ fn spawn_entity_creates_pending_and_init_commits() {
 
 #[test]
 fn entity_is_alive_returns_true_for_alive() {
-    let (rt, tid) = run_simple(
+    let (rt, tid) = run_entity_simple(
         &[
             Instruction::SpawnEntity { r_dst: 0, type_idx: typedef_token(0) },
             Instruction::InitEntity { r_entity: 0 },
@@ -1754,7 +1776,7 @@ fn entity_is_alive_returns_true_for_alive() {
 
 #[test]
 fn entity_is_alive_returns_false_after_destroy() {
-    let (rt, tid) = run_simple(
+    let (rt, tid) = run_entity_simple(
         &[
             Instruction::SpawnEntity { r_dst: 0, type_idx: typedef_token(0) },
             Instruction::InitEntity { r_entity: 0 },
@@ -1770,7 +1792,7 @@ fn entity_is_alive_returns_false_after_destroy() {
 #[test]
 fn destroy_stale_entity_crashes() {
     // Spawn, init, destroy, then try to destroy again
-    let (rt, tid) = run_simple(
+    let (rt, tid) = run_entity_simple(
         &[
             Instruction::SpawnEntity { r_dst: 0, type_idx: typedef_token(0) },
             Instruction::InitEntity { r_entity: 0 },
@@ -1792,7 +1814,7 @@ fn get_or_create_singleton_returns_same_entity() {
     // then comparing by checking both are alive and have the same index.
     // Use a different approach: get_or_create twice, check both are alive,
     // then check the entity_registry has exactly 1 alive entity for that type.
-    let mut runtime = build_runtime(
+    let mut runtime = build_entity_runtime(
         &[
             Instruction::GetOrCreate { r_dst: 0, type_idx: typedef_token(0) },
             Instruction::GetOrCreate { r_dst: 1, type_idx: typedef_token(0) },
@@ -1807,11 +1829,24 @@ fn get_or_create_singleton_returns_same_entity() {
     assert_eq!(runtime.task_state(tid), Some(TaskState::Completed));
     // The entity registry should have exactly 1 alive entity
     assert_eq!(runtime.entity_registry().alive_count(), 1);
-    // The singleton should be registered
-    assert!(runtime
+    // The singleton should be registered under its resolved domain identity.
+    let entity_id = runtime
         .entity_registry()
-        .get_singleton(typedef_token(0))
-        .is_some());
+        .alive_entities()
+        .next()
+        .map(|(entity_id, _)| entity_id)
+        .expect("singleton entity should be alive");
+    let identity = runtime
+        .entity_registry()
+        .get_type_identity(entity_id)
+        .expect("entity handle should be valid")
+        .expect("runtime-created entity should retain its resolved type identity");
+    assert_eq!(
+        runtime
+            .entity_registry()
+            .get_resolved_singleton(identity),
+        Some(entity_id)
+    );
 }
 
 #[test]
@@ -1833,7 +1868,7 @@ fn entity_is_alive_on_uninitialized_handle_returns_false() {
 
 #[test]
 fn spawn_init_two_entities_both_alive() {
-    let mut runtime = build_runtime(
+    let mut runtime = build_entity_runtime(
         &[
             Instruction::SpawnEntity { r_dst: 0, type_idx: typedef_token(0) },
             Instruction::InitEntity { r_entity: 0 },
@@ -1852,7 +1887,7 @@ fn spawn_init_two_entities_both_alive() {
 
 #[test]
 fn destroy_one_entity_other_survives() {
-    let mut runtime = build_runtime(
+    let mut runtime = build_entity_runtime(
         &[
             Instruction::SpawnEntity { r_dst: 0, type_idx: typedef_token(0) },
             Instruction::InitEntity { r_entity: 0 },

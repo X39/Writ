@@ -69,8 +69,16 @@ impl RuntimeHost for RecordingHost {
 // ── Test helpers ─────────────────────────────────────────────────
 
 fn build_gc_runtime(instructions: &[Instruction], reg_count: u16) -> Runtime<NullHost> {
+    build_gc_runtime_with_type_kind(instructions, reg_count, TypeDefKind::Struct)
+}
+
+fn build_gc_runtime_with_type_kind(
+    instructions: &[Instruction],
+    reg_count: u16,
+    type_kind: TypeDefKind,
+) -> Runtime<NullHost> {
     let mut builder = ModuleBuilder::new("test");
-    builder.add_type_def("TestType", "", TypeDefKind::Struct, 0);
+    builder.add_type_def("TestType", "", type_kind, 0);
     let body = MethodBody {
         register_types: vec![0; reg_count as usize],
         code: encode(instructions),
@@ -166,13 +174,14 @@ fn gc_preserves_reachable_global() {
 #[test]
 fn gc_preserves_entity_data_ref() {
     // Spawn and init an entity — its data_ref should survive GC.
-    let mut runtime = build_gc_runtime(
+    let mut runtime = build_gc_runtime_with_type_kind(
         &[
             Instruction::SpawnEntity { r_dst: 0, type_idx: typedef_token(0) },
             Instruction::InitEntity { r_entity: 0 },
             Instruction::RetVoid,
         ],
         1,
+        TypeDefKind::Entity,
     );
     let tid = runtime.spawn_task(0, vec![]).unwrap();
     runtime.tick(0.0, ExecutionLimit::None);
@@ -189,7 +198,7 @@ fn gc_preserves_entity_data_ref() {
 #[test]
 fn gc_frees_destroyed_entity_data() {
     // Spawn, init, then destroy entity — data should be collectible
-    let mut runtime = build_gc_runtime(
+    let mut runtime = build_gc_runtime_with_type_kind(
         &[
             Instruction::SpawnEntity { r_dst: 0, type_idx: typedef_token(0) },
             Instruction::InitEntity { r_entity: 0 },
@@ -197,6 +206,7 @@ fn gc_frees_destroyed_entity_data() {
             Instruction::RetVoid,
         ],
         1,
+        TypeDefKind::Entity,
     );
     let tid = runtime.spawn_task(0, vec![]).unwrap();
     runtime.tick(0.0, ExecutionLimit::None);
