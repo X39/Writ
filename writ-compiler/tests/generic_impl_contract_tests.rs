@@ -109,7 +109,7 @@ fn span() -> SimpleSpan {
 }
 
 #[test]
-fn class_for_loop_emits_matching_iterable_dispatch_tokens() {
+fn class_for_loop_emits_resolvable_iterable_dispatch_tokens() {
     let mut def_map = DefMap::new();
     let class_id = def_map.arena.alloc(DefEntry {
         id: None,
@@ -126,7 +126,10 @@ fn class_for_loop_emits_matching_iterable_dispatch_tokens() {
     let mut interner = TyInterner::new();
     let int_ty = interner.int();
     let class_ty = interner.intern(TyKind::Class(class_id));
-    let builder = ModuleBuilder::new();
+    let mut builder = ModuleBuilder::new();
+    let runtime_module = builder.add_module_ref("writ-runtime", "1.0.0");
+    let iterable_ref = builder.add_type_ref(runtime_module, "Iterable", "writ");
+    let iterator_ref = builder.add_type_ref(runtime_module, "Iterator", "writ");
     let struct_fields: FxHashMap<DefId, Vec<(String, Ty)>> = FxHashMap::default();
     let mut emitter = BodyEmitter::new(&builder, &interner, &struct_fields);
     emitter.locals.insert("list".to_string(), 0);
@@ -165,9 +168,15 @@ fn class_for_loop_emits_matching_iterable_dispatch_tokens() {
     assert_eq!(
         dispatches,
         vec![
-            (MetadataToken::new(TableId::ContractDef, 14).0, 0),
-            (MetadataToken::new(TableId::ContractDef, 15).0, 0),
+            (
+                MetadataToken::new(TableId::TypeRef, (iterable_ref + 1) as u32).0,
+                0,
+            ),
+            (
+                MetadataToken::new(TableId::TypeRef, (iterator_ref + 1) as u32).0,
+                0,
+            ),
         ],
-        "for-in emission and ImplDef collection must use identical contract tokens"
+        "for-in dispatch must resolve runtime contracts through module-scoped TypeRefs"
     );
 }

@@ -205,8 +205,8 @@
         MOV r13, r11
         CALL r10, 117440517, r12, 2
         LOAD_INT r14, 0  ; line:55 col:5
-        CALL_VIRT r15, r0, 167772174, 0, r0, 1  ; line:56 col:5
-        CALL_VIRT r16, r15, 167772175, 0, r15, 1
+        CALL_VIRT r15, r0, 50331656, 0, r0, 1  ; line:56 col:5
+        CALL_VIRT r16, r15, 50331657, 0, r15, 1
         IS_NONE r17, r16
         BR_TRUE r17, 36
         UNWRAP r18, r16

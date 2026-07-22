@@ -7,7 +7,6 @@ use writ_module::instruction::Instruction;
 
 use crate::check::ir::TypedStmt;
 use crate::check::ty::TyKind;
-use crate::emit::collect::{ITERABLE_CONTRACT_TOKEN, ITERATOR_CONTRACT_TOKEN};
 
 use super::BodyEmitter;
 use super::call::pack_args_consecutive;
@@ -306,8 +305,13 @@ fn emit_for_loop(
             let r_collection = emit_expr(emitter, iterable);
 
             // 2. CALL_VIRT: r_iter = collection.iterator()
-            //    Iterable contract token is spec-locked at virtual module row 14.
-            let iterable_contract_idx = ITERABLE_CONTRACT_TOKEN.0;
+            //    Runtime contracts are referenced through this module's TypeRef table;
+            //    ContractDef tokens are local to the module that owns them.
+            let iterable_contract_idx = emitter.builder.type_ref_token_by_name("Iterable");
+            assert_ne!(
+                iterable_contract_idx, 0,
+                "Iterable TypeRef must be registered before body emission"
+            );
             // slot=0: "iterator" is the first (and only) method of Iterable<T>
             let iterable_slot: u16 = 0;
 
@@ -330,8 +334,11 @@ fn emit_for_loop(
             emitter.mark_label_here(loop_start);
 
             // 4. CALL_VIRT: r_next = iter.next()
-            //    Iterator contract token is spec-locked at virtual module row 15.
-            let iterator_contract_idx = ITERATOR_CONTRACT_TOKEN.0;
+            let iterator_contract_idx = emitter.builder.type_ref_token_by_name("Iterator");
+            assert_ne!(
+                iterator_contract_idx, 0,
+                "Iterator TypeRef must be registered before body emission"
+            );
             // slot=0: "next" is the first (and only) method of Iterator<T>
             let iterator_slot: u16 = 0;
 

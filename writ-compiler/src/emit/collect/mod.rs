@@ -27,7 +27,6 @@ mod lookup;
 use types::{collect_struct, collect_entity, collect_enum, collect_class};
 use functions::{collect_fn, collect_extern_fn, collect_component};
 use contracts::{collect_contract, collect_impl, collect_extern_component, emit_reflectable_auto_impl};
-pub(crate) use contracts::{ITERABLE_CONTRACT_TOKEN, ITERATOR_CONTRACT_TOKEN};
 use globals::{collect_const, collect_global};
 use encoding::{collect_exports, collect_attributes, collect_attribute_decl_defs, collect_locale_defs, collect_component_slots};
 use walker::{collect_addressable_generic_types, collect_called_def_ids};
