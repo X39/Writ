@@ -248,3 +248,103 @@ fn test_typeof_disasm_round_trip() {
     let text = writ_assembler::disassemble(&module);
     assert!(text.contains("TYPEOF"), "disassembly should contain TYPEOF mnemonic: {}", text);
 }
+
+#[test]
+fn round_trip_type_owned_method_preserves_owner_flags_signature_and_body_order() {
+    use writ_module::module::MethodBody;
+    use writ_module::tables::{METHOD_FLAG_PUBLIC, METHOD_FLAG_STATIC};
+    use writ_module::{Instruction, ModuleBuilder, TypeDefKind};
+
+    fn body(instructions: &[Instruction]) -> MethodBody {
+        let mut code = Vec::new();
+        for instruction in instructions {
+            instruction.encode(&mut code).expect("instruction encodes");
+        }
+        MethodBody {
+            register_types: Vec::new(),
+            code,
+            debug_locals: Vec::new(),
+            source_spans: Vec::new(),
+        }
+    }
+
+    let signature = [0, 0, 0]; // no regular parameters, void return
+    let flags = METHOD_FLAG_PUBLIC | METHOD_FLAG_STATIC;
+    let mut builder = ModuleBuilder::new("owned_methods").version("1.0.0");
+    let type_owner = builder.add_type_def("Worker", "", TypeDefKind::Class, 0);
+    builder.add_type_method(
+        type_owner,
+        "direct",
+        &signature,
+        flags,
+        0,
+        body(&[Instruction::Nop, Instruction::RetVoid]),
+    );
+
+    let contract = builder.add_contract_def("Runnable", "");
+    builder.add_contract_method("run", &signature, 0);
+    let implementation = builder.add_impl_def(type_owner, contract);
+    builder.add_impl_method(
+        implementation,
+        "run",
+        &signature,
+        flags,
+        0,
+        body(&[Instruction::RetVoid]),
+    );
+    builder.add_method(
+        "main",
+        &signature,
+        flags,
+        0,
+        body(&[Instruction::Nop, Instruction::Nop, Instruction::RetVoid]),
+    );
+    let original = builder.build();
+
+    let text = writ_assembler::disassemble(&original);
+    let reassembled = writ_assembler::assemble(&text).unwrap_or_else(|errors| {
+        panic!("reassembly failed: {errors:?}\nDisassembled text:\n{text}")
+    });
+
+    assert_eq!(reassembled.type_method_indices(0), vec![0]);
+    assert_eq!(reassembled.method_defs[0].owner, type_owner);
+    assert_eq!(reassembled.method_defs[0].flags, flags);
+    assert_eq!(
+        writ_module::heap::read_blob(
+            &reassembled.blob_heap,
+            reassembled.method_defs[0].signature,
+        )
+        .expect("reassembled signature"),
+        signature,
+    );
+
+    let original_names: Vec<_> = original
+        .method_defs
+        .iter()
+        .map(|method| {
+            writ_module::heap::read_string(&original.string_heap, method.name)
+                .expect("original method name")
+        })
+        .collect();
+    let reassembled_names: Vec<_> = reassembled
+        .method_defs
+        .iter()
+        .map(|method| {
+            writ_module::heap::read_string(&reassembled.string_heap, method.name)
+                .expect("reassembled method name")
+        })
+        .collect();
+    assert_eq!(reassembled_names, original_names);
+
+    let original_bodies: Vec<_> = original
+        .method_bodies
+        .iter()
+        .map(|method| method.code.as_slice())
+        .collect();
+    let reassembled_bodies: Vec<_> = reassembled
+        .method_bodies
+        .iter()
+        .map(|method| method.code.as_slice())
+        .collect();
+    assert_eq!(reassembled_bodies, original_bodies);
+}

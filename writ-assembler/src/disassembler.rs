@@ -82,7 +82,7 @@ fn disassemble_inner(module: &Module, verbose: bool) -> String {
         writeln!(out, "    .extern {:?} {:?}", s(mr.name), s(mr.min_version)).unwrap();
     }
 
-    // ── 2. Type defs with their fields ──
+    // ── 2. Type defs with their fields and directly-owned methods ──
     for (ti, td) in module.type_defs.iter().enumerate() {
         let kind_str = match TypeDefKind::from_u8(td.kind) {
             Some(TypeDefKind::Struct) => "struct",
@@ -114,6 +114,43 @@ fn disassemble_inner(module: &Module, verbose: bool) -> String {
             } else {
                 writeln!(out, "        .field {:?} {} {}", s(fd.name), type_text, field_flags_str).unwrap();
             }
+        }
+
+        for method_idx in module.type_method_indices(ti) {
+            let md = &module.method_defs[method_idx];
+            let param_names = get_param_names(method_idx);
+            let (params, ret) =
+                decode_method_sig(&module.blob_heap, md.signature, module, &param_names);
+            let method_flags_str = flags_to_str(md.flags);
+
+            if method_flags_str.is_empty() {
+                writeln!(
+                    out,
+                    "        .method {:?} ({}) -> {} {{",
+                    s(md.name),
+                    params.join(", "),
+                    ret
+                )
+                .unwrap();
+            } else {
+                writeln!(
+                    out,
+                    "        .method {:?} ({}) -> {} {} {{",
+                    s(md.name),
+                    params.join(", "),
+                    ret,
+                    method_flags_str
+                )
+                .unwrap();
+            }
+
+            if method_idx < module.method_bodies.len() {
+                let body = &module.method_bodies[method_idx];
+                let body_text = disassemble_body(body, module, verbose, "            ");
+                out.push_str(&body_text);
+            }
+
+            writeln!(out, "        }}").unwrap();
         }
 
         writeln!(out, "    }}").unwrap();

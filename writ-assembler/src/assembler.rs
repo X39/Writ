@@ -54,7 +54,7 @@ pub fn assemble_module(ast: AsmModule) -> Result<Module, Vec<AssembleError>> {
         ctx.module_ref_map.insert(ext.name.clone(), tok);
     }
 
-    // 2. Types and their fields
+    // 2. Types, their fields, and their directly-owned methods
     for ty in &ast.types {
         let kind = match ty.kind {
             AsmTypeKind::Struct => TypeDefKind::Struct,
@@ -72,6 +72,30 @@ pub fn assemble_module(ast: AsmModule) -> Result<Module, Vec<AssembleError>> {
             let field_tok = builder.add_field_def(&field.name, &type_sig, field.flags);
             let key = format!("{}::{}", ty.name, field.name);
             ctx.field_map.insert(key, field_tok);
+        }
+
+        // Direct methods are registered before ImplDef-owned and top-level methods.
+        // Keep this order in sync with `all_methods` below so each assembled body is
+        // patched back into the MethodDef row that declared it.
+        for method in &ty.methods {
+            let sig = encode_method_sig_from_params(&method.params, &method.return_type, &ctx);
+            let placeholder_body = MethodBody {
+                register_types: vec![0; method.registers.len()],
+                code: Vec::new(),
+                debug_locals: Vec::new(),
+                source_spans: Vec::new(),
+            };
+            let reg_count = method.registers.len() as u16;
+            let tok = builder.add_type_method(
+                type_tok,
+                &method.name,
+                &sig,
+                method.flags,
+                reg_count,
+                placeholder_body,
+            );
+            let key = format!("{}::{}", ty.name, method.name);
+            ctx.method_map.insert(key, tok);
         }
     }
 
@@ -185,6 +209,11 @@ pub fn assemble_module(ast: AsmModule) -> Result<Module, Vec<AssembleError>> {
 
     // Collect all methods with their owner type (for method_map key lookup)
     let mut all_methods: Vec<(&AsmMethod, Option<String>)> = Vec::new();
+    for ty in &ast.types {
+        for method in &ty.methods {
+            all_methods.push((method, Some(ty.name.clone())));
+        }
+    }
     for imp in &ast.impls {
         for method in &imp.methods {
             all_methods.push((method, Some(imp.type_name.clone())));

@@ -283,27 +283,39 @@ impl<'a> Parser<'a> {
 
         if !self.expect_token(&TokenKind::OpenBrace) {
             self.synchronize();
-            return Some(AsmType { name, kind, flags, fields: Vec::new() });
+            return Some(AsmType {
+                name,
+                kind,
+                flags,
+                fields: Vec::new(),
+                methods: Vec::new(),
+            });
         }
 
         let mut fields = Vec::new();
+        let mut methods = Vec::new();
         loop {
             self.skip_newlines();
             if self.at_end() || matches!(self.peek_kind(), TokenKind::CloseBrace) {
                 break;
             }
             let is_field = matches!(self.peek_kind(), TokenKind::Directive(d) if d == "field");
+            let is_method = matches!(self.peek_kind(), TokenKind::Directive(d) if d == "method");
             let is_directive = matches!(self.peek_kind(), TokenKind::Directive(_));
 
             if is_field {
                 if let Some(f) = self.parse_field() {
                     fields.push(f);
                 }
+            } else if is_method {
+                if let Some(method) = self.parse_method() {
+                    methods.push(method);
+                }
             } else if is_directive {
                 let tok = self.peek();
                 let d = if let TokenKind::Directive(d) = self.peek_kind() { d.clone() } else { String::new() };
                 self.errors.push(AssembleError::new(
-                    format!("expected '.field' inside .type, got '.{}'", d),
+                    format!("expected '.field' or '.method' inside .type, got '.{}'", d),
                     tok.line,
                     tok.col,
                 ));
@@ -311,7 +323,7 @@ impl<'a> Parser<'a> {
             } else {
                 let tok = self.peek();
                 self.errors.push(AssembleError::new(
-                    "expected '.field' or '}'",
+                    "expected '.field', '.method', or '}'",
                     tok.line,
                     tok.col,
                 ));
@@ -320,7 +332,13 @@ impl<'a> Parser<'a> {
         }
 
         self.expect_token(&TokenKind::CloseBrace);
-        Some(AsmType { name, kind, flags, fields })
+        Some(AsmType {
+            name,
+            kind,
+            flags,
+            fields,
+            methods,
+        })
     }
 
     fn parse_field(&mut self) -> Option<AsmField> {
