@@ -14,7 +14,7 @@ Bytes 4–5:   u16 format_version    (starts at 1, bumps on incompatible layout 
 Bytes 6–7:   u16 flags             (bit 0 = debug info present, rest reserved)
 ```
 
-**Format version history:** Version 1 — initial format (MethodDef row: 20 bytes). Version 2 — added `param_count(u16)` to MethodDef (row: 24 bytes, padded from 22). Version 3 — TypeDef.kind=4 (class) added; kind=0 (struct) now means value type. Version 4 — TYPEOF opcode added (reflection; section 3.10, section 4.2 0x0A30). Version 5 — array opcode overhaul (`ARRAY_RESIZE`, `ARRAY_COPY`, sized and filled array construction). Version 6 — appended `owner(token)` to MethodDef (row: 28 bytes), making method ownership explicit. Version 7 — made generic-instance (`0x11`) and function (`0x30`) TypeRef payloads recursive and self-contained, replacing TypeSpec-row and blob-offset indirection. Readers reject modules from older format versions with `UnsupportedVersion`.
+**Format version history:** Version 1 — initial format (MethodDef row: 20 bytes). Version 2 — added `param_count(u16)` to MethodDef (row: 24 bytes, padded from 22). Version 3 — TypeDef.kind=4 (class) added; kind=0 (struct) now means value type. Version 4 — TYPEOF opcode added (reflection; section 3.10, section 4.2 0x0A30). Version 5 — array opcode overhaul (`ARRAY_RESIZE`, `ARRAY_COPY`, sized and filled array construction). Version 6 — appended `owner(token)` to MethodDef (row: 28 bytes), making method ownership explicit. Version 7 — made generic-instance (`0x11`) and function (`0x30`) TypeRef payloads recursive and self-contained, replacing TypeSpec-row and blob-offset indirection. Version 8 — appended `flags(u16)` plus two bytes of padding to MethodRef (row: 16 bytes), recording the receiver ABI in cross-module method identity. Readers reject modules from older format versions with `UnsupportedVersion`.
 
 **Module header** (fixed layout, immediately after the magic):
 
@@ -52,9 +52,11 @@ resolves cross-module references at load time.
 
 - **TypeRef** rows reference a type in another module by `(ModuleRef, namespace, name)`. At load time, the runtime
   resolves each TypeRef to a TypeDef in the target module.
-- **MethodRef** rows reference a method by `(parent, name, signature)`. The parent is a ModuleRef for a top-level
+- **MethodRef** rows reference a method by `(parent, name, signature, has_receiver)`. The parent is a ModuleRef for a top-level
   function, a bare TypeDef/TypeRef for methods declared on the nominal type, or a TypeSpec for a method declared by a
-  matching specialized ImplDef target (the most-specific matching target wins).
+  matching specialized ImplDef target. Resolution first retains inherent candidates when any exist, then retains the
+  candidates with the most-specific matching target, and finally requires exactly one candidate; a remaining tie is
+  an ambiguity error.
   The complete tuple is the method identity and is resolved to one MethodDef at load time; name-only overload selection
   is invalid.
 - **FieldRef** rows reference a field by `(parent type, name, type signature)`. Resolved to a FieldDef at load time.
@@ -135,7 +137,7 @@ with no fields has an empty range without using `field_list = 0`; zero is not a 
 | 5  | **FieldDef**          | name(str), type_sig(blob), flags(u16)                                                    | Fields on types defined here                          |
 | 6  | **FieldRef**          | parent(token), name(str), type_sig(blob)                                                 | Fields in other modules (resolved at load time)       |
 | 7  | **MethodDef**         | name(str), signature(blob), flags(u16), body_offset(u32), body_size(u32), reg_count(u16), param_count(u16), owner(token) | Methods/functions defined here                        |
-| 8  | **MethodRef**         | parent(token:ModuleRef/TypeDef/TypeRef/TypeSpec), name(str), signature(blob)             | Functions/methods in other modules (resolved by parent/name/signature) |
+| 8  | **MethodRef**         | parent(token:ModuleRef/TypeDef/TypeRef/TypeSpec), name(str), signature(blob), flags(u16) | Functions/methods in other modules (resolved by complete identity) |
 | 9  | **ParamDef**          | name(str), type_sig(blob), sequence(u16)                                                 | Method parameters                                     |
 | 10 | **ContractDef**       | name(str), namespace(str), method_list, generic_param_list                               | Contract declarations                                 |
 | 11 | **ContractMethod**    | name(str), signature(blob), slot(u16)                                                    | Method slots within a contract                        |
@@ -154,6 +156,10 @@ with no fields has an empty range without using `field_list = 0`; zero is not a 
 **MethodDef.flags** includes: visibility (pub/private), is_static, is_mut_self, hook_kind (0=none, 1=create, 2=destroy,
 3=finalize, 4=serialize, 5=deserialize, 6=interact), and an **intrinsic** flag for `writ-runtime` native
 implementations (§2.16.8).
+
+**MethodRef.flags** is a `u16` bitset: bit 0 = `has_receiver`, meaning the referenced MethodDef consumes an implicit
+instance receiver in its call argument block. A clear bit denotes a static method or top-level function. Remaining bits
+are reserved and readers must reject a MethodRef that sets them. The row is padded with two zero bytes to 16 bytes.
 
 **FieldDef.flags** is a `u16` bitset: bit 0 = public visibility, bit 1 = has_default, bit 2 =
 is_component_field, and bit 3 = read-only through reflection. Remaining bits are reserved. Adding bit 3 does not

@@ -21,7 +21,7 @@ const ROW_SIZES: [usize; 21] = [
     12, // 5  FieldDef: u32+u32+u16 = 10 -> pad to 12
     12, // 6  FieldRef: u32+u32+u32 = 12
     28, // 7  MethodDef: v5 prefix (24 bytes) + owner token (u32) = 28
-    12, // 8  MethodRef: u32+u32+u32 = 12
+    16, // 8  MethodRef: u32+u32+u32+u16 = 14 -> pad to 16
     12, // 9  ParamDef: u32+u32+u16 = 10 -> pad to 12
     16, // 10 ContractDef: u32+u32+u32+u32 = 16
     12, // 11 ContractMethod: u32+u32+u16 = 10 -> pad to 12
@@ -318,11 +318,15 @@ fn read_method_def(c: &mut Cursor<&[u8]>) -> Result<MethodDefRow, DecodeError> {
 }
 
 fn read_method_ref(c: &mut Cursor<&[u8]>) -> Result<MethodRefRow, DecodeError> {
-    Ok(MethodRefRow {
-        parent: MetadataToken(c.read_u32::<LittleEndian>()?),
-        name: c.read_u32::<LittleEndian>()?,
-        signature: c.read_u32::<LittleEndian>()?,
-    })
+    let parent = MetadataToken(c.read_u32::<LittleEndian>()?);
+    let name = c.read_u32::<LittleEndian>()?;
+    let signature = c.read_u32::<LittleEndian>()?;
+    let flags = c.read_u16::<LittleEndian>()?;
+    let _ = c.read_u16::<LittleEndian>()?; // padding
+    if flags & !METHOD_REF_FLAG_HAS_RECEIVER != 0 {
+        return Err(DecodeError::InvalidMethodRefFlags(flags));
+    }
+    Ok(MethodRefRow { parent, name, signature, flags })
 }
 
 fn read_param_def(c: &mut Cursor<&[u8]>) -> Result<ParamDefRow, DecodeError> {

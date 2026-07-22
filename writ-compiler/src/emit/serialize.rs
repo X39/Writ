@@ -164,6 +164,7 @@ pub fn translate(
             parent: WmToken(mr.parent.0),
             name: mr.name,
             signature: mr.signature,
+            flags: mr.flags,
         });
     }
 

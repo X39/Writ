@@ -1,7 +1,7 @@
 use writ_module::heap;
 use writ_module::instruction::Instruction;
 use writ_module::module::{MethodBody, Module};
-use writ_module::tables::TypeDefKind;
+use writ_module::tables::{TypeDefKind, METHOD_REF_FLAG_HAS_RECEIVER};
 use writ_module::{FORMAT_VERSION, MetadataToken, ModuleBuilder};
 
 #[test]
@@ -127,6 +127,30 @@ fn test_builder_round_trip_through_serialization() {
     let bytes2 = module2.to_bytes().expect("second to_bytes should succeed");
 
     assert_eq!(bytes1, bytes2, "Builder-produced module round-trip failed");
+}
+
+#[test]
+fn method_ref_receiver_abi_is_part_of_identity_and_round_trips() {
+    let mut builder = ModuleBuilder::new("method_ref_abi");
+    let scope = builder.add_module_ref("dependency", "1.0.0");
+    let parent = builder.add_type_ref(scope, "Utility", "");
+    let signature = [0, 0x01];
+
+    let instance = builder.add_method_ref_with_flags(
+        parent,
+        "identity",
+        &signature,
+        METHOD_REF_FLAG_HAS_RECEIVER,
+    );
+    let static_method = builder.add_method_ref_with_flags(parent, "identity", &signature, 0);
+    assert_ne!(instance, static_method, "receiver ABI distinguishes MethodRef rows");
+
+    let bytes = builder.build().to_bytes().unwrap();
+    let decoded = Module::from_bytes(&bytes).unwrap();
+    assert_eq!(decoded.method_refs.len(), 2);
+    assert_eq!(decoded.method_refs[0].flags, METHOD_REF_FLAG_HAS_RECEIVER);
+    assert_eq!(decoded.method_refs[1].flags, 0);
+    assert_eq!(decoded.to_bytes().unwrap(), bytes);
 }
 
 #[test]

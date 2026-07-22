@@ -4,7 +4,7 @@ use writ_module::instruction::Instruction;
 use writ_module::module::{DebugLocal, MethodBody, Module};
 use writ_module::signature::{encode_type_signature, TypeSignature};
 use writ_module::tables::*;
-use writ_module::MetadataToken;
+use writ_module::{MetadataToken, ModuleBuilder};
 
 /// Assert write -> read -> write produces identical bytes.
 fn assert_round_trip(module: &Module) {
@@ -276,21 +276,44 @@ fn test_class_typedef_round_trip() {
 
 #[test]
 fn test_format_version_rejection() {
-    // Build a valid v7 module, then patch the format_version bytes to v6.
+    // Build a valid v8 module, then patch the format_version bytes to the
+    // stale v7 ABI, whose MethodRef rows do not contain receiver flags.
     let module = Module::new();
     let mut bytes = module.to_bytes().expect("to_bytes should succeed");
 
     // format_version is at bytes 4-5 (little-endian u16)
-    bytes[4] = 0x06;
+    bytes[4] = 0x07;
     bytes[5] = 0x00;
 
     let result = Module::from_bytes(&bytes);
     assert!(result.is_err());
     match result.unwrap_err() {
         DecodeError::UnsupportedVersion(v) => {
-            assert_eq!(v, 6, "Expected UnsupportedVersion(6)");
+            assert_eq!(v, 7, "Expected UnsupportedVersion(7)");
         }
         other => panic!("Expected UnsupportedVersion, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_reserved_methodref_flags_rejected_during_decode() {
+    let mut builder = ModuleBuilder::new("invalid_methodref_flags");
+    let scope = builder.add_module_ref("dependency", "1.0.0");
+    let parent = builder.add_type_ref(scope, "Utility", "");
+    builder.add_method_ref(parent, "identity", &[0, 0]);
+    let mut bytes = builder.build().to_bytes().unwrap();
+
+    let directory_entry = 32 + TableId::MethodRef.as_u8() as usize * 8;
+    let row_offset = u32::from_le_bytes(
+        bytes[directory_entry..directory_entry + 4]
+            .try_into()
+            .unwrap(),
+    ) as usize;
+    bytes[row_offset + 12..row_offset + 14].copy_from_slice(&0x8000u16.to_le_bytes());
+
+    match Module::from_bytes(&bytes) {
+        Err(DecodeError::InvalidMethodRefFlags(0x8000)) => {}
+        other => panic!("expected InvalidMethodRefFlags(0x8000), got {other:?}"),
     }
 }
 

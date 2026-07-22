@@ -47,6 +47,9 @@ pub enum DecodeError {
     #[error("invalid TypeDef kind: {0}")]
     InvalidTypeDefKind(u8),
 
+    #[error("invalid MethodRef flags: 0x{0:04X}")]
+    InvalidMethodRefFlags(u16),
+
     #[error("invalid attribute tag: 0x{0:02X}")]
     InvalidAttrTag(u8),
 }

@@ -297,6 +297,16 @@ impl Domain {
 
         // ── MethodRef resolution ──────────────────────────────────
         for (ref_idx, method_ref) in src_module.method_refs.iter().enumerate() {
+            let unknown_flags =
+                method_ref.flags & !writ_module::tables::METHOD_REF_FLAG_HAS_RECEIVER;
+            if unknown_flags != 0 {
+                return Err(RuntimeError::ExecutionError(format!(
+                    "invalid MethodRef flags: 0x{:04X}",
+                    method_ref.flags
+                )));
+            }
+            let has_receiver =
+                method_ref.flags & writ_module::tables::METHOD_REF_FLAG_HAS_RECEIVER != 0;
             let parent = self.resolve_method_parent(src_idx, method_ref.parent)?;
             let method_name = read_string(&src_module.string_heap, method_ref.name)
                 .map_err(|_| RuntimeError::ExecutionError("invalid MethodRef name".into()))?;
@@ -306,8 +316,13 @@ impl Domain {
                 })?;
             let signature = writ_module::signature::decode_method_signature(signature_blob)
                 .map_err(|_| RuntimeError::ExecutionError("invalid MethodRef signature".into()))?;
-            let candidate =
-                self.resolve_method_candidate(&parent, src_idx, method_name, &signature)?;
+            let candidate = self.resolve_method_candidate(
+                &parent,
+                src_idx,
+                method_name,
+                &signature,
+                has_receiver,
+            )?;
             resolved.methods.insert(
                 ref_idx as u32,
                 ResolvedMethod {
@@ -465,6 +480,7 @@ impl Domain {
         reference_module_idx: usize,
         method_name: &str,
         reference_signature: &(Vec<TypeSignature>, TypeSignature),
+        reference_has_receiver: bool,
     ) -> Result<MethodCandidate, RuntimeError> {
         let mut candidates = Vec::new();
         match parent {
@@ -479,6 +495,7 @@ impl Domain {
                     reference_module_idx,
                     method_name,
                     reference_signature,
+                    reference_has_receiver,
                     &mut candidates,
                 );
             }
@@ -498,6 +515,7 @@ impl Domain {
                     reference_module_idx,
                     method_name,
                     reference_signature,
+                    reference_has_receiver,
                     &mut candidates,
                 );
                 for (impl_module_idx, loaded) in self.modules.iter().enumerate() {
@@ -521,6 +539,7 @@ impl Domain {
                             reference_module_idx,
                             method_name,
                             reference_signature,
+                            reference_has_receiver,
                             &mut candidates,
                         );
                     }
@@ -569,11 +588,15 @@ impl Domain {
                             reference_module_idx,
                             method_name,
                             reference_signature,
+                            reference_has_receiver,
                             &mut candidates,
                         );
                     }
                 }
             }
+        }
+        if candidates.iter().any(|candidate| candidate.inherent) {
+            candidates.retain(|candidate| candidate.inherent);
         }
         if let Some(max_specificity) = candidates
             .iter()
@@ -581,9 +604,6 @@ impl Domain {
             .max()
         {
             candidates.retain(|candidate| candidate.specificity == max_specificity);
-        }
-        if candidates.iter().any(|candidate| candidate.inherent) {
-            candidates.retain(|candidate| candidate.inherent);
         }
         match candidates.as_slice() {
             [candidate] => Ok(*candidate),
@@ -611,6 +631,7 @@ impl Domain {
         reference_module_idx: usize,
         method_name: &str,
         reference_signature: &(Vec<TypeSignature>, TypeSignature),
+        reference_has_receiver: bool,
         candidates: &mut Vec<MethodCandidate>,
     ) {
         let module = &self.modules[module_idx].module;
@@ -618,7 +639,10 @@ impl Domain {
             let Some(method) = module.method_defs.get(method_idx) else {
                 continue;
             };
-            if read_string(&module.string_heap, method.name).ok() != Some(method_name)
+            let definition_has_receiver = !method.owner.is_null()
+                && method.flags & writ_module::tables::METHOD_FLAG_STATIC == 0;
+            if definition_has_receiver != reference_has_receiver
+                || read_string(&module.string_heap, method.name).ok() != Some(method_name)
                 || !self.method_signature_matches(
                     pattern_parent,
                     actual_parent,
@@ -1065,6 +1089,133 @@ mod tests {
             resolved[&1].method_idx,
             bool_method.row_index().unwrap() as usize - 1
         );
+    }
+
+    #[test]
+    fn methodref_receiver_abi_selects_static_and_instance_definitions() {
+        use writ_module::tables::{METHOD_FLAG_STATIC, METHOD_REF_FLAG_HAS_RECEIVER};
+
+        let signature = void_signature();
+        let mut library = ModuleBuilder::new("receiver-library");
+        let utility = library.add_type_def("Utility", "lib", TypeDefKind::Class, 0);
+        let implementation = library.add_impl_def(utility, MetadataToken::NULL);
+        let instance = library.add_impl_method(
+            implementation,
+            "identity",
+            &signature,
+            0,
+            1,
+            empty_body(),
+        );
+        let static_method = library.add_impl_method(
+            implementation,
+            "identity",
+            &signature,
+            METHOD_FLAG_STATIC,
+            0,
+            empty_body(),
+        );
+
+        let mut user = ModuleBuilder::new("receiver-user");
+        let library_ref = user.add_module_ref("receiver-library", "1.0.0");
+        let utility_ref = user.add_type_ref(library_ref, "Utility", "lib");
+        user.add_method_ref_with_flags(
+            utility_ref,
+            "identity",
+            &signature,
+            METHOD_REF_FLAG_HAS_RECEIVER,
+        );
+        user.add_method_ref_with_flags(utility_ref, "identity", &signature, 0);
+
+        let mut domain = Domain::new();
+        domain.add_module(library.build()).unwrap();
+        domain.add_module(user.build()).unwrap();
+        domain.resolve_refs().unwrap();
+        let resolved = &domain.modules[1].resolved_refs.methods;
+        assert_eq!(
+            resolved[&0].method_idx,
+            instance.row_index().unwrap() as usize - 1
+        );
+        assert_eq!(
+            resolved[&1].method_idx,
+            static_method.row_index().unwrap() as usize - 1
+        );
+    }
+
+    #[test]
+    fn stale_static_methodref_does_not_bind_instance_definition() {
+        let signature = void_signature();
+        let mut library = ModuleBuilder::new("receiver-library");
+        let utility = library.add_type_def("Utility", "lib", TypeDefKind::Class, 0);
+        let implementation = library.add_impl_def(utility, MetadataToken::NULL);
+        library.add_impl_method(
+            implementation,
+            "identity",
+            &signature,
+            0,
+            1,
+            empty_body(),
+        );
+
+        let mut user = ModuleBuilder::new("receiver-user");
+        let library_ref = user.add_module_ref("receiver-library", "1.0.0");
+        let utility_ref = user.add_type_ref(library_ref, "Utility", "lib");
+        user.add_method_ref_with_flags(utility_ref, "identity", &signature, 0);
+
+        let mut domain = Domain::new();
+        domain.add_module(library.build()).unwrap();
+        domain.add_module(user.build()).unwrap();
+        let error = domain.resolve_refs().unwrap_err().to_string();
+        assert!(error.contains("unresolved method reference: 'identity'"), "{error}");
+    }
+
+    #[test]
+    fn equally_specific_inherent_methodrefs_remain_ambiguous() {
+        let signature = void_signature();
+        let mut library = ModuleBuilder::new("ambiguous-library");
+        let utility = library.add_type_def("Utility", "lib", TypeDefKind::Class, 0);
+        for _ in 0..2 {
+            let implementation = library.add_impl_def(utility, MetadataToken::NULL);
+            library.add_impl_method(
+                implementation,
+                "identity",
+                &signature,
+                0,
+                1,
+                empty_body(),
+            );
+        }
+
+        let mut user = ModuleBuilder::new("ambiguous-user");
+        let library_ref = user.add_module_ref("ambiguous-library", "1.0.0");
+        let utility_ref = user.add_type_ref(library_ref, "Utility", "lib");
+        user.add_method_ref(utility_ref, "identity", &signature);
+
+        let mut domain = Domain::new();
+        domain.add_module(library.build()).unwrap();
+        domain.add_module(user.build()).unwrap();
+        let error = domain.resolve_refs().unwrap_err().to_string();
+        assert!(
+            error.contains("ambiguous method reference: 'identity' matched 2 definitions"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn reserved_methodref_flags_fail_closed() {
+        let signature = void_signature();
+        let mut library = ModuleBuilder::new("flag-library");
+        library.add_type_def("Utility", "lib", TypeDefKind::Class, 0);
+        let mut user = ModuleBuilder::new("receiver-user");
+        let library_ref = user.add_module_ref("flag-library", "1.0.0");
+        let utility_ref = user.add_type_ref(library_ref, "Utility", "lib");
+        user.add_method_ref_with_flags(utility_ref, "identity", &signature, 1 << 15);
+
+        let mut domain = Domain::new();
+        domain.add_module(library.build()).unwrap();
+        domain.add_module(user.build()).unwrap();
+        let error = domain.resolve_refs().unwrap_err().to_string();
+        assert!(error.contains("invalid MethodRef flags: 0x8000"), "{error}");
     }
 
     #[test]

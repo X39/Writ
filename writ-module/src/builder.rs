@@ -144,6 +144,7 @@ struct MethodRefBuilder {
     parent: MetadataToken,
     name: String,
     signature: Vec<u8>,
+    flags: u16,
 }
 
 // ── ModuleBuilder implementation ───────────────────────────────
@@ -436,12 +437,33 @@ impl ModuleBuilder {
         MetadataToken::new(TableId::FieldRef.as_u8(), idx)
     }
 
-    /// Add a cross-module method reference.
+    /// Add a cross-module instance-method reference.
+    ///
+    /// This compatibility helper defaults to an implicit receiver. Call
+    /// [`Self::add_method_ref_with_flags`] for static methods and top-level
+    /// functions, whose receiver flag must be clear.
     pub fn add_method_ref(&mut self, parent: MetadataToken, name: &str, signature: &[u8]) -> MetadataToken {
+        self.add_method_ref_with_flags(
+            parent,
+            name,
+            signature,
+            crate::tables::METHOD_REF_FLAG_HAS_RECEIVER,
+        )
+    }
+
+    /// Add a cross-module method reference with an explicit serialized ABI.
+    pub fn add_method_ref_with_flags(
+        &mut self,
+        parent: MetadataToken,
+        name: &str,
+        signature: &[u8],
+        flags: u16,
+    ) -> MetadataToken {
         if let Some(index) = self.method_refs.iter().position(|method_ref| {
             method_ref.parent == parent
                 && method_ref.name == name
                 && method_ref.signature == signature
+                && method_ref.flags == flags
         }) {
             return MetadataToken::new(TableId::MethodRef.as_u8(), (index + 1) as u32);
         }
@@ -450,6 +472,7 @@ impl ModuleBuilder {
             parent,
             name: name.to_string(),
             signature: signature.to_vec(),
+            flags,
         });
         MetadataToken::new(TableId::MethodRef.as_u8(), idx)
     }
@@ -580,6 +603,7 @@ impl ModuleBuilder {
                 parent: b.parent,
                 name: intern_str(&b.name),
                 signature: intern_blob(&b.signature),
+                flags: b.flags,
             }
         }).collect();
 

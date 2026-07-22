@@ -272,6 +272,7 @@ pub struct MethodRefRow {
     pub parent: MetadataToken,
     pub name: u32,      // string heap offset
     pub signature: u32, // blob heap offset
+    pub flags: u16,
 }
 
 /// Table 9: ParamDef — Method parameters.

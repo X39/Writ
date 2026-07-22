@@ -313,6 +313,8 @@ fn write_method_ref(out: &mut Vec<u8>, row: &MethodRefRow) -> Result<(), EncodeE
     out.write_u32::<LittleEndian>(row.parent.0)?;
     out.write_u32::<LittleEndian>(row.name)?;
     out.write_u32::<LittleEndian>(row.signature)?;
+    out.write_u16::<LittleEndian>(row.flags)?;
+    out.write_u16::<LittleEndian>(0)?; // padding to 16 bytes
     Ok(())
 }
 

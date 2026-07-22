@@ -245,13 +245,20 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
         }
 
         // ── Call dispatch (EMIT-09, EMIT-21, EMIT-27) ─────────────────────────
-        TypedExpr::Call { callee, ty, callee_def_id, .. } => {
+        TypedExpr::Call {
+            callee,
+            ty,
+            callee_def_id,
+            callee_has_receiver,
+            ..
+        } => {
             let callee_ty = callee.ty();
             let concrete_target = resolve_concrete_call_target(
                 emitter,
                 callee,
                 callee_ty,
                 *callee_def_id,
+                *callee_has_receiver,
             );
 
             // ── Built-in shortcut: Option/Result/Array methods ────────────────
@@ -421,20 +428,24 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
                 let method_idx = if let TypedExpr::Field { receiver, .. } = callee.as_ref() {
                     match emitter.interner.kind(receiver.ty()) {
                         TyKind::Struct(_) | TyKind::Class(_) | TyKind::Entity(_) => {
-                            concrete_target.map(|target| target.token).unwrap_or(0)
+                            concrete_target
+                                .expect("checked concrete method call has no non-null metadata target")
+                                .token
                         }
                         _ => {
                             maybe_def_id
                                 .and_then(|id| emitter.builder.token_for_def(id))
+                                .filter(|token| !token.is_null())
                                 .map(|t| t.0)
-                                .unwrap_or(0)
+                                .expect("checked direct call has no non-null metadata target")
                         }
                     }
                 } else {
                     maybe_def_id
                         .and_then(|id| emitter.builder.token_for_def(id))
+                        .filter(|token| !token.is_null())
                         .map(|t| t.0)
-                        .unwrap_or(0)
+                        .expect("checked direct call has no non-null metadata target")
                 };
 
                 match kind {
@@ -645,6 +656,7 @@ pub(crate) fn resolve_concrete_call_target(
     callee: &TypedExpr,
     checked_func_ty: Ty,
     callee_def_id: Option<crate::resolve::def_map::DefId>,
+    callee_has_receiver: Option<bool>,
 ) -> Option<ConcreteCallTarget> {
     use crate::emit::metadata::{MetadataToken, TableId};
 
@@ -655,11 +667,22 @@ pub(crate) fn resolve_concrete_call_target(
 
     match callee {
         TypedExpr::Field { receiver, field, .. } => {
+            let has_receiver = callee_has_receiver?;
             if !matches!(
                 emitter.interner.kind(receiver.ty()),
                 TyKind::Struct(_) | TyKind::Class(_) | TyKind::Entity(_) | TyKind::Enum(_)
             ) {
                 return None;
+            }
+            if let Some(token) = declared_token.filter(|token| {
+                !token.is_null()
+                    && matches!(token.table(), TableId::MethodDef | TableId::MethodRef)
+                    && emitter.builder.method_has_receiver(*token) == Some(has_receiver)
+            }) {
+                return Some(ConcreteCallTarget {
+                    token: token.0,
+                    prepend_receiver: has_receiver,
+                });
             }
             let signature = crate::emit::type_sig::encode_method_sig_for_fn_ty(
                 checked_func_ty,
@@ -680,21 +703,22 @@ pub(crate) fn resolve_concrete_call_target(
                 base_parent,
                 field,
                 &signature,
+                has_receiver,
             )?;
             let token_metadata = MetadataToken(token);
-            Some(ConcreteCallTarget {
+            (!token_metadata.is_null()).then_some(ConcreteCallTarget {
                 token,
-                prepend_receiver: emitter
-                    .builder
-                    .method_has_receiver(token_metadata)
-                    .unwrap_or(true),
+                prepend_receiver: has_receiver,
             })
         }
         _ => {
             let token = declared_token?;
-            matches!(token.table(), TableId::MethodDef | TableId::MethodRef).then_some(
-                ConcreteCallTarget { token: token.0, prepend_receiver: false },
-            )
+            (!token.is_null()
+                && matches!(token.table(), TableId::MethodDef | TableId::MethodRef))
+            .then_some(ConcreteCallTarget {
+                token: token.0,
+                prepend_receiver: false,
+            })
         }
     }
 }

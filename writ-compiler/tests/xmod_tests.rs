@@ -90,12 +90,16 @@ fn xmod_smoke_method_call() {
     );
 
     let user_module = writ_module::Module::from_bytes(&result.unwrap()).unwrap();
-    assert!(user_module.method_refs.iter().any(|method_ref| {
+    let method_ref = user_module.method_refs.iter().find(|method_ref| {
         method_ref.parent.table_id() == writ_module::tables::TableId::TypeRef.as_u8()
             && writ_module::heap::read_string(&user_module.string_heap, method_ref.name)
                 .unwrap_or("")
                 == "get"
-    }));
+    }).expect("get MethodRef");
+    assert_ne!(
+        method_ref.flags & writ_module::tables::METHOD_REF_FLAG_HAS_RECEIVER,
+        0,
+    );
 
     let method_index = user_module
         .method_defs
@@ -253,6 +257,7 @@ fn xmod_top_level_function_call() {
         method_ref.parent.table_id(),
         writ_module::tables::TableId::ModuleRef.as_u8()
     );
+    assert_eq!(method_ref.flags, 0, "top-level calls have no implicit receiver");
     let body = &user.method_bodies[user.top_level_method_indices()[0]];
     let mut cursor = std::io::Cursor::new(&body.code);
     assert!(std::iter::from_fn(|| {
@@ -1088,6 +1093,14 @@ fn xmod_static_methodref_does_not_prepend_qualified_receiver() {
         }
     "#, &[&library]).expect("qualified static library method should compile");
     let user = writ_module::Module::from_bytes(&user_bytes).unwrap();
+    let identity_ref = user.method_refs.iter().find(|method| {
+        writ_module::heap::read_string(&user.string_heap, method.name).ok()
+            == Some("identity")
+    }).expect("identity MethodRef");
+    assert_eq!(
+        identity_ref.flags & writ_module::tables::METHOD_REF_FLAG_HAS_RECEIVER,
+        0,
+    );
     let body = &user.method_bodies[user.top_level_method_indices()[0]];
     let mut cursor = std::io::Cursor::new(&body.code);
     let mut call = None;

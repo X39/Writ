@@ -183,8 +183,6 @@ pub struct ModuleBuilder {
     method_refs: Vec<MethodRefRow>,
     /// Compiler-only MethodRef origin metadata used for inherent preference.
     method_ref_inherent: Vec<bool>,
-    /// Whether each imported method uses an implicit instance receiver.
-    method_ref_has_receiver: Vec<bool>,
     param_defs: Vec<ParamDefEntry>,
     contract_defs: Vec<ContractDefRow>,
     contract_def_def_ids: Vec<Option<DefId>>,
@@ -259,7 +257,6 @@ impl ModuleBuilder {
             method_defs: Vec::new(),
             method_refs: Vec::new(),
             method_ref_inherent: Vec::new(),
-            method_ref_has_receiver: Vec::new(),
             param_defs: Vec::new(),
             contract_defs: Vec::new(),
             contract_def_def_ids: Vec::new(),
@@ -347,15 +344,18 @@ impl ModuleBuilder {
         inherent: bool,
         has_receiver: bool,
     ) -> usize {
+        let flags = if has_receiver {
+            writ_module::tables::METHOD_REF_FLAG_HAS_RECEIVER
+        } else {
+            0
+        };
         if let Some(index) = self.method_refs.iter().position(|method_ref| {
             method_ref.parent == parent
                 && self.string_heap.get_str(method_ref.name) == name
                 && writ_module::heap::read_blob(self.blob_heap.data(), method_ref.signature)
                     .is_ok_and(|existing| existing == signature)
+                && method_ref.flags == flags
         }) {
-            if inherent && !self.method_ref_inherent[index] {
-                self.method_ref_has_receiver[index] = has_receiver;
-            }
             self.method_ref_inherent[index] |= inherent;
             return index;
         }
@@ -366,9 +366,9 @@ impl ModuleBuilder {
             parent,
             name,
             signature,
+            flags,
         });
         self.method_ref_inherent.push(inherent);
-        self.method_ref_has_receiver.push(has_receiver);
         self.method_refs.len() - 1
     }
 
@@ -1110,19 +1110,24 @@ impl ModuleBuilder {
     /// Whether a finalized MethodDef token names an instance method with a receiver.
     pub fn methoddef_has_receiver(&self, token: MetadataToken) -> Option<bool> {
         self.method_has_receiver(token)
-        }
+    }
 
     /// Whether a MethodDef or MethodRef uses an implicit instance receiver.
     pub fn method_has_receiver(&self, token: MetadataToken) -> Option<bool> {
         match token.table() {
             TableId::MethodDef => {
-        let index = token.row().checked_sub(1)? as usize;
-        let method = self.method_defs.get(index)?;
-        Some(method.parent.is_some() && method.row.flags & (1 << 1) == 0)
-    }
+                let index = token.row().checked_sub(1)? as usize;
+                let method = self.method_defs.get(index)?;
+                Some(
+                    (method.parent.is_some() || method.impl_owner.is_some())
+                        && method.row.flags & writ_module::tables::METHOD_FLAG_STATIC == 0,
+                )
+            }
             TableId::MethodRef => {
                 let index = token.row().checked_sub(1)? as usize;
-                self.method_ref_has_receiver.get(index).copied()
+                self.method_refs.get(index).map(|method| {
+                    method.flags & writ_module::tables::METHOD_REF_FLAG_HAS_RECEIVER != 0
+                })
             }
             _ => None,
         }
@@ -1235,29 +1240,53 @@ impl ModuleBuilder {
         None
     }
 
-    /// Resolve a method by exact parent, name, and declaration signature.
-    /// The exact TypeSpec wins over the bare parent fallback. Within either
-    /// parent, inherent methods win and ambiguity fails closed.
+    /// Resolve a method by parent, name, and declaration signature using the
+    /// same policy as the checker: inherent methods win first, then the most
+    /// specific matching specialization, and remaining ambiguity fails closed.
     pub fn method_token_by_parent_name_and_signature(
         &self,
         exact_parent: MetadataToken,
         base_parent: Option<MetadataToken>,
         method_name: &str,
         signature: &[u8],
+        has_receiver: bool,
     ) -> Option<u32> {
-        let (has_exact, exact) =
-            self.method_candidates_for_parent(exact_parent, method_name, signature);
-        if has_exact {
-            return exact;
+        let mut candidates = self.method_candidates_for_parent(
+            exact_parent,
+            method_name,
+            signature,
+            has_receiver,
+        );
+        candidates.extend(self.method_pattern_candidates(
+            exact_parent,
+            method_name,
+            signature,
+            has_receiver,
+        ));
+        if let Some(base_parent) = base_parent.filter(|parent| *parent != exact_parent) {
+            candidates.extend(self.method_candidates_for_parent(
+                base_parent,
+                method_name,
+                signature,
+                has_receiver,
+            ));
         }
-        let (has_pattern, pattern) =
-            self.method_pattern_candidates(exact_parent, method_name, signature);
-        if has_pattern {
-            return pattern;
+        let mut deduplicated = Vec::new();
+        for candidate in candidates {
+            if !deduplicated
+                .iter()
+                .any(|(token, _, _)| *token == candidate.0)
+            {
+                deduplicated.push(candidate);
+            }
         }
-        let base_parent = base_parent.filter(|parent| *parent != exact_parent)?;
-        self.method_candidates_for_parent(base_parent, method_name, signature)
-            .1
+        if deduplicated.iter().any(|(_, inherent, _)| *inherent) {
+            deduplicated.retain(|(_, inherent, _)| *inherent);
+        }
+        if let Some(max_specificity) = deduplicated.iter().map(|(_, _, score)| *score).max() {
+            deduplicated.retain(|(_, _, score)| *score == max_specificity);
+        }
+        (deduplicated.len() == 1).then(|| deduplicated[0].0)
     }
 
     fn method_pattern_candidates(
@@ -1265,12 +1294,14 @@ impl ModuleBuilder {
         actual_parent: MetadataToken,
         method_name: &str,
         signature: &[u8],
-    ) -> (bool, Option<u32>) {
+        has_receiver: bool,
+    ) -> Vec<(u32, bool, usize)> {
         let Some(_actual) = self.type_spec_signature(actual_parent) else {
-            return (false, None);
+            return Vec::new();
         };
         let mut candidates = Vec::new();
         for (index, method) in self.method_defs.iter().enumerate() {
+            let token = MetadataToken::new(TableId::MethodDef, (index + 1) as u32);
             let (parent, inherent) = if let Some(owner) = method.impl_owner {
                 let implementation = &self.impl_defs[owner.0];
                 (
@@ -1283,7 +1314,8 @@ impl ModuleBuilder {
             let Some(pattern) = self.type_spec_signature(parent) else {
                 continue;
             };
-            if self.string_heap.get_str(method.row.name) != method_name
+            if self.method_has_receiver(token) != Some(has_receiver)
+                || self.string_heap.get_str(method.row.name) != method_name
                 || !self.method_signature_pattern_matches(
                     parent,
                     actual_parent,
@@ -1294,16 +1326,18 @@ impl ModuleBuilder {
                 continue;
             }
             candidates.push((
-                MetadataToken::new(TableId::MethodDef, (index + 1) as u32).0,
+                token.0,
                 inherent,
                 type_signature_specificity(&pattern),
             ));
         }
         for (index, method) in self.method_refs.iter().enumerate() {
+            let token = MetadataToken::new(TableId::MethodRef, (index + 1) as u32);
             let Some(pattern) = self.type_spec_signature(method.parent) else {
                 continue;
             };
-            if self.string_heap.get_str(method.name) != method_name
+            if self.method_has_receiver(token) != Some(has_receiver)
+                || self.string_heap.get_str(method.name) != method_name
                 || !self.method_signature_pattern_matches(
                     method.parent,
                     actual_parent,
@@ -1314,21 +1348,12 @@ impl ModuleBuilder {
                 continue;
             }
             candidates.push((
-                MetadataToken::new(TableId::MethodRef, (index + 1) as u32).0,
+                token.0,
                 self.method_ref_inherent[index],
                 type_signature_specificity(&pattern),
             ));
         }
-        if candidates.is_empty() {
-            return (false, None);
-        }
-        let max_specificity = candidates.iter().map(|(_, _, score)| *score).max().unwrap();
-        candidates.retain(|(_, _, score)| *score == max_specificity);
-        if candidates.iter().any(|(_, inherent, _)| *inherent) {
-            candidates.retain(|(_, inherent, _)| *inherent);
-        }
-        let selection = (candidates.len() == 1).then_some(candidates[0].0);
-        (true, selection)
+        candidates
     }
 
     fn type_spec_signature(
@@ -1396,9 +1421,11 @@ impl ModuleBuilder {
         parent: MetadataToken,
         method_name: &str,
         signature: &[u8],
-    ) -> (bool, Option<u32>) {
+        has_receiver: bool,
+    ) -> Vec<(u32, bool, usize)> {
         let mut candidates = Vec::new();
         for (index, method) in self.method_defs.iter().enumerate() {
+            let token = MetadataToken::new(TableId::MethodDef, (index + 1) as u32);
             let (method_parent, inherent) = if let Some(owner) = method.impl_owner {
                 let implementation = &self.impl_defs[owner.0];
                 (
@@ -1413,7 +1440,8 @@ impl ModuleBuilder {
             } else {
                 continue;
             };
-            if method_parent != parent
+            if self.method_has_receiver(token) != Some(has_receiver)
+                || method_parent != parent
                 || self.string_heap.get_str(method.row.name) != method_name
                 || !self.method_signature_pattern_matches(
                     method_parent,
@@ -1425,12 +1453,18 @@ impl ModuleBuilder {
                 continue;
             }
             candidates.push((
-                MetadataToken::new(TableId::MethodDef, (index + 1) as u32).0,
+                token.0,
                 inherent,
+                self.type_spec_signature(method_parent)
+                    .as_ref()
+                    .map(type_signature_specificity)
+                    .unwrap_or(0),
             ));
         }
         for (index, method) in self.method_refs.iter().enumerate() {
-            if method.parent != parent
+            let token = MetadataToken::new(TableId::MethodRef, (index + 1) as u32);
+            if self.method_has_receiver(token) != Some(has_receiver)
+                || method.parent != parent
                 || self.string_heap.get_str(method.name) != method_name
                 || !self.method_signature_pattern_matches(
                     method.parent,
@@ -1442,19 +1476,15 @@ impl ModuleBuilder {
                 continue;
             }
             candidates.push((
-                MetadataToken::new(TableId::MethodRef, (index + 1) as u32).0,
+                token.0,
                 self.method_ref_inherent[index],
+                self.type_spec_signature(method.parent)
+                    .as_ref()
+                    .map(type_signature_specificity)
+                    .unwrap_or(0),
             ));
         }
-        if candidates.is_empty() {
-            return (false, None);
-        }
-        if candidates.iter().any(|(_, inherent)| *inherent) {
-            candidates.retain(|(_, inherent)| *inherent);
-        }
-        candidates.dedup_by_key(|(token, _)| *token);
-        let selection = (candidates.len() == 1).then_some(candidates[0].0);
-        (true, selection)
+        candidates
     }
 
     /// Look up the MethodDef token by parent type DefId and method name.
@@ -1800,6 +1830,55 @@ mod tests {
         assert_eq!(
             builder.type_spec_token_for_encoded_ty(resolved, &interner),
             Some(token)
+        );
+    }
+
+    #[test]
+    fn method_lookup_filters_same_identity_by_receiver_abi() {
+        let mut builder = ModuleBuilder::new();
+        let module_ref = builder.add_module_ref("dependency", "1.0.0");
+        let type_ref = builder.add_type_ref(module_ref, "Utility", "");
+        let parent = MetadataToken::new(TableId::TypeRef, (type_ref + 1) as u32);
+        let signature = writ_module::signature::encode_method_signature(
+            &[writ_module::signature::TypeSignature::Int],
+            &writ_module::signature::TypeSignature::Int,
+        )
+        .unwrap();
+        let instance = builder.add_method_ref_with_origin(
+            parent,
+            "identity",
+            &signature,
+            true,
+            true,
+        );
+        let static_method = builder.add_method_ref_with_origin(
+            parent,
+            "identity",
+            &signature,
+            true,
+            false,
+        );
+
+        assert_ne!(instance, static_method);
+        assert_eq!(
+            builder.method_token_by_parent_name_and_signature(
+                parent,
+                None,
+                "identity",
+                &signature,
+                true,
+            ),
+            Some(MetadataToken::new(TableId::MethodRef, (instance + 1) as u32).0)
+        );
+        assert_eq!(
+            builder.method_token_by_parent_name_and_signature(
+                parent,
+                None,
+                "identity",
+                &signature,
+                false,
+            ),
+            Some(MetadataToken::new(TableId::MethodRef, (static_method + 1) as u32).0)
         );
     }
 }

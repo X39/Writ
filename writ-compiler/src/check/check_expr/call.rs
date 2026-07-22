@@ -47,6 +47,7 @@ pub(super) fn check_call(
                     }),
                     args: typed_args,
                     callee_def_id: None,
+                    callee_has_receiver: None,
                 };
             } else {
                 let err_ty = ctx.emit_error(TypeError::ArityMismatch {
@@ -67,6 +68,7 @@ pub(super) fn check_call(
                     }),
                     args: typed_args,
                     callee_def_id: None,
+                    callee_has_receiver: None,
                 };
             }
         }
@@ -151,6 +153,7 @@ pub(super) fn check_call(
             callee: Box::new(typed_callee),
             args: typed_args,
             callee_def_id: None,
+            callee_has_receiver: None,
         };
     }
 
@@ -175,6 +178,7 @@ pub(super) fn check_call(
                     callee: Box::new(typed_callee),
                     args: typed_args,
                     callee_def_id: None,
+                    callee_has_receiver: None,
                 };
             }
 
@@ -198,6 +202,7 @@ pub(super) fn check_call(
                 callee: Box::new(typed_callee),
                 args: typed_args,
                 callee_def_id: None,
+                callee_has_receiver: None,
             }
         }
         _ => {
@@ -214,6 +219,7 @@ pub(super) fn check_call(
                 callee: Box::new(typed_callee),
                 args: typed_args,
                 callee_def_id: None,
+                callee_has_receiver: None,
             }
         }
     }
@@ -384,6 +390,7 @@ fn resolve_overloaded_method_call(
             }),
             args: typed_args,
             callee_def_id: None,
+            callee_has_receiver: None,
         });
     }
 
@@ -407,6 +414,7 @@ fn resolve_overloaded_method_call(
                 }),
                 args: typed_args,
                 callee_def_id: None,
+                callee_has_receiver: None,
             });
         }
     };
@@ -468,6 +476,7 @@ fn resolve_overloaded_method_call(
         }),
         args: typed_args,
         callee_def_id: None,
+        callee_has_receiver: Some(signature.self_param.is_some()),
     })
 }
 
@@ -595,6 +604,7 @@ fn resolve_overloaded_call(
                 }),
                 args: typed_args,
                 callee_def_id: None,
+                callee_has_receiver: None,
             })
         }
         1 => {
@@ -633,6 +643,7 @@ fn resolve_overloaded_call(
                 }),
                 args: typed_args,
                 callee_def_id: Some(def_id),
+                callee_has_receiver: Some(false),
             })
         }
         _ => {
@@ -653,6 +664,7 @@ fn resolve_overloaded_call(
                 }),
                 args: typed_args,
                 callee_def_id: None,
+                callee_has_receiver: None,
             })
         }
     }
@@ -713,6 +725,7 @@ pub(super) fn check_call_with_sig(
             }),
             args: typed_args,
             callee_def_id: None,
+            callee_has_receiver: None,
         };
     }
 
@@ -746,6 +759,7 @@ pub(super) fn check_call_with_sig(
         }),
         args: typed_args,
         callee_def_id: Some(def_id),
+        callee_has_receiver: Some(false),
     }
 }
 
@@ -869,6 +883,7 @@ pub(super) fn check_generic_call(
                 callee: Box::new(callee_typed),
                 args: vec![],
                 callee_def_id: None,
+                callee_has_receiver: None,
             };
         }
         // If the pair is unsupported, fall through to the error path below
@@ -898,6 +913,7 @@ pub(super) fn check_generic_call(
                 callee: Box::new(callee_typed),
                 args: vec![],
                 callee_def_id: None,
+                callee_has_receiver: None,
             };
         }
     }
@@ -947,6 +963,7 @@ pub(super) fn check_generic_call(
                         }),
                         args: typed_args,
                         callee_def_id: None,
+                        callee_has_receiver: None,
                     };
                 }
 
@@ -972,6 +989,7 @@ pub(super) fn check_generic_call(
                     }),
                     args: typed_args,
                     callee_def_id: Some(def_id),
+                    callee_has_receiver: Some(false),
                 };
             }
 
@@ -983,5 +1001,6 @@ pub(super) fn check_generic_call(
         callee: Box::new(check_expr(ctx, callee)),
         args: typed_args,
         callee_def_id: None,
+        callee_has_receiver: None,
     }
 }

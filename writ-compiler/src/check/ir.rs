@@ -51,6 +51,10 @@ pub enum TypedExpr {
         callee: Box<TypedExpr>,
         args: Vec<TypedExpr>,
         callee_def_id: Option<DefId>,
+        /// Selected direct-call ABI for a concrete member call. `Some(true)`
+        /// means the target consumes an implicit receiver; `Some(false)` means
+        /// it is static. Other call forms leave this unset.
+        callee_has_receiver: Option<bool>,
     },
     Field {
         ty: Ty,

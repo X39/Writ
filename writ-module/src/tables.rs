@@ -15,6 +15,10 @@ pub const FIELD_FLAG_READONLY: u16 = 1 << 3;
 
 /// MethodDef flag: the method is visible outside its declaring scope.
 pub const METHOD_FLAG_PUBLIC: u16 = 1 << 0;
+/// MethodDef flag: the method has no implicit instance receiver.
+pub const METHOD_FLAG_STATIC: u16 = 1 << 1;
+/// MethodRef flag: the referenced method uses an implicit instance receiver.
+pub const METHOD_REF_FLAG_HAS_RECEIVER: u16 = 1 << 0;
 
 /// TypeDef kind discriminant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -198,6 +202,7 @@ pub struct MethodRefRow {
     pub parent: MetadataToken,
     pub name: u32,      // string heap offset
     pub signature: u32, // blob heap offset
+    pub flags: u16,
 }
 
 /// Table 9: Method parameters.

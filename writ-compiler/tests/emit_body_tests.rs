@@ -685,6 +685,7 @@ fn test_call_direct_free_function() {
             TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(42) },
         ],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let r_dst = emit_call(&mut emitter, &call_expr, fn_def_id, CallKind::Direct);
@@ -716,6 +717,7 @@ fn test_call_extern() {
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_call(&mut emitter, &call_expr, extern_def_id, CallKind::Extern);
@@ -748,6 +750,7 @@ fn test_call_indirect_delegate() {
             TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(10) },
         ],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_call_indirect(&mut emitter, &call_expr, 0);
@@ -778,6 +781,7 @@ fn test_call_argument_packing_consecutive() {
             TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(3) },
         ],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_call(&mut emitter, &call_expr, fn_def_id, CallKind::Direct);
@@ -847,6 +851,7 @@ fn test_call_virt_specialized_to_call_for_concrete_receiver() {
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
     // Concrete receiver -> Direct call (EMIT-27 specialization)
     emit_call(&mut emitter, &call_expr, method_def_id, CallKind::Direct);
@@ -902,6 +907,7 @@ fn test_emit_expr_known_direct_instance_call_includes_self() {
             value: TypedLiteral::Int(7),
         }],
         callee_def_id: Some(method_def_id),
+        callee_has_receiver: Some(true),
     };
 
     emit_expr(&mut emitter, &call_expr);
@@ -1193,6 +1199,7 @@ fn test_entity_get_or_create_emits_instruction() {
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &call_expr);
@@ -1234,6 +1241,7 @@ fn test_entity_find_all_emits_instruction() {
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &call_expr);
@@ -1275,6 +1283,7 @@ fn test_entity_destroy_emits_instruction() {
             TypedExpr::Var { ty: ty_entity, span: dummy_span(), name: "e".to_string() },
         ],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &call_expr);
@@ -1316,6 +1325,7 @@ fn test_entity_is_alive_emits_instruction() {
             TypedExpr::Var { ty: ty_entity, span: dummy_span(), name: "e".to_string() },
         ],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &call_expr);
@@ -1481,6 +1491,7 @@ fn test_array_len_call_emits_array_len() {
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &len_call);
@@ -1548,6 +1559,7 @@ fn test_option_some_construction() {
             TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(42) },
         ],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &some_call);
@@ -1574,6 +1586,7 @@ fn test_option_none_construction() {
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &none_call);
@@ -1609,6 +1622,7 @@ fn test_option_is_none_method() {
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &is_none_call);
@@ -1643,6 +1657,7 @@ fn test_option_unwrap_method() {
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &unwrap_call);
@@ -1671,6 +1686,7 @@ fn test_result_ok_construction() {
             TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(42) },
         ],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &ok_call);
@@ -1706,6 +1722,7 @@ fn test_result_is_err_method() {
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &is_err_call);
@@ -1827,6 +1844,7 @@ fn test_spawn_task_emits_spawn_task_instruction() {
             }),
             args: vec![],
             callee_def_id: None,
+            callee_has_receiver: None,
         }),
     };
 
@@ -1857,6 +1875,7 @@ fn test_spawn_detached_emits_spawn_detached_instruction() {
             }),
             args: vec![],
             callee_def_id: None,
+            callee_has_receiver: None,
         }),
     };
 
@@ -2196,6 +2215,7 @@ fn test_type_conversion_int_to_float() {
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &call_expr);
@@ -2227,6 +2247,7 @@ fn test_type_conversion_int_to_string() {
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &call_expr);
@@ -2258,6 +2279,7 @@ fn test_type_conversion_float_to_string() {
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &call_expr);
@@ -2289,6 +2311,7 @@ fn test_type_conversion_bool_to_string() {
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &call_expr);
@@ -2340,6 +2363,7 @@ fn test_string_len_emits_str_len() {
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &call_expr);
@@ -3533,7 +3557,8 @@ fn test_desugared_return_call_emits_call_then_ret() {
     // TypedExpr::Return is used by desugaring and is never a dialogue transition.
     let mut interner = make_interner();
     let ty_int = interner.int();
-    let builder = ModuleBuilder::new();
+    let (_, fn_def_id) = make_def_id();
+    let builder = make_builder_with_fn(fn_def_id);
     let mut emitter = make_emitter(&builder, &interner);
 
     // TypedExpr::Return { value: Some(TypedExpr::Call { ... }) }
@@ -3551,7 +3576,8 @@ fn test_desugared_return_call_emits_call_then_ret() {
             args: vec![
                 TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(42) },
             ],
-            callee_def_id: None,
+            callee_def_id: Some(fn_def_id),
+            callee_has_receiver: Some(false),
         })),
     };
 
@@ -3585,6 +3611,7 @@ fn test_dialogue_transition_emits_tail_call() {
             }),
             args: vec![],
             callee_def_id: Some(fn_def_id),
+            callee_has_receiver: None,
         },
     };
 
@@ -3616,6 +3643,7 @@ fn test_ordinary_return_call_emits_call_then_ret() {
             }),
             args: vec![],
             callee_def_id: Some(fn_def_id),
+            callee_has_receiver: None,
         }),
     };
 
@@ -3833,6 +3861,7 @@ fn test_call_virt_emits_non_zero_contract_idx_when_registered() {
             TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(42) },
         ],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     emit_call(&mut emitter, &call_expr, method_def_id, CallKind::Virtual { slot: 0 });
@@ -3894,6 +3923,7 @@ fn test_call_virt_emits_zero_contract_idx_when_no_mapping() {
             TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(1) },
         ],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     emit_call(&mut emitter, &call_expr, method_def_id, CallKind::Virtual { slot: 0 });
@@ -4187,6 +4217,7 @@ fn test_call_with_callee_def_id_emits_correct_method_idx() {
         }),
         args: vec![],
         callee_def_id: Some(fn_def_id),
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &call_expr);
@@ -4232,6 +4263,7 @@ fn test_call_virt_via_emit_expr_uses_callee_def_id_for_contract_idx() {
         }),
         args: vec![],
         callee_def_id: Some(method_def_id),
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &call_expr);
@@ -4264,14 +4296,15 @@ fn test_call_virt_via_emit_expr_uses_callee_def_id_for_contract_idx() {
 /// MC-01: When callee_def_id=None (legacy path / error path), CALL should emit
 /// method_idx=0 as backward-compatible fallback.
 #[test]
-fn test_call_with_none_callee_def_id_emits_zero_method_idx() {
+fn test_call_with_none_callee_def_id_fails_before_emitting_null_target() {
     let mut interner = make_interner();
     let ty_int = interner.int();
     let (_, fn_def_id) = make_def_id();
     let builder = make_builder_with_fn(fn_def_id);
     let mut emitter = make_emitter(&builder, &interner);
 
-    // callee_def_id: None — legacy/error path should fall back to method_idx=0
+    // This malformed checked IR has no declaration identity. Codegen must fail
+    // closed instead of encoding the null metadata token as a CALL target.
     let call_expr = TypedExpr::Call {
         ty: ty_int,
         span: dummy_span(),
@@ -4282,19 +4315,20 @@ fn test_call_with_none_callee_def_id_emits_zero_method_idx() {
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
-    let _r = emit_expr(&mut emitter, &call_expr);
-
-    let call_instr = emitter.instructions.iter().find(|i| matches!(i, Instruction::Call { .. }));
-    assert!(call_instr.is_some(), "should have emitted a CALL instruction");
-    if let Some(Instruction::Call { method_idx, .. }) = call_instr {
-        assert_eq!(
-            *method_idx, 0,
-            "CALL with callee_def_id=None should emit method_idx=0 (backward compat fallback); got {}",
-            method_idx
-        );
-    }
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = emit_expr(&mut emitter, &call_expr);
+    }));
+    assert!(result.is_err(), "missing direct-call identity must fail codegen");
+    assert!(
+        !emitter.instructions.iter().any(|instruction| matches!(
+            instruction,
+            Instruction::Call { method_idx: 0, .. }
+        )),
+        "codegen must never append a CALL with the null metadata token"
+    );
 }
 
 // ─── BUG-05: Extern dispatch via emit_expr ────────────────────────────────────
@@ -4335,6 +4369,7 @@ fn test_emit_expr_extern_call_emits_call_extern() {
             TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(99) },
         ],
         callee_def_id: Some(extern_def_id),
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &call_expr);
@@ -4391,6 +4426,7 @@ fn test_emit_expr_qualified_extern_call_keeps_explicit_argument_block() {
             value: TypedLiteral::Int(99),
         }],
         callee_def_id: Some(extern_def_id),
+        callee_has_receiver: None,
     };
 
     emit_expr(&mut emitter, &call_expr);
@@ -4458,6 +4494,7 @@ fn test_emit_expr_static_field_call_keeps_explicit_argument_block() {
             value: TypedLiteral::Int(7),
         }],
         callee_def_id: Some(method_def_id),
+        callee_has_receiver: Some(false),
     };
 
     emit_expr(&mut emitter, &call_expr);
@@ -4543,6 +4580,7 @@ fn test_contract_receiver_emits_call_virt() {
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     emit_expr(&mut emitter, &expr);
@@ -4604,6 +4642,7 @@ fn test_contract_receiver_call_virt_correct_idx_and_slot() {
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     emit_expr(&mut emitter, &expr);
@@ -4648,6 +4687,7 @@ fn test_emit_expr_non_extern_call_emits_call() {
         }),
         args: vec![],
         callee_def_id: Some(fn_def_id),
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &call_expr);
