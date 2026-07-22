@@ -157,6 +157,20 @@ implementations (§2.16.8).
 
 **MethodDef.owner:** The authoritative owner of the method. A null token denotes a top-level function, a TypeDef token denotes a method declared directly on that type (including lifecycle hooks), and an ImplDef token denotes a method supplied by that implementation. The `method_list` fields retained on TypeDef and ImplDef are legacy display/index hints only; ownership and top-level classification must use `MethodDef.owner`.
 
+### Method signature blobs
+
+The `signature` fields on MethodDef, MethodRef, ContractMethod, and ExternDef rows point to a complete blob with this layout:
+
+```text
+regular_param_count: u16
+parameter_types:     TypeRef[regular_param_count]
+return_type:         TypeRef
+```
+
+`regular_param_count` is little-endian. Each parameter and the return value uses the recursive TypeRef encoding from §2.15.3, and the return TypeRef must end at the end of the blob; truncated or trailing data is invalid.
+
+The signature count covers regular source parameters only and excludes an explicit `self`. It is therefore distinct from `MethodDef.param_count`, which counts runtime parameter registers and includes `self` at `r0` for instance methods. For a free function the two counts are equal; for a method with `self`, the signature count is one less than `MethodDef.param_count`.
+
 ## 2.16.6 Method Body Layout
 
 Each method body starts at the MethodDef's `body_offset` and occupies `body_size` bytes:

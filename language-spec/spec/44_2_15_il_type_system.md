@@ -81,7 +81,7 @@ metadata references a type: field types, parameter types, return types, register
 - **Open generic types:** A TypeDef may have one or more `GenericParam` rows, each with a zero-based ordinal.
   `List<T>` has one GenericParam (ordinal 0). `Map<K, V>` has two (ordinals 0, 1).
 - **Generic constraints:** `GenericConstraint` rows bind a GenericParam to required contracts. `T: Add + Eq` produces
-  two constraint rows, each referencing the GenericParam and a contract TypeDef.
+  two constraint rows, each referencing the GenericParam and a ContractDef.
 - **Instantiated types:** Signatures embed the `0x11` constructor identity and concrete TypeRef arguments directly.
   When an instantiated type must itself be addressed by a metadata token (for example by `TYPEOF`), a TypeSpec row
   stores that same complete TypeRef descriptor in its signature blob.
