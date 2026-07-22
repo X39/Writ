@@ -64,8 +64,16 @@ pub fn collect_defs(
     let module_name = find_module_name(def_map);
     builder.set_module_def(&module_name, "0.1.0", 0);
 
-    // 2. ModuleRef: always emit writ-runtime.
-    let runtime_mod_idx = builder.add_module_ref("writ-runtime", "1.0.0");
+    // 2. ModuleRef: preserve normalized dependency order. Public emit entry
+    // points guarantee that exactly one of these entries is writ-runtime.
+    let library_module_refs = register_library_module_refs(library_modules, builder);
+    let runtime_mod_idx = library_modules
+        .iter()
+        .zip(&library_module_refs)
+        .find_map(|(module, &module_ref)| {
+            crate::core_library::is_core_module(module).then_some(module_ref)
+        })
+        .unwrap_or_else(|| builder.add_module_ref("writ-runtime", "1.0.0"));
 
     // 2b. TypeRef: register Range<T> from writ-runtime so range expressions can construct it.
     builder.add_type_ref(runtime_mod_idx, "Range", "writ");
@@ -87,7 +95,7 @@ pub fn collect_defs(
     builder.add_type_ref(runtime_mod_idx, "Iterable", "writ");
     builder.add_type_ref(runtime_mod_idx, "Iterator", "writ");
 
-    register_library_type_refs(library_modules, def_map, builder);
+    register_library_type_refs(library_modules, &library_module_refs, def_map, builder);
     register_provisional_named_tokens(typed_ast, builder);
 
     // Pre-scan: compute the set of DefIds to skip at emit time.
@@ -261,30 +269,66 @@ fn register_provisional_named_tokens(typed_ast: &TypedAst, builder: &mut ModuleB
     }
 }
 
+fn register_library_module_refs(
+    library_modules: &[&writ_module::Module],
+    builder: &mut ModuleBuilder,
+) -> Vec<usize> {
+    library_modules
+        .iter()
+        .map(|module| {
+            let module_def = module.module_defs.first();
+            let module_name = module_def
+                .and_then(|row| {
+                    writ_module::heap::read_string(&module.string_heap, row.name).ok()
+                })
+                .or_else(|| {
+                    writ_module::heap::read_string(
+                        &module.string_heap,
+                        module.header.module_name,
+                    )
+                    .ok()
+                })
+                .unwrap_or("library");
+            let module_version = module_def
+                .and_then(|row| {
+                    writ_module::heap::read_string(&module.string_heap, row.version).ok()
+                })
+                .or_else(|| {
+                    writ_module::heap::read_string(
+                        &module.string_heap,
+                        module.header.module_version,
+                    )
+                    .ok()
+                })
+                .unwrap_or("0.0.0");
+            builder.add_module_ref(module_name, module_version)
+        })
+        .collect()
+}
+
 fn register_library_type_refs(
     library_modules: &[&writ_module::Module],
+    library_module_refs: &[usize],
     def_map: &DefMap,
     builder: &mut ModuleBuilder,
 ) {
-    for module in library_modules {
-        let module_name = writ_module::heap::read_string(
-            &module.string_heap,
-            module.header.module_name,
-        )
-        .unwrap_or("library");
-        let module_version = writ_module::heap::read_string(
-            &module.string_heap,
-            module.header.module_version,
-        )
-        .unwrap_or("0.0.0");
-        let module_ref = builder.add_module_ref(module_name, module_version);
+    for (lib_index, module) in library_modules.iter().enumerate() {
+        let lib_file_id = FileId(u32::MAX - 1 - lib_index as u32);
+        let module_ref = library_module_refs[lib_index];
 
         for type_def in &module.type_defs {
             let name = writ_module::heap::read_string(&module.string_heap, type_def.name)
                 .unwrap_or("");
             let namespace = writ_module::heap::read_string(&module.string_heap, type_def.namespace)
                 .unwrap_or("");
-            register_library_type_ref(module_ref, name, namespace, def_map, builder);
+            register_library_type_ref(
+                module_ref,
+                name,
+                namespace,
+                lib_file_id,
+                def_map,
+                builder,
+            );
         }
         for contract_def in &module.contract_defs {
             let name = writ_module::heap::read_string(&module.string_heap, contract_def.name)
@@ -294,7 +338,14 @@ fn register_library_type_refs(
                 contract_def.namespace,
             )
             .unwrap_or("");
-            register_library_type_ref(module_ref, name, namespace, def_map, builder);
+            register_library_type_ref(
+                module_ref,
+                name,
+                namespace,
+                lib_file_id,
+                def_map,
+                builder,
+            );
         }
     }
 }
@@ -303,21 +354,39 @@ fn register_library_type_ref(
     module_ref: usize,
     name: &str,
     namespace: &str,
+    lib_file_id: FileId,
     def_map: &DefMap,
     builder: &mut ModuleBuilder,
 ) {
     if name.is_empty() {
         return;
     }
-    let row = builder.add_type_ref(module_ref, name, namespace);
+    let scope = MetadataToken::new(TableId::ModuleRef, (module_ref + 1) as u32);
+    let existing_row = builder
+        .finalized_type_refs()
+        .iter()
+        .position(|type_ref| {
+            type_ref.scope == scope
+                && builder.string_heap.get_str(type_ref.name) == name
+                && builder.string_heap.get_str(type_ref.namespace) == namespace
+        });
+    let row = match existing_row {
+        Some(index) => index,
+        None => builder.add_type_ref(module_ref, name, namespace),
+    };
     let fqn = if namespace.is_empty() {
         name.to_string()
     } else {
         format!("{}::{}", namespace, name)
     };
     if let Some(def_id) = def_map.get(&fqn) {
-        let token = MetadataToken::new(TableId::TypeRef, (row + 1) as u32);
-        builder.def_token_map.insert(def_id, token);
+        // DefMap injection is first-wins. Only the library that supplied this
+        // DefId may bind its token; a later module with the same FQN must not
+        // redirect references away from the authoritative dependency.
+        if def_map.get_entry(def_id).file_id == lib_file_id {
+            let token = MetadataToken::new(TableId::TypeRef, (row + 1) as u32);
+            builder.def_token_map.insert(def_id, token);
+        }
     }
 }
 

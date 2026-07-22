@@ -36,8 +36,9 @@ use writ_diagnostics::{Diagnostic, FileId};
 ///
 /// `library_modules` is a slice of pre-compiled module binaries. Their method
 /// signatures are injected into `TypeEnv` after `TypeEnv::build` so that method
-/// calls on library types resolve correctly. Pass `&[]` when compiling without
-/// library dependencies.
+/// calls on library types resolve correctly. The canonical `writ-runtime` module
+/// is appended automatically when the supplied slice does not already contain a
+/// core module.
 ///
 /// Returns a 4-element tuple: `(TypedAst, TyInterner, TypeEnv, Vec<Diagnostic>)`.
 /// The `TypeEnv` carries function signatures, struct/entity/enum fields, impl
@@ -47,6 +48,18 @@ pub fn typecheck(
     asts: &[(FileId, &Ast)],
     library_modules: &[&writ_module::Module],
 ) -> (TypedAst, ty::TyInterner, env::TypeEnv, Vec<Diagnostic>) {
+    let canonical_core = writ_module::build_writ_runtime_module();
+    let library_modules =
+        crate::core_library::normalize_libraries(library_modules, &canonical_core);
+
+    // typecheck is a public boundary and may receive a NameResolvedAst built by
+    // another frontend. Injection is idempotent, so ensure its DefMap contains
+    // the same normalized libraries before materializing TypeEnv metadata.
+    crate::resolve::inject_library::inject_module_types(
+        &library_modules,
+        &mut resolved.def_map,
+    );
+
     // 1. Build TyInterner with primitives pre-interned
     let mut interner = ty::TyInterner::new();
 
@@ -57,7 +70,7 @@ pub fn typecheck(
     // This must happen AFTER TypeEnv::build so user-source sigs are already present.
     // resolved is owned (mut) and TypeEnv::build has returned; no outstanding borrows exist.
     library_sigs::inject_library_sigs(
-        library_modules,
+        &library_modules,
         &mut resolved.def_map,
         &mut type_env,
         &mut interner,

@@ -12,6 +12,7 @@
 pub mod ast;
 pub mod check;
 pub mod config;
+mod core_library;
 pub mod emit;
 pub mod lower;
 pub mod resolve;

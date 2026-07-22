@@ -272,6 +272,12 @@ instructions depend on. Unlike normal modules, `writ-runtime` is not compiled fr
 it as part of its implementation. The spec mandates what types this module must contain and what layouts they must have.
 The runtime is free to implement them however it chooses internally.
 
+Every compiler frontend entry point MUST make exactly one `writ-runtime` module available during name resolution, type
+checking, and IL emission. If dependencies explicitly contain one or more modules whose ModuleDef name is
+`writ-runtime`, the first is authoritative and later duplicates are ignored. If none is supplied, the compiler appends
+its canonical in-memory `writ-runtime` module after all explicit dependencies. This is a compiler-pipeline guarantee and
+MUST NOT depend on a particular CLI command adding the module.
+
 
 Methods on `writ-runtime` types may carry an **intrinsic** flag on their MethodDef entries, indicating that the runtime
 provides a native implementation rather than IL bytecode. This allows core operations (such as contract implementations

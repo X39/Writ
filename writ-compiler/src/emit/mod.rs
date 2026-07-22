@@ -37,6 +37,8 @@ pub fn emit(
 ) -> (ModuleBuilder, Vec<Diagnostic>) {
     let mut builder = ModuleBuilder::new();
     let mut diags = Vec::new();
+    let canonical_core = writ_module::build_writ_runtime_module();
+    let library_modules = crate::core_library::normalize_libraries(&[], &canonical_core);
 
     // Pass 1: collect all definitions into provisional rows.
     // The `emit` function is used for metadata-only (no conditions needed here).
@@ -48,7 +50,7 @@ pub fn emit(
         &mut builder,
         &mut diags,
         &empty_conditions,
-        &[],
+        &library_modules,
     );
 
     // Assign CALL_VIRT slot indices from contract declaration order.
@@ -109,6 +111,9 @@ pub fn emit_bodies_with_libraries(
     library_modules: &[&writ_module::Module],
 ) -> Result<Vec<u8>, Vec<Diagnostic>> {
     let mut diags = Vec::new();
+    let canonical_core = writ_module::build_writ_runtime_module();
+    let library_modules =
+        crate::core_library::normalize_libraries(library_modules, &canonical_core);
 
     // Build metadata tables
     let mut builder = ModuleBuilder::new();
@@ -123,7 +128,7 @@ pub fn emit_bodies_with_libraries(
         &mut builder,
         &mut diags,
         active_conditions,
-        library_modules,
+        &library_modules,
     );
 
     if !diags.is_empty() {

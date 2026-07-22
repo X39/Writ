@@ -67,10 +67,6 @@ pub fn cmd_build(path: String, release: bool, name_override: Option<String>, con
         })?;
         lib_module_storage.push(module);
     }
-    // Also inject the writ-runtime virtual module so prelude contracts (Iterable,
-    // Iterator, Add, Eq, etc.) get real DefId entries through the DefMap mechanism.
-    lib_module_storage.push(writ_runtime::virtual_module::build_writ_runtime_module());
-
     // Spawn compilation on a 16MB-stack thread
     let handle = std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)
