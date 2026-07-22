@@ -179,6 +179,10 @@ pub struct ModuleBuilder {
     type_spec_signature_tokens: FxHashMap<u32, MetadataToken>,
     field_defs: Vec<FieldDefEntry>,
     field_refs: Vec<FieldRefRow>,
+    /// Imported field identity -> FieldRef row index. Field declarations do
+    /// not have source-level DefIds, so the owning type DefId and field name
+    /// form the stable identity used by checked body emission.
+    field_ref_by_owner_name: FxHashMap<(DefId, String), usize>,
     method_defs: Vec<MethodDefEntry>,
     method_refs: Vec<MethodRefRow>,
     /// Compiler-only MethodRef origin metadata used for inherent preference.
@@ -254,6 +258,7 @@ impl ModuleBuilder {
             type_spec_signature_tokens: FxHashMap::default(),
             field_defs: Vec::new(),
             field_refs: Vec::new(),
+            field_ref_by_owner_name: FxHashMap::default(),
             method_defs: Vec::new(),
             method_refs: Vec::new(),
             method_ref_inherent: Vec::new(),
@@ -468,6 +473,37 @@ impl ModuleBuilder {
             },
         });
         self.field_defs.len() - 1
+    }
+
+    /// Add or reuse an imported FieldRef and bind it to its source-level owner.
+    ///
+    /// FieldRef identity includes the exact parent, name, and canonical type
+    /// signature. The `(owner_def_id, name)` map lets body emission recover the
+    /// corresponding metadata token without confusing it with a local ordinal.
+    pub fn add_field_ref(
+        &mut self,
+        owner_def_id: DefId,
+        parent: MetadataToken,
+        name: &str,
+        type_signature: &[u8],
+    ) -> usize {
+        let row = self.field_refs.iter().position(|field_ref| {
+            field_ref.parent == parent
+                && self.string_heap.get_str(field_ref.name) == name
+                && writ_module::heap::read_blob(self.blob_heap.data(), field_ref.type_sig)
+                    .is_ok_and(|existing| existing == type_signature)
+        }).unwrap_or_else(|| {
+            let name = self.string_heap.intern(name);
+            let type_sig = self.blob_heap.intern(type_signature);
+            self.field_refs.push(FieldRefRow { parent, name, type_sig });
+            self.field_refs.len() - 1
+        });
+
+        let identity = (owner_def_id, name.to_owned());
+        if let Some(previous) = self.field_ref_by_owner_name.insert(identity, row) {
+            assert_eq!(previous, row, "ambiguous imported field identity for `{name}`");
+        }
+        row
     }
 
     /// Add a MethodDef row, optionally under a parent TypeDef.
@@ -1167,34 +1203,34 @@ impl ModuleBuilder {
     // Body emission helpers (used by call.rs and expr.rs)
     // =========================================================================
 
-    /// Look up the FieldDef token for a field by parent TypeDef DefId and field name.
+    /// Look up a field operand by parent type DefId and field name.
     ///
-    /// This is used by GET_FIELD / SET_FIELD emission. Returns the encoded MetadataToken
-    /// for the FieldDef row (1-based, assigned after finalize).
+    /// Local fields retain their historical 0-based object-layout ordinal.
+    /// Imported fields return an encoded table-6 FieldRef token.
     ///
     /// Returns None if the type is not registered or the field is not found.
     pub fn field_token_by_name(&self, parent_def_id: DefId, field_name: &str) -> Option<u32> {
-        // Find the parent TypeDef index
-        let parent_idx = self
+        if let Some(parent_idx) = self
             .type_def_def_ids
             .iter()
-            .position(|id| id.as_ref() == Some(&parent_def_id))?;
-
-        let parent_handle = TypeDefHandle(parent_idx);
-
-        // Return a 0-based local field index within the parent type.
-        // This matches what the runtime expects: fields[idx] indexed from 0.
-        let mut local_idx = 0u32;
-        for entry in self.field_defs.iter() {
-            if entry.parent == parent_handle {
-                let name_in_heap = self.string_heap.get_str(entry.row.name);
-                if name_in_heap == field_name {
-                    return Some(local_idx);
+            .position(|id| id.as_ref() == Some(&parent_def_id))
+        {
+            let parent_handle = TypeDefHandle(parent_idx);
+            let mut local_idx = 0u32;
+            for entry in self.field_defs.iter() {
+                if entry.parent == parent_handle {
+                    let name_in_heap = self.string_heap.get_str(entry.row.name);
+                    if name_in_heap == field_name {
+                        return Some(local_idx);
+                    }
+                    local_idx += 1;
                 }
-                local_idx += 1;
             }
         }
-        None
+
+        self.field_ref_by_owner_name
+            .get(&(parent_def_id, field_name.to_owned()))
+            .map(|row| MetadataToken::new(TableId::FieldRef, (*row + 1) as u32).0)
     }
 
     /// Look up an extern def token by DefId.

@@ -176,12 +176,13 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
                 TypedExpr::Field { receiver, field, .. } => {
                     // Emit receiver, then SET_FIELD
                     let r_obj = emit_expr(emitter, receiver);
-                    let receiver_def_id = extract_type_def_id(emitter, receiver.ty());
-                    let field_idx = if let Some(def_id) = receiver_def_id {
-                        emitter.builder.field_token_by_name(def_id, field).unwrap_or(0)
-                    } else {
-                        0
-                    };
+                    let receiver_def_id = extract_type_def_id(emitter, receiver.ty())
+                        .expect("checked field assignment must have a nominal receiver type");
+                    let field_idx = emitter.builder
+                        .field_token_by_name(receiver_def_id, field)
+                        .unwrap_or_else(|| {
+                            panic!("checked field assignment `{field}` has no metadata operand")
+                        });
                     emitter.emit(Instruction::SetField { r_obj, field_idx, r_val });
                     r_val
                 }
@@ -474,12 +475,11 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
         // ── Field access (GET_FIELD) ───────────────────────────────────────────
         TypedExpr::Field { receiver, field, ty, .. } => {
             let r_obj = emit_expr(emitter, receiver);
-            let receiver_def_id = extract_type_def_id(emitter, receiver.ty());
-            let field_idx = if let Some(def_id) = receiver_def_id {
-                emitter.builder.field_token_by_name(def_id, field).unwrap_or(0)
-            } else {
-                0
-            };
+            let receiver_def_id = extract_type_def_id(emitter, receiver.ty())
+                .expect("checked field access must have a nominal receiver type");
+            let field_idx = emitter.builder
+                .field_token_by_name(receiver_def_id, field)
+                .unwrap_or_else(|| panic!("checked field access `{field}` has no metadata operand"));
             let r_dst = emitter.alloc_reg(*ty);
             emitter.emit(Instruction::GetField { r_dst, r_obj, field_idx });
             r_dst

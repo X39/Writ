@@ -106,42 +106,72 @@ fn attach_type_spec(
     }
 }
 
+fn resolve_field_target(
+    ctx: &ExecContext<'_>,
+    object: Value,
+    field_operand: u32,
+) -> Result<(crate::value::HeapRef, usize), String> {
+    let href = match object {
+        Value::Struct { href, .. } | Value::Ref(href) => href,
+        Value::Entity(entity) => ctx.entity_registry
+            .get_data_ref(entity)
+            .map_err(|error| format!("invalid entity receiver: {error}"))?
+            .ok_or_else(|| "entity receiver has no script-field storage".to_string())?,
+        other => return Err(format!(
+            "expected struct, class, or entity receiver, got {other:?}"
+        )),
+    };
+
+    let token = writ_module::MetadataToken(field_operand);
+    if token.table_id() != writ_module::tables::TableId::FieldRef.as_u8() {
+        return Ok((href, field_operand as usize));
+    }
+
+    let row = token.row_index()
+        .and_then(|row| row.checked_sub(1))
+        .ok_or_else(|| "null FieldRef token".to_string())?;
+    let resolved = ctx.modules[ctx.current_module_idx].resolved_refs.fields
+        .get(&row)
+        .ok_or_else(|| format!("unresolved FieldRef row {row}"))?;
+
+    match ctx.heap.get_object(href) {
+        Ok(HeapObject::Struct { type_key, .. }) if *type_key != u32::MAX => {
+            let expected = ((resolved.module_idx as u32) << 16) | resolved.owner_type_idx as u32;
+            if *type_key != expected {
+                return Err(format!(
+                    "FieldRef owner mismatch: object type key 0x{type_key:08x}, expected 0x{expected:08x}"
+                ));
+            }
+        }
+        Ok(HeapObject::Struct { .. }) => {
+            // Entity data buffers do not retain a domain-wide type key, so
+            // their owner cannot be validated here.
+        }
+        Ok(_) => return Err("FieldRef receiver is not a struct or class object".into()),
+        Err(error) => return Err(error.to_string()),
+    }
+
+    Ok((href, resolved.field_offset))
+}
+
 pub(super) fn exec_get_field(
     ctx: &mut ExecContext<'_>,
     r_dst: u16,
     r_obj: u16,
     field_idx: u32,
 ) -> ExecutionResult {
-    let frame = ctx.task.call_stack.last().unwrap();
-    let obj_val = &frame.registers[r_obj as usize];
-    match obj_val {
-        Value::Struct { href, .. } => {
-            let href = *href;
-            match ctx.heap.get_field(href, field_idx as usize) {
-                Ok(val) => {
-                    let frame = ctx.task.call_stack.last_mut().unwrap();
-                    frame.registers[r_dst as usize] = val;
-                    ExecutionResult::Continue
-                }
-                Err(e) => ExecutionResult::Crash(format!("GetField: {}", e)),
-            }
+    let object = ctx.task.call_stack.last().unwrap().registers[r_obj as usize];
+    let (href, field_offset) = match resolve_field_target(ctx, object, field_idx) {
+        Ok(target) => target,
+        Err(error) => return ExecutionResult::Crash(format!("GetField: {error}")),
+    };
+    match ctx.heap.get_field(href, field_offset) {
+        Ok(val) => {
+            let frame = ctx.task.call_stack.last_mut().unwrap();
+            frame.registers[r_dst as usize] = val;
+            ExecutionResult::Continue
         }
-        Value::Ref(_) | Value::Entity(_) => {
-            // Existing heap/entity path
-            let href = helpers::extract_ref(obj_val);
-            match ctx.heap.get_field(href, field_idx as usize) {
-                Ok(val) => {
-                    let frame = ctx.task.call_stack.last_mut().unwrap();
-                    frame.registers[r_dst as usize] = val;
-                    ExecutionResult::Continue
-                }
-                Err(e) => ExecutionResult::Crash(format!("GetField: {}", e)),
-            }
-        }
-        other => ExecutionResult::Crash(format!(
-            "GetField: expected struct or class, got {:?}",
-            other
-        )),
+        Err(error) => ExecutionResult::Crash(format!("GetField: {error}")),
     }
 }
 
@@ -151,31 +181,16 @@ pub(super) fn exec_set_field(
     field_idx: u32,
     r_val: u16,
 ) -> ExecutionResult {
-    let idx = field_idx as usize;
-    // Copy the value to store BEFORE taking mutable reference to the object register
-    let val = ctx.task.call_stack.last().unwrap().registers[r_val as usize];
-
-    let frame = ctx.task.call_stack.last_mut().unwrap();
-    match &mut frame.registers[r_obj as usize] {
-        Value::Struct { href, .. } => {
-            let href = *href;
-            let _ = frame;
-            match ctx.heap.set_field(href, idx, val) {
-                Ok(()) => ExecutionResult::Continue,
-                Err(e) => ExecutionResult::Crash(format!("SetField: {}", e)),
-            }
-        }
-        Value::Ref(href) => {
-            // Copy href (HeapRef is Copy) so we can drop the frame borrow
-            let href = *href;
-            // End the mutable borrow of frame by shadowing it
-            let _ = frame;
-            match ctx.heap.set_field(href, idx, val) {
-                Ok(()) => ExecutionResult::Continue,
-                Err(e) => ExecutionResult::Crash(format!("SetField: {}", e)),
-            }
-        }
-        _ => ExecutionResult::Crash("SetField: not a struct or class".into()),
+    let frame = ctx.task.call_stack.last().unwrap();
+    let object = frame.registers[r_obj as usize];
+    let val = frame.registers[r_val as usize];
+    let (href, field_offset) = match resolve_field_target(ctx, object, field_idx) {
+        Ok(target) => target,
+        Err(error) => return ExecutionResult::Crash(format!("SetField: {error}")),
+    };
+    match ctx.heap.set_field(href, field_offset, val) {
+        Ok(()) => ExecutionResult::Continue,
+        Err(error) => ExecutionResult::Crash(format!("SetField: {error}")),
     }
 }
 

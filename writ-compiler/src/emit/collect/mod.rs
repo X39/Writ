@@ -96,6 +96,7 @@ pub fn collect_defs(
     builder.add_type_ref(runtime_mod_idx, "Iterator", "writ");
 
     register_library_type_refs(library_modules, &library_module_refs, def_map, builder);
+    register_library_field_refs(library_modules, def_map, builder);
     register_library_method_refs(
         library_modules,
         &library_module_refs,
@@ -512,6 +513,77 @@ fn register_library_method_refs(
                 def_id,
                 MetadataToken::new(TableId::MethodRef, (row + 1) as u32),
             );
+        }
+    }
+}
+
+fn register_library_field_refs(
+    library_modules: &[&writ_module::Module],
+    def_map: &DefMap,
+    builder: &mut ModuleBuilder,
+) {
+    for (lib_index, module) in library_modules.iter().enumerate() {
+        let lib_file_id = FileId(u32::MAX - 1 - lib_index as u32);
+
+        for (type_index, type_def) in module.type_defs.iter().enumerate() {
+            let name = writ_module::heap::read_string(&module.string_heap, type_def.name)
+                .unwrap_or("");
+            let namespace = writ_module::heap::read_string(&module.string_heap, type_def.namespace)
+                .unwrap_or("");
+            let fqn = if namespace.is_empty() {
+                name.to_owned()
+            } else {
+                format!("{namespace}::{name}")
+            };
+            let Some(owner_def_id) = def_map.get(&fqn) else {
+                continue;
+            };
+            if def_map.get_entry(owner_def_id).file_id != lib_file_id {
+                continue;
+            }
+            let Some(parent) = builder.token_for_def(owner_def_id) else {
+                continue;
+            };
+            if !matches!(parent.table(), TableId::TypeDef | TableId::TypeRef) {
+                panic!(
+                    "unsupported imported FieldRef parent table {} for `{fqn}`",
+                    parent.table() as u8
+                );
+            }
+
+            let field_start = type_def.field_list.saturating_sub(1) as usize;
+            let field_end = module.type_defs.get(type_index + 1)
+                .map(|next| next.field_list.saturating_sub(1) as usize)
+                .unwrap_or(module.field_defs.len())
+                .min(module.field_defs.len());
+            if field_start > field_end {
+                continue;
+            }
+
+            for field in &module.field_defs[field_start..field_end] {
+                let field_name = writ_module::heap::read_string(&module.string_heap, field.name)
+                    .unwrap_or("");
+                if field_name.is_empty() {
+                    continue;
+                }
+                let Ok(signature) = writ_module::heap::read_blob(&module.blob_heap, field.type_sig)
+                else {
+                    continue;
+                };
+                let Ok(signature) = writ_module::signature::decode_type_signature(signature) else {
+                    continue;
+                };
+                let Some(signature) = remap_library_type_signature(
+                    module, &signature, def_map, builder
+                ) else {
+                    continue;
+                };
+                let Ok(signature) = writ_module::signature::encode_type_signature(&signature)
+                else {
+                    continue;
+                };
+                builder.add_field_ref(owner_def_id, parent, field_name, &signature);
+            }
         }
     }
 }

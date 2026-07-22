@@ -41,7 +41,9 @@ pub(super) fn emit_struct_eq(
         let field_idx = emitter
             .builder
             .field_token_by_name(def_id, field_name)
-            .unwrap_or(0);
+            .unwrap_or_else(|| {
+                panic!("checked equality field `{field_name}` has no metadata operand")
+            });
 
         let r_fa = emitter.alloc_reg(*field_ty);
         emitter.emit(Instruction::GetField { r_dst: r_fa, r_obj: r_a, field_idx });
@@ -92,7 +94,9 @@ pub(super) fn emit_struct_neq(
         let field_idx = emitter
             .builder
             .field_token_by_name(def_id, field_name)
-            .unwrap_or(0);
+            .unwrap_or_else(|| {
+                panic!("checked inequality field `{field_name}` has no metadata operand")
+            });
 
         let r_fa = emitter.alloc_reg(*field_ty);
         emitter.emit(Instruction::GetField { r_dst: r_fa, r_obj: r_a, field_idx });

@@ -169,12 +169,44 @@ fn xmod_field_access() {
     let lib_module = writ_module::Module::from_bytes(&lib_bytes).unwrap();
 
     let user_src = r#"
-        pub fn get_first(p: Pair) -> int {
-            return p.first;
+        pub fn get_second(p: Pair) -> string {
+            return p.second;
         }
     "#;
     let result = compile_with_libs(user_src, &[&lib_module]);
-    assert!(result.is_ok(), "expected compile success for field access on library type, got: {:?}", result.err());
+    let user_bytes = result.unwrap_or_else(|error| {
+        panic!("expected compile success for field access on library type: {error}")
+    });
+    let user_module = writ_module::Module::from_bytes(&user_bytes).unwrap();
+    let second_ref = user_module.field_refs.iter().position(|field_ref| {
+        writ_module::heap::read_string(&user_module.string_heap, field_ref.name).ok()
+            == Some("second")
+    }).expect("the second imported field must have a FieldRef row");
+    let expected_operand = writ_module::MetadataToken::new(
+        writ_module::tables::TableId::FieldRef.as_u8(),
+        (second_ref + 1) as u32,
+    ).0;
+    let method_idx = user_module.top_level_method_indices().into_iter().find(|index| {
+        writ_module::heap::read_string(
+            &user_module.string_heap,
+            user_module.method_defs[*index].name,
+        ).ok() == Some("get_second")
+    }).unwrap();
+    let mut cursor = std::io::Cursor::new(&user_module.method_bodies[method_idx].code);
+    let mut operand = None;
+    while (cursor.position() as usize) < user_module.method_bodies[method_idx].code.len() {
+        if let writ_module::Instruction::GetField { field_idx, .. } =
+            writ_module::Instruction::decode(&mut cursor).unwrap()
+        {
+            operand = Some(field_idx);
+        }
+    }
+    assert_eq!(operand, Some(expected_operand));
+    assert_eq!(
+        writ_module::MetadataToken(operand.unwrap()).table_id(),
+        writ_module::tables::TableId::FieldRef.as_u8(),
+        "imported fields must not be emitted as raw local ordinals"
+    );
 }
 
 /// XMOD-06: Multiple library modules can be loaded simultaneously.

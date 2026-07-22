@@ -160,7 +160,9 @@ pub(super) fn emit_new(
                 let field_idx = emitter
                     .builder
                     .field_token_by_name(target_def_id, field_name)
-                    .unwrap_or(0);
+                    .unwrap_or_else(|| {
+                        panic!("checked entity field `{field_name}` has no metadata operand")
+                    });
                 emitter.emit(Instruction::SetField { r_obj: r_entity, field_idx, r_val });
             }
             emitter.emit(Instruction::InitEntity { r_entity });
@@ -181,7 +183,9 @@ pub(super) fn emit_new(
                 let field_idx = emitter
                     .builder
                     .field_token_by_name(target_def_id, field_name)
-                    .unwrap_or(0);
+                    .unwrap_or_else(|| {
+                        panic!("checked construction field `{field_name}` has no metadata operand")
+                    });
                 emitter.emit(Instruction::SetField { r_obj, field_idx, r_val });
             }
             r_obj

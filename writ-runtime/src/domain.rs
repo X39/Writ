@@ -40,8 +40,12 @@ pub struct ResolvedMethod {
 pub struct ResolvedField {
     /// Index into Domain::modules.
     pub module_idx: usize,
+    /// 0-based index into the target module's TypeDef table.
+    pub owner_type_idx: usize,
     /// 0-based index into the target module's field_defs table.
     pub field_idx: usize,
+    /// 0-based offset within the owning type's object layout.
+    pub field_offset: usize,
 }
 
 /// Resolved cross-module contract reference: points to a ContractDef in a specific module.
@@ -337,26 +341,78 @@ impl Domain {
 
             let field_name = read_string(&src_module.string_heap, field_ref.name)
                 .map_err(|_| RuntimeError::ExecutionError("invalid FieldRef name".into()))?;
+            let reference_blob = read_blob(&src_module.blob_heap, field_ref.type_sig)
+                .map_err(|_| RuntimeError::ExecutionError(
+                    "invalid FieldRef type signature blob offset".into()
+                ))?;
+            let reference_signature = writ_module::signature::decode_type_signature(reference_blob)
+                .map_err(|_| RuntimeError::ExecutionError(
+                    "invalid FieldRef type signature".into()
+                ))?;
 
             let target_module = &self.modules[target_mod_idx].module;
-            let field_idx = Self::find_field_in_type(target_module, type_idx, field_name)
-                .ok_or_else(|| {
+            let (field_start, field_end) = Self::type_field_range(target_module, type_idx)
+                .ok_or_else(|| RuntimeError::ExecutionError(
+                    "FieldRef parent TypeDef is out of range".into()
+                ))?;
+            let mut candidates = Vec::new();
+            for (field_offset, field_idx) in (field_start..field_end).enumerate() {
+                let definition = &target_module.field_defs[field_idx];
+                let definition_name = read_string(&target_module.string_heap, definition.name)
+                    .map_err(|_| RuntimeError::ExecutionError(format!(
+                        "invalid FieldDef name at row {}", field_idx + 1
+                    )))?;
+                if definition_name != field_name {
+                    continue;
+                }
+                let definition_blob = read_blob(&target_module.blob_heap, definition.type_sig)
+                    .map_err(|_| RuntimeError::ExecutionError(format!(
+                        "invalid FieldDef type signature blob offset at row {}", field_idx + 1
+                    )))?;
+                let definition_signature = writ_module::signature::decode_type_signature(
+                    definition_blob
+                ).map_err(|_| RuntimeError::ExecutionError(format!(
+                    "invalid FieldDef type signature at row {}", field_idx + 1
+                )))?;
+                if crate::type_specs::type_signatures_equal(
+                    &reference_signature,
+                    src_idx,
+                    &definition_signature,
+                    target_mod_idx,
+                    crate::type_specs::NominalSpace::Any,
+                    &self.modules,
+                ) {
+                    candidates.push((field_idx, field_offset));
+                }
+            }
+
+            let (field_idx, field_offset) = match candidates.as_slice() {
+                [candidate] => *candidate,
+                [] => {
                     let type_name = read_string(
                         &target_module.string_heap,
                         target_module.type_defs[type_idx].name,
                     )
                     .unwrap_or("<unknown>");
-                    RuntimeError::ExecutionError(format!(
-                        "unresolved field reference: '{}' on type '{}'",
+                    return Err(RuntimeError::ExecutionError(format!(
+                        "unresolved field reference: '{}' on type '{}' with the requested type signature",
                         field_name, type_name
-                    ))
-                })?;
+                    )));
+                }
+                _ => return Err(RuntimeError::ExecutionError(format!(
+                    "ambiguous field reference: '{}' has {} matching definitions",
+                    field_name,
+                    candidates.len()
+                ))),
+            };
 
             resolved.fields.insert(
                 ref_idx as u32,
                 ResolvedField {
                 module_idx: target_mod_idx,
+                owner_type_idx: type_idx,
                 field_idx,
+                field_offset,
                 },
             );
         }
@@ -395,6 +451,10 @@ impl Domain {
                     )))?;
                 Ok((rt.module_idx, rt.typedef_idx))
             }
+            4 => Err(RuntimeError::ExecutionError(
+                "FieldRef TypeSpec parents are not supported; use a TypeDef or TypeRef parent"
+                    .into(),
+            )),
             _ => Err(RuntimeError::ExecutionError(format!(
                 "unexpected parent token table ID: {}", table_id
             )))
@@ -807,26 +867,20 @@ impl Domain {
         None
     }
 
-    /// Find a FieldDef by name within a type's field range.
-    fn find_field_in_type(
+    /// Return the absolute FieldDef range owned by a TypeDef.
+    fn type_field_range(
         module: &writ_module::Module,
         type_idx: usize,
-        field_name: &str,
-    ) -> Option<usize> {
-        let td = &module.type_defs[type_idx];
+    ) -> Option<(usize, usize)> {
+        let td = module.type_defs.get(type_idx)?;
         let field_start = td.field_list.saturating_sub(1) as usize;
         let field_end = if type_idx + 1 < module.type_defs.len() {
             module.type_defs[type_idx + 1].field_list.saturating_sub(1) as usize
         } else {
             module.field_defs.len()
         };
-        for idx in field_start..field_end {
-            let fd_name = read_string(&module.string_heap, module.field_defs[idx].name).unwrap_or("");
-            if fd_name == field_name {
-                return Some(idx);
-            }
-        }
-        None
+        (field_start <= field_end && field_end <= module.field_defs.len())
+            .then_some((field_start, field_end))
     }
 
 }

@@ -59,9 +59,18 @@ resolves cross-module references at load time.
   an ambiguity error.
   The complete tuple is the method identity and is resolved to one MethodDef at load time; name-only overload selection
   is invalid.
-- **FieldRef** rows reference a field by `(parent type, name, type signature)`. Resolved to a FieldDef at load time.
+- **FieldRef** rows reference a field by `(parent type, name, type signature)`. The parent is a TypeDef or TypeRef;
+  loaders must reject unsupported parent tables rather than interpreting the reference as a field ordinal. Resolution
+  compares complete canonical type signatures (including remapped nominal tokens) and produces both the owning TypeDef
+  and the field's local offset within that type.
   This provides ABI-safe cross-module field access — recompiling a dependency that reorders fields does not break
   dependent modules as long as field names and types are preserved.
+
+`GET_FIELD` and `SET_FIELD` accept either a legacy raw 0-based local field ordinal or a table-6 FieldRef token. A
+table-6 operand is resolved in the currently executing module and translated to the resolved field's target-local
+offset before heap access. When the receiver carries a runtime owner identity, it must match the FieldRef's resolved
+owner. A missing, malformed, type-mismatched, or unresolved FieldRef is a link or execution error and must never fall
+back to ordinal zero.
 
 After load-time resolution, cross-module references are equivalent to direct local references. The resolution cost is
 paid once at load time.
@@ -137,7 +146,7 @@ with no fields has an empty range without using `field_list = 0`; zero is not a 
 | 3  | **TypeRef**           | scope(token:ModuleRef), name(str), namespace(str)                                        | Types in other modules (resolved at load time)        |
 | 4  | **TypeSpec**          | signature(blob)                                                                          | Addressable instantiated type using a complete TypeRef descriptor |
 | 5  | **FieldDef**          | name(str), type_sig(blob), flags(u16)                                                    | Fields on types defined here                          |
-| 6  | **FieldRef**          | parent(token), name(str), type_sig(blob)                                                 | Fields in other modules (resolved at load time)       |
+| 6  | **FieldRef**          | parent(token:TypeDef/TypeRef), name(str), type_sig(blob)                                 | Fields resolved by complete identity at load time     |
 | 7  | **MethodDef**         | name(str), signature(blob), flags(u16), body_offset(u32), body_size(u32), reg_count(u16), param_count(u16), owner(token) | Methods/functions defined here                        |
 | 8  | **MethodRef**         | parent(token:ModuleRef/TypeDef/TypeRef/TypeSpec), name(str), signature(blob), flags(u16) | Functions/methods in other modules (resolved by complete identity) |
 | 9  | **ParamDef**          | name(str), type_sig(blob), sequence(u16)                                                 | Method parameters                                     |
