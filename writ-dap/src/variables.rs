@@ -38,7 +38,11 @@ pub fn format_value(val: &Value, module: &Module, heap: &dyn GcHeap) -> String {
                 HeapObject::String(s) => format!("{:?}", s),
                 HeapObject::Struct { fields, .. } => format!("struct({})", fields.len()),
                 HeapObject::Array { elements, .. } => format!("[{} elements]", elements.len()),
-                HeapObject::Delegate { method_idx, .. } => format!("fn@{}", method_idx),
+                HeapObject::Delegate {
+                    module_idx,
+                    method_idx,
+                    ..
+                } => format!("fn@{module_idx}:{method_idx}"),
                 HeapObject::Enum { tag, .. } => format!("enum(tag={})", tag),
                 HeapObject::Boxed(inner) => {
                     format!("box({})", format_value(inner, module, heap))
@@ -214,6 +218,17 @@ mod tests {
         let href = heap.alloc_array(1);
         let result = format_value(&Value::Ref(href), &m, &heap);
         assert_eq!(result, "[0 elements]");
+    }
+
+    #[test]
+    fn test_format_value_ref_delegate_includes_module_and_method() {
+        let m = empty_module();
+        let mut heap = BumpHeap::new();
+        let href = heap.alloc_delegate(2, 5, None);
+
+        let result = format_value(&Value::Ref(href), &m, &heap);
+
+        assert_eq!(result, "fn@2:5");
     }
 
     #[test]
