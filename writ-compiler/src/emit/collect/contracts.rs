@@ -78,22 +78,15 @@ pub(super) fn collect_impl(
         // Resolve target type.
         let target_type_handle = resolve_type_handle(&impl_decl.target, def_map, typedef_handles);
 
-        // Resolve contract (if any).
-        let contract_def_id = impl_decl.contract.as_ref().and_then(|c| {
-            if let crate::ast::types::AstType::Named { name, .. } = c {
-                def_map.get(name)
-            } else {
-                None
-            }
-        });
-        // Capture contract name for prelude contract TypeRef fallback.
-        let contract_name: Option<&str> = impl_decl.contract.as_ref().and_then(|c| {
-            if let crate::ast::types::AstType::Named { name, .. } = c {
-                Some(name.as_str())
-            } else {
-                None
-            }
-        });
+        // Resolve the contract constructor, independent of whether it has type
+        // arguments. Generic applications such as `Iterable<T>` retain the
+        // constructor name in `AstType::Generic`; the arguments do not change
+        // which ContractDef owns the implementation.
+        let contract_name = impl_decl
+            .contract
+            .as_ref()
+            .and_then(ast_type_constructor_name);
+        let contract_def_id = contract_name.and_then(|name| def_map.get(name));
 
         // Emit MethodDefs for each impl method under the target type's TypeDef.
         //
@@ -211,6 +204,19 @@ pub(super) fn collect_impl(
         for method_handle in owned_method_handles {
             builder.set_method_impl_owner(method_handle, impl_handle);
         }
+    }
+}
+
+/// Return the definition-bearing constructor name for an AST type.
+///
+/// Impl contracts can be written as either a bare name (`Printable`) or a
+/// generic application (`Iterable<T>`). Both forms resolve through the same
+/// `DefMap` entry; only the latter carries specialization arguments.
+fn ast_type_constructor_name(ty: &crate::ast::types::AstType) -> Option<&str> {
+    match ty {
+        crate::ast::types::AstType::Named { name, .. }
+        | crate::ast::types::AstType::Generic { name, .. } => Some(name.as_str()),
+        _ => None,
     }
 }
 
