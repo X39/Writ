@@ -48,7 +48,7 @@ fn build_runtime_with_host<H: RuntimeHost>(
 
 /// A host that records every before_instruction call and always returns Continue.
 struct RecordingHost {
-    pub calls: Vec<(TaskId, u32, u32)>, // (task_id, method_idx, pc)
+    pub calls: Vec<(TaskId, usize, u32, u32)>, // (task_id, module_idx, method_idx, pc)
 }
 
 impl RecordingHost {
@@ -74,12 +74,13 @@ impl RuntimeHost for RecordingHost {
     fn before_instruction(
         &mut self,
         task_id: TaskId,
+        module_idx: usize,
         method_idx: u32,
         pc: u32,
         _source_line: u32,
         _source_col: u16,
     ) -> DebugAction {
-        self.calls.push((task_id, method_idx, pc));
+        self.calls.push((task_id, module_idx, method_idx, pc));
         DebugAction::Continue
     }
 }
@@ -87,8 +88,8 @@ impl RuntimeHost for RecordingHost {
 /// A host that returns Break on a specific instruction index to trigger a debug suspension.
 struct BreakOnFirstHost {
     pub did_break: bool,
-    pub entered_methods: Vec<u32>,
-    pub exited_methods: Vec<u32>,
+    pub entered_methods: Vec<(usize, u32)>,
+    pub exited_methods: Vec<(usize, u32)>,
 }
 
 impl BreakOnFirstHost {
@@ -115,6 +116,7 @@ impl RuntimeHost for BreakOnFirstHost {
     fn before_instruction(
         &mut self,
         _task_id: TaskId,
+        _module_idx: usize,
         _method_idx: u32,
         _pc: u32,
         _source_line: u32,
@@ -129,12 +131,12 @@ impl RuntimeHost for BreakOnFirstHost {
         }
     }
 
-    fn on_function_enter(&mut self, _task_id: TaskId, method_idx: u32) {
-        self.entered_methods.push(method_idx);
+    fn on_function_enter(&mut self, _task_id: TaskId, module_idx: usize, method_idx: u32) {
+        self.entered_methods.push((module_idx, method_idx));
     }
 
-    fn on_function_exit(&mut self, _task_id: TaskId, method_idx: u32) {
-        self.exited_methods.push(method_idx);
+    fn on_function_exit(&mut self, _task_id: TaskId, module_idx: usize, method_idx: u32) {
+        self.exited_methods.push((module_idx, method_idx));
     }
 }
 
@@ -190,7 +192,7 @@ fn before_instruction_receives_correct_method_and_task_ids() {
     assert!(!calls.is_empty(), "should have recorded at least one call");
 
     // Every call should carry the correct task_id
-    for (recorded_task_id, _method_idx, _pc) in calls {
+    for (recorded_task_id, _module_idx, _method_idx, _pc) in calls {
         assert_eq!(
             *recorded_task_id, task_id,
             "before_instruction should receive the spawned task's id"
@@ -200,11 +202,143 @@ fn before_instruction_receives_correct_method_and_task_ids() {
     // method_idx should be 0 (user module method index 0, since the virtual module
     // is module 0 and user module is module 1, but the method index within the user
     // module is 0)
-    let (_, method_idx, _) = calls[0];
+    let (_, module_idx, method_idx, _) = calls[0];
+    assert_eq!(module_idx, runtime.user_module_idx());
     assert_eq!(
         method_idx, 0,
         "first call should be for method index 0"
     );
+}
+
+#[test]
+fn cross_module_debug_locations_disambiguate_colliding_method_rows() {
+    use writ_module::signature::{TypeSignature, encode_method_signature};
+
+    struct BreakOnModuleChangeHost {
+        first_module: Option<usize>,
+    }
+
+    impl RuntimeHost for BreakOnModuleChangeHost {
+        fn on_request(&mut self, _id: RequestId, _req: &HostRequest) -> HostResponse {
+            HostResponse::Confirmed
+        }
+
+        fn on_log(&mut self, _level: LogLevel, _message: &str) {}
+
+        fn debug_enabled(&self) -> bool {
+            true
+        }
+
+        fn before_instruction(
+            &mut self,
+            _task_id: TaskId,
+            module_idx: usize,
+            _method_idx: u32,
+            _pc: u32,
+            _source_line: u32,
+            _source_col: u16,
+        ) -> DebugAction {
+            let first_module = self.first_module.get_or_insert(module_idx);
+            if *first_module == module_idx {
+                DebugAction::Continue
+            } else {
+                DebugAction::Break
+            }
+        }
+    }
+
+    let signature = encode_method_signature(&[], &TypeSignature::Void)
+        .expect("encode method signature");
+
+    let mut library = ModuleBuilder::new("debug-library");
+    let exports = library.add_type_def("Exports", "lib", TypeDefKind::Struct, 0);
+    library.add_type_method(
+        exports,
+        "library_method_zero",
+        &signature,
+        1 << 1,
+        0,
+        MethodBody {
+            register_types: vec![],
+            code: encode(&[Instruction::RetVoid]),
+            debug_locals: vec![],
+            source_spans: vec![],
+        },
+    );
+
+    let mut user = ModuleBuilder::new("debug-user");
+    let library_ref = user.add_module_ref("debug-library", "1.0.0");
+    let exports_ref = user.add_type_ref(library_ref, "Exports", "lib");
+    let target_ref = user.add_method_ref_with_flags(
+        exports_ref,
+        "library_method_zero",
+        &signature,
+        0,
+    );
+    user.add_method(
+        "user_method_zero",
+        &signature,
+        0,
+        1,
+        MethodBody {
+            register_types: vec![0],
+            code: encode(&[
+                Instruction::Call {
+                    r_dst: 0,
+                    method_idx: target_ref.0,
+                    r_base: 0,
+                    argc: 0,
+                },
+                Instruction::RetVoid,
+            ]),
+            debug_locals: vec![],
+            source_spans: vec![],
+        },
+    );
+
+    let host = BreakOnModuleChangeHost { first_module: None };
+    let mut runtime = RuntimeBuilder::new(user.build())
+        .with_library(library.build())
+        .with_host(host)
+        .build()
+        .expect("build cross-module runtime");
+    let user_module_idx = runtime.user_module_idx();
+    let library_module_idx = runtime
+        .domain()
+        .modules
+        .iter()
+        .position(|loaded| {
+            writ_module::heap::read_string(
+                &loaded.module.string_heap,
+                loaded.module.header.module_name,
+            )
+            .ok()
+                == Some("debug-library")
+        })
+        .expect("library module is loaded");
+    let task_id = runtime.spawn_task(0, vec![]).expect("spawn user method");
+
+    runtime.tick(0.0, ExecutionLimit::None);
+
+    let reason = runtime.suspend_reason(task_id).expect("library method should suspend");
+    match reason {
+        SuspendReason::Breakpoint {
+            module_idx,
+            method_idx,
+            ..
+        } => {
+            assert_eq!(*module_idx, library_module_idx);
+            assert_eq!(*method_idx, 0);
+        }
+        other => panic!("expected breakpoint, got {:?}", std::mem::discriminant(other)),
+    }
+
+    let frames = runtime.call_stack_frames(task_id).expect("live call stack");
+    assert_eq!(frames.len(), 2);
+    assert_eq!(frames[0].module_idx, user_module_idx);
+    assert_eq!(frames[0].method_idx, 0);
+    assert_eq!(frames[1].module_idx, library_module_idx);
+    assert_eq!(frames[1].method_idx, 0);
 }
 
 /// A debug-enabled host with DebugAction::Break causes the task to suspend with Breakpoint reason.
@@ -348,6 +482,7 @@ fn debug_step_over_suspends_task_with_debug_step_reason() {
         fn before_instruction(
             &mut self,
             _task_id: TaskId,
+            _module_idx: usize,
             _method_idx: u32,
             _pc: u32,
             _source_line: u32,

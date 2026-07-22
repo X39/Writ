@@ -160,6 +160,8 @@ impl<I: Read, O: Write> DapServer<I, O> {
         };
 
         // Build breakpoint table and debug host.
+        // The final domain index is assigned by RuntimeBuilder below. Rebind the
+        // table immediately after construction, before execution can begin.
         let breakpoint_table = BreakpointTable::new(&module);
         let debug_host = DebugHost::new(breakpoint_table, &module);
 
@@ -175,6 +177,11 @@ impl<I: Read, O: Write> DapServer<I, O> {
                 return;
             }
         };
+        let user_module_idx = runtime.user_module_idx();
+        runtime
+            .host_mut()
+            .breakpoints
+            .set_module_idx(user_module_idx);
 
         // Find the "main" export (item_kind == 0 = method).
         // If not found in exports, fall back to searching method_defs
@@ -289,7 +296,7 @@ impl<I: Read, O: Write> DapServer<I, O> {
     }
 
     pub(super) fn handle_threads(&mut self, req: Request) {
-        let threads = if let (Some(rt), Some(module)) = (self.runtime.as_ref(), self.module.as_ref()) {
+        let threads = if let Some(rt) = self.runtime.as_ref() {
             let task_ids = rt.all_task_ids();
             if task_ids.is_empty() {
                 // Check if the main task crashed -- if so, report it as a stopped thread
@@ -307,7 +314,17 @@ impl<I: Read, O: Write> DapServer<I, O> {
                     vec![types::Thread { id: 0, name: "terminated".to_string() }]
                 }
             } else {
-                build_thread_list(&task_ids, |tid| rt.call_stack_frames(tid), module)
+                build_thread_list(
+                    &task_ids,
+                    |tid| rt.call_stack_frames(tid),
+                    |module_idx, method_idx| {
+                        let loaded = rt.domain().modules.get(module_idx)?;
+                        let method = loaded.module.method_defs.get(method_idx)?;
+                        read_string(&loaded.module.string_heap, method.name)
+                            .ok()
+                            .map(str::to_owned)
+                    },
+                )
             }
         } else {
             vec![types::Thread { id: 0, name: "terminated".to_string() }]
@@ -390,9 +407,9 @@ impl<I: Read, O: Write> DapServer<I, O> {
 
     pub(super) fn handle_next(&mut self, req: Request) {
         // Step Over: stop at next line at same or lower call depth.
-        let (current_line, current_method) = self.current_position();
+        let (current_line, current_module, current_method) = self.current_position();
         if let (Some(rt), Some(task_id)) = (self.runtime.as_mut(), self.task_id) {
-            rt.host_mut().set_step_over(task_id, current_line, current_method);
+            rt.host_mut().set_step_over(task_id, current_line, current_module, current_method);
         }
         let rsp = req.success(ResponseBody::Next);
         let _ = self.server.respond(rsp);
@@ -401,9 +418,9 @@ impl<I: Read, O: Write> DapServer<I, O> {
 
     pub(super) fn handle_step_in(&mut self, req: Request) {
         // Step Into: stop at next line in any method (including callees).
-        let (current_line, current_method) = self.current_position();
+        let (current_line, current_module, current_method) = self.current_position();
         if let Some(rt) = self.runtime.as_mut() {
-            rt.host_mut().set_step_into(current_line, current_method);
+            rt.host_mut().set_step_into(current_line, current_module, current_method);
         }
         let rsp = req.success(ResponseBody::StepIn);
         let _ = self.server.respond(rsp);

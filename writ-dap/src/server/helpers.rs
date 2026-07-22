@@ -5,7 +5,7 @@
 use dap::prelude::*;
 use writ_module::module::Module;
 use writ_module::heap::read_string;
-use writ_runtime::{TaskId, Value, GcHeap};
+use writ_runtime::{TaskId, Value, GcHeap, FrameLocation};
 
 use crate::variables::{format_value, decode_type_blob};
 
@@ -21,18 +21,16 @@ pub(super) fn decode_frame_id(frame_id: i64) -> (u32, u32) {
 /// Returns a single "terminated" thread if task_ids is empty.
 pub(super) fn build_thread_list(
     task_ids: &[TaskId],
-    call_stack_fn: impl Fn(TaskId) -> Option<Vec<(usize, usize)>>,
-    module: &Module,
+    call_stack_fn: impl Fn(TaskId) -> Option<Vec<FrameLocation>>,
+    method_name_fn: impl Fn(usize, usize) -> Option<String>,
 ) -> Vec<types::Thread> {
     if task_ids.is_empty() {
         return vec![types::Thread { id: 0, name: "terminated".to_string() }];
     }
     task_ids.iter().map(|tid| {
         let name = call_stack_fn(*tid)
-            .and_then(|frames| frames.first().map(|&(method_idx, _)| method_idx))
-            .and_then(|method_idx| module.method_defs.get(method_idx))
-            .and_then(|def| read_string(&module.string_heap, def.name).ok())
-            .map(|s| s.to_string())
+            .and_then(|frames| frames.first().copied())
+            .and_then(|frame| method_name_fn(frame.module_idx, frame.method_idx))
             .unwrap_or_else(|| format!("task-{}", tid.index));
         types::Thread { id: tid.index as i64, name }
     }).collect()
@@ -88,9 +86,13 @@ pub(crate) fn collect_frame_variables(
 /// `call_stack_frames` returns instruction-index PCs, but `SourceSpan.pc`
 /// and `DebugLocal.start_pc`/`end_pc` are byte offsets. This helper bridges
 /// the gap using `LoadedModule.byte_offsets`.
-pub(crate) fn instr_to_byte_pc(runtime: &writ_runtime::Runtime<crate::debug_host::DebugHost>, method_idx: usize, instr_pc: usize) -> u32 {
-    let user_idx = runtime.user_module_idx();
-    runtime.domain().modules.get(user_idx)
+pub(crate) fn instr_to_byte_pc(
+    runtime: &writ_runtime::Runtime<crate::debug_host::DebugHost>,
+    module_idx: usize,
+    method_idx: usize,
+    instr_pc: usize,
+) -> u32 {
+    runtime.domain().modules.get(module_idx)
         .and_then(|m| m.byte_offsets.get(method_idx))
         .and_then(|offsets| offsets.get(instr_pc))
         .copied()
@@ -190,11 +192,17 @@ mod tests {
         // Simulate call_stack_frames: task0 has method 0 at bottom, task1 has method 1
         let threads = build_thread_list(&task_ids, |tid| {
             match tid.index {
-                0 => Some(vec![(0usize, 0usize)]),
-                1 => Some(vec![(1usize, 0usize)]),
+                0 => Some(vec![FrameLocation { module_idx: 0, method_idx: 0, pc: 0 }]),
+                1 => Some(vec![FrameLocation { module_idx: 0, method_idx: 1, pc: 0 }]),
                 _ => None,
             }
-        }, &module);
+        }, |module_idx, method_idx| {
+            (module_idx == 0)
+                .then(|| module.method_defs.get(method_idx))
+                .flatten()
+                .and_then(|def| read_string(&module.string_heap, def.name).ok())
+                .map(str::to_owned)
+        });
 
         assert_eq!(threads.len(), 2);
         assert_eq!(threads[0].id, 0);
@@ -203,7 +211,7 @@ mod tests {
         assert_eq!(threads[1].name, "worker");
 
         // Empty task list -> terminated
-        let threads_empty = build_thread_list(&[], |_| None, &module);
+        let threads_empty = build_thread_list(&[], |_| None, |_, _| None);
         assert_eq!(threads_empty.len(), 1);
         assert_eq!(threads_empty[0].id, 0);
         assert_eq!(threads_empty[0].name, "terminated");

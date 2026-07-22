@@ -410,9 +410,10 @@ fn test_call_stack_after_spawn() {
         frames.len()
     );
     assert_eq!(
-        frames[0].0, main_idx,
+        frames[0].method_idx, main_idx,
         "initial frame method_idx should be the main method index"
     );
+    assert_eq!(frames[0].module_idx, runtime.user_module_idx());
 }
 
 // ─── Method name resolution from compiled module ─────────────────────────────
@@ -670,6 +671,11 @@ fn test_breakpoint_fires_during_execution() {
         .with_host(debug_host)
         .build()
         .expect("runtime should build");
+    let user_module_idx = runtime.user_module_idx();
+    runtime
+        .host_mut()
+        .breakpoints
+        .set_module_idx(user_module_idx);
 
     let task_id = runtime
         .spawn_task(main_idx, vec![])
@@ -731,6 +737,11 @@ fn test_breakpoint_resume_does_not_rehit_same_pc() {
         .with_host(debug_host)
         .build()
         .expect("runtime should build");
+    let user_module_idx = runtime.user_module_idx();
+    runtime
+        .host_mut()
+        .breakpoints
+        .set_module_idx(user_module_idx);
 
     let task_id = runtime.spawn_task(main_idx, vec![]).expect("spawn should succeed");
 
@@ -937,6 +948,11 @@ fn test_multi_fn_breakpoint_fires_on_line2() {
         .with_host(debug_host)
         .build()
         .expect("runtime should build");
+    let user_module_idx = runtime.user_module_idx();
+    runtime
+        .host_mut()
+        .breakpoints
+        .set_module_idx(user_module_idx);
 
     let task_id = runtime
         .spawn_task(main_idx, vec![])
@@ -995,6 +1011,11 @@ fn test_multi_fn_step_into_function_call() {
         .with_host(debug_host)
         .build()
         .expect("runtime should build");
+    let user_module_idx = runtime.user_module_idx();
+    runtime
+        .host_mut()
+        .breakpoints
+        .set_module_idx(user_module_idx);
 
     let task_id = runtime
         .spawn_task(main_idx, vec![])
@@ -1016,14 +1037,24 @@ fn test_multi_fn_step_into_function_call() {
     runtime.host_mut().take_pending_stop();
 
     // Record the current line so StepInto knows the origin.
-    let origin_line = match runtime.suspend_reason(task_id) {
-        Some(SuspendReason::Breakpoint { line, .. }) => *line,
-        _ => resolved[0].line,  // fall back to what the table reported
+    let (origin_line, origin_module, origin_method) = match runtime.suspend_reason(task_id) {
+        Some(SuspendReason::Breakpoint {
+            line,
+            module_idx,
+            method_idx,
+            ..
+        }) => (*line, *module_idx, *method_idx),
+        _ => (
+            resolved[0].line,
+            runtime.user_module_idx(),
+            resolved[0].method_idx as u32,
+        ),
     };
-    let origin_method = resolved[0].method_idx as u32;
 
     // Activate StepInto mode, then resume.
-    runtime.host_mut().set_step_into(origin_line, origin_method);
+    runtime
+        .host_mut()
+        .set_step_into(origin_line, origin_module, origin_method);
     runtime.resume_debug(task_id).expect("resume_debug should succeed");
 
     // Tick until the step fires (should stop inside test() at line 2).

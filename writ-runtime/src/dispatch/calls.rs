@@ -64,7 +64,8 @@ pub(super) fn exec_call(
     }
 
     if ctx.host.debug_enabled() {
-        ctx.host.on_function_enter(ctx.task.id, method_idx as u32);
+        ctx.host
+            .on_function_enter(ctx.task.id, target_module_idx, method_idx as u32);
     }
     ExecutionResult::Continue
 }
@@ -218,7 +219,8 @@ pub(super) fn exec_call_virt(
             }
 
             if ctx.host.debug_enabled() {
-                ctx.host.on_function_enter(ctx.task.id, method_idx as u32);
+                ctx.host
+                    .on_function_enter(ctx.task.id, module_idx, method_idx as u32);
             }
             ExecutionResult::Continue
         }
@@ -514,7 +516,8 @@ pub(super) fn exec_call_indirect(
     }
 
     if ctx.host.debug_enabled() {
-        ctx.host.on_function_enter(ctx.task.id, method_idx as u32);
+        ctx.host
+            .on_function_enter(ctx.task.id, target_module_idx, method_idx as u32);
     }
     ExecutionResult::Continue
 }

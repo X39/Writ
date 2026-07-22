@@ -29,6 +29,8 @@ pub struct CrashInfo {
 /// A single frame in a crash stack trace.
 #[derive(Debug, Clone)]
 pub struct StackFrame {
+    /// Index of the loaded module containing `method_idx`.
+    pub module_idx: usize,
     pub method_idx: usize,
     pub method_name: String,
     pub pc: usize,
@@ -95,6 +97,7 @@ mod tests {
             message: "unwrap called on None".to_string(),
             stack_trace: vec![
                 StackFrame {
+                    module_idx: 0,
                     method_idx: 0,
                     method_name: "crash_here".to_string(),
                     pc: 5,
@@ -103,6 +106,7 @@ mod tests {
                     registers: vec![],
                 },
                 StackFrame {
+                    module_idx: 0,
                     method_idx: 1,
                     method_name: "main".to_string(),
                     pc: 2,
@@ -135,6 +139,7 @@ mod tests {
             message: "error".to_string(),
             stack_trace: vec![
                 StackFrame {
+                    module_idx: 0,
                     method_idx: 0,
                     method_name: "foo".to_string(),
                     pc: 0,
@@ -155,6 +160,7 @@ mod tests {
             message: "error".to_string(),
             stack_trace: vec![
                 StackFrame {
+                    module_idx: 0,
                     method_idx: 3,
                     method_name: String::new(),
                     pc: 0,

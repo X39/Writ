@@ -40,11 +40,13 @@ pub enum StepMode {
     StepOver {
         origin_depth: usize,
         origin_line: u32,
+        origin_module: usize,
         origin_method: u32,
     },
     /// Stop at the next line in any method (including callees), different from origin.
     StepInto {
         origin_line: u32,
+        origin_module: usize,
         origin_method: u32,
     },
     /// Stop when the call depth decreases below the origin depth (i.e., after return).
@@ -74,11 +76,11 @@ pub struct DebugHost {
     extern_names: Vec<String>,
     /// Buffered log messages to drain via DAP Event::Output.
     pub log_messages: Vec<(LogLevel, String)>,
-    /// Suppress breakpoint re-hit at this (method_idx, byte_pc) on the next
+    /// Suppress breakpoint re-hit at this domain-qualified location on the next
     /// `before_instruction` call. Set when a breakpoint fires so that after
     /// resume the same breakpoint doesn't immediately re-trigger (the runtime
     /// returns DebugSuspend before advancing the PC).
-    suppress_breakpoint_at: Option<(u32, u32)>,
+    suppress_breakpoint_at: Option<(usize, u32, u32)>,
 }
 
 impl DebugHost {
@@ -130,11 +132,18 @@ impl DebugHost {
     /// Set StepOver mode using the current position.
     ///
     /// The DAP server calls this when the user issues a "next" (step over) command.
-    pub fn set_step_over(&mut self, task_id: TaskId, current_line: u32, current_method: u32) {
+    pub fn set_step_over(
+        &mut self,
+        task_id: TaskId,
+        current_line: u32,
+        current_module: usize,
+        current_method: u32,
+    ) {
         let depth = self.current_depth(task_id);
         self.step_mode = StepMode::StepOver {
             origin_depth: depth,
             origin_line: current_line,
+            origin_module: current_module,
             origin_method: current_method,
         };
     }
@@ -142,9 +151,15 @@ impl DebugHost {
     /// Set StepInto mode.
     ///
     /// The DAP server calls this when the user issues a "stepIn" command.
-    pub fn set_step_into(&mut self, current_line: u32, current_method: u32) {
+    pub fn set_step_into(
+        &mut self,
+        current_line: u32,
+        current_module: usize,
+        current_method: u32,
+    ) {
         self.step_mode = StepMode::StepInto {
             origin_line: current_line,
+            origin_module: current_module,
             origin_method: current_method,
         };
     }
@@ -185,6 +200,7 @@ impl RuntimeHost for DebugHost {
     fn before_instruction(
         &mut self,
         task_id: TaskId,
+        module_idx: usize,
         method_idx: u32,
         pc: u32,
         source_line: u32,
@@ -194,10 +210,13 @@ impl RuntimeHost for DebugHost {
         //    Skip the check if we just resumed from this exact breakpoint position
         //    (the runtime returns DebugSuspend before advancing the PC, so without
         //    suppression the same breakpoint would re-fire immediately).
-        if self.suppress_breakpoint_at == Some((method_idx, pc)) {
+        if self.suppress_breakpoint_at == Some((module_idx, method_idx, pc)) {
             self.suppress_breakpoint_at = None;
-        } else if let Some(bp_id) = self.breakpoints.lookup(method_idx as usize, pc) {
-            self.suppress_breakpoint_at = Some((method_idx, pc));
+        } else if let Some(bp_id) = self
+            .breakpoints
+            .lookup_in_module(module_idx, method_idx as usize, pc)
+        {
+            self.suppress_breakpoint_at = Some((module_idx, method_idx, pc));
             self.pending_stop = Some(StopReason::Breakpoint(bp_id));
             return DebugAction::Break;
         }
@@ -211,13 +230,16 @@ impl RuntimeHost for DebugHost {
             StepMode::StepOver {
                 origin_depth,
                 origin_line,
+                origin_module,
                 origin_method,
             } => {
                 // Stop when:
                 // - we are at the same or lower call depth (not inside a callee), AND
                 // - the current line or method differs from where we started.
                 if depth <= *origin_depth
-                    && (source_line != *origin_line || method_idx != *origin_method)
+                    && (source_line != *origin_line
+                        || module_idx != *origin_module
+                        || method_idx != *origin_method)
                 {
                     self.pending_stop = Some(StopReason::Step);
                     return DebugAction::Break;
@@ -226,10 +248,14 @@ impl RuntimeHost for DebugHost {
 
             StepMode::StepInto {
                 origin_line,
+                origin_module,
                 origin_method,
             } => {
                 // Stop at any line change (including in callees).
-                if source_line != *origin_line || method_idx != *origin_method {
+                if source_line != *origin_line
+                    || module_idx != *origin_module
+                    || method_idx != *origin_method
+                {
                     self.pending_stop = Some(StopReason::Step);
                     return DebugAction::Break;
                 }
@@ -247,12 +273,12 @@ impl RuntimeHost for DebugHost {
         DebugAction::Continue
     }
 
-    fn on_function_enter(&mut self, task_id: TaskId, _method_idx: u32) {
+    fn on_function_enter(&mut self, task_id: TaskId, _module_idx: usize, _method_idx: u32) {
         let depth = self.call_depths.entry(task_id).or_insert(0);
         *depth += 1;
     }
 
-    fn on_function_exit(&mut self, task_id: TaskId, _method_idx: u32) {
+    fn on_function_exit(&mut self, task_id: TaskId, _module_idx: usize, _method_idx: u32) {
         let depth = self.call_depths.entry(task_id).or_insert(0);
         *depth = depth.saturating_sub(1);
     }
@@ -362,7 +388,7 @@ mod tests {
         let mut host = make_host(&[(0, 10, 5)]);
         host.breakpoints.set_breakpoints(&[10]);
 
-        let action = host.before_instruction(task(0), 0, 5, 10, 0);
+        let action = host.before_instruction(task(0), 0, 0, 5, 10, 0);
         assert_eq!(action, DebugAction::Break, "should break on breakpoint");
         assert!(host.pending_stop.is_some(), "pending_stop should be set");
         match host.take_pending_stop() {
@@ -377,9 +403,22 @@ mod tests {
         host.breakpoints.set_breakpoints(&[10]);
 
         // Different pc — should not hit
-        let action = host.before_instruction(task(0), 0, 6, 10, 0);
+        let action = host.before_instruction(task(0), 0, 0, 6, 10, 0);
         assert_eq!(action, DebugAction::Continue, "should not break at wrong pc");
         assert!(host.pending_stop.is_none(), "no pending stop expected");
+    }
+
+    #[test]
+    fn test_colliding_location_in_another_module_does_not_hit() {
+        let module = make_module_with_spans(&[(0, 10, 5)]);
+        let mut table = BreakpointTable::for_module(2, &module);
+        table.set_breakpoints(&[10]);
+        let mut host = DebugHost::new(table, &module);
+
+        let action = host.before_instruction(task(0), 1, 0, 5, 10, 0);
+
+        assert_eq!(action, DebugAction::Continue);
+        assert!(host.pending_stop.is_none());
     }
 
     // ─── StepOver tests ───────────────────────────────────────────────────────
@@ -388,14 +427,14 @@ mod tests {
     fn test_step_over_same_depth() {
         // StepOver from line 10 at depth 0 should stop at line 20 at depth 0.
         let mut host = make_host(&[]);
-        host.set_step_over(task(0), 10, 0);
+        host.set_step_over(task(0), 10, 0, 0);
 
         // Same line — should NOT stop.
-        let a = host.before_instruction(task(0), 0, 0, 10, 0);
+        let a = host.before_instruction(task(0), 0, 0, 0, 10, 0);
         assert_eq!(a, DebugAction::Continue, "should not stop at origin line");
 
         // Different line at same depth — should stop.
-        let a = host.before_instruction(task(0), 0, 0, 20, 0);
+        let a = host.before_instruction(task(0), 0, 0, 0, 20, 0);
         assert_eq!(a, DebugAction::Break, "should stop at different line, same depth");
     }
 
@@ -403,16 +442,16 @@ mod tests {
     fn test_step_over_same_line_skip() {
         // Multiple instructions on the same line should NOT cause a stop.
         let mut host = make_host(&[]);
-        host.set_step_over(task(0), 10, 0);
+        host.set_step_over(task(0), 10, 0, 0);
 
         // Multiple instructions on origin line.
-        let a = host.before_instruction(task(0), 0, 1, 10, 0);
+        let a = host.before_instruction(task(0), 0, 0, 1, 10, 0);
         assert_eq!(a, DebugAction::Continue);
-        let a = host.before_instruction(task(0), 0, 2, 10, 0);
+        let a = host.before_instruction(task(0), 0, 0, 2, 10, 0);
         assert_eq!(a, DebugAction::Continue);
 
         // Next line — should stop.
-        let a = host.before_instruction(task(0), 0, 3, 11, 0);
+        let a = host.before_instruction(task(0), 0, 0, 3, 11, 0);
         assert_eq!(a, DebugAction::Break);
     }
 
@@ -420,20 +459,20 @@ mod tests {
     fn test_step_over_skips_deeper() {
         // StepOver should NOT stop at lines inside a called function (deeper depth).
         let mut host = make_host(&[]);
-        host.set_step_over(task(0), 10, 0);
+        host.set_step_over(task(0), 10, 0, 0);
 
         // Simulate entering a callee.
-        host.on_function_enter(task(0), 1);
+        host.on_function_enter(task(0), 0, 1);
 
         // At deeper depth — should NOT stop, even on a different line.
-        let a = host.before_instruction(task(0), 1, 0, 20, 0);
+        let a = host.before_instruction(task(0), 0, 1, 0, 20, 0);
         assert_eq!(a, DebugAction::Continue, "should skip lines in callee");
 
         // Return from callee.
-        host.on_function_exit(task(0), 1);
+        host.on_function_exit(task(0), 0, 1);
 
         // Back at origin depth, different line — should stop.
-        let a = host.before_instruction(task(0), 0, 5, 15, 0);
+        let a = host.before_instruction(task(0), 0, 0, 5, 15, 0);
         assert_eq!(a, DebugAction::Break, "should stop after returning from callee");
     }
 
@@ -443,10 +482,10 @@ mod tests {
     fn test_step_into_stops_at_callee() {
         // StepInto should stop at the first instruction in the callee (method 1, line 20).
         let mut host = make_host(&[]);
-        host.set_step_into(10, 0); // origin: line 10, method 0
+        host.set_step_into(10, 0, 0); // origin: line 10, module 0, method 0
 
         // Different method/line — stop immediately.
-        let a = host.before_instruction(task(0), 1, 0, 20, 0);
+        let a = host.before_instruction(task(0), 0, 1, 0, 20, 0);
         assert_eq!(a, DebugAction::Break, "should stop at callee entry");
     }
 
@@ -454,10 +493,20 @@ mod tests {
     fn test_step_into_skips_origin_line() {
         // Should not stop on the origin line/method.
         let mut host = make_host(&[]);
-        host.set_step_into(10, 0);
+        host.set_step_into(10, 0, 0);
 
-        let a = host.before_instruction(task(0), 0, 1, 10, 0);
+        let a = host.before_instruction(task(0), 0, 0, 1, 10, 0);
         assert_eq!(a, DebugAction::Continue, "should not stop at origin line");
+    }
+
+    #[test]
+    fn test_step_into_distinguishes_same_method_and_line_in_another_module() {
+        let mut host = make_host(&[]);
+        host.set_step_into(10, 2, 0);
+
+        let action = host.before_instruction(task(0), 1, 0, 1, 10, 0);
+
+        assert_eq!(action, DebugAction::Break);
     }
 
     // ─── StepOut tests ────────────────────────────────────────────────────────
@@ -468,18 +517,18 @@ mod tests {
         let mut host = make_host(&[]);
 
         // Simulate being inside a function (depth 1).
-        host.on_function_enter(task(0), 0);
+        host.on_function_enter(task(0), 0, 0);
         host.set_step_out(task(0));
 
         // Still inside — should not stop.
-        let a = host.before_instruction(task(0), 0, 0, 10, 0);
+        let a = host.before_instruction(task(0), 0, 0, 0, 10, 0);
         assert_eq!(a, DebugAction::Continue, "should not stop while still in callee");
 
         // Return from function.
-        host.on_function_exit(task(0), 0);
+        host.on_function_exit(task(0), 0, 0);
 
         // Depth is now 0, origin was 1 — should stop.
-        let a = host.before_instruction(task(0), 0, 0, 5, 0);
+        let a = host.before_instruction(task(0), 0, 0, 0, 5, 0);
         assert_eq!(a, DebugAction::Break, "should stop after returning from frame");
     }
 
@@ -492,16 +541,16 @@ mod tests {
 
         assert_eq!(host.current_depth(t), 0, "initial depth should be 0");
 
-        host.on_function_enter(t, 0);
+        host.on_function_enter(t, 0, 0);
         assert_eq!(host.current_depth(t), 1);
 
-        host.on_function_enter(t, 1);
+        host.on_function_enter(t, 0, 1);
         assert_eq!(host.current_depth(t), 2);
 
-        host.on_function_exit(t, 1);
+        host.on_function_exit(t, 0, 1);
         assert_eq!(host.current_depth(t), 1);
 
-        host.on_function_exit(t, 0);
+        host.on_function_exit(t, 0, 0);
         assert_eq!(host.current_depth(t), 0);
     }
 
@@ -510,7 +559,7 @@ mod tests {
         let mut host = make_host(&[]);
         let t = task(0);
         // Exiting without entering should not panic.
-        host.on_function_exit(t, 0);
+        host.on_function_exit(t, 0, 0);
         assert_eq!(host.current_depth(t), 0, "depth should saturate at 0");
     }
 
@@ -520,8 +569,8 @@ mod tests {
         let t0 = task(0);
         let t1 = task(1);
 
-        host.on_function_enter(t0, 0);
-        host.on_function_enter(t0, 0);
+        host.on_function_enter(t0, 0, 0);
+        host.on_function_enter(t0, 0, 0);
 
         assert_eq!(host.current_depth(t0), 2);
         assert_eq!(host.current_depth(t1), 0, "tasks should have independent depths");
@@ -545,7 +594,7 @@ mod tests {
     fn test_take_pending_stop_clears() {
         let mut host = make_host(&[(0, 10, 5)]);
         host.breakpoints.set_breakpoints(&[10]);
-        host.before_instruction(task(0), 0, 5, 10, 0);
+        host.before_instruction(task(0), 0, 0, 5, 10, 0);
 
         let first = host.take_pending_stop();
         assert!(first.is_some());

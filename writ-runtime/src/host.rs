@@ -141,11 +141,13 @@ pub trait RuntimeHost: Send + Sync {
     fn debug_enabled(&self) -> bool { false }
 
     /// Called before each instruction executes (only when debug_enabled() is true).
-    /// Receives task ID, method index, program counter, and source location.
+    /// Receives task ID, loaded-module index, module-local method index,
+    /// program counter, and source location.
     /// Return DebugAction to control execution flow.
     fn before_instruction(
         &mut self,
         _task_id: TaskId,
+        _module_idx: usize,
         _method_idx: u32,
         _pc: u32,
         _source_line: u32,
@@ -153,10 +155,10 @@ pub trait RuntimeHost: Send + Sync {
     ) -> DebugAction { DebugAction::Continue }
 
     /// Called when a function is entered (only when debug_enabled() is true).
-    fn on_function_enter(&mut self, _task_id: TaskId, _method_idx: u32) {}
+    fn on_function_enter(&mut self, _task_id: TaskId, _module_idx: usize, _method_idx: u32) {}
 
     /// Called when a function is exited (only when debug_enabled() is true).
-    fn on_function_exit(&mut self, _task_id: TaskId, _method_idx: u32) {}
+    fn on_function_exit(&mut self, _task_id: TaskId, _module_idx: usize, _method_idx: u32) {}
 
     /// Called after the user module is parsed but before it is added to the Domain.
     ///
@@ -419,7 +421,7 @@ mod tests {
     fn null_host_before_instruction_returns_continue() {
         let mut host = NullHost;
         let task_id = TaskId::new(0, 0);
-        let action = host.before_instruction(task_id, 0, 0, 1, 0);
+        let action = host.before_instruction(task_id, 0, 0, 0, 1, 0);
         assert_eq!(action, DebugAction::Continue);
     }
 
@@ -427,8 +429,8 @@ mod tests {
     fn null_host_function_hooks_are_callable() {
         let mut host = NullHost;
         let task_id = TaskId::new(0, 0);
-        host.on_function_enter(task_id, 0);
-        host.on_function_exit(task_id, 0);
+        host.on_function_enter(task_id, 0, 0);
+        host.on_function_exit(task_id, 0, 0);
         // No panic == success
     }
 

@@ -15,7 +15,9 @@ environment.
 
 Each task maintains a **managed call stack**: an ordered sequence of **call frames**. Each frame contains:
 
-- **method**: The MethodDef token identifying the executing method.
+- **method**: The loaded module identity and module-local MethodDef token identifying the executing method. Frame
+  snapshots, crash traces, and debugger locations must retain both parts because MethodDef row indices may collide
+  across modules.
 - **pc**: The program counter — byte offset into the method body's code section.
 - **registers**: An array of typed register slots, sized per the method body's `reg_count`.
 - **defer_stack**: A LIFO stack of pending defer handler offsets (pushed by `DEFER_PUSH`, popped by `DEFER_POP`).

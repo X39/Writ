@@ -361,11 +361,19 @@ pub(crate) fn execute_one(
             .copied()
             .unwrap_or(0);
         let (line, col) = lookup_source_location(module, method_idx, byte_pc);
-        let action = host.before_instruction(task.id, method_idx as u32, byte_pc, line, col);
+        let action = host.before_instruction(
+            task.id,
+            current_module_idx,
+            method_idx as u32,
+            byte_pc,
+            line,
+            col,
+        );
         match action {
             DebugAction::Continue => {}
             DebugAction::Break => {
                 task.suspend_reason = Some(SuspendReason::Breakpoint {
+                    module_idx: current_module_idx,
                     method_idx: method_idx as u32,
                     pc: byte_pc,
                     line,
@@ -377,6 +385,7 @@ pub(crate) fn execute_one(
             DebugAction::StepOver | DebugAction::StepInto | DebugAction::StepOut => {
                 task.suspend_reason = Some(SuspendReason::DebugStep {
                     mode: action,
+                    module_idx: current_module_idx,
                     method_idx: method_idx as u32,
                     pc: byte_pc,
                     line,
@@ -732,8 +741,12 @@ fn execute_ret(
 
     // Step 2: Fire on_function_exit hook before popping, then pop frame
     if host.debug_enabled() {
-        let exiting_method_idx = task.call_stack.last().map(|f| f.method_idx).unwrap_or(0);
-        host.on_function_exit(task.id, exiting_method_idx as u32);
+        let (exiting_module_idx, exiting_method_idx) = task
+            .call_stack
+            .last()
+            .map(|f| (f.module_idx.unwrap_or(current_module_idx), f.method_idx))
+            .unwrap_or((current_module_idx, 0));
+        host.on_function_exit(task.id, exiting_module_idx, exiting_method_idx as u32);
     }
     let popped = task.call_stack.pop().unwrap();
     // Extract return_register (Copy u16) before moving registers into pool
@@ -866,6 +879,7 @@ pub(crate) fn execute_crash(
                     .unwrap_or((0, 0));
 
                 crate::error::StackFrame {
+                    module_idx: frame_module_idx,
                     method_idx: f.method_idx,
                     method_name,
                     pc: f.pc,

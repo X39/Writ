@@ -702,11 +702,21 @@ impl<H: RuntimeHost> Runtime<H> {
 
     /// Get a snapshot of all call stack frames for a task (used by the DAP server).
     ///
-    /// Returns `(method_idx, pc)` pairs ordered from bottom (oldest) to top (newest frame).
+    /// Returns domain-qualified frame locations ordered from bottom (oldest) to
+    /// top (newest frame).
     /// Returns `None` if the task does not exist.
-    pub fn call_stack_frames(&self, task_id: TaskId) -> Option<Vec<(usize, usize)>> {
+    pub fn call_stack_frames(&self, task_id: TaskId) -> Option<Vec<crate::frame::FrameLocation>> {
         self.scheduler.tasks.get(&task_id)
-            .map(|t| t.call_stack.iter().map(|f| (f.method_idx, f.pc)).collect())
+            .map(|t| {
+                t.call_stack
+                    .iter()
+                    .map(|f| crate::frame::FrameLocation {
+                        module_idx: f.module_idx.unwrap_or(self.user_module_idx),
+                        method_idx: f.method_idx,
+                        pc: f.pc,
+                    })
+                    .collect()
+            })
     }
 
     /// Get a clone of all registers for a specific call frame of a task.

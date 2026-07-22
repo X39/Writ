@@ -1,5 +1,16 @@
 use crate::value::Value;
 
+/// Domain-qualified location of a runtime call frame.
+///
+/// Method indices are local to a loaded module, so consumers such as debuggers
+/// must retain `module_idx` alongside `method_idx` and `pc`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FrameLocation {
+    pub module_idx: usize,
+    pub method_idx: usize,
+    pub pc: usize,
+}
+
 /// A single call frame in a task's call stack.
 ///
 /// Each executing function has one CallFrame. The frame owns the register file

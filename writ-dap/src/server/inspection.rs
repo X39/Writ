@@ -7,7 +7,7 @@ use std::io::{Read, Write};
 
 use dap::prelude::*;
 use writ_module::heap::read_string;
-use writ_runtime::{LogLevel, SuspendReason, TaskState, TaskId};
+use writ_runtime::{FrameLocation, LogLevel, SuspendReason, TaskState, TaskId};
 use writ_runtime::runtime::{ExecutionLimit, TickResult};
 
 use crate::debug_host::StopReason;
@@ -288,10 +288,6 @@ impl<I: Read, O: Write> DapServer<I, O> {
             Some(rt) => rt,
             None => return 0,
         };
-        let module = match self.module.as_ref() {
-            Some(m) => m,
-            None => return 0,
-        };
         let display_frame_idx = display_frame_idx as usize;
 
         // Primary path: active call stack.
@@ -302,12 +298,22 @@ impl<I: Read, O: Write> DapServer<I, O> {
                 return 0;
             }
             let actual_idx = frames.len() - 1 - display_frame_idx;
-            let (method_idx, pc) = match frames.get(actual_idx) {
-                Some(&f) => f,
+            let frame = match frames.get(actual_idx) {
+                Some(frame) => *frame,
                 None => return 0,
             };
-            let byte_pc = instr_to_byte_pc(runtime, method_idx, pc);
-            let body = match module.method_bodies.get(method_idx) {
+            let byte_pc = instr_to_byte_pc(
+                runtime,
+                frame.module_idx,
+                frame.method_idx,
+                frame.pc,
+            );
+            let body = match runtime
+                .domain()
+                .modules
+                .get(frame.module_idx)
+                .and_then(|loaded| loaded.module.method_bodies.get(frame.method_idx))
+            {
                 Some(b) => b,
                 None => return 0,
             };
@@ -324,8 +330,18 @@ impl<I: Read, O: Write> DapServer<I, O> {
                 Some(f) => f,
                 None => return 0,
             };
-            let byte_pc = instr_to_byte_pc(runtime, crash_frame.method_idx, crash_frame.pc);
-            let body = match module.method_bodies.get(crash_frame.method_idx) {
+            let byte_pc = instr_to_byte_pc(
+                runtime,
+                crash_frame.module_idx,
+                crash_frame.method_idx,
+                crash_frame.pc,
+            );
+            let body = match runtime
+                .domain()
+                .modules
+                .get(crash_frame.module_idx)
+                .and_then(|loaded| loaded.module.method_bodies.get(crash_frame.method_idx))
+            {
                 Some(b) => b,
                 None => return 0,
             };
@@ -347,10 +363,6 @@ impl<I: Read, O: Write> DapServer<I, O> {
             Some(rt) => rt,
             None => return vec![],
         };
-        let module = match self.module.as_ref() {
-            Some(m) => m,
-            None => return vec![],
-        };
         let display_frame_idx = display_frame_idx as usize;
 
         // Primary path: active call stack.
@@ -361,16 +373,31 @@ impl<I: Read, O: Write> DapServer<I, O> {
                 return vec![];
             }
             let actual_idx = frames.len() - 1 - display_frame_idx;
-            let (method_idx, pc) = match frames.get(actual_idx) {
-                Some(&f) => f,
+            let frame = match frames.get(actual_idx) {
+                Some(frame) => *frame,
                 None => return vec![],
             };
-            let byte_pc = instr_to_byte_pc(runtime, method_idx, pc);
+            let byte_pc = instr_to_byte_pc(
+                runtime,
+                frame.module_idx,
+                frame.method_idx,
+                frame.pc,
+            );
             let regs = match runtime.frame_registers(task_id, actual_idx) {
                 Some(r) => r,
                 None => return vec![],
             };
-            return collect_frame_variables(module, method_idx, byte_pc as usize, &regs, runtime.heap());
+            let module = match runtime.domain().modules.get(frame.module_idx) {
+                Some(loaded) => &loaded.module,
+                None => return vec![],
+            };
+            return collect_frame_variables(
+                module,
+                frame.method_idx,
+                byte_pc as usize,
+                &regs,
+                runtime.heap(),
+            );
         }
 
         // Crash fallback: use preserved registers from CrashInfo.stack_trace.
@@ -381,7 +408,16 @@ impl<I: Read, O: Write> DapServer<I, O> {
                 Some(f) => f,
                 None => return vec![],
             };
-            let byte_pc = instr_to_byte_pc(runtime, crash_frame.method_idx, crash_frame.pc);
+            let byte_pc = instr_to_byte_pc(
+                runtime,
+                crash_frame.module_idx,
+                crash_frame.method_idx,
+                crash_frame.pc,
+            );
+            let module = match runtime.domain().modules.get(crash_frame.module_idx) {
+                Some(loaded) => &loaded.module,
+                None => return vec![],
+            };
             return collect_frame_variables(
                 module,
                 crash_frame.method_idx,
@@ -404,10 +440,6 @@ impl<I: Read, O: Write> DapServer<I, O> {
             Some(rt) => rt,
             None => return ("unavailable".into(), None),
         };
-        let module = match self.module.as_ref() {
-            Some(m) => m,
-            None => return ("unavailable".into(), None),
-        };
         let display_frame_idx = display_frame_idx as usize;
 
         // Primary path: active call stack.
@@ -418,16 +450,32 @@ impl<I: Read, O: Write> DapServer<I, O> {
                 return ("unavailable".into(), None);
             }
             let actual_idx = frames.len() - 1 - display_frame_idx;
-            let (method_idx, pc) = match frames.get(actual_idx) {
-                Some(&f) => f,
+            let frame = match frames.get(actual_idx) {
+                Some(frame) => *frame,
                 None => return ("unavailable".into(), None),
             };
-            let byte_pc = instr_to_byte_pc(runtime, method_idx, pc);
+            let byte_pc = instr_to_byte_pc(
+                runtime,
+                frame.module_idx,
+                frame.method_idx,
+                frame.pc,
+            );
             let regs = match runtime.frame_registers(task_id, actual_idx) {
                 Some(r) => r,
                 None => return ("unavailable".into(), None),
             };
-            return evaluate_local(module, method_idx, byte_pc as usize, &regs, runtime.heap(), expr);
+            let module = match runtime.domain().modules.get(frame.module_idx) {
+                Some(loaded) => &loaded.module,
+                None => return ("unavailable".into(), None),
+            };
+            return evaluate_local(
+                module,
+                frame.method_idx,
+                byte_pc as usize,
+                &regs,
+                runtime.heap(),
+                expr,
+            );
         }
 
         // Crash fallback: use preserved registers from CrashInfo.stack_trace.
@@ -436,7 +484,16 @@ impl<I: Read, O: Write> DapServer<I, O> {
                 Some(f) => f,
                 None => return ("unavailable".into(), None),
             };
-            let byte_pc = instr_to_byte_pc(runtime, crash_frame.method_idx, crash_frame.pc);
+            let byte_pc = instr_to_byte_pc(
+                runtime,
+                crash_frame.module_idx,
+                crash_frame.method_idx,
+                crash_frame.pc,
+            );
+            let module = match runtime.domain().modules.get(crash_frame.module_idx) {
+                Some(loaded) => &loaded.module,
+                None => return ("unavailable".into(), None),
+            };
             return evaluate_local(
                 module,
                 crash_frame.method_idx,
@@ -460,13 +517,6 @@ impl<I: Read, O: Write> DapServer<I, O> {
             Some(rt) => rt,
             None => return vec![],
         };
-        let module = match self.module.as_ref() {
-            Some(m) => m,
-            None => return vec![],
-        };
-        // Per-frame source file attribution via method_file_ids.
-        // method_file_ids is indexed in parallel to module.method_defs.
-        // Falls back to source_paths.first() for synthetic/unknown methods.
 
         // Determine which frames to display and whether they are already in
         // top-to-bottom order (crash frames) or bottom-to-top (call stack frames).
@@ -476,10 +526,14 @@ impl<I: Read, O: Write> DapServer<I, O> {
                 // Call stack is empty (crashed task has unwound frames).
                 // Fall back to CrashInfo.stack_trace if available.
                 if let Some(crash) = runtime.crash_info(task_id) {
-                    let crash_frames: Vec<(usize, usize)> = crash
+                    let crash_frames: Vec<FrameLocation> = crash
                         .stack_trace
                         .iter()
-                        .map(|sf| (sf.method_idx, sf.pc))
+                        .map(|sf| FrameLocation {
+                            module_idx: sf.module_idx,
+                            method_idx: sf.method_idx,
+                            pc: sf.pc,
+                        })
                         .collect();
                     (crash_frames, true)
                 } else {
@@ -490,29 +544,45 @@ impl<I: Read, O: Write> DapServer<I, O> {
 
         // Build an iterator in top-to-bottom order.
         // call_stack_frames is bottom-to-top so we .rev(); crash frames are already top-to-bottom.
-        let frames_iter: Box<dyn Iterator<Item = (usize, (usize, usize))>> = if already_reversed {
-            Box::new(raw_frames.into_iter().enumerate())
-        } else {
-            Box::new(raw_frames.into_iter().rev().enumerate())
-        };
+        let frames_iter: Box<dyn Iterator<Item = (usize, FrameLocation)>> =
+            if already_reversed {
+                Box::new(raw_frames.into_iter().enumerate())
+            } else {
+                Box::new(raw_frames.into_iter().rev().enumerate())
+            };
 
         frames_iter
-            .map(|(frame_index, (method_idx, pc))| {
-                // Resolve method name from string heap.
+            .map(|(frame_index, frame)| {
+                let loaded = runtime.domain().modules.get(frame.module_idx);
+                let module = loaded.map(|loaded| &loaded.module);
+                let module_name = module
+                    .and_then(|module| {
+                        read_string(&module.string_heap, module.header.module_name).ok()
+                    })
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("module_{}", frame.module_idx));
                 let method_name = module
-                    .method_defs
-                    .get(method_idx)
-                    .and_then(|def| read_string(&module.string_heap, def.name).ok())
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| format!("method_{}", method_idx));
+                    .and_then(|module| module.method_defs.get(frame.method_idx).map(|def| (module, def)))
+                    .and_then(|(module, def)| read_string(&module.string_heap, def.name).ok())
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("method_{}", frame.method_idx));
+                let display_name = if frame.module_idx == runtime.user_module_idx() {
+                    method_name
+                } else {
+                    format!("{module_name}::{method_name}")
+                };
 
                 // Translate instruction-index PC to byte-offset PC for span lookup.
-                let byte_pc = instr_to_byte_pc(runtime, method_idx, pc);
+                let byte_pc = instr_to_byte_pc(
+                    runtime,
+                    frame.module_idx,
+                    frame.method_idx,
+                    frame.pc,
+                );
 
                 // Resolve source location: find largest span.pc <= byte_pc.
                 let (line, col) = module
-                    .method_bodies
-                    .get(method_idx)
+                    .and_then(|module| module.method_bodies.get(frame.method_idx))
                     .and_then(|body| {
                         body.source_spans
                             .iter()
@@ -522,23 +592,30 @@ impl<I: Read, O: Write> DapServer<I, O> {
                     })
                     .unwrap_or((0, 0));
 
-                // Resolve per-frame source path using method_file_ids.
-                let frame_source = self.method_file_ids
-                    .get(method_idx)
-                    .and_then(|opt| *opt)
-                    .and_then(|fid| self.source_paths.iter().find(|(id, _)| *id == fid))
-                    .or_else(|| self.source_paths.first())
-                    .map(|(_, p)| p.as_str())
-                    .unwrap_or("");
-                let frame_filename = std::path::Path::new(frame_source)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or(frame_source);
-
-                let source = types::Source {
-                    path: Some(frame_source.to_string()),
-                    name: Some(frame_filename.to_string()),
-                    ..Default::default()
+                // Only the compiled user module has workspace file paths. For
+                // dependency frames, identify the owning module without
+                // attributing the frame to an unrelated user source file.
+                let source = if frame.module_idx == runtime.user_module_idx() {
+                    let frame_source = self
+                        .method_file_ids
+                        .get(frame.method_idx)
+                        .and_then(|opt| *opt)
+                        .and_then(|fid| self.source_paths.iter().find(|(id, _)| *id == fid))
+                        .or_else(|| self.source_paths.first())
+                        .map(|(_, path)| path.as_str());
+                    frame_source.map(|path| types::Source {
+                        path: Some(path.to_string()),
+                        name: std::path::Path::new(path)
+                            .file_name()
+                            .and_then(|name| name.to_str())
+                            .map(str::to_owned),
+                        ..Default::default()
+                    })
+                } else {
+                    Some(types::Source {
+                        name: Some(module_name),
+                        ..Default::default()
+                    })
                 };
 
                 // Globally unique frame ID: task_idx * 10000 + display_frame_index
@@ -547,8 +624,8 @@ impl<I: Read, O: Write> DapServer<I, O> {
 
                 types::StackFrame {
                     id: frame_id,
-                    name: method_name,
-                    source: Some(source),
+                    name: display_name,
+                    source,
                     line,
                     column: col,
                     ..Default::default()
@@ -557,39 +634,58 @@ impl<I: Read, O: Write> DapServer<I, O> {
             .collect()
     }
 
-    /// Get the current (line, method_idx) from the task's suspend reason.
+    /// Get the current (line, module_idx, method_idx) from the task's suspend reason.
     ///
     /// Used by step commands to establish the origin position before stepping.
-    /// Returns (0, 0) if unavailable.
-    pub(super) fn current_position(&self) -> (u32, u32) {
+    /// Returns a zeroed position if unavailable.
+    pub(super) fn current_position(&self) -> (u32, usize, u32) {
         let task_id = match self.task_id {
             Some(id) => id,
-            None => return (0, 0),
+            None => return (0, 0, 0),
         };
         let runtime = match self.runtime.as_ref() {
             Some(rt) => rt,
-            None => return (0, 0),
+            None => return (0, 0, 0),
         };
         match runtime.suspend_reason(task_id) {
-            Some(SuspendReason::Breakpoint { line, method_idx, .. }) => (*line, *method_idx),
-            Some(SuspendReason::DebugStep { line, method_idx, .. }) => (*line, *method_idx),
+            Some(SuspendReason::Breakpoint {
+                line,
+                module_idx,
+                method_idx,
+                ..
+            }) => (*line, *module_idx, *method_idx),
+            Some(SuspendReason::DebugStep {
+                line,
+                module_idx,
+                method_idx,
+                ..
+            }) => (*line, *module_idx, *method_idx),
             _ => {
                 // No suspend reason — use top of call stack if available.
                 if let Some(frames) = runtime.call_stack_frames(task_id)
-                    && let Some(&(method_idx, pc)) = frames.last() {
-                        let byte_pc = instr_to_byte_pc(runtime, method_idx, pc);
-                        let line = self.module.as_ref()
-                            .and_then(|m| m.method_bodies.get(method_idx))
-                            .and_then(|body| {
-                                body.source_spans.iter()
-                                    .filter(|s| s.pc <= byte_pc)
-                                    .max_by_key(|s| s.pc)
-                                    .map(|s| s.line)
-                            })
-                            .unwrap_or(0);
-                        return (line, method_idx as u32);
-                    }
-                (0, 0)
+                    && let Some(frame) = frames.last()
+                {
+                    let byte_pc = instr_to_byte_pc(
+                        runtime,
+                        frame.module_idx,
+                        frame.method_idx,
+                        frame.pc,
+                    );
+                    let line = runtime
+                        .domain()
+                        .modules
+                        .get(frame.module_idx)
+                        .and_then(|loaded| loaded.module.method_bodies.get(frame.method_idx))
+                        .and_then(|body| {
+                            body.source_spans.iter()
+                                .filter(|s| s.pc <= byte_pc)
+                                .max_by_key(|s| s.pc)
+                                .map(|s| s.line)
+                        })
+                        .unwrap_or(0);
+                    return (line, frame.module_idx, frame.method_idx as u32);
+                }
+                (0, runtime.user_module_idx(), 0)
             }
         }
     }
