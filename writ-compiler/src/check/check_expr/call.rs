@@ -110,8 +110,37 @@ pub(super) fn check_call(
             }
         }
 
-    // General case: check callee expression
-    let typed_callee = check_expr(ctx, callee);
+    // General case: check callee expression. For an overloaded method, resolve
+    // the candidate from the call arguments before collapsing member access to
+    // a single function type.
+    let typed_callee = if let AstExpr::MemberAccess {
+        object,
+        field,
+        field_span,
+        span: member_span,
+    } = callee
+    {
+        let typed_receiver = check_expr(ctx, object);
+        if let Some(call) = resolve_overloaded_method_call(
+            ctx,
+            typed_receiver.clone(),
+            field,
+            args,
+            span,
+            *member_span,
+        ) {
+            return call;
+        }
+        super::access::check_typed_member_access(
+            ctx,
+            typed_receiver,
+            field,
+            *field_span,
+            *member_span,
+        )
+    } else {
+        check_expr(ctx, callee)
+    };
     let callee_ty = typed_callee.ty();
 
     if ctx.is_error(callee_ty) {
@@ -190,6 +219,258 @@ pub(super) fn check_call(
     }
 }
 
+/// Resolve method calls before ordinary member access erases declaration
+/// identity. Keeping the selected declaration's open signature on the callee
+/// lets metadata lookup distinguish generic methods even when other modules
+/// contribute same-name rows; the call result still uses inferred types.
+fn resolve_overloaded_method_call(
+    ctx: &mut CheckCtx,
+    typed_receiver: TypedExpr,
+    method_name: &str,
+    args: &[AstArg],
+    call_span: SimpleSpan,
+    member_span: SimpleSpan,
+) -> Option<TypedExpr> {
+    let receiver_ty = typed_receiver.ty();
+    let receiver_def_id = match ctx.interner.kind(receiver_ty) {
+        TyKind::Struct(def_id)
+        | TyKind::Class(def_id)
+        | TyKind::Entity(def_id)
+        | TyKind::Enum(def_id) => *def_id,
+        _ => return None,
+    };
+
+    // Preserve field-before-method lookup for types that have a field with the
+    // same name as an overloaded method set.
+    let has_field = ctx
+        .type_env
+        .struct_fields
+        .get(&receiver_def_id)
+        .or_else(|| ctx.type_env.entity_fields.get(&receiver_def_id))
+        .is_some_and(|fields| fields.iter().any(|(name, _, _)| name == method_name));
+    if has_field {
+        return None;
+    }
+
+    let mut candidates = Vec::new();
+    for implementation in ctx.type_env.impl_index.get(&receiver_def_id)? {
+        let Some(bindings) = super::super::infer::match_type_pattern(
+            implementation.target_ty,
+            receiver_ty,
+            &ctx.interner,
+        ) else {
+            continue;
+        };
+        for (_, signature) in implementation
+            .methods
+            .iter()
+            .filter(|(name, _)| name == method_name)
+        {
+            candidates.push((
+                implementation.contract_def_id.is_none(),
+                implementation.impl_def_id,
+                implementation.impl_generic_count,
+                bindings.clone(),
+                signature.clone(),
+            ));
+        }
+    }
+    if candidates
+        .iter()
+        .any(|(is_inherent, _, _, _, _)| *is_inherent)
+    {
+        candidates.retain(|(is_inherent, _, _, _, _)| *is_inherent);
+    }
+    if candidates.is_empty() {
+        return None;
+    }
+    let candidate_impl = candidates[0].1;
+    if candidates
+        .iter()
+        .any(|(_, impl_def_id, _, _, _)| *impl_def_id != candidate_impl)
+    {
+        // Multiple matching impl specializations are an implementation
+        // ambiguity (E0125), not an overload ambiguity (E0124). Defer to the
+        // ordinary member resolver, which owns that diagnostic.
+        return None;
+    }
+
+    let typed_args: Vec<TypedExpr> = args
+        .iter()
+        .map(|arg| check_expr(ctx, &arg.value))
+        .collect();
+    let matching: Vec<_> = candidates
+        .iter()
+        .filter_map(|(is_inherent, _, impl_generic_count, receiver_bindings, signature)| {
+            let mut bindings = receiver_bindings.clone();
+            (signature.params.len() == typed_args.len()
+                && typed_args
+                    .iter()
+                    .zip(&signature.params)
+                    .all(|(arg, (_, param_ty))| {
+                        ctx.is_error(arg.ty())
+                            || ctx.is_error(*param_ty)
+                            || super::super::infer::match_type_pattern_with_bindings(
+                                *param_ty,
+                                arg.ty(),
+                                &ctx.interner,
+                                &mut bindings,
+                            )
+                    }))
+            .then(|| {
+                (
+                    *is_inherent,
+                    *impl_generic_count,
+                    bindings,
+                    signature.clone(),
+                )
+            })
+        })
+        .collect();
+
+    if matching.is_empty() {
+        let error_ty = if let Some((_, _, _, receiver_bindings, same_arity)) = candidates
+            .iter()
+            .find(|(_, _, _, _, signature)| signature.params.len() == typed_args.len())
+        {
+            let mut bindings = receiver_bindings.clone();
+            let mismatch = typed_args
+                .iter()
+                .zip(&same_arity.params)
+                .find(|(arg, (_, param_ty))| {
+                    !ctx.is_error(arg.ty())
+                        && !ctx.is_error(*param_ty)
+                        && !super::super::infer::match_type_pattern_with_bindings(
+                            *param_ty,
+                            arg.ty(),
+                            &ctx.interner,
+                            &mut bindings,
+                        )
+                });
+            if let Some((arg, (_, param_ty))) = mismatch {
+                ctx.emit_error(TypeError::TypeMismatch {
+                    expected: ctx.display_ty(*param_ty),
+                    found: ctx.display_ty(arg.ty()),
+                    expected_span: member_span,
+                    found_span: arg.span(),
+                    file: ctx.current_file,
+                    help: Some(format!("in call to `{}`", method_name)),
+                })
+            } else {
+                ctx.emit_error(TypeError::NotCallable {
+                    ty_name: format!("overload set `{}`", method_name),
+                    span: call_span,
+                    file: ctx.current_file,
+                })
+            }
+        } else {
+            ctx.emit_error(TypeError::ArityMismatch {
+                fn_name: method_name.to_string(),
+                expected: candidates[0].4.params.len(),
+                found: typed_args.len(),
+                call_span,
+                def_span: member_span,
+                file: ctx.current_file,
+            })
+        };
+        return Some(TypedExpr::Call {
+            ty: error_ty,
+            span: call_span,
+            callee: Box::new(TypedExpr::Field {
+                ty: error_ty,
+                span: member_span,
+                receiver: Box::new(typed_receiver),
+                field: method_name.to_string(),
+            }),
+            args: typed_args,
+            callee_def_id: None,
+        });
+    }
+
+    let (_, impl_generic_count, mut bindings, signature) = match matching.len() {
+        1 => matching.into_iter().next().unwrap(),
+        count => {
+            let error_ty = ctx.emit_error(TypeError::AmbiguousOverload {
+                fn_name: method_name.to_string(),
+                candidate_count: count,
+                call_span,
+                file: ctx.current_file,
+            });
+            return Some(TypedExpr::Call {
+                ty: error_ty,
+                span: call_span,
+                callee: Box::new(TypedExpr::Field {
+                    ty: error_ty,
+                    span: member_span,
+                    receiver: Box::new(typed_receiver),
+                    field: method_name.to_string(),
+                }),
+                args: typed_args,
+                callee_def_id: None,
+            });
+        }
+    };
+
+    let mut infer_vars = Vec::with_capacity(signature.generics.len());
+    for method_index in 0..signature.generics.len() {
+        let ordinal = impl_generic_count + method_index as u32;
+        let var = ctx.unify.new_var();
+        let infer_ty = ctx.interner.intern(TyKind::Infer(var));
+        if let Some(bound_ty) = bindings
+            .iter()
+            .find_map(|(index, ty)| (*index == ordinal).then_some(*ty))
+        {
+            let _ = ctx.unify.unify(infer_ty, bound_ty, &mut ctx.interner);
+        }
+        if let Some((_, bound_ty)) = bindings.iter_mut().find(|(index, _)| *index == ordinal) {
+            *bound_ty = infer_ty;
+        } else {
+            bindings.push((ordinal, infer_ty));
+        }
+        infer_vars.push(var);
+    }
+    let param_tys: Vec<_> = signature
+        .params
+        .iter()
+        .map(|(_, ty)| {
+            super::super::infer::substitute_bindings(*ty, &bindings, &mut ctx.interner)
+        })
+        .collect();
+    let ret_ty = super::super::infer::substitute_bindings(
+        signature.ret,
+        &bindings,
+        &mut ctx.interner,
+    );
+    for (index, (arg, &param_ty)) in typed_args.iter().zip(&param_tys).enumerate() {
+        ctx.check_assignable(
+            param_ty,
+            arg.ty(),
+            member_span,
+            arg.span(),
+            Some(format!("in argument {} of `{}`", index + 1, method_name)),
+        );
+    }
+    let resolved_ret = ctx.unify.resolve_ty_deep(ret_ty, &mut ctx.interner);
+    if !signature.generics.is_empty() && !signature.bounds.is_empty() {
+        check_contract_bounds(ctx, &signature, &infer_vars, call_span);
+    }
+    let declaration_params = signature.params.iter().map(|(_, ty)| *ty).collect();
+    let callee_ty = ctx.interner.func(declaration_params, signature.ret);
+
+    Some(TypedExpr::Call {
+        ty: resolved_ret,
+        span: call_span,
+        callee: Box::new(TypedExpr::Field {
+            ty: callee_ty,
+            span: member_span,
+            receiver: Box::new(typed_receiver),
+            field: method_name.to_string(),
+        }),
+        args: typed_args,
+        callee_def_id: None,
+    })
+}
+
 /// Resolve an overloaded function call by name. Checks all candidates and picks
 /// the one whose parameter count and types match the call-site arguments.
 ///
@@ -220,43 +501,101 @@ fn resolve_overloaded_call(
     let typed_args: Vec<TypedExpr> = args.iter().map(|a| check_expr(ctx, &a.value)).collect();
     let arg_count = typed_args.len();
 
-    let mut matching: Vec<(DefId, FnSig)> = Vec::new();
-
-    for &def_id in &candidates {
-        if let Some(sig) = ctx.type_env.fn_sigs.get(&def_id) {
-            // Check arity
-            if sig.params.len() != arg_count {
-                continue;
-            }
-
-            // Check argument type compatibility via structural comparison.
-            // For overload resolution we use direct Ty equality (interned indices).
-            // Error types are treated as wildcards (match anything).
-            let mut all_match = true;
-            for (arg, (_, param_ty)) in typed_args.iter().zip(sig.params.iter()) {
-                let arg_ty = arg.ty();
-                if ctx.is_error(arg_ty) || ctx.is_error(*param_ty) {
-                    continue;
-                }
-                if arg_ty != *param_ty {
-                    all_match = false;
-                    break;
-                }
-            }
-
-            if all_match {
-                matching.push((def_id, sig.clone()));
-            }
-        }
-    }
+    let candidate_sigs: Vec<(DefId, FnSig)> = candidates
+        .iter()
+        .filter_map(|def_id| {
+            ctx.type_env
+                .fn_sigs
+                .get(def_id)
+                .cloned()
+                .map(|signature| (*def_id, signature))
+        })
+        .collect();
+    let matching: Vec<(DefId, FnSig)> = candidate_sigs
+        .iter()
+        .filter_map(|(def_id, signature)| {
+            let mut bindings = Vec::new();
+            (signature.params.len() == arg_count
+                && typed_args
+                    .iter()
+                    .zip(&signature.params)
+                    .all(|(arg, (_, param_ty))| {
+                        ctx.is_error(arg.ty())
+                            || ctx.is_error(*param_ty)
+                            || super::super::infer::match_type_pattern_with_bindings(
+                                *param_ty,
+                                arg.ty(),
+                                &ctx.interner,
+                                &mut bindings,
+                            )
+                    }))
+            .then(|| (*def_id, signature.clone()))
+        })
+        .collect();
 
     match matching.len() {
         0 => {
-            // No matching overload — emit error with the first candidate
-            if let Some(sig) = ctx.type_env.fn_sigs.get(&candidates[0]) {
-                return Some(check_call_with_sig(ctx, name, candidates[0], sig.clone(), args, span, name_span));
-            }
-            None
+            let err_ty = if let Some((def_id, same_arity)) = candidate_sigs
+                .iter()
+                .find(|(_, signature)| signature.params.len() == arg_count)
+            {
+                let mut bindings = Vec::new();
+                let mismatch = typed_args
+                    .iter()
+                    .zip(&same_arity.params)
+                    .find(|(arg, (_, param_ty))| {
+                        !ctx.is_error(arg.ty())
+                            && !ctx.is_error(*param_ty)
+                            && !super::super::infer::match_type_pattern_with_bindings(
+                                *param_ty,
+                                arg.ty(),
+                                &ctx.interner,
+                                &mut bindings,
+                            )
+                    });
+                if let Some((arg, (_, param_ty))) = mismatch {
+                    let def_span = ctx.def_map.get_entry(*def_id).name_span;
+                    ctx.emit_error(TypeError::TypeMismatch {
+                        expected: ctx.display_ty(*param_ty),
+                        found: ctx.display_ty(arg.ty()),
+                        expected_span: def_span,
+                        found_span: arg.span(),
+                        file: ctx.current_file,
+                        help: Some(format!("in call to `{}`", name)),
+                    })
+                } else {
+                    ctx.emit_error(TypeError::NotCallable {
+                        ty_name: format!("overload set `{}`", name),
+                        span,
+                        file: ctx.current_file,
+                    })
+                }
+            } else if let Some((def_id, nearest_arity)) = candidate_sigs
+                .iter()
+                .min_by_key(|(_, signature)| signature.params.len().abs_diff(arg_count))
+            {
+                ctx.emit_error(TypeError::ArityMismatch {
+                    fn_name: name.to_string(),
+                    expected: nearest_arity.params.len(),
+                    found: arg_count,
+                    call_span: span,
+                    def_span: ctx.def_map.get_entry(*def_id).name_span,
+                    file: ctx.current_file,
+                })
+            } else {
+                return None;
+            };
+            Some(TypedExpr::Call {
+                ty: err_ty,
+                span,
+                callee: Box::new(TypedExpr::Var {
+                    ty: err_ty,
+                    span: name_span,
+                    name: name.to_string(),
+                }),
+                args: typed_args,
+                callee_def_id: None,
+            })
         }
         1 => {
             // Exactly one match — call it (re-check with proper unification)

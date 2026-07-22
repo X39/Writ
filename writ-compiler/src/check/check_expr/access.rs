@@ -18,6 +18,16 @@ pub(super) fn check_member_access(
     span: SimpleSpan,
 ) -> TypedExpr {
     let typed_obj = check_expr(ctx, object);
+    check_typed_member_access(ctx, typed_obj, field, field_span, span)
+}
+
+pub(super) fn check_typed_member_access(
+    ctx: &mut CheckCtx,
+    typed_obj: TypedExpr,
+    field: &str,
+    field_span: SimpleSpan,
+    span: SimpleSpan,
+) -> TypedExpr {
     let obj_ty = typed_obj.ty();
 
     // Poison propagation

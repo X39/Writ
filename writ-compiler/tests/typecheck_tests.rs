@@ -236,6 +236,64 @@ fn nested_calls() {
     assert!(has_no_errors(&diags), "errors: {:?}", diags);
 }
 
+#[test]
+fn free_overload_resolution_matches_structural_generic_patterns() {
+    let (_ast, diags) = typecheck_src(
+        r#"
+        class Payload<T> {}
+        fn choose<T>(value: Payload<T>) -> int { 1 }
+        fn choose(value: bool) -> int { 2 }
+        fn read(value: Payload<int>) -> int { choose(value) }
+        "#,
+    );
+    assert!(has_no_errors(&diags), "errors: {diags:?}");
+}
+
+#[test]
+fn free_generic_and_concrete_overloads_are_ambiguous_when_both_match() {
+    let (_ast, diags) = typecheck_src(
+        r#"
+        fn choose<T>(value: T) -> int { 1 }
+        fn choose(value: bool) -> int { 2 }
+        fn ambiguous() -> int { choose(true) }
+        "#,
+    );
+    assert!(
+        has_error(&diags, "E0124"),
+        "the spec defines no concrete-over-generic precedence: {diags:?}"
+    );
+}
+
+#[test]
+fn free_overload_no_match_reports_type_mismatch() {
+    let (_ast, diags) = typecheck_src(
+        r#"
+        fn choose(value: int) -> int { 1 }
+        fn choose(value: bool) -> int { 2 }
+        fn invalid() -> int { choose("wrong") }
+        "#,
+    );
+    assert!(
+        has_error(&diags, "E0100"),
+        "a zero-match overload set must report a type error: {diags:?}"
+    );
+}
+
+#[test]
+fn free_overload_no_arity_reports_arity_mismatch() {
+    let (_ast, diags) = typecheck_src(
+        r#"
+        fn choose(value: int) -> int { 1 }
+        fn choose(left: bool, right: bool) -> int { 2 }
+        fn invalid() -> int { choose() }
+        "#,
+    );
+    assert!(
+        has_error(&diags, "E0101"),
+        "a zero-arity-match overload set must report an arity error: {diags:?}"
+    );
+}
+
 // =========================================================
 // Generic inference tests (TYPE-13)
 // =========================================================
@@ -473,6 +531,24 @@ fn impl_method_generics_infer_after_impl_generic_prefix() {
     assert!(
         has_no_errors(&diags),
         "method generics must instantiate independently of impl generics: {diags:?}"
+    );
+}
+
+#[test]
+fn method_generic_and_concrete_overloads_are_ambiguous_when_both_match() {
+    let (_typed, diags) = typecheck_src(
+        r#"
+        class Picker {}
+        impl Picker {
+            fn choose<T>(self, value: T) -> int { 1 }
+            fn choose(self, value: bool) -> int { 2 }
+        }
+        fn ambiguous(value: Picker) -> int { value.choose(true) }
+        "#,
+    );
+    assert!(
+        has_error(&diags, "E0124"),
+        "method overloads are ambiguous whenever multiple signatures match: {diags:?}"
     );
 }
 
