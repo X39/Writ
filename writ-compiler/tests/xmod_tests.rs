@@ -303,3 +303,315 @@ fn xmod_multiple_impl_blocks_are_disjoint() {
     );
     assert!(result.is_ok(), "both impls must remain visible: {:?}", result.err());
 }
+
+#[test]
+fn xmod_array_signature_checks_nested_element_type() {
+    let lib_bytes = compile(
+        r#"
+        pub fn consume_ints(values: int[]) -> int { 0 }
+    "#,
+    );
+    let lib_module = writ_module::Module::from_bytes(&lib_bytes).unwrap();
+
+    let valid = compile_with_libs(
+        r#"pub fn valid() -> int { consume_ints([1, 2, 3]) }"#,
+        &[&lib_module],
+    );
+    assert!(
+        valid.is_ok(),
+        "matching array type must pass: {:?}",
+        valid.err()
+    );
+
+    let invalid = compile_with_libs(
+        r#"pub fn invalid() -> int { consume_ints(["wrong"]) }"#,
+        &[&lib_module],
+    );
+    assert!(invalid.is_err(), "array element mismatch must be rejected");
+}
+
+#[test]
+fn xmod_generic_instance_signature_checks_arguments_and_return() {
+    let lib_bytes = compile(
+        r#"
+        pub fn consume_option(value: Option<int>) -> int { 0 }
+        pub fn echo_option(value: Option<int>) -> Option<int> { value }
+        pub fn consume_result(value: Result<int, string>) -> int { 0 }
+        pub fn echo_result(value: Result<int, string>) -> Result<int, string> { value }
+    "#,
+    );
+    let lib_module = writ_module::Module::from_bytes(&lib_bytes).unwrap();
+
+    let valid = compile_with_libs(
+        r#"
+        pub fn valid(option: Option<int>, result: Result<int, string>) -> Option<int> {
+            consume_option(option);
+            consume_result(result);
+            return echo_option(option);
+        }
+    "#,
+        &[&lib_module],
+    );
+    assert!(
+        valid.is_ok(),
+        "matching generic types must pass: {:?}",
+        valid.err()
+    );
+
+    let wrong_argument = compile_with_libs(
+        r#"pub fn invalid(value: Option<string>) -> int { consume_option(value) }"#,
+        &[&lib_module],
+    );
+    assert!(
+        wrong_argument.is_err(),
+        "generic argument mismatch must be rejected"
+    );
+
+    let wrong_result = compile_with_libs(
+        r#"pub fn invalid(value: Result<string, string>) -> int { consume_result(value) }"#,
+        &[&lib_module],
+    );
+    assert!(
+        wrong_result.is_err(),
+        "Result argument mismatch must be rejected"
+    );
+
+    let wrong_return = compile_with_libs(
+        r#"pub fn invalid(value: Option<int>) -> Option<string> { return echo_option(value); }"#,
+        &[&lib_module],
+    );
+    assert!(
+        wrong_return.is_err(),
+        "generic return mismatch must be rejected"
+    );
+}
+
+#[test]
+fn xmod_user_generic_constructor_decodes_by_module_qualified_identity() {
+    let lib_bytes = compile(
+        r#"
+        pub struct Crate<T> { pub value: T }
+        pub fn consume_crate(value: Crate<int>) -> int { 0 }
+    "#,
+    );
+    let lib_module = writ_module::Module::from_bytes(&lib_bytes).unwrap();
+
+    let valid = compile_with_libs(
+        r#"pub fn valid(value: Crate<int>) -> int { consume_crate(value) }"#,
+        &[&lib_module],
+    );
+    assert!(
+        valid.is_ok(),
+        "user generic constructor must resolve nominally: {:?}",
+        valid.err()
+    );
+}
+
+#[test]
+fn xmod_named_signature_resolves_typeref_token_table() {
+    let types_bytes = compile(r#"pub struct Remote {}"#);
+    let types_module = writ_module::Module::from_bytes(&types_bytes).unwrap();
+
+    let bridge_bytes = compile_with_libs(
+        r#"pub fn echo_remote(value: Remote) -> Remote { value }"#,
+        &[&types_module],
+    )
+    .expect("bridge module should compile against Remote");
+    let bridge_module = writ_module::Module::from_bytes(&bridge_bytes).unwrap();
+    let echo_idx = bridge_module.top_level_method_indices()[0];
+    let signature = writ_module::heap::read_blob(
+        &bridge_module.blob_heap,
+        bridge_module.method_defs[echo_idx].signature,
+    )
+    .unwrap();
+    let (params, ret) = writ_module::signature::decode_method_signature(signature).unwrap();
+    assert!(matches!(
+        params.as_slice(),
+        [writ_module::signature::TypeSignature::Named(token)] if token.table_id() == 3
+    ));
+    assert!(matches!(
+        ret,
+        writ_module::signature::TypeSignature::Named(token) if token.table_id() == 3
+    ));
+
+    let valid = compile_with_libs(
+        r#"pub fn valid(value: Remote) -> Remote { return echo_remote(value); }"#,
+        &[&types_module, &bridge_module],
+    );
+    assert!(
+        valid.is_ok(),
+        "TypeRef-backed signature must resolve: {:?}",
+        valid.err()
+    );
+
+    let invalid = compile_with_libs(
+        r#"pub fn invalid() -> Remote { return echo_remote(1); }"#,
+        &[&types_module, &bridge_module],
+    );
+    assert!(
+        invalid.is_err(),
+        "TypeRef-backed argument mismatch must fail"
+    );
+}
+
+#[test]
+fn xmod_generic_parameter_signature_remains_inferable() {
+    let lib_bytes = compile(r#"pub fn identity<T>(value: T) -> T { value }"#);
+    let lib_module = writ_module::Module::from_bytes(&lib_bytes).unwrap();
+    let identity_idx = lib_module.top_level_method_indices()[0];
+    let identity_blob = writ_module::heap::read_blob(
+        &lib_module.blob_heap,
+        lib_module.method_defs[identity_idx].signature,
+    )
+    .unwrap();
+    let (params, ret) = writ_module::signature::decode_method_signature(identity_blob).unwrap();
+    assert_eq!(
+        params,
+        vec![writ_module::signature::TypeSignature::GenericParam(0)]
+    );
+    assert_eq!(ret, writ_module::signature::TypeSignature::GenericParam(0));
+    assert!(lib_module.generic_params.iter().any(|param| {
+        param.owner_kind == 1
+            && param.owner.row_index() == Some((identity_idx + 1) as u32)
+            && param.ordinal == 0
+    }));
+
+    let valid = compile_with_libs(r#"pub fn valid() -> int { identity(42) }"#, &[&lib_module]);
+    assert!(
+        valid.is_ok(),
+        "generic parameter must infer: {:?}",
+        valid.err()
+    );
+
+    let invalid = compile_with_libs(
+        r#"pub fn invalid() -> string { return identity(42); }"#,
+        &[&lib_module],
+    );
+    assert!(
+        invalid.is_err(),
+        "instantiated return mismatch must be rejected"
+    );
+}
+
+#[test]
+fn xmod_function_signature_checks_parameter_and_return_types() {
+    let lib_bytes = compile(
+        r#"
+        pub fn apply(callback: fn(int) -> int, value: int) -> int {
+            callback(value)
+        }
+    "#,
+    );
+    let lib_module = writ_module::Module::from_bytes(&lib_bytes).unwrap();
+
+    let valid = compile_with_libs(
+        r#"
+        pub fn valid() -> int {
+            apply(fn(value: int) -> int { value }, 1)
+        }
+    "#,
+        &[&lib_module],
+    );
+    assert!(
+        valid.is_ok(),
+        "matching callback must pass: {:?}",
+        valid.err()
+    );
+
+    let invalid = compile_with_libs(
+        r#"
+        pub fn invalid() -> int {
+            apply(fn(value: string) -> int { 0 }, 1)
+        }
+    "#,
+        &[&lib_module],
+    );
+    assert!(
+        invalid.is_err(),
+        "callback parameter mismatch must be rejected"
+    );
+}
+
+#[test]
+fn xmod_contract_signature_resolves_contractdef_token_table() {
+    let lib_bytes = compile(
+        r#"
+        pub contract Speakable {
+            fn speak(self) -> string;
+        }
+        pub struct Local {}
+        pub fn accept_speakable(value: Speakable) -> int { 0 }
+        pub fn echo_local(value: Local) -> Local { value }
+    "#,
+    );
+    let lib_module = writ_module::Module::from_bytes(&lib_bytes).unwrap();
+    let method_idx = lib_module
+        .top_level_method_indices()
+        .into_iter()
+        .find(|&idx| {
+            writ_module::heap::read_string(
+                &lib_module.string_heap,
+                lib_module.method_defs[idx].name,
+            )
+            .unwrap()
+                == "accept_speakable"
+        })
+        .unwrap();
+    let signature = writ_module::heap::read_blob(
+        &lib_module.blob_heap,
+        lib_module.method_defs[method_idx].signature,
+    )
+    .unwrap();
+    let (params, _) = writ_module::signature::decode_method_signature(signature).unwrap();
+    assert!(matches!(
+        params.as_slice(),
+        [writ_module::signature::TypeSignature::Named(token)] if token.table_id() == 10
+    ));
+
+    let local_idx = lib_module
+        .top_level_method_indices()
+        .into_iter()
+        .find(|&idx| {
+            writ_module::heap::read_string(
+                &lib_module.string_heap,
+                lib_module.method_defs[idx].name,
+            )
+            .unwrap()
+                == "echo_local"
+        })
+        .unwrap();
+    let local_signature = writ_module::heap::read_blob(
+        &lib_module.blob_heap,
+        lib_module.method_defs[local_idx].signature,
+    )
+    .unwrap();
+    let (local_params, local_ret) =
+        writ_module::signature::decode_method_signature(local_signature).unwrap();
+    assert!(matches!(
+        local_params.as_slice(),
+        [writ_module::signature::TypeSignature::Named(token)] if token.table_id() == 2
+    ));
+    assert!(matches!(
+        local_ret,
+        writ_module::signature::TypeSignature::Named(token) if token.table_id() == 2
+    ));
+
+    let valid = compile_with_libs(
+        r#"pub fn valid(value: Speakable) -> int { accept_speakable(value) }"#,
+        &[&lib_module],
+    );
+    assert!(
+        valid.is_ok(),
+        "ContractDef-backed signature must resolve: {:?}",
+        valid.err()
+    );
+
+    let invalid = compile_with_libs(
+        r#"pub fn invalid() -> int { accept_speakable(1) }"#,
+        &[&lib_module],
+    );
+    assert!(
+        invalid.is_err(),
+        "non-contract argument must be rejected"
+    );
+}

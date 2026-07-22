@@ -314,74 +314,85 @@ pub(crate) fn decode_type_sig(blob_heap: &[u8], sig_offset: u32, module: &Module
 /// Decode a type reference from a blob byte slice starting at `*pos`.
 /// Advances `*pos` past the consumed bytes.
 pub(crate) fn decode_type_ref(blob: &[u8], pos: &mut usize, module: &Module) -> String {
-    let s = |offset: u32| -> &str {
-        read_string(&module.string_heap, offset).unwrap_or("?")
+    let Some(bytes) = blob.get(*pos..) else {
+        return "?".to_string();
     };
-
-    match blob.get(*pos).copied() {
-        Some(0x00) => {
-            *pos += 1;
-            "void".to_string()
+    match writ_module::signature::decode_type_signature_prefix(bytes) {
+        Ok((signature, consumed)) => {
+            *pos += consumed;
+            render_type_signature(&signature, module)
         }
-        Some(0x01) => {
-            *pos += 1;
-            "int".to_string()
-        }
-        Some(0x02) => {
-            *pos += 1;
-            "float".to_string()
-        }
-        Some(0x03) => {
-            *pos += 1;
-            "bool".to_string()
-        }
-        Some(0x04) => {
-            *pos += 1;
-            "string".to_string()
-        }
-        Some(0x10) => {
-            *pos += 1;
-            if *pos + 4 <= blob.len() {
-                let token = u32::from_le_bytes(blob[*pos..*pos + 4].try_into().unwrap());
-                *pos += 4;
-                // Token: bits 31-24 = table_id, bits 23-0 = 1-based row index
-                let row_idx = (token & 0x00FF_FFFF) as usize;
-                let table_id = (token >> 24) as usize;
-                if row_idx == 0 {
-                    return "?".to_string();
-                }
-                let idx = row_idx - 1;
-                // Table 2 = TypeDef, Table 3 = TypeRef
-                if table_id == 2 || table_id == 0 {
-                    // TypeDef (table_id=2) or untagged (table_id=0, treat as TypeDef)
-                    if let Some(td) = module.type_defs.get(idx) {
-                        return s(td.name).to_string();
-                    }
-                }
-                if table_id == 3 {
-                    // TypeRef
-                    if let Some(tr) = module.type_refs.get(idx) {
-                        return s(tr.name).to_string();
-                    }
-                }
-                // Fallback: try TypeDef if table_id was unrecognized
-                if let Some(td) = module.type_defs.get(idx) {
-                    return s(td.name).to_string();
-                }
-                format!("type_{}", token)
-            } else {
-                *pos = blob.len();
-                "?".to_string()
-            }
-        }
-        Some(0x20) => {
-            *pos += 1;
-            let elem = decode_type_ref(blob, pos, module);
-            format!("array<{}>", elem)
-        }
-        _ => {
+        Err(_) => {
             *pos = blob.len();
             "?".to_string()
+        }
+    }
+}
+
+fn render_type_signature(
+    signature: &writ_module::signature::TypeSignature,
+    module: &Module,
+) -> String {
+    use writ_module::signature::TypeSignature;
+    match signature {
+        TypeSignature::Void => "void".to_string(),
+        TypeSignature::Int => "int".to_string(),
+        TypeSignature::Float => "float".to_string(),
+        TypeSignature::Bool => "bool".to_string(),
+        TypeSignature::String => "string".to_string(),
+        TypeSignature::Entity => "Entity".to_string(),
+        TypeSignature::Named(token) => {
+            let Some(row) = token.row_index() else {
+                return "?".to_string();
+            };
+            let idx = row as usize - 1;
+            match token.table_id() {
+                2 | 0 => module
+                    .type_defs
+                    .get(idx)
+                    .and_then(|row| read_string(&module.string_heap, row.name).ok()),
+                3 => module
+                    .type_refs
+                    .get(idx)
+                    .and_then(|row| read_string(&module.string_heap, row.name).ok()),
+                _ => None,
+            }
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("type_{}", token.0))
+        }
+        TypeSignature::Generic {
+            namespace,
+            name,
+            args,
+        } => {
+            let constructor = if namespace.is_empty() {
+                name.clone()
+            } else {
+                format!("{}::{}", namespace, name)
+            };
+            let args = args
+                .iter()
+                .map(|arg| render_type_signature(arg, module))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{}<{}>", constructor, args)
+        }
+        TypeSignature::GenericParam(ordinal) => format!("T{}", ordinal),
+        TypeSignature::Array(element) => {
+            format!("array<{}>", render_type_signature(element, module))
+        }
+        TypeSignature::Function { params, ret } => {
+            let params = params
+                .iter()
+                .map(|param| render_type_signature(param, module))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let ret = render_type_signature(ret, module);
+            if matches!(ret.as_str(), "void") {
+                format!("fn({})", params)
+            } else {
+                format!("fn({}) -> {}", params, ret)
+            }
         }
     }
 }

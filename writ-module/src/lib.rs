@@ -19,6 +19,7 @@ pub mod heap;
 pub mod instruction;
 pub mod module;
 pub(crate) mod reader;
+pub mod signature;
 pub mod tables;
 pub mod token;
 pub(crate) mod writer;

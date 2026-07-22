@@ -47,6 +47,26 @@ fn round_trip_type_with_fields() {
 }
 
 #[test]
+fn round_trip_recursive_generic_field_signature() {
+    let src = r#"
+.module "test" "1.0.0" {
+    .type "Holder" struct {
+        .field "value" Option<array<int>> pub
+    }
+}
+"#;
+    let (m1, m2, text) = round_trip(src);
+    assert!(text.contains("writ::Option<array<int>>"));
+
+    let sig1 = writ_module::heap::read_blob(&m1.blob_heap, m1.field_defs[0].type_sig).unwrap();
+    let sig2 = writ_module::heap::read_blob(&m2.blob_heap, m2.field_defs[0].type_sig).unwrap();
+    assert_eq!(
+        sig1, sig2,
+        "recursive generic signature must round-trip exactly"
+    );
+}
+
+#[test]
 fn round_trip_method_with_body() {
     let src = r#"
 .module "test" "1.0.0" {

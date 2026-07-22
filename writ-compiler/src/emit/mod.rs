@@ -41,7 +41,15 @@ pub fn emit(
     // Pass 1: collect all definitions into provisional rows.
     // The `emit` function is used for metadata-only (no conditions needed here).
     let empty_conditions = std::collections::HashSet::new();
-    let _reflectable_infos = collect::collect_defs(typed_ast, asts, interner, &mut builder, &mut diags, &empty_conditions);
+    let _reflectable_infos = collect::collect_defs(
+        typed_ast,
+        asts,
+        interner,
+        &mut builder,
+        &mut diags,
+        &empty_conditions,
+        &[],
+    );
 
     // Assign CALL_VIRT slot indices from contract declaration order.
     slots::assign_vtable_slots(&mut builder);
@@ -79,6 +87,27 @@ pub fn emit_bodies(
     sources: &[(FileId, &str)],
     active_conditions: &std::collections::HashSet<String>,
 ) -> Result<Vec<u8>, Vec<Diagnostic>> {
+    emit_bodies_with_libraries(
+        typed_ast,
+        interner,
+        asts,
+        emit_debug_info,
+        sources,
+        active_conditions,
+        &[],
+    )
+}
+
+/// Emit method bodies while preserving metadata references to supplied libraries.
+pub fn emit_bodies_with_libraries(
+    typed_ast: &TypedAst,
+    interner: &TyInterner,
+    asts: &[(FileId, &Ast)],
+    emit_debug_info: bool,
+    sources: &[(FileId, &str)],
+    active_conditions: &std::collections::HashSet<String>,
+    library_modules: &[&writ_module::Module],
+) -> Result<Vec<u8>, Vec<Diagnostic>> {
     let mut diags = Vec::new();
 
     // Build metadata tables
@@ -87,7 +116,15 @@ pub fn emit_bodies(
 
     // Pass 1: collect all definitions (TypeDef, MethodDef, FieldDef, ExternDef, etc.)
     // When asts is non-empty, this populates all 21 metadata tables including exports.
-    let reflectable_infos = collect::collect_defs(typed_ast, asts, interner, &mut builder, &mut diags, active_conditions);
+    let reflectable_infos = collect::collect_defs(
+        typed_ast,
+        asts,
+        interner,
+        &mut builder,
+        &mut diags,
+        active_conditions,
+        library_modules,
+    );
 
     if !diags.is_empty() {
         return Err(diags);

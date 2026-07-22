@@ -38,11 +38,14 @@ pub(super) fn collect_contract(
         for member in &contract_decl.members {
             match member {
                 AstContractMember::FnSig(sig) => {
-                    let sig_blob = encode_fn_sig_from_ast_sig(sig, interner, &entry.generics, builder);
+                    let sig_blob = encode_fn_sig_from_ast_sig(
+                        sig, interner, &entry.generics, def_map, builder,
+                    );
                     builder.add_contract_method(contract_handle, &sig.name, sig_blob, 0);
                 }
                 AstContractMember::OpSig(op_sig) => {
-                    let sig_blob = encode_op_sig(op_sig, interner, &entry.generics, builder);
+                    let sig_blob =
+                        encode_op_sig(op_sig, interner, &entry.generics, def_map, builder);
                     let name = format!("operator_{:?}", op_sig.symbol);
                     builder.add_contract_method(contract_handle, &name, sig_blob, 0);
                 }
@@ -111,7 +114,8 @@ pub(super) fn collect_impl(
 
             let is_pub = impl_is_pub;
 
-            let (sig_blob, _) = encode_fn_sig(fn_decl, interner, &impl_entry_generics, builder);
+            let (sig_blob, _) =
+                encode_fn_sig(fn_decl, interner, &impl_entry_generics, def_map, builder);
 
             let has_self = fn_decl.params.iter().any(|p| matches!(p, AstFnParam::SelfParam { .. }));
             let is_mut_self = fn_decl.params.iter().any(|p| {
@@ -142,7 +146,14 @@ pub(super) fn collect_impl(
             methoddef_handles.insert(*_method_def_id, method_handle);
 
             // ParamDef
-            emit_fn_params(fn_decl, interner, &impl_entry_generics, builder, method_handle);
+            emit_fn_params(
+                fn_decl,
+                interner,
+                &impl_entry_generics,
+                def_map,
+                builder,
+                method_handle,
+            );
 
             // Populate fn_param_map: (name, Ty) list including self as first entry.
             // Self occupies r0 by convention (SelfRef always returns r0), so it must
@@ -332,7 +343,8 @@ pub(super) fn collect_extern_component(
             if let AstComponentMember::Field(f) = member {
                 let is_field_pub = matches!(f.vis, Some(AstVisibility::Pub));
                 let flags = field_flags(is_field_pub, false, true);
-                let type_blob = encode_type_from_ast(&f.ty, interner, &entry.generics, builder);
+                let type_blob =
+                    encode_type_from_ast(&f.ty, interner, &entry.generics, def_map, builder);
                 builder.add_fielddef(handle, &f.name, type_blob, flags);
             }
         }

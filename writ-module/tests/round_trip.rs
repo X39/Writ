@@ -258,19 +258,19 @@ fn test_class_typedef_round_trip() {
 
 #[test]
 fn test_format_version_rejection() {
-    // Build a valid v6 module, then patch the format_version bytes to v5.
+    // Build a valid v7 module, then patch the format_version bytes to v6.
     let module = Module::new();
     let mut bytes = module.to_bytes().expect("to_bytes should succeed");
 
     // format_version is at bytes 4-5 (little-endian u16)
-    bytes[4] = 0x05;
+    bytes[4] = 0x06;
     bytes[5] = 0x00;
 
     let result = Module::from_bytes(&bytes);
     assert!(result.is_err());
     match result.unwrap_err() {
         DecodeError::UnsupportedVersion(v) => {
-            assert_eq!(v, 5, "Expected UnsupportedVersion(5)");
+            assert_eq!(v, 6, "Expected UnsupportedVersion(6)");
         }
         other => panic!("Expected UnsupportedVersion, got {other:?}"),
     }

@@ -38,6 +38,9 @@ pub enum DecodeError {
     #[error("invalid TypeRef kind: 0x{0:02X}")]
     InvalidTypeRefKind(u8),
 
+    #[error("invalid type signature: {0}")]
+    InvalidTypeSignature(&'static str),
+
     #[error("buffer too small")]
     BufferTooSmall,
 
@@ -59,6 +62,12 @@ pub enum EncodeError {
 
     #[error("too many rows: {0}")]
     TooManyRows(usize),
+
+    #[error("{what} is too large for a type signature: {value}")]
+    TypeSignatureTooLarge { what: &'static str, value: usize },
+
+    #[error("type signature nesting too deep")]
+    TypeSignatureTooDeep,
 }
 
 fn format_magic(bytes: &[u8; 4]) -> String {

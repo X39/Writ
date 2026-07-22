@@ -45,7 +45,8 @@ pub(super) fn collect_struct(
                     let has_default = f.default.is_some();
                     let flags = field_flags(is_field_pub, has_default, false);
                     // Encode type signature as blob.
-                    let type_blob = encode_type_from_ast(&f.ty, interner, &entry.generics, builder);
+                    let type_blob =
+                        encode_type_from_ast(&f.ty, interner, &entry.generics, def_map, builder);
                     builder.add_fielddef(handle, &f.name, type_blob, flags);
                 }
                 AstStructMember::OnHook { event, body: _, span: _, .. } => {
@@ -90,7 +91,8 @@ pub(super) fn collect_entity(
             let is_field_pub = matches!(prop.vis, Some(AstVisibility::Pub));
             let has_default = prop.default.is_some();
             let flags = field_flags(is_field_pub, has_default, false);
-            let type_blob = encode_type_from_ast(&prop.ty, interner, &entry.generics, builder);
+            let type_blob =
+                encode_type_from_ast(&prop.ty, interner, &entry.generics, def_map, builder);
             builder.add_fielddef(handle, &prop.name, type_blob, flags);
         }
 
@@ -98,7 +100,8 @@ pub(super) fn collect_entity(
         for hook in &entity_decl.hooks {
             let hook_kind = HookKind::from_event_name(&hook.contract);
             let flags = method_flags(false, false, true, hook_kind);
-            let sig_blob = encode_hook_sig(&hook.method, interner, &entry.generics, builder);
+            let sig_blob =
+                encode_hook_sig(&hook.method, interner, &entry.generics, def_map, builder);
             builder.add_methoddef(
                 Some(handle),
                 &format!("on_{}", hook.contract),
@@ -137,7 +140,13 @@ pub(super) fn collect_enum(
         for variant in &enum_decl.variants {
             if let Some(fields) = &variant.fields {
                 for field in fields {
-                    let type_blob = encode_type_from_ast(&field.ty, interner, &entry.generics, builder);
+                    let type_blob = encode_type_from_ast(
+                        &field.ty,
+                        interner,
+                        &entry.generics,
+                        def_map,
+                        builder,
+                    );
                     // Enum fields are implicitly pub (accessed by pattern matching).
                     let flags = field_flags(true, false, false);
                     builder.add_fielddef(handle, &field.name, type_blob, flags);
@@ -178,7 +187,8 @@ pub(super) fn collect_class(
                     let is_field_pub = matches!(f.vis, Some(AstVisibility::Pub));
                     let has_default = f.default.is_some();
                     let flags = field_flags(is_field_pub, has_default, false);
-                    let type_blob = encode_type_from_ast(&f.ty, interner, &entry.generics, builder);
+                    let type_blob =
+                        encode_type_from_ast(&f.ty, interner, &entry.generics, def_map, builder);
                     builder.add_fielddef(handle, &f.name, type_blob, flags);
                 }
                 AstStructMember::OnHook { event, body: _, span: _, .. } => {

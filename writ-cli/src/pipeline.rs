@@ -102,11 +102,19 @@ pub fn run_pipeline(
         .map(|(fid, _, src)| (*fid, *src))
         .collect();
 
-    let bytes = writ_compiler::emit_bodies(&typed_ast, &interner, &asts_refs, emit_debug_info, &sources, active_conditions)
-        .map_err(|diags| {
-            eprint!("{}", writ_diagnostics::render_diagnostics(&diags, &sources_for_render));
-            format!("{} codegen error(s)", diags.len())
-        })?;
+    let bytes = writ_compiler::emit::emit_bodies_with_libraries(
+        &typed_ast,
+        &interner,
+        &asts_refs,
+        emit_debug_info,
+        &sources,
+        active_conditions,
+        library_modules,
+    )
+    .map_err(|diags| {
+        eprint!("{}", writ_diagnostics::render_diagnostics(&diags, &sources_for_render));
+        format!("{} codegen error(s)", diags.len())
+    })?;
 
     Ok(bytes)
 }

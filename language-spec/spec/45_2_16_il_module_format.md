@@ -14,7 +14,7 @@ Bytes 4–5:   u16 format_version    (starts at 1, bumps on incompatible layout 
 Bytes 6–7:   u16 flags             (bit 0 = debug info present, rest reserved)
 ```
 
-**Format version history:** Version 1 — initial format (MethodDef row: 20 bytes). Version 2 — added `param_count(u16)` to MethodDef (row: 24 bytes, padded from 22). Version 3 — TypeDef.kind=4 (class) added; kind=0 (struct) now means value type. Version 4 — TYPEOF opcode added (reflection; section 3.10, section 4.2 0x0A30). Version 5 — array opcode overhaul (`ARRAY_RESIZE`, `ARRAY_COPY`, sized and filled array construction). Version 6 — appended `owner(token)` to MethodDef (row: 28 bytes), making method ownership explicit. Readers reject modules from older format versions with `UnsupportedVersion`.
+**Format version history:** Version 1 — initial format (MethodDef row: 20 bytes). Version 2 — added `param_count(u16)` to MethodDef (row: 24 bytes, padded from 22). Version 3 — TypeDef.kind=4 (class) added; kind=0 (struct) now means value type. Version 4 — TYPEOF opcode added (reflection; section 3.10, section 4.2 0x0A30). Version 5 — array opcode overhaul (`ARRAY_RESIZE`, `ARRAY_COPY`, sized and filled array construction). Version 6 — appended `owner(token)` to MethodDef (row: 28 bytes), making method ownership explicit. Version 7 — made generic-instance (`0x11`) and function (`0x30`) TypeRef payloads recursive and self-contained, replacing TypeSpec-row and blob-offset indirection. Readers reject modules from older format versions with `UnsupportedVersion`.
 
 **Module header** (fixed layout, immediately after the magic):
 
@@ -123,7 +123,7 @@ represented unambiguously by adjacent parent ranges.
 | 1  | **ModuleRef**         | name(str), min_version(str)                                                              | Dependencies on other modules                         |
 | 2  | **TypeDef**           | name(str), namespace(str), kind(u8), flags(u16), field_list, method_list                 | Types defined in this module (kind distinguishes struct/class/enum/entity/component) |
 | 3  | **TypeRef**           | scope(token:ModuleRef), name(str), namespace(str)                                        | Types in other modules (resolved at load time)        |
-| 4  | **TypeSpec**          | signature(blob)                                                                          | Instantiated generic types (TypeDef + type arguments) |
+| 4  | **TypeSpec**          | signature(blob)                                                                          | Addressable instantiated type using a complete TypeRef descriptor |
 | 5  | **FieldDef**          | name(str), type_sig(blob), flags(u16)                                                    | Fields on types defined here                          |
 | 6  | **FieldRef**          | parent(token), name(str), type_sig(blob)                                                 | Fields in other modules (resolved at load time)       |
 | 7  | **MethodDef**         | name(str), signature(blob), flags(u16), body_offset(u32), body_size(u32), reg_count(u16), param_count(u16), owner(token) | Methods/functions defined here                        |

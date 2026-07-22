@@ -363,72 +363,153 @@ pub(super) fn encode_type_from_ast(
     ast_type: &crate::ast::types::AstType,
     _interner: &TyInterner,
     generics: &[String],
+    def_map: &DefMap,
     builder: &mut ModuleBuilder,
 ) -> u32 {
     let mut buf = Vec::new();
-    encode_ast_type_into(ast_type, generics, &mut buf);
+    encode_ast_type_into(ast_type, generics, def_map, builder, &mut buf);
     builder.blob_heap.intern(&buf)
 }
 
 pub(super) fn encode_ast_type_into(
     ast_type: &crate::ast::types::AstType,
     generics: &[String],
+    def_map: &DefMap,
+    builder: &ModuleBuilder,
     buf: &mut Vec<u8>,
 ) {
+    let signature = ast_type_signature(ast_type, generics, def_map, builder);
+    let bytes = writ_module::signature::encode_type_signature(&signature)
+        .expect("AST type signature exceeds module format limits");
+    buf.extend_from_slice(&bytes);
+}
+
+fn ast_type_signature(
+    ast_type: &crate::ast::types::AstType,
+    generics: &[String],
+    def_map: &DefMap,
+    builder: &ModuleBuilder,
+) -> writ_module::signature::TypeSignature {
+    use writ_module::signature::TypeSignature;
+
     match ast_type {
         crate::ast::types::AstType::Named { name, .. } => {
-            // Check generic param
-            if let Some(idx) = generics.iter().position(|g| g == name) {
-                buf.push(0x12);
-                buf.extend_from_slice(&(idx as u16).to_le_bytes());
-                return;
+            if let Some(idx) = generics.iter().position(|generic| generic == name) {
+                return TypeSignature::GenericParam(idx as u16);
             }
             match name.as_str() {
-                "void" => buf.push(0x00),
-                "int" => buf.push(0x01),
-                "float" => buf.push(0x02),
-                "bool" => buf.push(0x03),
-                "string" => buf.push(0x04),
-                _ => {
-                    // Named type — encode as TypeDef reference (0x10).
-                    // Row index will be resolved during finalize.
-                    buf.push(0x10);
-                    buf.extend_from_slice(&0u32.to_le_bytes()); // placeholder
-                }
+                "void" => TypeSignature::Void,
+                "int" => TypeSignature::Int,
+                "float" => TypeSignature::Float,
+                "bool" => TypeSignature::Bool,
+                "string" => TypeSignature::String,
+                "Entity" => TypeSignature::Entity,
+                _ => TypeSignature::Named(resolve_named_type_token(name, def_map, builder)),
             }
         }
         crate::ast::types::AstType::Generic { name, args, .. } => {
-            match name.as_str() {
-                "Option" | "Result" | "TaskHandle" => {
-                    // writ-runtime generic type: TypeSpec reference
-                    buf.push(0x11);
-                    buf.extend_from_slice(&0u32.to_le_bytes()); // placeholder
-                }
-                "Array" => {
-                    buf.push(0x20);
-                    if let Some(inner) = args.first() {
-                        encode_ast_type_into(inner, generics, buf);
+            if name == "Array" {
+                let element = args
+                    .first()
+                    .map(|arg| ast_type_signature(arg, generics, def_map, builder))
+                    .unwrap_or(TypeSignature::Void);
+                return TypeSignature::Array(Box::new(element));
+            }
+
+            let (namespace, constructor) =
+                if matches!(name.as_str(), "Option" | "Result" | "TaskHandle" | "Type") {
+                    ("writ".to_string(), name.clone())
+                } else if let Some((_, entry)) = resolve_named_type_definition(name, def_map) {
+                    (entry.namespace.clone(), entry.name.clone())
+                } else {
+                    let normalized = name.strip_prefix("::").unwrap_or(name);
+                    if let Some((namespace, constructor)) = normalized.rsplit_once("::") {
+                        (namespace.to_string(), constructor.to_string())
+                    } else {
+                        (String::new(), normalized.to_string())
                     }
-                }
-                _ => {
-                    buf.push(0x11);
-                    buf.extend_from_slice(&0u32.to_le_bytes()); // placeholder TypeSpec
-                }
+                };
+            TypeSignature::Generic {
+                namespace,
+                name: constructor,
+                args: args
+                    .iter()
+                    .map(|arg| ast_type_signature(arg, generics, def_map, builder))
+                    .collect(),
             }
         }
         crate::ast::types::AstType::Array { elem, .. } => {
-            buf.push(0x20);
-            encode_ast_type_into(elem, generics, buf);
+            TypeSignature::Array(Box::new(ast_type_signature(
+                elem, generics, def_map, builder,
+            )))
         }
-        crate::ast::types::AstType::Func { params: _, ret: _, .. } => {
-            buf.push(0x30);
-            // Inline the signature for now (blob offset will be computed).
-            buf.extend_from_slice(&0u32.to_le_bytes()); // placeholder blob offset
-        }
-        crate::ast::types::AstType::Void { .. } => {
-            buf.push(0x00);
-        }
+        crate::ast::types::AstType::Func { params, ret, .. } => TypeSignature::Function {
+            params: params
+                .iter()
+                .map(|param| ast_type_signature(param, generics, def_map, builder))
+                .collect(),
+            ret: Box::new(
+                ret.as_deref()
+                    .map(|ret| ast_type_signature(ret, generics, def_map, builder))
+                    .unwrap_or(TypeSignature::Void),
+            ),
+        },
+        crate::ast::types::AstType::Void { .. } => TypeSignature::Void,
     }
+}
+
+fn resolve_named_type_token(
+    name: &str,
+    def_map: &DefMap,
+    builder: &ModuleBuilder,
+) -> writ_module::MetadataToken {
+    resolve_named_type_definition(name, def_map)
+        .map(|(def_id, _)| def_id)
+        .and_then(|def_id| builder.token_for_def(def_id))
+        .map(|token| writ_module::MetadataToken(token.0))
+        .unwrap_or(writ_module::MetadataToken::NULL)
+}
+
+fn resolve_named_type_definition<'a>(
+    name: &str,
+    def_map: &'a DefMap,
+) -> Option<(DefId, &'a crate::resolve::def_map::DefEntry)> {
+    let rooted = name.starts_with("::");
+    let normalized = name.strip_prefix("::").unwrap_or(name);
+
+    // Qualified names (including explicit root names) must resolve exactly. Falling
+    // back to a short name here could silently bind `a::Thing` to `b::Thing`.
+    if rooted || normalized.contains("::") {
+        let def_id = def_map.get(normalized)?;
+        let entry = def_map.get_entry(def_id);
+        return is_type_definition(entry.kind).then_some((def_id, entry));
+    }
+
+    // The AST retains an unqualified spelling rather than its resolved DefId. A
+    // short-name fallback is therefore safe only when exactly one type definition
+    // has that spelling across all namespaces.
+    let mut matches = def_map
+        .arena
+        .iter()
+        .filter(|(_, entry)| entry.name == normalized && is_type_definition(entry.kind));
+    let candidate = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    Some(candidate)
+}
+
+fn is_type_definition(kind: DefKind) -> bool {
+    matches!(
+        kind,
+        DefKind::Struct
+            | DefKind::Class
+            | DefKind::Entity
+            | DefKind::Enum
+            | DefKind::Contract
+            | DefKind::Component
+            | DefKind::ExternComponent
+    )
 }
 
 /// Encode an empty method signature (void -> void).
@@ -444,6 +525,7 @@ pub(super) fn encode_fn_sig(
     fn_decl: &crate::ast::decl::AstFnDecl,
     _interner: &TyInterner,
     generics: &[String],
+    def_map: &DefMap,
     builder: &mut ModuleBuilder,
 ) -> (u32, Vec<u32>) {
     let mut sig_buf = Vec::new();
@@ -462,16 +544,16 @@ pub(super) fn encode_fn_sig(
     sig_buf.extend_from_slice(&(regular_params.len() as u16).to_le_bytes());
 
     for param in &regular_params {
-        encode_ast_type_into(&param.ty, generics, &mut sig_buf);
+        encode_ast_type_into(&param.ty, generics, def_map, builder, &mut sig_buf);
         // Also encode each param type for ParamDef
         let mut param_buf = Vec::new();
-        encode_ast_type_into(&param.ty, generics, &mut param_buf);
+        encode_ast_type_into(&param.ty, generics, def_map, builder, &mut param_buf);
         param_blobs.push(builder.blob_heap.intern(&param_buf));
     }
 
     // Return type
     match &fn_decl.return_type {
-        Some(rt) => encode_ast_type_into(rt, generics, &mut sig_buf),
+        Some(rt) => encode_ast_type_into(rt, generics, def_map, builder, &mut sig_buf),
         None => sig_buf.push(0x00), // void
     }
 
@@ -484,6 +566,7 @@ pub(super) fn encode_fn_sig_from_ast_sig(
     sig: &crate::ast::decl::AstFnSig,
     _interner: &TyInterner,
     generics: &[String],
+    def_map: &DefMap,
     builder: &mut ModuleBuilder,
 ) -> u32 {
     let mut sig_buf = Vec::new();
@@ -498,10 +581,10 @@ pub(super) fn encode_fn_sig_from_ast_sig(
 
     sig_buf.extend_from_slice(&(regular_params.len() as u16).to_le_bytes());
     for param in &regular_params {
-        encode_ast_type_into(&param.ty, generics, &mut sig_buf);
+        encode_ast_type_into(&param.ty, generics, def_map, builder, &mut sig_buf);
     }
     match &sig.return_type {
-        Some(rt) => encode_ast_type_into(rt, generics, &mut sig_buf),
+        Some(rt) => encode_ast_type_into(rt, generics, def_map, builder, &mut sig_buf),
         None => sig_buf.push(0x00),
     }
 
@@ -513,15 +596,16 @@ pub(super) fn encode_op_sig(
     op_sig: &crate::ast::decl::AstOpSig,
     _interner: &TyInterner,
     generics: &[String],
+    def_map: &DefMap,
     builder: &mut ModuleBuilder,
 ) -> u32 {
     let mut sig_buf = Vec::new();
     sig_buf.extend_from_slice(&(op_sig.params.len() as u16).to_le_bytes());
     for param in &op_sig.params {
-        encode_ast_type_into(&param.ty, generics, &mut sig_buf);
+        encode_ast_type_into(&param.ty, generics, def_map, builder, &mut sig_buf);
     }
     match &op_sig.return_type {
-        Some(rt) => encode_ast_type_into(rt, generics, &mut sig_buf),
+        Some(rt) => encode_ast_type_into(rt, generics, def_map, builder, &mut sig_buf),
         None => sig_buf.push(0x00),
     }
     builder.blob_heap.intern(&sig_buf)
@@ -532,9 +616,10 @@ pub(super) fn encode_hook_sig(
     fn_decl: &crate::ast::decl::AstFnDecl,
     interner: &TyInterner,
     generics: &[String],
+    def_map: &DefMap,
     builder: &mut ModuleBuilder,
 ) -> u32 {
-    let (sig_blob, _) = encode_fn_sig(fn_decl, interner, generics, builder);
+    let (sig_blob, _) = encode_fn_sig(fn_decl, interner, generics, def_map, builder);
     sig_blob
 }
 
@@ -543,6 +628,7 @@ pub(super) fn emit_fn_params(
     fn_decl: &crate::ast::decl::AstFnDecl,
     _interner: &TyInterner,
     generics: &[String],
+    def_map: &DefMap,
     builder: &mut ModuleBuilder,
     method_handle: MethodDefHandle,
 ) {
@@ -550,7 +636,7 @@ pub(super) fn emit_fn_params(
     for param in &fn_decl.params {
         if let AstFnParam::Regular(p) = param {
             let mut buf = Vec::new();
-            encode_ast_type_into(&p.ty, generics, &mut buf);
+            encode_ast_type_into(&p.ty, generics, def_map, builder, &mut buf);
             let type_blob = builder.blob_heap.intern(&buf);
             builder.add_paramdef(method_handle, &p.name, type_blob, seq);
             seq += 1;
@@ -587,4 +673,97 @@ pub(super) fn resolve_type_handle(
     };
     let def_id = def_map.get(name)?;
     typedef_handles.get(&def_id).copied()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chumsky::span::SimpleSpan;
+
+    use crate::resolve::def_map::{DefEntry, DefVis};
+
+    fn add_public_type(def_map: &mut DefMap, namespace: &str, name: &str) -> DefId {
+        let span = SimpleSpan {
+            start: 0,
+            end: 0,
+            context: (),
+        };
+        let fqn = if namespace.is_empty() {
+            name.to_string()
+        } else {
+            format!("{namespace}::{name}")
+        };
+        let mut diags = Vec::new();
+        let def_id = def_map.insert(
+            fqn,
+            DefEntry {
+                id: None,
+                kind: DefKind::Struct,
+                vis: DefVis::Pub,
+                file_id: FileId(0),
+                namespace: namespace.to_string(),
+                name: name.to_string(),
+                name_span: span,
+                generics: Vec::new(),
+                span,
+            },
+            &mut diags,
+        );
+        assert!(diags.is_empty());
+        def_id
+    }
+
+    #[test]
+    fn named_type_short_match_must_be_unique() {
+        let mut def_map = DefMap::new();
+        let alpha = add_public_type(&mut def_map, "alpha", "Thing");
+        let beta = add_public_type(&mut def_map, "beta", "Thing");
+        let mut builder = ModuleBuilder::new();
+        let alpha_token = MetadataToken::new(TableId::TypeDef, 1);
+        let beta_token = MetadataToken::new(TableId::TypeDef, 2);
+        builder.def_token_map.insert(alpha, alpha_token);
+        builder.def_token_map.insert(beta, beta_token);
+
+        assert_eq!(
+            resolve_named_type_token("Thing", &def_map, &builder),
+            writ_module::MetadataToken::NULL
+        );
+        assert_eq!(
+            resolve_named_type_token("alpha::Thing", &def_map, &builder),
+            writ_module::MetadataToken(alpha_token.0)
+        );
+        assert_eq!(
+            resolve_named_type_token("missing::Thing", &def_map, &builder),
+            writ_module::MetadataToken::NULL
+        );
+    }
+
+    #[test]
+    fn generic_user_constructor_uses_resolved_namespace() {
+        let mut def_map = DefMap::new();
+        add_public_type(&mut def_map, "collections", "Crate");
+        let builder = ModuleBuilder::new();
+        let span = SimpleSpan {
+            start: 0,
+            end: 0,
+            context: (),
+        };
+        let ast_type = crate::ast::types::AstType::Generic {
+            name: "Crate".to_string(),
+            args: vec![crate::ast::types::AstType::Named {
+                name: "int".to_string(),
+                span,
+            }],
+            span,
+        };
+
+        assert_eq!(
+            ast_type_signature(&ast_type, &[], &def_map, &builder),
+            writ_module::signature::TypeSignature::Generic {
+                namespace: "collections".to_string(),
+                name: "Crate".to_string(),
+                args: vec![writ_module::signature::TypeSignature::Int],
+            }
+        );
+    }
 }

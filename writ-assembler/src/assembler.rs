@@ -394,33 +394,49 @@ fn instruction_size(instr: &Instruction) -> u32 {
 
 /// Encode an AsmTypeRef to its blob byte representation.
 fn encode_type_ref(type_ref: &AsmTypeRef, ctx: &ResolutionCtx) -> Vec<u8> {
-    match type_ref {
-        AsmTypeRef::Void => vec![0x00],
-        AsmTypeRef::Int => vec![0x01],
-        AsmTypeRef::Float => vec![0x02],
-        AsmTypeRef::Bool => vec![0x03],
-        AsmTypeRef::String_ => vec![0x04],
-        AsmTypeRef::Named(name) => {
-            if let Some(tok) = ctx.type_map.get(name) {
-                let mut bytes = vec![0x10];
-                bytes.extend_from_slice(&tok.0.to_le_bytes());
-                bytes
-            } else {
-                // Unknown type -- encode as void fallback, error reported elsewhere
-                vec![0x00]
+    fn to_signature(
+        type_ref: &AsmTypeRef,
+        ctx: &ResolutionCtx,
+    ) -> Option<writ_module::signature::TypeSignature> {
+        use writ_module::signature::TypeSignature;
+        Some(match type_ref {
+            AsmTypeRef::Void => TypeSignature::Void,
+            AsmTypeRef::Int => TypeSignature::Int,
+            AsmTypeRef::Float => TypeSignature::Float,
+            AsmTypeRef::Bool => TypeSignature::Bool,
+            AsmTypeRef::String_ => TypeSignature::String,
+            AsmTypeRef::Named(name) => TypeSignature::Named(*ctx.type_map.get(name)?),
+            AsmTypeRef::Array(element) => {
+                TypeSignature::Array(Box::new(to_signature(element, ctx)?))
             }
-        }
-        AsmTypeRef::Array(elem) => {
-            let mut bytes = vec![0x20];
-            bytes.extend(encode_type_ref(elem, ctx));
-            bytes
-        }
-        AsmTypeRef::Generic(_name, _args) => {
-            // Generic type instantiation not fully supported yet
-            vec![0x00]
-        }
-        AsmTypeRef::RawBlob(raw) => raw.clone(),
+            AsmTypeRef::Generic(name, args) => {
+                let (namespace, name) =
+                    if matches!(name.as_str(), "Option" | "Result" | "TaskHandle" | "Type") {
+                        ("writ".to_string(), name.clone())
+                    } else {
+                        name.rsplit_once("::")
+                            .map(|(namespace, name)| (namespace.to_string(), name.to_string()))
+                            .unwrap_or_else(|| (String::new(), name.clone()))
+                    };
+                TypeSignature::Generic {
+                    namespace,
+                    name,
+                    args: args
+                        .iter()
+                        .map(|arg| to_signature(arg, ctx))
+                        .collect::<Option<Vec<_>>>()?,
+                }
+            }
+            AsmTypeRef::RawBlob(_) => return None,
+        })
     }
+
+    if let AsmTypeRef::RawBlob(raw) = type_ref {
+        return raw.clone();
+    }
+    to_signature(type_ref, ctx)
+        .and_then(|signature| writ_module::signature::encode_type_signature(&signature).ok())
+        .unwrap_or_else(|| vec![0x00])
 }
 
 /// Encode a method signature (from AsmMethodSig) to blob bytes.

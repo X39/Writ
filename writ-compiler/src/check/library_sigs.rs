@@ -10,6 +10,7 @@ use chumsky::span::SimpleSpan;
 use rustc_hash::FxHashMap;
 use writ_diagnostics::FileId;
 use writ_module::Module;
+use writ_module::signature::TypeSignature;
 use writ_module::tables::TypeDefKind;
 
 use crate::resolve::def_map::{DefEntry, DefId, DefKind, DefMap, DefVis};
@@ -21,97 +22,168 @@ use super::ty::{Ty, TyInterner, TyKind};
 // Type blob decoder
 // =============================================================================
 
+#[derive(Clone, Copy)]
+enum LibraryTypeKind {
+    Struct,
+    Class,
+    Entity,
+    Enum,
+    Contract,
+    Component,
+}
+
+#[derive(Clone, Copy)]
+struct LibraryType {
+    def_id: DefId,
+    kind: LibraryTypeKind,
+}
+
+impl LibraryType {
+    fn from_type_def(def_id: DefId, kind: TypeDefKind) -> Self {
+        let kind = match kind {
+            TypeDefKind::Struct => LibraryTypeKind::Struct,
+            TypeDefKind::Class => LibraryTypeKind::Class,
+            TypeDefKind::Entity => LibraryTypeKind::Entity,
+            TypeDefKind::Enum => LibraryTypeKind::Enum,
+            TypeDefKind::Component => LibraryTypeKind::Component,
+        };
+        Self { def_id, kind }
+    }
+}
+
+fn library_type_for_def(def_id: DefId, def_map: &DefMap) -> Option<LibraryType> {
+    let kind = match def_map.get_entry(def_id).kind {
+        DefKind::Struct => LibraryTypeKind::Struct,
+        DefKind::Class => LibraryTypeKind::Class,
+        DefKind::Entity => LibraryTypeKind::Entity,
+        DefKind::Enum => LibraryTypeKind::Enum,
+        DefKind::Contract => LibraryTypeKind::Contract,
+        DefKind::Component | DefKind::ExternComponent => LibraryTypeKind::Component,
+        _ => return None,
+    };
+    Some(LibraryType { def_id, kind })
+}
+
+fn lookup_constructor<'a, T>(
+    types: &'a FxHashMap<String, T>,
+    namespace: &str,
+    name: &str,
+) -> Option<&'a T> {
+    if namespace.is_empty() {
+        types.get(name)
+    } else {
+        types.get(&format!("{}::{}", namespace, name))
+    }
+}
+
 /// Decode a type from a blob at `cursor`, advancing the cursor past the decoded bytes.
 ///
 /// Mirrors the encoding in `writ-compiler/src/emit/type_sig.rs`.
+fn type_signature_to_ty(
+    signature: &TypeSignature,
+    lib_type_token_map: &FxHashMap<u32, LibraryType>,
+    lib_type_name_map: &FxHashMap<String, LibraryType>,
+    interner: &mut TyInterner,
+) -> Ty {
+    match signature {
+        TypeSignature::Void => interner.void(),
+        TypeSignature::Int => interner.int(),
+        TypeSignature::Float => interner.float(),
+        TypeSignature::Bool => interner.bool_ty(),
+        TypeSignature::String => interner.string_ty(),
+        TypeSignature::Entity => interner.any_entity(),
+        TypeSignature::Named(token) => lib_type_token_map
+            .get(&token.0)
+            .copied()
+            .map(|named| nominal_ty(named, interner))
+            .unwrap_or_else(|| interner.error()),
+        TypeSignature::Generic {
+            namespace,
+            name,
+            args,
+        } => {
+            let decoded_args: Vec<Ty> = args
+                .iter()
+                .map(|arg| {
+                    type_signature_to_ty(arg, lib_type_token_map, lib_type_name_map, interner)
+                })
+                .collect();
+            match (namespace.as_str(), name.as_str(), decoded_args.as_slice()) {
+                ("writ" | "", "Option", [inner]) => interner.option(*inner),
+                ("writ" | "", "Result", [ok, err]) => interner.result(*ok, *err),
+                ("writ" | "", "TaskHandle", [inner]) => interner.task_handle(*inner),
+                ("writ" | "", "Type", [inner]) => interner.reflection_type(*inner),
+                _ => {
+                    lookup_constructor(lib_type_name_map, namespace, name)
+                        .copied()
+                        .map(|named| nominal_ty(named, interner))
+                        .unwrap_or_else(|| interner.error())
+                }
+            }
+        }
+        TypeSignature::GenericParam(ordinal) => {
+            interner.intern(TyKind::GenericParam(u32::from(*ordinal)))
+        }
+        TypeSignature::Array(element) => {
+            let element =
+                type_signature_to_ty(element, lib_type_token_map, lib_type_name_map, interner);
+            interner.array(element)
+        }
+        TypeSignature::Function { params, ret } => {
+            let params = params
+                .iter()
+                .map(|param| {
+                    type_signature_to_ty(param, lib_type_token_map, lib_type_name_map, interner)
+                })
+                .collect();
+            let ret = type_signature_to_ty(ret, lib_type_token_map, lib_type_name_map, interner);
+            interner.func(params, ret)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::lookup_constructor;
+    use rustc_hash::FxHashMap;
+
+    #[test]
+    fn namespaced_constructor_lookup_never_falls_back_to_short_name() {
+        let mut types = FxHashMap::default();
+        types.insert("List".to_string(), 1);
+        types.insert("alpha::List".to_string(), 2);
+
+        assert_eq!(lookup_constructor(&types, "alpha", "List"), Some(&2));
+        assert_eq!(lookup_constructor(&types, "beta", "List"), None);
+        assert_eq!(lookup_constructor(&types, "", "List"), Some(&1));
+    }
+}
+
+fn nominal_ty(named: LibraryType, interner: &mut TyInterner) -> Ty {
+    match named.kind {
+        LibraryTypeKind::Struct => interner.intern(TyKind::Struct(named.def_id)),
+        LibraryTypeKind::Class => interner.intern(TyKind::Class(named.def_id)),
+        LibraryTypeKind::Entity => interner.intern(TyKind::Entity(named.def_id)),
+        LibraryTypeKind::Enum => interner.intern(TyKind::Enum(named.def_id)),
+        LibraryTypeKind::Contract => interner.intern(TyKind::Contract(named.def_id)),
+        LibraryTypeKind::Component => interner.intern(TyKind::Struct(named.def_id)),
+    }
+}
+
 fn decode_type_from_blob(
     blob: &[u8],
     cursor: &mut usize,
-    lib_type_def_id_map: &FxHashMap<u32, (DefId, TypeDefKind)>,
+    lib_type_token_map: &FxHashMap<u32, LibraryType>,
+    lib_type_name_map: &FxHashMap<String, LibraryType>,
     interner: &mut TyInterner,
 ) -> Ty {
-    if *cursor >= blob.len() {
-        return interner.error();
-    }
-    let tag = blob[*cursor];
-    *cursor += 1;
-
-    match tag {
-        0x00 => interner.void(),
-        0x01 => interner.int(),
-        0x02 => interner.float(),
-        0x03 => interner.bool_ty(),
-        0x04 => interner.string_ty(),
-        0x05 => interner.any_entity(),
-
-        0x10 => {
-            // Named type: u32 1-based TypeDef row index
-            if *cursor + 4 > blob.len() {
-                return interner.error();
-            }
-            let row = u32::from_le_bytes([
-                blob[*cursor],
-                blob[*cursor + 1],
-                blob[*cursor + 2],
-                blob[*cursor + 3],
-            ]);
-            *cursor += 4;
-            if let Some(&(def_id, kind)) = lib_type_def_id_map.get(&row) {
-                match kind {
-                    TypeDefKind::Struct => interner.intern(TyKind::Struct(def_id)),
-                    TypeDefKind::Class => interner.intern(TyKind::Class(def_id)),
-                    TypeDefKind::Entity => interner.intern(TyKind::Entity(def_id)),
-                    TypeDefKind::Enum => interner.intern(TyKind::Enum(def_id)),
-                    TypeDefKind::Component => interner.intern(TyKind::Struct(def_id)), // components are struct-like
-                }
-            } else {
-                interner.error()
-            }
+    let bytes = blob.get(*cursor..).unwrap_or_default();
+    match writ_module::signature::decode_type_signature(bytes) {
+        Ok(signature) => {
+            *cursor = blob.len();
+            type_signature_to_ty(&signature, lib_type_token_map, lib_type_name_map, interner)
         }
-
-        0x11 => {
-            // TypeSpec placeholder (Option/Result/TaskHandle stub) — skip 4-byte row
-            if *cursor + 4 <= blob.len() {
-                *cursor += 4;
-            }
-            // Can't reconstruct these without more context — return Error (safe: suppresses errors)
-            interner.error()
-        }
-
-        0x12 => {
-            // Generic param: u16 index
-            if *cursor + 2 > blob.len() {
-                return interner.error();
-            }
-            let idx = u16::from_le_bytes([blob[*cursor], blob[*cursor + 1]]) as u32;
-            *cursor += 2;
-            interner.intern(TyKind::GenericParam(idx))
-        }
-
-        0x20 => {
-            // Array<T>: recursive element type
-            let elem = decode_type_from_blob(blob, cursor, lib_type_def_id_map, interner);
-            interner.array(elem)
-        }
-
-        0x30 => {
-            // Func: u32 blob_offset into the blob heap (in the outer module's blob_heap)
-            // The function signature sub-blob format is: u16(param_count) + TypeRef[] + TypeRef(ret)
-            // NOTE: The offset here is INTO the outer module's blob heap, but we are already
-            // working within a sub-blob. Since we don't have the blob_heap here, we skip.
-            // This is rare in practice (function-typed fields/params); return Func{[],void} as placeholder.
-            if *cursor + 4 <= blob.len() {
-                *cursor += 4;
-            }
-            let params: Vec<Ty> = Vec::new();
-            let ret = interner.void();
-            interner.intern(TyKind::Func { params, ret })
-        }
-
-        _ => {
-            // Unknown tag — bail out (no way to skip unknown size)
-            interner.error()
-        }
+        Err(_) => interner.error(),
     }
 }
 
@@ -124,22 +196,23 @@ fn decode_type_from_blob(
 /// Blob format: u16(param_count) + TypeRef[param_count] + TypeRef(return_type).
 fn decode_method_sig(
     blob: &[u8],
-    lib_type_def_id_map: &FxHashMap<u32, (DefId, TypeDefKind)>,
+    lib_type_token_map: &FxHashMap<u32, LibraryType>,
+    lib_type_name_map: &FxHashMap<String, LibraryType>,
     interner: &mut TyInterner,
 ) -> (Vec<Ty>, Ty) {
-    if blob.len() < 2 {
-        return (Vec::new(), interner.void());
+    match writ_module::signature::decode_method_signature(blob) {
+        Ok((params, ret)) => {
+            let params = params
+                .iter()
+                .map(|param| {
+                    type_signature_to_ty(param, lib_type_token_map, lib_type_name_map, interner)
+                })
+                .collect();
+            let ret = type_signature_to_ty(&ret, lib_type_token_map, lib_type_name_map, interner);
+            (params, ret)
+        }
+        Err(_) => (Vec::new(), interner.error()),
     }
-    let param_count = u16::from_le_bytes([blob[0], blob[1]]) as usize;
-    let mut cursor = 2;
-
-    let mut param_tys = Vec::with_capacity(param_count);
-    for _ in 0..param_count {
-        let ty = decode_type_from_blob(blob, &mut cursor, lib_type_def_id_map, interner);
-        param_tys.push(ty);
-    }
-    let ret = decode_type_from_blob(blob, &mut cursor, lib_type_def_id_map, interner);
-    (param_tys, ret)
 }
 
 /// Build a `FnSig` from a `MethodDefRow` plus associated `ParamDefRow`s.
@@ -152,7 +225,8 @@ fn build_fn_sig_from_binary(
     module: &Module,
     param_start: usize,
     param_end: usize,
-    lib_type_def_id_map: &FxHashMap<u32, (DefId, TypeDefKind)>,
+    lib_type_token_map: &FxHashMap<u32, LibraryType>,
+    lib_type_name_map: &FxHashMap<String, LibraryType>,
     interner: &mut TyInterner,
     lib_file_id: FileId,
     method_generics: Vec<String>,
@@ -161,7 +235,7 @@ fn build_fn_sig_from_binary(
 
     // Decode the method signature blob
     let (param_tys, ret_ty) = match writ_module::heap::read_blob(&module.blob_heap, method.signature) {
-        Ok(blob) => decode_method_sig(blob, lib_type_def_id_map, interner),
+        Ok(blob) => decode_method_sig(blob, lib_type_token_map, lib_type_name_map, interner),
         Err(_) => (Vec::new(), interner.void()),
     };
 
@@ -241,9 +315,10 @@ pub fn inject_library_sigs(
     for (lib_index, module) in library_modules.iter().enumerate() {
         let lib_file_id = FileId(u32::MAX - 1 - lib_index as u32);
 
-        // Build lib_type_def_id_map: 1-based TypeDef row -> (DefId, TypeDefKind)
-        // This maps binary type references back to DefIds in the DefMap.
-        let mut lib_type_def_id_map: FxHashMap<u32, (DefId, TypeDefKind)> = FxHashMap::default();
+        // Map full TypeDef/TypeRef tokens and namespace-qualified constructor
+        // names back to the DefIds injected during resolution.
+        let mut lib_type_token_map: FxHashMap<u32, LibraryType> = FxHashMap::default();
+        let mut lib_type_name_map: FxHashMap<String, LibraryType> = FxHashMap::default();
         for (type_idx, type_def) in module.type_defs.iter().enumerate() {
             let row_1based = (type_idx + 1) as u32;
             let name = writ_module::heap::read_string(&module.string_heap, type_def.name)
@@ -258,7 +333,7 @@ pub fn inject_library_sigs(
             }
 
             let fqn = if namespace.is_empty() {
-                name
+                name.clone()
             } else {
                 format!("{}::{}", namespace, name)
             };
@@ -266,8 +341,35 @@ pub fn inject_library_sigs(
             if let Some(def_id) = def_map.get(&fqn) {
                 let kind = TypeDefKind::from_u8(type_def.kind)
                     .unwrap_or(TypeDefKind::Struct);
-                lib_type_def_id_map.insert(row_1based, (def_id, kind));
+                let named = LibraryType::from_type_def(def_id, kind);
+                let token = writ_module::MetadataToken::new(2, row_1based);
+                lib_type_token_map.insert(token.0, named);
+                lib_type_name_map.insert(fqn, named);
+                lib_type_name_map.entry(name).or_insert(named);
             }
+        }
+
+        for (type_ref_idx, type_ref) in module.type_refs.iter().enumerate() {
+            let name = writ_module::heap::read_string(&module.string_heap, type_ref.name)
+                .unwrap_or("")
+                .to_string();
+            let namespace = writ_module::heap::read_string(&module.string_heap, type_ref.namespace)
+                .unwrap_or("")
+                .to_string();
+            let fqn = if namespace.is_empty() {
+                name.clone()
+            } else {
+                format!("{}::{}", namespace, name)
+            };
+            let Some(def_id) = def_map.get(&fqn) else {
+                continue;
+            };
+            let Some(named) = library_type_for_def(def_id, def_map) else {
+                continue;
+            };
+            let token = writ_module::MetadataToken::new(3, (type_ref_idx + 1) as u32);
+            lib_type_token_map.insert(token.0, named);
+            lib_type_name_map.entry(fqn).or_insert(named);
         }
 
         // Build contract_def_id_map: 1-based ContractDef row -> DefId
@@ -286,13 +388,21 @@ pub fn inject_library_sigs(
             }
 
             let fqn = if namespace.is_empty() {
-                name
+                name.clone()
             } else {
                 format!("{}::{}", namespace, name)
             };
 
             if let Some(def_id) = def_map.get(&fqn) {
                 lib_contract_def_id_map.insert(row_1based, def_id);
+                let named = LibraryType {
+                    def_id,
+                    kind: LibraryTypeKind::Contract,
+                };
+                let token = writ_module::MetadataToken::new(10, row_1based);
+                lib_type_token_map.insert(token.0, named);
+                lib_type_name_map.insert(fqn, named);
+                lib_type_name_map.entry(name).or_insert(named);
             }
         }
 
@@ -353,8 +463,9 @@ pub fn inject_library_sigs(
                 continue;
             }
 
-            let def_id = match lib_type_def_id_map.get(&row_1based) {
-                Some(&(def_id, _)) => def_id,
+            let type_token = writ_module::MetadataToken::new(2, row_1based);
+            let def_id = match lib_type_token_map.get(&type_token.0) {
+                Some(named) => named.def_id,
                 None => continue,
             };
 
@@ -389,7 +500,13 @@ pub fn inject_library_sigs(
                 let field_ty = match writ_module::heap::read_blob(&module.blob_heap, field_def.type_sig) {
                     Ok(blob) => {
                         let mut cursor = 0;
-                        decode_type_from_blob(blob, &mut cursor, &lib_type_def_id_map, interner)
+                        decode_type_from_blob(
+                            blob,
+                            &mut cursor,
+                            &lib_type_token_map,
+                            &lib_type_name_map,
+                            interner,
+                        )
                     }
                     Err(_) => interner.error(),
                 };
@@ -408,10 +525,13 @@ pub fn inject_library_sigs(
         for (impl_idx, impl_def) in module.impl_defs.iter().enumerate() {
             // Get the type DefId this impl is for
             let type_def_id = match impl_def.type_token.row_index() {
-                Some(row_1based) => match lib_type_def_id_map.get(&row_1based) {
-                    Some(&(def_id, _)) => def_id,
-                    None => continue,
-                },
+                Some(row_1based) => {
+                    let token = writ_module::MetadataToken::new(2, row_1based);
+                    match lib_type_token_map.get(&token.0) {
+                        Some(named) => named.def_id,
+                        None => continue,
+                    }
+                }
                 None => continue,
             };
 
@@ -464,7 +584,8 @@ pub fn inject_library_sigs(
                     module,
                     param_start,
                     param_end,
-                    &lib_type_def_id_map,
+                    &lib_type_token_map,
+                    &lib_type_name_map,
                     interner,
                     lib_file_id,
                     generics,
@@ -522,7 +643,8 @@ pub fn inject_library_sigs(
                 module,
                 param_start,
                 param_end,
-                &lib_type_def_id_map,
+                &lib_type_token_map,
+                &lib_type_name_map,
                 interner,
                 lib_file_id,
                 generics,
@@ -566,7 +688,12 @@ pub fn inject_library_sigs(
                     .unwrap_or("_")
                     .to_string();
                 let (param_tys, ret_ty) = match writ_module::heap::read_blob(&module.blob_heap, cm.signature) {
-                    Ok(blob) => decode_method_sig(blob, &lib_type_def_id_map, interner),
+                    Ok(blob) => decode_method_sig(
+                        blob,
+                        &lib_type_token_map,
+                        &lib_type_name_map,
+                        interner,
+                    ),
                     Err(_) => (Vec::new(), interner.void()),
                 };
                 let params: Vec<(String, Ty)> = param_tys

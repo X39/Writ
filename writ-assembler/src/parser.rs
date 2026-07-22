@@ -829,8 +829,20 @@ impl<'a> Parser<'a> {
 
         match self.peek_kind() {
             TokenKind::Ident(s) => {
-                let s_clone = s.clone();
+                let mut s_clone = s.clone();
                 self.pos += 1;
+
+                // Preserve namespace-qualified constructor identity (for example
+                // `writ::Option<int>`) in format-v7 generic signatures.
+                while matches!(self.peek_kind(), TokenKind::DoubleColon) {
+                    self.pos += 1;
+                    let TokenKind::Ident(segment) = self.peek_kind() else {
+                        break;
+                    };
+                    s_clone.push_str("::");
+                    s_clone.push_str(segment);
+                    self.pos += 1;
+                }
 
                 // Check for generic: Name<T>
                 if matches!(self.peek_kind(), TokenKind::LAngle) {

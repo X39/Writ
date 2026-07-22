@@ -149,7 +149,15 @@ pub fn compile_with_libraries(
     // Stage 5: IL codegen
     let sources: Vec<(writ_diagnostics::FileId, &str)> = vec![(file_id, src)];
     let active_conditions = std::collections::HashSet::new();
-    emit_bodies(&typed_ast, &interner, &asts_refs, false, &sources, &active_conditions)
+    emit::emit_bodies_with_libraries(
+        &typed_ast,
+        &interner,
+        &asts_refs,
+        false,
+        &sources,
+        &active_conditions,
+        library_modules,
+    )
         .map_err(|diags| {
             let msgs: Vec<String> = diags.iter().map(|d| d.message.clone()).collect();
             format!("codegen error(s): {}", msgs.join("; "))

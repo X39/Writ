@@ -12,6 +12,7 @@ use crate::check::ir::{TypedAst, TypedDecl};
 use crate::check::ty::TyInterner;
 use crate::resolve::def_map::{DefId, DefMap};
 
+use super::metadata::{MetadataToken, TableId};
 use super::module_builder::{ModuleBuilder, TypeDefHandle, MethodDefHandle, ContractDefHandle};
 
 mod types;
@@ -55,6 +56,7 @@ pub fn collect_defs(
     builder: &mut ModuleBuilder,
     diags: &mut Vec<writ_diagnostics::Diagnostic>,
     active_conditions: &HashSet<String>,
+    library_modules: &[&writ_module::Module],
 ) -> Vec<ReflectableInfo> {
     let def_map = &typed_ast.def_map;
 
@@ -84,6 +86,9 @@ pub fn collect_defs(
     builder.add_type_ref(runtime_mod_idx, "Eq", "writ");
     builder.add_type_ref(runtime_mod_idx, "Iterable", "writ");
     builder.add_type_ref(runtime_mod_idx, "Iterator", "writ");
+
+    register_library_type_refs(library_modules, def_map, builder);
+    register_provisional_named_tokens(typed_ast, builder);
 
     // Pre-scan: compute the set of DefIds to skip at emit time.
     // Active conditional variant: emit the conditional fn, skip its fallback.
@@ -229,6 +234,91 @@ pub fn collect_defs(
     inject_dialogue_extern_defs(def_map, builder, &called_ids);
 
     reflectable_infos
+}
+
+fn register_provisional_named_tokens(typed_ast: &TypedAst, builder: &mut ModuleBuilder) {
+    let mut type_row = 0u32;
+    let mut contract_row = 0u32;
+
+    for decl in &typed_ast.decls {
+        let (def_id, token) = match decl {
+            TypedDecl::Struct { def_id }
+            | TypedDecl::Class { def_id }
+            | TypedDecl::Entity { def_id }
+            | TypedDecl::Enum { def_id }
+            | TypedDecl::Component { def_id }
+            | TypedDecl::ExternComponent { def_id } => {
+                type_row += 1;
+                (*def_id, MetadataToken::new(TableId::TypeDef, type_row))
+            }
+            TypedDecl::Contract { def_id } => {
+                contract_row += 1;
+                (*def_id, MetadataToken::new(TableId::ContractDef, contract_row))
+            }
+            _ => continue,
+        };
+        builder.def_token_map.insert(def_id, token);
+    }
+}
+
+fn register_library_type_refs(
+    library_modules: &[&writ_module::Module],
+    def_map: &DefMap,
+    builder: &mut ModuleBuilder,
+) {
+    for module in library_modules {
+        let module_name = writ_module::heap::read_string(
+            &module.string_heap,
+            module.header.module_name,
+        )
+        .unwrap_or("library");
+        let module_version = writ_module::heap::read_string(
+            &module.string_heap,
+            module.header.module_version,
+        )
+        .unwrap_or("0.0.0");
+        let module_ref = builder.add_module_ref(module_name, module_version);
+
+        for type_def in &module.type_defs {
+            let name = writ_module::heap::read_string(&module.string_heap, type_def.name)
+                .unwrap_or("");
+            let namespace = writ_module::heap::read_string(&module.string_heap, type_def.namespace)
+                .unwrap_or("");
+            register_library_type_ref(module_ref, name, namespace, def_map, builder);
+        }
+        for contract_def in &module.contract_defs {
+            let name = writ_module::heap::read_string(&module.string_heap, contract_def.name)
+                .unwrap_or("");
+            let namespace = writ_module::heap::read_string(
+                &module.string_heap,
+                contract_def.namespace,
+            )
+            .unwrap_or("");
+            register_library_type_ref(module_ref, name, namespace, def_map, builder);
+        }
+    }
+}
+
+fn register_library_type_ref(
+    module_ref: usize,
+    name: &str,
+    namespace: &str,
+    def_map: &DefMap,
+    builder: &mut ModuleBuilder,
+) {
+    if name.is_empty() {
+        return;
+    }
+    let row = builder.add_type_ref(module_ref, name, namespace);
+    let fqn = if namespace.is_empty() {
+        name.to_string()
+    } else {
+        format!("{}::{}", namespace, name)
+    };
+    if let Some(def_id) = def_map.get(&fqn) {
+        let token = MetadataToken::new(TableId::TypeRef, (row + 1) as u32);
+        builder.def_token_map.insert(def_id, token);
+    }
 }
 
 /// Collect exports and attributes that depend on finalized tokens.

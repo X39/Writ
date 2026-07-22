@@ -28,7 +28,8 @@ pub(super) fn collect_fn(
     let is_pub = matches!(entry.vis, DefVis::Pub);
 
     if let Some(fn_decl) = find_fn_decl(asts, entry) {
-        let (sig_blob, _param_types) = encode_fn_sig(fn_decl, interner, &entry.generics, builder);
+        let (sig_blob, _param_types) =
+            encode_fn_sig(fn_decl, interner, &entry.generics, def_map, builder);
         let flags = method_flags(is_pub, true, false, HookKind::None);
 
         // Free functions have no self; param_count = number of regular params.
@@ -38,7 +39,7 @@ pub(super) fn collect_fn(
         methoddef_handles.insert(def_id, method_handle);
 
         // ParamDef for each parameter.
-        emit_fn_params(fn_decl, interner, &entry.generics, builder, method_handle);
+        emit_fn_params(fn_decl, interner, &entry.generics, def_map, builder, method_handle);
 
         // Populate fn_param_map: (name, Ty) list in declaration order, excluding self.
         let fn_params: Vec<(String, crate::check::ty::Ty)> = fn_decl
@@ -82,7 +83,8 @@ pub(super) fn collect_extern_fn(
     let is_pub = matches!(entry.vis, DefVis::Pub);
 
     if let Some(sig) = find_extern_fn_sig(asts, entry) {
-        let sig_blob = encode_fn_sig_from_ast_sig(sig, interner, &entry.generics, builder);
+        let sig_blob =
+            encode_fn_sig_from_ast_sig(sig, interner, &entry.generics, def_map, builder);
 
         // Build import name: qualifier.name if present, else just name.
         let import_name = if let Some(ref q) = sig.qualifier {
@@ -123,7 +125,8 @@ pub(super) fn collect_component(
                 let is_field_pub = matches!(f.vis, Some(AstVisibility::Pub));
                 let has_default = f.default.is_some();
                 let flags = field_flags(is_field_pub, has_default, true);
-                let type_blob = encode_type_from_ast(&f.ty, interner, &entry.generics, builder);
+                let type_blob =
+                    encode_type_from_ast(&f.ty, interner, &entry.generics, def_map, builder);
                 builder.add_fielddef(handle, &f.name, type_blob, flags);
             }
         }
