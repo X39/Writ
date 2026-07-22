@@ -6,7 +6,30 @@ use crate::ast::expr::BinaryOp;
 use crate::check::ty::{Ty, TyKind};
 
 use super::super::BodyEmitter;
+use super::super::call::pack_args_consecutive;
 use super::eq::{emit_struct_eq, emit_struct_neq};
+
+/// Emit equality for an operand whose concrete type is only known at runtime.
+///
+/// Generic bodies are emitted once, so selecting a primitive CMP_EQ opcode from
+/// the static `GenericParam` would be unsound. Dispatch through the prelude
+/// `Eq<T>` contract instead; the runtime type selects the primitive intrinsic or
+/// user implementation. CALL_VIRT's argument block includes `self`, hence the
+/// two-operand block and `argc = 2`.
+fn emit_generic_eq(emitter: &mut BodyEmitter<'_>, r_a: u16, r_b: u16) -> u16 {
+    let bool_ty = Ty(2);
+    let r_dst = emitter.alloc_reg(bool_ty);
+    let r_base = pack_args_consecutive(emitter, &[r_a, r_b]);
+    emitter.emit(Instruction::CallVirt {
+        r_dst,
+        r_obj: r_base,
+        contract_idx: emitter.builder.type_ref_token_by_name("Eq"),
+        slot: 0,
+        r_base,
+        argc: 2,
+    });
+    r_dst
+}
 
 /// Emit code for a binary operation. Returns the destination register.
 ///
@@ -120,8 +143,10 @@ pub(super) fn emit_binary(
         BinaryOp::Eq => {
             // Dispatch on the OPERAND type (ty is Bool, the result type).
             let bool_ty = Ty(2); // Bool is Ty(2)
+            let operand_ty = emitter.interner.resolve_infer(operand_ty);
             match emitter.interner.kind(operand_ty).clone() {
                 TyKind::Struct(def_id) => emit_struct_eq(emitter, r_a, r_b, def_id),
+                TyKind::GenericParam(_) => emit_generic_eq(emitter, r_a, r_b),
                 TyKind::Float => {
                     let r_dst = emitter.alloc_reg(bool_ty);
                     emitter.emit(Instruction::CmpEqF { r_dst, r_a, r_b });
@@ -148,8 +173,15 @@ pub(super) fn emit_binary(
         BinaryOp::NotEq => {
             // Dispatch on the OPERAND type (ty is Bool, the result type).
             let bool_ty = Ty(2);
+            let operand_ty = emitter.interner.resolve_infer(operand_ty);
             match emitter.interner.kind(operand_ty).clone() {
                 TyKind::Struct(def_id) => emit_struct_neq(emitter, r_a, r_b, def_id),
+                TyKind::GenericParam(_) => {
+                    let r_cmp = emit_generic_eq(emitter, r_a, r_b);
+                    let r_dst = emitter.alloc_reg(bool_ty);
+                    emitter.emit(Instruction::Not { r_dst, r_src: r_cmp });
+                    r_dst
+                }
                 TyKind::Float => {
                     let r_cmp = emitter.alloc_reg(bool_ty);
                     emitter.emit(Instruction::CmpEqF { r_dst: r_cmp, r_a, r_b });

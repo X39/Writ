@@ -377,6 +377,97 @@ fn test_emit_binary_float_mul() {
 }
 
 #[test]
+fn test_emit_generic_equality_uses_eq_contract_dispatch() {
+    let mut builder = ModuleBuilder::new();
+    let runtime_ref = builder.add_module_ref("writ-runtime", "1.0.0");
+    let eq_ref = builder.add_type_ref(runtime_ref, "Eq", "writ");
+    let expected_eq_token = MetadataToken::new(TableId::TypeRef, (eq_ref + 1) as u32).0;
+
+    let mut interner = make_interner();
+    let ty_generic = interner.intern(TyKind::GenericParam(0));
+    let ty_bool = interner.bool_ty();
+    let mut emitter = make_emitter(&builder, &interner);
+    let r_a = emitter.alloc_reg(ty_generic);
+    let r_b = emitter.alloc_reg(ty_generic);
+    emitter.locals.insert("a".to_string(), r_a);
+    emitter.locals.insert("b".to_string(), r_b);
+
+    let expr = TypedExpr::Binary {
+        ty: ty_bool,
+        span: dummy_span(),
+        left: Box::new(TypedExpr::Var {
+            ty: ty_generic,
+            span: dummy_span(),
+            name: "a".to_string(),
+        }),
+        op: BinaryOp::Eq,
+        right: Box::new(TypedExpr::Var {
+            ty: ty_generic,
+            span: dummy_span(),
+            name: "b".to_string(),
+        }),
+    };
+
+    let r_result = emit_expr(&mut emitter, &expr);
+
+    assert_eq!(emitter.instructions.len(), 1);
+    assert!(matches!(
+        emitter.instructions[0],
+        Instruction::CallVirt {
+            r_dst,
+            r_obj,
+            contract_idx,
+            slot: 0,
+            r_base,
+            argc: 2,
+        } if r_dst == r_result
+            && r_obj == r_a
+            && r_base == r_a
+            && contract_idx == expected_eq_token
+    ));
+}
+
+#[test]
+fn test_emit_generic_inequality_negates_eq_contract_result() {
+    let mut builder = ModuleBuilder::new();
+    let runtime_ref = builder.add_module_ref("writ-runtime", "1.0.0");
+    builder.add_type_ref(runtime_ref, "Eq", "writ");
+
+    let mut interner = make_interner();
+    let ty_generic = interner.intern(TyKind::GenericParam(0));
+    let ty_bool = interner.bool_ty();
+    let mut emitter = make_emitter(&builder, &interner);
+    let r_a = emitter.alloc_reg(ty_generic);
+    let r_b = emitter.alloc_reg(ty_generic);
+    emitter.locals.insert("a".to_string(), r_a);
+    emitter.locals.insert("b".to_string(), r_b);
+
+    let expr = TypedExpr::Binary {
+        ty: ty_bool,
+        span: dummy_span(),
+        left: Box::new(TypedExpr::Var {
+            ty: ty_generic,
+            span: dummy_span(),
+            name: "a".to_string(),
+        }),
+        op: BinaryOp::NotEq,
+        right: Box::new(TypedExpr::Var {
+            ty: ty_generic,
+            span: dummy_span(),
+            name: "b".to_string(),
+        }),
+    };
+
+    let r_result = emit_expr(&mut emitter, &expr);
+
+    assert!(matches!(emitter.instructions[0], Instruction::CallVirt { argc: 2, .. }));
+    assert!(matches!(
+        emitter.instructions[1],
+        Instruction::Not { r_dst, r_src } if r_dst == r_result && r_src + 1 == r_dst
+    ));
+}
+
+#[test]
 fn test_emit_if_else() {
     // if true { 1 } else { 2 }
     //

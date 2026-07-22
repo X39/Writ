@@ -61,6 +61,26 @@ fn run_to_completion(src: &str) {
     }
 }
 
+/// Compile and execute Writ source, returning `main`'s value.
+fn run_to_value(src: &str) -> writ_runtime::Value {
+    let bytes = compile(src);
+    let module = writ_module::Module::from_bytes(&bytes).unwrap();
+    let main_idx = find_main_idx(&module);
+    let mut runtime = writ_runtime::RuntimeBuilder::new(module)
+        .with_gc()
+        .build()
+        .unwrap();
+    let task_id = runtime.spawn_task(main_idx, vec![]).unwrap();
+    match runtime.tick(0.0, writ_runtime::ExecutionLimit::Instructions(MAX_INSTRUCTIONS)) {
+        writ_runtime::TickResult::AllCompleted | writ_runtime::TickResult::Empty => {}
+        writ_runtime::TickResult::ExecutionLimitReached => {
+            panic!("INFINITE LOOP DETECTED: test exceeded {} instructions", MAX_INSTRUCTIONS);
+        }
+        other => panic!("unexpected tick result: {:?}", other),
+    }
+    runtime.return_value(task_id).expect("main should return a value")
+}
+
 /// Run user_src with writ-std loaded as a SEPARATE library module via with_library().
 /// This tests the cross-module loading code path that writ-cli depends on.
 ///
@@ -235,6 +255,36 @@ fn main() {
 "#);
 }
 
+#[test]
+fn coll_map_distinguishes_different_string_keys() {
+    let result = run_to_value(r#"
+pub class Map<K: Ord + Eq, V> { keys: K[], values: V[] }
+impl<K: Ord + Eq, V> Map<K, V> {
+    pub fn set(mut self, key: K, value: V) {
+        let mut i: int = 0;
+        while i < self.keys.len() {
+            if self.keys[i] == key { self.values[i] = value; return; }
+            i = i + 1;
+        }
+        let old_len: int = self.keys.len();
+        self.keys.resize(old_len + 1);
+        self.values.resize(old_len + 1);
+        self.keys[old_len] = key;
+        self.values[old_len] = value;
+    }
+    pub fn len(self) -> int { self.keys.len() }
+}
+fn main() -> int {
+    let map: Map<string, int> = new Map<string, int> { keys: [], values: [] };
+    map.set("alpha", 1);
+    map.set("beta", 2);
+    map.len()
+}
+"#);
+
+    assert_eq!(result, writ_runtime::Value::Int(2));
+}
+
 // ── Set<T> tests ──────────────────────────────────────────────────────────────
 
 #[test]
@@ -353,6 +403,36 @@ fn main() {
 "#);
 }
 
+#[test]
+fn coll_hashmap_distinguishes_different_string_keys() {
+    let result = run_to_value(r#"
+pub class HashMap<K: Hashable, V> { keys: K[], values: V[] }
+impl<K: Hashable, V> HashMap<K, V> {
+    pub fn set(mut self, key: K, value: V) {
+        let mut i: int = 0;
+        while i < self.keys.len() {
+            if self.keys[i] == key { self.values[i] = value; return; }
+            i = i + 1;
+        }
+        let old_len: int = self.keys.len();
+        self.keys.resize(old_len + 1);
+        self.values.resize(old_len + 1);
+        self.keys[old_len] = key;
+        self.values[old_len] = value;
+    }
+    pub fn len(self) -> int { self.keys.len() }
+}
+fn main() -> int {
+    let map: HashMap<string, int> = new HashMap<string, int> { keys: [], values: [] };
+    map.set("alpha", 1);
+    map.set("beta", 2);
+    map.len()
+}
+"#);
+
+    assert_eq!(result, writ_runtime::Value::Int(2));
+}
+
 // ── Iterator protocol tests (Phase 118) ───────────────────────────────────────
 
 /// ITER-01: for-in loop over List<T> using Iterable<T> protocol.
@@ -469,10 +549,10 @@ fn main() {
 }
 
 /// ITER-03: iterate Map keys using get_keys() which returns K[] (array path).
-/// Uses string keys to avoid GenericParam resolution limitations (Phase 119+).
+/// String keys also lock the generic Eq dispatch used while inserting each key.
 #[test]
 fn iter_for_map_keys() {
-    run_to_completion(r#"
+    let result = run_to_value(r#"
 pub class Map<K: Ord + Eq, V> {
     keys: K[],
     values: V[]
@@ -493,7 +573,7 @@ impl<K: Ord + Eq, V> Map<K, V> {
     pub fn get_keys(self) -> K[] { self.keys }
     pub fn len(self) -> int { self.keys.len() }
 }
-fn main() {
+fn main() -> int {
     let map: Map<string, int> = new Map<string, int> { keys: [], values: [] };
     map.set("a", 10);
     map.set("b", 20);
@@ -503,9 +583,11 @@ fn main() {
         let _k: string = k;
         key_count = key_count + 1;
     }
-    let _result: int = key_count;
+    key_count
 }
 "#);
+
+    assert_eq!(result, writ_runtime::Value::Int(3));
 }
 
 /// ITER-04: custom class implementing Iterable<T> works in for-in loop.

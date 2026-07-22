@@ -76,10 +76,12 @@ pub fn collect_defs(
     builder.add_type_ref(runtime_mod_idx, "Bool", "writ");
     builder.add_type_ref(runtime_mod_idx, "String", "writ");
 
-    // 2d. TypeRef: register Iterable<T> and Iterator<T> from writ-runtime so that
-    //     for-in loop desugaring and ImplDef contract tokens can reference them.
+    // 2d. TypeRef: register contracts used directly by body lowering so that
+    //     CALL_VIRT can reference the writ-runtime ContractDef rows through the
+    //     normal cross-module resolution path.
     //     These are prelude contracts with no user-module DefId; TypeRef resolution
     //     maps them to the writ-runtime virtual module's ContractDef table.
+    builder.add_type_ref(runtime_mod_idx, "Eq", "writ");
     builder.add_type_ref(runtime_mod_idx, "Iterable", "writ");
     builder.add_type_ref(runtime_mod_idx, "Iterator", "writ");
 
