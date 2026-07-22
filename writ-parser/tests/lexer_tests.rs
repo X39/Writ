@@ -296,6 +296,70 @@ fn formattable_string_with_nested_braces() {
 }
 
 #[test]
+fn formattable_string_rejects_bare_lf() {
+    let src = "$\"hello\nworld\"";
+    let tokens = lex(src);
+
+    assert!(
+        tokens
+            .iter()
+            .any(|(token, _)| matches!(token, Token::Error)),
+        "Formattable string with a bare LF should produce an error, got {tokens:?}"
+    );
+    assert!(
+        !tokens
+            .iter()
+            .any(|(token, _)| matches!(token, Token::FormattableStringLit)),
+        "Formattable string with a bare LF must not be accepted, got {tokens:?}"
+    );
+}
+
+#[test]
+fn formattable_string_rejects_bare_crlf() {
+    let src = "$\"hello\r\nworld\"";
+    let tokens = lex(src);
+
+    assert!(
+        tokens
+            .iter()
+            .any(|(token, _)| matches!(token, Token::Error)),
+        "Formattable string with a bare CRLF should produce an error, got {tokens:?}"
+    );
+    assert!(
+        !tokens
+            .iter()
+            .any(|(token, _)| matches!(token, Token::FormattableStringLit)),
+        "Formattable string with a bare CRLF must not be accepted, got {tokens:?}"
+    );
+}
+
+#[test]
+fn formattable_string_accepts_escaped_lf_continuation() {
+    let src = "$\"hello \\\n        {name}\"";
+    let tokens = lex(src);
+    let non_ws: Vec<_> = tokens
+        .iter()
+        .filter(|(token, _)| !matches!(token, Token::Whitespace))
+        .collect();
+
+    assert_eq!(non_ws.len(), 1, "Expected one token, got {non_ws:?}");
+    assert!(matches!(non_ws[0].0, Token::FormattableStringLit));
+}
+
+#[test]
+fn formattable_string_accepts_escaped_crlf_continuation() {
+    let src = "$\"hello \\\r\n        {name}\"";
+    let tokens = lex(src);
+    let non_ws: Vec<_> = tokens
+        .iter()
+        .filter(|(token, _)| !matches!(token, Token::Whitespace))
+        .collect();
+
+    assert_eq!(non_ws.len(), 1, "Expected one token, got {non_ws:?}");
+    assert!(matches!(non_ws[0].0, Token::FormattableStringLit));
+}
+
+#[test]
 fn formattable_raw_string() {
     let src = "$\"\"\"\nhello {name}\n\"\"\"";
     let tokens = lex(src);

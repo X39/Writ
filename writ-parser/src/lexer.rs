@@ -111,7 +111,16 @@ fn formattable_string<'src>(lex: &mut logos::Lexer<'src, Token<'src>>) -> bool {
             b'\\' => {
                 i += 1; // skip the backslash
                 if i < bytes.len() {
-                    if bytes[i] == b'u' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+                    if bytes[i] == b'\n' {
+                        // Escaped LF line continuation.
+                        i += 1;
+                    } else if bytes[i] == b'\r' {
+                        // A CR is only valid as part of an escaped CRLF continuation.
+                        if i + 1 >= bytes.len() || bytes[i + 1] != b'\n' {
+                            return false;
+                        }
+                        i += 2;
+                    } else if bytes[i] == b'u' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
                         // \u{...} unicode escape — skip past the closing }
                         // Do NOT increment brace_depth
                         i += 2; // skip 'u' and '{'
@@ -126,6 +135,7 @@ fn formattable_string<'src>(lex: &mut logos::Lexer<'src, Token<'src>>) -> bool {
                     }
                 }
             }
+            b'\r' | b'\n' => return false,
             b'{' => {
                 brace_depth += 1;
                 i += 1;
