@@ -148,6 +148,15 @@ pub fn emit_bodies_with_libraries(
     // This populates ExportDef rows for all pub-visible items.
     collect::collect_post_finalize(typed_ast, asts, &mut builder);
 
+    // Calls are checked against the fallback DefId regardless of build conditions.
+    // Once metadata-dependent exports and attributes are stable, redirect that DefId
+    // to the emitted conditional MethodDef when the condition is active.
+    collect::bind_active_conditional_call_targets(
+        typed_ast,
+        active_conditions,
+        &mut builder,
+    );
+
     // Emit all method bodies (including lambda bodies via lambda_infos and synthetic
     // Reflectable get_type() bodies via reflectable_infos).
     // Per-function error nodes cause that function's body to be skipped with an E9001

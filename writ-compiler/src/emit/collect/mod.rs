@@ -254,6 +254,32 @@ pub fn collect_defs(
     reflectable_infos
 }
 
+/// Redirect calls resolved to a suppressed fallback to the active conditional body.
+///
+/// The checker deliberately resolves every call to the non-conditional fallback so
+/// argument checking is independent of the active build conditions.  Metadata
+/// collection, however, emits the conditional definition instead when its condition
+/// is active.  Install the alias only after exports and attributes have been
+/// collected, so the fallback does not appear as a duplicate exported definition.
+pub(super) fn bind_active_conditional_call_targets(
+    typed_ast: &TypedAst,
+    active_conditions: &HashSet<String>,
+    builder: &mut ModuleBuilder,
+) {
+    for (&conditional_id, condition) in &typed_ast.conditional_fns {
+        if !active_conditions.contains(condition.as_str()) {
+            continue;
+        }
+        let Some(&fallback_id) = typed_ast.fallback_for_conditional.get(&conditional_id) else {
+            continue;
+        };
+        let Some(conditional_token) = builder.token_for_def(conditional_id) else {
+            continue;
+        };
+        builder.def_token_map.insert(fallback_id, conditional_token);
+    }
+}
+
 /// Add a TypeSpec for a checked structural generic type, or reuse its token.
 pub(super) fn intern_type_spec_for_ty(
     ty: Ty,
