@@ -41,26 +41,6 @@ fn find_main_idx(module: &writ_module::Module) -> usize {
         .expect("no main method found")
 }
 
-/// Compile and execute Writ source with instruction-limited execution.
-/// Panics on infinite loop (> MAX_INSTRUCTIONS) or VM crash.
-fn run_to_completion(src: &str) {
-    let bytes = compile(src);
-    let module = writ_module::Module::from_bytes(&bytes).unwrap();
-    let main_idx = find_main_idx(&module);
-    let mut runtime = writ_runtime::RuntimeBuilder::new(module)
-        .with_gc()
-        .build()
-        .unwrap();
-    runtime.spawn_task(main_idx, vec![]).unwrap();
-    match runtime.tick(0.0, writ_runtime::ExecutionLimit::Instructions(MAX_INSTRUCTIONS)) {
-        writ_runtime::TickResult::AllCompleted | writ_runtime::TickResult::Empty => {}
-        writ_runtime::TickResult::ExecutionLimitReached => {
-            panic!("INFINITE LOOP DETECTED: test exceeded {} instructions — likely an infinite recursion or unresolvable method dispatch", MAX_INSTRUCTIONS);
-        }
-        other => panic!("unexpected tick result: {:?}", other),
-    }
-}
-
 /// Compile and execute Writ source, returning `main`'s value.
 fn run_to_value(src: &str) -> writ_runtime::Value {
     let bytes = compile(src);
@@ -78,6 +58,12 @@ fn run_to_value(src: &str) -> writ_runtime::Value {
         }
         other => panic!("unexpected tick result: {:?}", other),
     }
+    assert_eq!(
+        runtime.task_state(task_id),
+        Some(writ_runtime::TaskState::Completed),
+        "main should complete (crash={:?})",
+        runtime.crash_info(task_id)
+    );
     runtime.return_value(task_id).unwrap_or_else(|| {
         panic!(
             "main should return a value (state={:?}, crash={:?})",
@@ -92,7 +78,7 @@ fn run_to_value(src: &str) -> writ_runtime::Value {
 ///
 /// Uses `compile_with_libraries` so user code can reference types defined in
 /// writ-std (e.g. `List<int>`) without inlining the class definition.
-fn run_with_library(user_src: &str) {
+fn run_with_library(user_src: &str) -> writ_runtime::Value {
     let std_bytes = compile(WRIT_STD_SRC);
     let std_module = writ_module::Module::from_bytes(&std_bytes).unwrap();
     // Use compile_with_libraries so user code can reference types from std_module
@@ -116,7 +102,7 @@ fn run_with_library(user_src: &str) {
         .with_gc()
         .build()
         .unwrap();
-    runtime.spawn_task(main_idx, vec![]).unwrap();
+    let task_id = runtime.spawn_task(main_idx, vec![]).unwrap();
     match runtime.tick(0.0, writ_runtime::ExecutionLimit::Instructions(MAX_INSTRUCTIONS)) {
         writ_runtime::TickResult::AllCompleted | writ_runtime::TickResult::Empty => {}
         writ_runtime::TickResult::ExecutionLimitReached => {
@@ -124,6 +110,18 @@ fn run_with_library(user_src: &str) {
         }
         other => panic!("unexpected tick result: {:?}", other),
     }
+    assert_eq!(
+        runtime.task_state(task_id),
+        Some(writ_runtime::TaskState::Completed),
+        "main should complete with separate library module (crash={:?})",
+        runtime.crash_info(task_id)
+    );
+    runtime.return_value(task_id).unwrap_or_else(|| {
+        panic!(
+            "main should return a value with separate library module (crash={:?})",
+            runtime.crash_info(task_id)
+        )
+    })
 }
 
 // ── with_library path test ─────────────────────────────────────────────────────
@@ -136,22 +134,24 @@ fn run_with_library(user_src: &str) {
 /// compiler can see the List type from the separately-compiled writ-std module.
 #[test]
 fn coll_with_library_separate_modules() {
-    run_with_library(
+    let result = run_with_library(
         r#"
-fn main() {
+fn main() -> int {
     let list: List<int> = new List<int> { items: [] };
     list.add(42);
-    let _v: int = list.get(0);
+    list.get(0)
 }
 "#,
     );
+
+    assert_eq!(result, writ_runtime::Value::Int(42));
 }
 
 // ── List<T> tests ─────────────────────────────────────────────────────────────
 
 #[test]
 fn coll_list_add_get_len() {
-    run_to_completion(r#"
+    let result = run_to_value(r#"
 pub class List<T> { items: T[] }
 impl<T> List<T> {
     pub fn add(mut self, item: T) {
@@ -180,7 +180,7 @@ impl<T> List<T> {
         false
     }
 }
-fn main() {
+fn main() -> int {
     let list: List<int> = new List<int> { items: [] };
     list.add(10);
     list.add(20);
@@ -190,15 +190,19 @@ fn main() {
     let _has: bool = list.has(20);
     list.set(1, 25);
     list.remove_at(0);
+    let final_value: int = list.get(0);
+    final_value + list.len()
 }
 "#);
+
+    assert_eq!(result, writ_runtime::Value::Int(27));
 }
 
 // ── Map<K, V> tests ───────────────────────────────────────────────────────────
 
 #[test]
 fn coll_map_set_get_remove() {
-    run_to_completion(r#"
+    let result = run_to_value(r#"
 pub class Map<K: Ord + Eq, V> { keys: K[], values: V[] }
 impl<K: Ord + Eq, V> Map<K, V> {
     pub fn len(self) -> int { self.keys.len() }
@@ -249,7 +253,7 @@ impl<K: Ord + Eq, V> Map<K, V> {
         }
     }
 }
-fn main() {
+fn main() -> int {
     let map: Map<string, int> = new Map<string, int> { keys: [], values: [] };
     map.set("a", 1);
     map.set("b", 2);
@@ -257,8 +261,12 @@ fn main() {
     let _has: bool = map.has("b");
     let _len: int = map.len();
     map.remove("a");
+    let remaining: int = map.get("b");
+    remaining + map.len()
 }
 "#);
+
+    assert_eq!(result, writ_runtime::Value::Int(3));
 }
 
 #[test]
@@ -295,7 +303,7 @@ fn main() -> int {
 
 #[test]
 fn coll_set_add_dedup_remove() {
-    run_to_completion(r#"
+    let result = run_to_value(r#"
 pub class Set<T: Eq> { items: T[] }
 impl<T: Eq> Set<T> {
     pub fn add(mut self, item: T) {
@@ -330,7 +338,7 @@ impl<T: Eq> Set<T> {
     }
     pub fn len(self) -> int { self.items.len() }
 }
-fn main() {
+fn main() -> int {
     let s: Set<int> = new Set<int> { items: [] };
     s.add(1);
     s.add(2);
@@ -338,15 +346,18 @@ fn main() {
     let _has: bool = s.has(1);
     let _len: int = s.len();
     s.remove(1);
+    s.len()
 }
 "#);
+
+    assert_eq!(result, writ_runtime::Value::Int(1));
 }
 
 // ── HashMap<K, V> tests ───────────────────────────────────────────────────────
 
 #[test]
 fn coll_hashmap_set_get_remove() {
-    run_to_completion(r#"
+    let result = run_to_value(r#"
 pub class HashMap<K: Hashable, V> { keys: K[], values: V[] }
 impl<K: Hashable, V> HashMap<K, V> {
     pub fn len(self) -> int { self.keys.len() }
@@ -397,7 +408,7 @@ impl<K: Hashable, V> HashMap<K, V> {
         }
     }
 }
-fn main() {
+fn main() -> int {
     let hm: HashMap<string, int> = new HashMap<string, int> { keys: [], values: [] };
     hm.set("x", 10);
     hm.set("y", 20);
@@ -405,8 +416,12 @@ fn main() {
     let _has: bool = hm.has("y");
     let _len: int = hm.len();
     hm.remove("x");
+    let remaining: int = hm.get("y");
+    remaining + hm.len()
 }
 "#);
+
+    assert_eq!(result, writ_runtime::Value::Int(21));
 }
 
 #[test]
@@ -444,7 +459,7 @@ fn main() -> int {
 /// ITER-01: for-in loop over List<T> using Iterable<T> protocol.
 #[test]
 fn iter_for_in_list() {
-    run_to_completion(r#"
+    let result = run_to_value(r#"
 pub class ListIterator<T> {
     source: T[],
     index: int
@@ -479,7 +494,7 @@ impl<T> Iterable<T> for List<T> {
         new ListIterator<T> { source: self.items, index: 0 }
     }
 }
-fn main() {
+fn main() -> int {
     let list: List<int> = new List<int> { items: [] };
     list.add(10);
     list.add(20);
@@ -488,15 +503,17 @@ fn main() {
     for x in list {
         sum = sum + x;
     }
-    let _result: int = sum;
+    sum
 }
 "#);
+
+    assert_eq!(result, writ_runtime::Value::Int(60));
 }
 
 /// ITER-02: for-in loop over Set<T> using Iterable<T> protocol.
 #[test]
 fn iter_for_in_set() {
-    run_to_completion(r#"
+    let result = run_to_value(r#"
 pub class SetIterator<T: Eq> {
     source: T[],
     index: int
@@ -540,7 +557,7 @@ impl<T: Eq> Iterable<T> for Set<T> {
         new SetIterator<T> { source: self.items, index: 0 }
     }
 }
-fn main() {
+fn main() -> int {
     let s: Set<int> = new Set<int> { items: [] };
     s.add(1);
     s.add(2);
@@ -549,9 +566,11 @@ fn main() {
     for x in s {
         sum = sum + x;
     }
-    let _result: int = sum;
+    sum
 }
 "#);
+
+    assert_eq!(result, writ_runtime::Value::Int(3));
 }
 
 /// ITER-03: iterate Map keys using get_keys() which returns K[] (array path).
@@ -599,7 +618,7 @@ fn main() -> int {
 /// ITER-04: custom class implementing Iterable<T> works in for-in loop.
 #[test]
 fn iter_custom_iterable() {
-    run_to_completion(r#"
+    let result = run_to_value(r#"
 pub class CounterIterator {
     current: int,
     max: int
@@ -628,15 +647,17 @@ impl Iterable<int> for Counter {
         new CounterIterator { current: 0, max: self.max }
     }
 }
-fn main() {
+fn main() -> int {
     let counter: Counter = new Counter { max: 5 };
     let mut sum: int = 0;
     for x in counter {
         sum = sum + x;
     }
-    let _result: int = sum;
+    sum
 }
 "#);
+
+    assert_eq!(result, writ_runtime::Value::Int(10));
 }
 
 /// COLL-04: List map/filter/reduce chain produces correct results.
