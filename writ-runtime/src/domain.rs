@@ -81,6 +81,44 @@ struct MethodCandidate {
     specificity: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct ModuleVersion {
+    major: u64,
+    minor: u64,
+    patch: u64,
+}
+
+impl ModuleVersion {
+    fn parse(value: &str) -> Option<Self> {
+        fn component(value: &str) -> Option<u64> {
+            if value.is_empty()
+                || !value.bytes().all(|byte| byte.is_ascii_digit())
+                || (value.len() > 1 && value.starts_with('0'))
+            {
+                return None;
+            }
+            value.parse().ok()
+        }
+
+        let mut parts = value.split('.');
+        let major = component(parts.next()?)?;
+        let minor = component(parts.next()?)?;
+        let patch = component(parts.next()?)?;
+        if parts.next().is_some() {
+            return None;
+        }
+        Some(Self {
+            major,
+            minor,
+            patch,
+        })
+    }
+
+    fn satisfies(self, minimum: Self) -> bool {
+        self.major == minimum.major && self >= minimum
+    }
+}
+
 fn type_signature_specificity(signature: &TypeSignature) -> usize {
     match signature {
         TypeSignature::GenericParam(_) => 0,
@@ -102,6 +140,8 @@ fn type_signature_specificity(signature: &TypeSignature) -> usize {
 /// TypeRef/MethodRef/FieldRef tables.
 #[derive(Debug, Clone, Default)]
 pub struct ResolvedRefs {
+    /// ModuleRef row index (0-based) -> resolved Domain::modules index.
+    pub modules: FxHashMap<u32, usize>,
     /// TypeRef row index (0-based) -> resolved (module_idx, typedef_idx).
     pub types: FxHashMap<u32, ResolvedType>,
     /// TypeRef row index (0-based) -> resolved (module_idx, contractdef_idx).
@@ -161,12 +201,19 @@ impl Domain {
     /// Returns an error for the first unresolvable reference encountered.
     pub fn resolve_refs(&mut self) -> Result<(), RuntimeError> {
         let module_count = self.modules.len();
+        for module_idx in 0..module_count {
+            self.module_identity(module_idx)?;
+        }
+        for src_idx in 0..module_count {
+            let resolved = self.resolve_dependency_refs(src_idx)?;
+            self.modules[src_idx].resolved_refs = resolved;
+        }
         for src_idx in 0..module_count {
             let resolved = self.resolve_type_refs(src_idx)?;
             self.modules[src_idx].resolved_refs = resolved;
         }
         for src_idx in 0..module_count {
-            let resolved = self.resolve_module_refs(src_idx)?;
+            let resolved = self.resolve_member_refs(src_idx)?;
             self.modules[src_idx].resolved_refs = resolved;
         }
         Ok(())
@@ -174,29 +221,35 @@ impl Domain {
 
     // ── Resolution implementation ─────────────────────────────────
 
+    /// Resolve every declared dependency before TypeRefs and MethodRefs use it.
+    fn resolve_dependency_refs(&self, src_idx: usize) -> Result<ResolvedRefs, RuntimeError> {
+        let mut resolved = ResolvedRefs::new();
+        for row in 0..self.modules[src_idx].module.module_refs.len() {
+            let target_idx = self.resolve_module_ref_row(src_idx, row)?;
+            resolved.modules.insert(row as u32, target_idx);
+        }
+        Ok(resolved)
+    }
+
     /// Resolve TypeRefs for every module before signatures or TypeSpecs use
     /// them during member resolution.
     fn resolve_type_refs(&self, src_idx: usize) -> Result<ResolvedRefs, RuntimeError> {
-        let mut resolved = ResolvedRefs::new();
+        let mut resolved = self.modules[src_idx].resolved_refs.clone();
         let src_module = &self.modules[src_idx].module;
         for (ref_idx, type_ref) in src_module.type_refs.iter().enumerate() {
+            if type_ref.scope.table_id() != 1 {
+                return Err(RuntimeError::ExecutionError(
+                    "TypeRef scope is not a ModuleRef token".into(),
+                ));
+            }
             let scope_row = type_ref.scope.row_index().ok_or_else(|| {
                 RuntimeError::ExecutionError("TypeRef has null scope token".into())
             })?;
             let scope = (scope_row - 1) as usize;
-            let module_ref = src_module.module_refs.get(scope).ok_or_else(|| {
+            let target_idx = *resolved.modules.get(&(scope as u32)).ok_or_else(|| {
                 RuntimeError::ExecutionError(format!(
-                    "TypeRef scope index {} out of range (module has {} ModuleRef rows)",
-                    scope,
-                    src_module.module_refs.len()
-                ))
-            })?;
-            let target_name = read_string(&src_module.string_heap, module_ref.name)
-                .map_err(|_| RuntimeError::ExecutionError("invalid ModuleRef name".into()))?;
-            let target_idx = self.find_module_by_name(target_name).ok_or_else(|| {
-                RuntimeError::ExecutionError(format!(
-                    "unresolved module reference: '{}'",
-                    target_name
+                    "TypeRef scope index {} is not a resolved ModuleRef",
+                    scope
                 ))
             })?;
             let name = read_string(&src_module.string_heap, type_ref.name)
@@ -225,75 +278,19 @@ impl Domain {
             } else {
                 return Err(RuntimeError::ExecutionError(format!(
                     "unresolved type reference: '{}::{}' in module '{}'",
-                    namespace, name, target_name
+                    namespace,
+                    name,
+                    self.module_identity(target_idx)?.0
                 )));
             }
         }
         Ok(resolved)
     }
 
-    /// Resolve all cross-module references for a single module.
-    fn resolve_module_refs(&self, src_idx: usize) -> Result<ResolvedRefs, RuntimeError> {
+    /// Resolve member references after dependencies and TypeRefs are resolved.
+    fn resolve_member_refs(&self, src_idx: usize) -> Result<ResolvedRefs, RuntimeError> {
         let mut resolved = self.modules[src_idx].resolved_refs.clone();
         let src_module = &self.modules[src_idx].module;
-
-        // ── TypeRef resolution ────────────────────────────────────
-        for (ref_idx, type_ref) in src_module.type_refs.iter().enumerate() {
-            // Get the ModuleRef scope to find the target module
-            let scope_row = type_ref.scope.row_index()
-                .ok_or_else(|| RuntimeError::ExecutionError(
-                    "TypeRef has null scope token".into()
-                ))?;
-            let scope_0based = (scope_row - 1) as usize;
-            if scope_0based >= src_module.module_refs.len() {
-                return Err(RuntimeError::ExecutionError(format!(
-                    "TypeRef scope index {} out of range (module has {} ModuleRef rows)",
-                    scope_0based, src_module.module_refs.len()
-                )));
-            }
-            let mod_ref = &src_module.module_refs[scope_0based];
-            let target_mod_name = read_string(&src_module.string_heap, mod_ref.name)
-                .map_err(|_| RuntimeError::ExecutionError("invalid ModuleRef name".into()))?;
-
-            let target_mod_idx = self.find_module_by_name(target_mod_name)
-                .ok_or_else(|| RuntimeError::ExecutionError(format!(
-                    "unresolved module reference: '{}'", target_mod_name
-                )))?;
-
-            let ref_name = read_string(&src_module.string_heap, type_ref.name)
-                .map_err(|_| RuntimeError::ExecutionError("invalid TypeRef name".into()))?;
-            let ref_ns = read_string(&src_module.string_heap, type_ref.namespace)
-                .map_err(|_| RuntimeError::ExecutionError("invalid TypeRef namespace".into()))?;
-
-            let target_module = &self.modules[target_mod_idx].module;
-            if let Some(typedef_idx) = Self::find_type_def_by_name(target_module, ref_ns, ref_name)
-            {
-                resolved.types.insert(
-                    ref_idx as u32,
-                    ResolvedType {
-                    module_idx: target_mod_idx,
-                    typedef_idx,
-                    },
-                );
-            } else if let Some(contractdef_idx) =
-                Self::find_contract_def_by_name(target_module, ref_ns, ref_name)
-            {
-                // TypeRef points to a ContractDef, not a TypeDef.
-                // Store in the contracts map for dispatch table resolution.
-                resolved.contracts.insert(
-                    ref_idx as u32,
-                    ResolvedContract {
-                    module_idx: target_mod_idx,
-                    contractdef_idx,
-                    },
-                );
-            } else {
-                return Err(RuntimeError::ExecutionError(format!(
-                    "unresolved type reference: '{}::{}' in module '{}'",
-                    ref_ns, ref_name, target_mod_name
-                )));
-            }
-        }
 
         // ── MethodRef resolution ──────────────────────────────────
         for (ref_idx, method_ref) in src_module.method_refs.iter().enumerate() {
@@ -418,22 +415,16 @@ impl Domain {
                     .and_then(|row| row.checked_sub(1))
                     .ok_or_else(|| {
                         RuntimeError::ExecutionError("invalid MethodRef ModuleRef parent".into())
-                    })? as usize;
-                let source = &self.modules[src_idx].module;
-                let module_ref = source.module_refs.get(row).ok_or_else(|| {
-                    RuntimeError::ExecutionError(
-                        "MethodRef ModuleRef parent is out of range".into(),
-                    )
-                })?;
-                let name = read_string(&source.string_heap, module_ref.name).map_err(|_| {
-                    RuntimeError::ExecutionError("invalid MethodRef ModuleRef name".into())
-                })?;
-                let module_idx = self.find_module_by_name(name).ok_or_else(|| {
-                    RuntimeError::ExecutionError(format!(
-                        "unresolved MethodRef module parent: '{}'",
-                        name
-                    ))
-                })?;
+                    })? as u32;
+                let module_idx = *self.modules[src_idx]
+                    .resolved_refs
+                    .modules
+                    .get(&row)
+                    .ok_or_else(|| {
+                        RuntimeError::ExecutionError(
+                            "MethodRef ModuleRef parent is not resolved".into(),
+                        )
+                    })?;
                 Ok(MethodRefParent::Module { module_idx })
             }
             2 | 3 => {
@@ -694,18 +685,94 @@ impl Domain {
         )
     }
 
-    /// Find a module in the domain by its name.
-    fn find_module_by_name(&self, name: &str) -> Option<usize> {
-        for (idx, m) in self.modules.iter().enumerate() {
-            let mod_name = read_string(
-                &m.module.string_heap,
-                m.module.module_defs.first().map_or(0, |d| d.name),
-            ).unwrap_or("");
-            if mod_name == name {
-                return Some(idx);
+    fn module_identity(
+        &self,
+        module_idx: usize,
+    ) -> Result<(&str, &str, ModuleVersion), RuntimeError> {
+        let module = &self
+            .modules
+            .get(module_idx)
+            .ok_or_else(|| {
+                RuntimeError::ExecutionError(format!("module index {} is out of range", module_idx))
+            })?
+            .module;
+        let definition = module.module_defs.first().ok_or_else(|| {
+            RuntimeError::ExecutionError(format!(
+                "module at index {} has no ModuleDef row",
+                module_idx
+            ))
+        })?;
+        let name = read_string(&module.string_heap, definition.name).map_err(|_| {
+            RuntimeError::ExecutionError(format!(
+                "module at index {} has an invalid ModuleDef name",
+                module_idx
+            ))
+        })?;
+        let version_text = read_string(&module.string_heap, definition.version).map_err(|_| {
+            RuntimeError::ExecutionError(format!(
+                "module '{}' has an invalid ModuleDef version string",
+                name
+            ))
+        })?;
+        let version = ModuleVersion::parse(version_text).ok_or_else(|| {
+            RuntimeError::ExecutionError(format!(
+                "module '{}' has malformed version '{}'; expected MAJOR.MINOR.PATCH",
+                name, version_text
+            ))
+        })?;
+        Ok((name, version_text, version))
+    }
+
+    fn resolve_module_ref_row(&self, src_idx: usize, row: usize) -> Result<usize, RuntimeError> {
+        let source = &self.modules[src_idx].module;
+        let module_ref = source.module_refs.get(row).ok_or_else(|| {
+            RuntimeError::ExecutionError(format!("ModuleRef row {} is out of range", row))
+        })?;
+        let name = read_string(&source.string_heap, module_ref.name)
+            .map_err(|_| RuntimeError::ExecutionError("invalid ModuleRef name".into()))?;
+        let minimum_text = read_string(&source.string_heap, module_ref.min_version)
+            .map_err(|_| RuntimeError::ExecutionError("invalid ModuleRef min_version".into()))?;
+        let minimum = ModuleVersion::parse(minimum_text).ok_or_else(|| {
+            RuntimeError::ExecutionError(format!(
+                "ModuleRef '{}' has malformed minimum version '{}'; expected MAJOR.MINOR.PATCH",
+                name, minimum_text
+            ))
+        })?;
+
+        let mut named = 0usize;
+        let mut compatible = Vec::new();
+        for module_idx in 0..self.modules.len() {
+            // ModuleRef edges are dependencies and cannot point back to the
+            // source module in the required acyclic module graph.
+            if module_idx == src_idx {
+                continue;
+            }
+            let (candidate_name, _, candidate_version) = self.module_identity(module_idx)?;
+            if candidate_name != name {
+                continue;
+            }
+            named += 1;
+            if candidate_version.satisfies(minimum) {
+                compatible.push(module_idx);
             }
         }
-        None
+
+        match compatible.as_slice() {
+            [module_idx] => Ok(*module_idx),
+            [] if named == 0 => Err(RuntimeError::ExecutionError(format!(
+                "unresolved module reference: '{}'",
+                name
+            ))),
+            [] => Err(RuntimeError::ExecutionError(format!(
+                "no compatible module '{}' satisfies minimum version '{}' with major {}",
+                name, minimum_text, minimum.major
+            ))),
+            _ => Err(RuntimeError::ExecutionError(format!(
+                "ambiguous module reference: '{}' has {} compatible loaded modules",
+                name,
+                compatible.len()
+            ))),
+        }
     }
 
     /// Find a TypeDef by (namespace, name) in a module.
@@ -959,6 +1026,135 @@ mod tests {
         assert_eq!(idx1, 0);
         assert_eq!(idx2, 1);
         assert_eq!(domain.modules.len(), 2);
+    }
+
+    #[test]
+    fn module_ref_accepts_exact_version_for_typeref() {
+        let mut library = ModuleBuilder::new("versioned-library").version("1.2.3");
+        library.add_type_def("Widget", "lib", TypeDefKind::Class, 0);
+        let mut user = ModuleBuilder::new("versioned-user");
+        let library_ref = user.add_module_ref("versioned-library", "1.2.3");
+        user.add_type_ref(library_ref, "Widget", "lib");
+
+        let mut domain = Domain::new();
+        domain.add_module(library.build()).unwrap();
+        domain.add_module(user.build()).unwrap();
+        domain.resolve_refs().unwrap();
+
+        let resolved = &domain.modules[1].resolved_refs;
+        assert_eq!(resolved.modules[&0], 0);
+        assert_eq!(resolved.types[&0].module_idx, 0);
+    }
+
+    #[test]
+    fn module_ref_accepts_higher_compatible_version_for_all_parent_kinds() {
+        let signature = void_signature();
+        let mut library = ModuleBuilder::new("versioned-library").version("1.4.1");
+        library.add_type_def("Widget", "lib", TypeDefKind::Class, 0);
+        library.add_method("ping", &signature, 0, 0, empty_body());
+        let mut user = ModuleBuilder::new("versioned-user");
+        let library_ref = user.add_module_ref("versioned-library", "1.3.9");
+        user.add_type_ref(library_ref, "Widget", "lib");
+        user.add_method_ref_with_flags(library_ref, "ping", &signature, 0);
+
+        let mut domain = Domain::new();
+        domain.add_module(library.build()).unwrap();
+        domain.add_module(user.build()).unwrap();
+        domain.resolve_refs().unwrap();
+
+        let resolved = &domain.modules[1].resolved_refs;
+        assert_eq!(resolved.modules[&0], 0);
+        assert_eq!(resolved.types[&0].module_idx, resolved.modules[&0]);
+        assert_eq!(resolved.methods[&0].module_idx, resolved.modules[&0]);
+    }
+
+    #[test]
+    fn module_ref_rejects_wrong_major_version() {
+        let library = ModuleBuilder::new("versioned-library")
+            .version("2.0.0")
+            .build();
+        let mut user = ModuleBuilder::new("versioned-user");
+        user.add_module_ref("versioned-library", "1.0.0");
+
+        let mut domain = Domain::new();
+        domain.add_module(library).unwrap();
+        domain.add_module(user.build()).unwrap();
+        let error = domain.resolve_refs().unwrap_err().to_string();
+        assert!(error.contains("no compatible module"), "{error}");
+    }
+
+    #[test]
+    fn module_ref_rejects_too_low_minor_version() {
+        let library = ModuleBuilder::new("versioned-library")
+            .version("1.1.9")
+            .build();
+        let mut user = ModuleBuilder::new("versioned-user");
+        user.add_module_ref("versioned-library", "1.2.0");
+
+        let mut domain = Domain::new();
+        domain.add_module(library).unwrap();
+        domain.add_module(user.build()).unwrap();
+        let error = domain.resolve_refs().unwrap_err().to_string();
+        assert!(error.contains("no compatible module"), "{error}");
+    }
+
+    #[test]
+    fn module_ref_rejects_too_low_patch_version() {
+        let library = ModuleBuilder::new("versioned-library")
+            .version("1.2.2")
+            .build();
+        let mut user = ModuleBuilder::new("versioned-user");
+        user.add_module_ref("versioned-library", "1.2.3");
+
+        let mut domain = Domain::new();
+        domain.add_module(library).unwrap();
+        domain.add_module(user.build()).unwrap();
+        let error = domain.resolve_refs().unwrap_err().to_string();
+        assert!(error.contains("no compatible module"), "{error}");
+    }
+
+    #[test]
+    fn module_ref_rejects_malformed_module_version() {
+        let library = ModuleBuilder::new("versioned-library")
+            .version("01.0.0")
+            .build();
+        let mut domain = Domain::new();
+        domain.add_module(library).unwrap();
+        let error = domain.resolve_refs().unwrap_err().to_string();
+        assert!(error.contains("malformed version"), "{error}");
+    }
+
+    #[test]
+    fn module_ref_rejects_malformed_minimum_version() {
+        let library = ModuleBuilder::new("versioned-library").build();
+        let mut user = ModuleBuilder::new("versioned-user");
+        user.add_module_ref("versioned-library", "1.0");
+
+        let mut domain = Domain::new();
+        domain.add_module(library).unwrap();
+        domain.add_module(user.build()).unwrap();
+        let error = domain.resolve_refs().unwrap_err().to_string();
+        assert!(error.contains("malformed minimum version"), "{error}");
+    }
+
+    #[test]
+    fn module_ref_rejects_ambiguous_compatible_duplicate_modules() {
+        let first = ModuleBuilder::new("versioned-library")
+            .version("1.0.0")
+            .build();
+        let second = ModuleBuilder::new("versioned-library")
+            .version("1.5.0")
+            .build();
+        let mut user = ModuleBuilder::new("versioned-user");
+        user.add_module_ref("versioned-library", "1.0.0");
+
+        let mut domain = Domain::new();
+        domain.add_module(first).unwrap();
+        domain.add_module(second).unwrap();
+        domain.add_module(user.build()).unwrap();
+        let error = domain.resolve_refs().unwrap_err().to_string();
+        assert!(error.contains("ambiguous module reference"), "{error}");
+        assert!(error.contains("2 compatible"), "{error}");
     }
 
     #[test]

@@ -860,7 +860,7 @@ mod tests {
     use writ_module::{Instruction, ModuleBuilder};
 
     fn make_runtime() -> Runtime<NullHost> {
-        let module = writ_module::Module::new();
+        let module = ModuleBuilder::new("runtime-test").build();
         RuntimeBuilder::new(module).build().expect("build runtime")
     }
 

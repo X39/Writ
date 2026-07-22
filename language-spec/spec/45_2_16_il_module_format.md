@@ -88,8 +88,10 @@ version change signals breaking incompatibility); the minor and patch versions m
 requirement.
 
 **ModuleRef** entries include a `min_version` field. At load time, the runtime checks that each dependency's version
-satisfies the requirement. On failure, the runtime logs the mismatch (§2.14.7) and may refuse to load or proceed at the
-host's discretion.
+satisfies the requirement and refuses resolution on a mismatch. Module and minimum-version strings that are not exactly
+three dot-separated, non-negative decimal components are invalid; leading zeroes are permitted only for the component
+`0`. If more than one loaded module with the requested name satisfies the same ModuleRef, resolution fails as ambiguous
+rather than selecting a module based on load order.
 
 ## 2.16.4 Metadata Tokens
 
