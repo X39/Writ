@@ -544,6 +544,14 @@ fn resolve_named_type_definition<'a>(
         return is_type_definition(entry.kind).then_some((def_id, entry));
     }
 
+    // Mirror the checker's root-scope lookup before considering short-name
+    // matches in other namespaces. A user-defined root `Box`, for example,
+    // must win even when the runtime also provides `writ::Box`.
+    if let Some(def_id) = def_map.get(normalized) {
+        let entry = def_map.get_entry(def_id);
+        return is_type_definition(entry.kind).then_some((def_id, entry));
+    }
+
     // The AST retains an unqualified spelling rather than its resolved DefId. A
     // short-name fallback is therefore safe only when exactly one type definition
     // has that spelling across all namespaces.
@@ -804,6 +812,27 @@ mod tests {
         assert_eq!(
             resolve_named_type_token("missing::Thing", &def_map, &builder),
             writ_module::MetadataToken::NULL
+        );
+    }
+
+    #[test]
+    fn named_type_prefers_exact_root_definition() {
+        let mut def_map = DefMap::new();
+        let root = add_public_type(&mut def_map, "", "Box");
+        let runtime = add_public_type(&mut def_map, "writ", "Box");
+        let mut builder = ModuleBuilder::new();
+        let root_token = MetadataToken::new(TableId::TypeDef, 1);
+        let runtime_token = MetadataToken::new(TableId::TypeDef, 2);
+        builder.def_token_map.insert(root, root_token);
+        builder.def_token_map.insert(runtime, runtime_token);
+
+        assert_eq!(
+            resolve_named_type_token("Box", &def_map, &builder),
+            writ_module::MetadataToken(root_token.0)
+        );
+        assert_eq!(
+            resolve_named_type_token("writ::Box", &def_map, &builder),
+            writ_module::MetadataToken(runtime_token.0)
         );
     }
 
