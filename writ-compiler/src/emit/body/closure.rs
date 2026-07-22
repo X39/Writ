@@ -10,8 +10,9 @@
 
 use crate::check::ir::{Capture, TypedDecl, TypedExpr, TypedAst};
 use crate::check::ty::{Ty, TyInterner};
-use crate::emit::metadata::TypeDefKind;
+use crate::emit::metadata::{HookKind, MetadataToken, TypeDefKind, method_flags};
 use crate::emit::module_builder::ModuleBuilder;
+use crate::resolve::def_map::DefId;
 
 use super::BodyEmitter;
 use writ_module::instruction::Instruction;
@@ -36,7 +37,7 @@ pub struct LambdaInfo {
 /// The order determines which builder token corresponds to which lambda.
 pub fn pre_scan_lambdas(
     typed_ast: &TypedAst,
-    _interner: &TyInterner,
+    interner: &TyInterner,
     builder: &mut ModuleBuilder,
 ) -> Vec<LambdaInfo> {
     let mut infos = Vec::new();
@@ -45,15 +46,15 @@ pub fn pre_scan_lambdas(
     for decl in &typed_ast.decls {
         match decl {
             TypedDecl::Fn { body, .. } => {
-                scan_expr_for_lambdas(body, builder, &mut counter, &mut infos);
+                scan_expr_for_lambdas(body, interner, builder, &mut counter, &mut infos);
             }
             TypedDecl::Impl { methods, .. } => {
                 for (_, body) in methods {
-                    scan_expr_for_lambdas(body, builder, &mut counter, &mut infos);
+                    scan_expr_for_lambdas(body, interner, builder, &mut counter, &mut infos);
                 }
             }
             TypedDecl::Const { value, .. } | TypedDecl::Global { value, .. } => {
-                scan_expr_for_lambdas(value, builder, &mut counter, &mut infos);
+                scan_expr_for_lambdas(value, interner, builder, &mut counter, &mut infos);
             }
             _ => {}
         }
@@ -65,12 +66,19 @@ pub fn pre_scan_lambdas(
 /// Recursively scan a TypedExpr for Lambda nodes and register synthetic metadata.
 fn scan_expr_for_lambdas(
     expr: &TypedExpr,
+    interner: &TyInterner,
     builder: &mut ModuleBuilder,
     counter: &mut usize,
     infos: &mut Vec<LambdaInfo>,
 ) {
     match expr {
-        TypedExpr::Lambda { captures, body, .. } => {
+        TypedExpr::Lambda {
+            params,
+            ret_ty,
+            captures,
+            body,
+            ..
+        } => {
             let idx = *counter;
             *counter += 1;
 
@@ -85,21 +93,66 @@ fn scan_expr_for_lambdas(
                 None, // synthetic — no source DefId
             );
 
+            let def_tokens = builder.def_token_map.clone();
+            let token_for_def = |def_id: DefId| {
+                def_tokens
+                    .get(&def_id)
+                    .copied()
+                    .unwrap_or(MetadataToken::NULL)
+            };
+
             // Register each capture as a FieldDef
             let captures_info: Vec<(String, Ty)> = captures.iter().map(|cap| {
-                builder.add_fielddef(type_handle, &cap.name, 0, 0);
+                let type_bytes = crate::emit::type_sig::encode_type_bytes(
+                    cap.ty,
+                    interner,
+                    &token_for_def,
+                );
+                let type_sig = builder.blob_heap.intern(&type_bytes);
+                builder.add_fielddef(type_handle, &cap.name, type_sig, 0);
                 (cap.name.clone(), cap.ty)
             }).collect();
 
-            // Register synthetic MethodDef for closure body
-            builder.add_methoddef(
+            // A capturing closure body is an instance method: the delegate target
+            // becomes r0. A zero-capture body is static, so its first explicit
+            // parameter is r0. Signatures and ParamDefs exclude the receiver.
+            let param_types: Vec<Ty> = params.iter().map(|(_, ty)| *ty).collect();
+            let signature = crate::emit::type_sig::encode_method_sig(
+                &param_types,
+                *ret_ty,
+                interner,
+                &token_for_def,
+                &mut builder.blob_heap,
+            );
+            let is_static = captures.is_empty();
+            let regular_param_count = u16::try_from(params.len())
+                .expect("lambda parameter count exceeds module format limits");
+            let param_count = regular_param_count
+                .checked_add(if is_static { 0 } else { 1 })
+                .expect("lambda entry parameter count exceeds module format limits");
+            let method_handle = builder.add_methoddef(
                 Some(type_handle),
                 &format!("__invoke_{}", idx),
-                0,   // signature blob: 0 (plain — deferred to Plan 04)
-                0,   // flags
-                None, // no source DefId
-                0,   // param_count: deferred (closure params not yet tracked)
+                signature,
+                method_flags(false, is_static, false, HookKind::None),
+                None,
+                param_count,
             );
+            for (sequence, (name, ty)) in params.iter().enumerate() {
+                let type_bytes = crate::emit::type_sig::encode_type_bytes(
+                    *ty,
+                    interner,
+                    &token_for_def,
+                );
+                let type_sig = builder.blob_heap.intern(&type_bytes);
+                builder.add_paramdef(
+                    method_handle,
+                    name,
+                    type_sig,
+                    u16::try_from(sequence)
+                        .expect("lambda parameter sequence exceeds module format limits"),
+                );
+            }
 
             infos.push(LambdaInfo {
                 closure_idx: idx,
@@ -107,65 +160,65 @@ fn scan_expr_for_lambdas(
             });
 
             // Recurse into lambda body
-            scan_expr_for_lambdas(body, builder, counter, infos);
+            scan_expr_for_lambdas(body, interner, builder, counter, infos);
         }
 
         // Recurse into all child expressions
         TypedExpr::Block { stmts, tail, .. } => {
             for stmt in stmts {
-                scan_stmt_for_lambdas(stmt, builder, counter, infos);
+                scan_stmt_for_lambdas(stmt, interner, builder, counter, infos);
             }
             if let Some(t) = tail {
-                scan_expr_for_lambdas(t, builder, counter, infos);
+                scan_expr_for_lambdas(t, interner, builder, counter, infos);
             }
         }
         TypedExpr::If { condition, then_branch, else_branch, .. } => {
-            scan_expr_for_lambdas(condition, builder, counter, infos);
-            scan_expr_for_lambdas(then_branch, builder, counter, infos);
+            scan_expr_for_lambdas(condition, interner, builder, counter, infos);
+            scan_expr_for_lambdas(then_branch, interner, builder, counter, infos);
             if let Some(e) = else_branch {
-                scan_expr_for_lambdas(e, builder, counter, infos);
+                scan_expr_for_lambdas(e, interner, builder, counter, infos);
             }
         }
         TypedExpr::Binary { left, right, .. } => {
-            scan_expr_for_lambdas(left, builder, counter, infos);
-            scan_expr_for_lambdas(right, builder, counter, infos);
+            scan_expr_for_lambdas(left, interner, builder, counter, infos);
+            scan_expr_for_lambdas(right, interner, builder, counter, infos);
         }
         TypedExpr::UnaryPrefix { expr: inner, .. } => {
-            scan_expr_for_lambdas(inner, builder, counter, infos);
+            scan_expr_for_lambdas(inner, interner, builder, counter, infos);
         }
         TypedExpr::Call { callee, args, .. } => {
-            scan_expr_for_lambdas(callee, builder, counter, infos);
+            scan_expr_for_lambdas(callee, interner, builder, counter, infos);
             for arg in args {
-                scan_expr_for_lambdas(arg, builder, counter, infos);
+                scan_expr_for_lambdas(arg, interner, builder, counter, infos);
             }
         }
         TypedExpr::Field { receiver, .. } | TypedExpr::ComponentAccess { receiver, .. } => {
-            scan_expr_for_lambdas(receiver, builder, counter, infos);
+            scan_expr_for_lambdas(receiver, interner, builder, counter, infos);
         }
         TypedExpr::Index { receiver, index, .. } => {
-            scan_expr_for_lambdas(receiver, builder, counter, infos);
-            scan_expr_for_lambdas(index, builder, counter, infos);
+            scan_expr_for_lambdas(receiver, interner, builder, counter, infos);
+            scan_expr_for_lambdas(index, interner, builder, counter, infos);
         }
         TypedExpr::Assign { target, value, .. } => {
-            scan_expr_for_lambdas(target, builder, counter, infos);
-            scan_expr_for_lambdas(value, builder, counter, infos);
+            scan_expr_for_lambdas(target, interner, builder, counter, infos);
+            scan_expr_for_lambdas(value, interner, builder, counter, infos);
         }
         TypedExpr::New { fields, .. } => {
             for (_, v) in fields {
-                scan_expr_for_lambdas(v, builder, counter, infos);
+                scan_expr_for_lambdas(v, interner, builder, counter, infos);
             }
         }
         TypedExpr::ArrayLit { elements, .. } => {
             for e in elements {
-                scan_expr_for_lambdas(e, builder, counter, infos);
+                scan_expr_for_lambdas(e, interner, builder, counter, infos);
             }
         }
         TypedExpr::Range { start, end, .. } => {
             if let Some(s) = start {
-                scan_expr_for_lambdas(s, builder, counter, infos);
+                scan_expr_for_lambdas(s, interner, builder, counter, infos);
             }
             if let Some(e) = end {
-                scan_expr_for_lambdas(e, builder, counter, infos);
+                scan_expr_for_lambdas(e, interner, builder, counter, infos);
             }
         }
         TypedExpr::Spawn { expr: inner, .. }
@@ -173,17 +226,17 @@ fn scan_expr_for_lambdas(
         | TypedExpr::Join { expr: inner, .. }
         | TypedExpr::Cancel { expr: inner, .. }
         | TypedExpr::Defer { expr: inner, .. } => {
-            scan_expr_for_lambdas(inner, builder, counter, infos);
+            scan_expr_for_lambdas(inner, interner, builder, counter, infos);
         }
         TypedExpr::Match { scrutinee, arms, .. } => {
-            scan_expr_for_lambdas(scrutinee, builder, counter, infos);
+            scan_expr_for_lambdas(scrutinee, interner, builder, counter, infos);
             for arm in arms {
-                scan_expr_for_lambdas(&arm.body, builder, counter, infos);
+                scan_expr_for_lambdas(&arm.body, interner, builder, counter, infos);
             }
         }
         TypedExpr::Return { value, .. } => {
             if let Some(v) = value {
-                scan_expr_for_lambdas(v, builder, counter, infos);
+                scan_expr_for_lambdas(v, interner, builder, counter, infos);
             }
         }
         // Leaf nodes
@@ -200,39 +253,44 @@ fn scan_expr_for_lambdas(
 /// Recursively scan a TypedStmt for Lambda nodes.
 fn scan_stmt_for_lambdas(
     stmt: &crate::check::ir::TypedStmt,
+    interner: &TyInterner,
     builder: &mut ModuleBuilder,
     counter: &mut usize,
     infos: &mut Vec<LambdaInfo>,
 ) {
     use crate::check::ir::TypedStmt;
     match stmt {
-        TypedStmt::Let { value, .. } => scan_expr_for_lambdas(value, builder, counter, infos),
-        TypedStmt::Expr { expr, .. } => scan_expr_for_lambdas(expr, builder, counter, infos),
+        TypedStmt::Let { value, .. } => {
+            scan_expr_for_lambdas(value, interner, builder, counter, infos)
+        }
+        TypedStmt::Expr { expr, .. } => {
+            scan_expr_for_lambdas(expr, interner, builder, counter, infos)
+        }
         TypedStmt::Return { value, .. } => {
             if let Some(v) = value {
-                scan_expr_for_lambdas(v, builder, counter, infos);
+                scan_expr_for_lambdas(v, interner, builder, counter, infos);
             }
         }
         TypedStmt::For { iterable, body, .. } => {
-            scan_expr_for_lambdas(iterable, builder, counter, infos);
+            scan_expr_for_lambdas(iterable, interner, builder, counter, infos);
             for s in body {
-                scan_stmt_for_lambdas(s, builder, counter, infos);
+                scan_stmt_for_lambdas(s, interner, builder, counter, infos);
             }
         }
         TypedStmt::While { condition, body, .. } => {
-            scan_expr_for_lambdas(condition, builder, counter, infos);
+            scan_expr_for_lambdas(condition, interner, builder, counter, infos);
             for s in body {
-                scan_stmt_for_lambdas(s, builder, counter, infos);
+                scan_stmt_for_lambdas(s, interner, builder, counter, infos);
             }
         }
         TypedStmt::Atomic { body, .. } => {
             for s in body {
-                scan_stmt_for_lambdas(s, builder, counter, infos);
+                scan_stmt_for_lambdas(s, interner, builder, counter, infos);
             }
         }
         TypedStmt::Break { value, .. } => {
             if let Some(v) = value {
-                scan_expr_for_lambdas(v, builder, counter, infos);
+                scan_expr_for_lambdas(v, interner, builder, counter, infos);
             }
         }
         TypedStmt::Continue { .. } | TypedStmt::Error { .. } => {}

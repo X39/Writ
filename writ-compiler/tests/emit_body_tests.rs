@@ -2823,6 +2823,285 @@ fn test_lambda_body_emitted_as_separate_body_entry() {
 }
 
 #[test]
+fn test_capturing_lambda_method_metadata_decodes_regular_signature_and_receiver() {
+    use writ_module::signature::{TypeSignature, decode_method_signature, decode_type_signature};
+
+    let mut interner = make_interner();
+    let ty_int = interner.int();
+    let ty_bool = interner.bool_ty();
+    let (mut def_map, fn_def_id) = make_def_id();
+    let capture_def_id = def_map.arena.alloc(DefEntry {
+        id: None,
+        kind: DefKind::Class,
+        vis: DefVis::Pub,
+        file_id: FileId(0),
+        namespace: String::new(),
+        name: "CapturedRef".to_string(),
+        name_span: dummy_span(),
+        generics: vec![],
+        span: dummy_span(),
+    });
+    let ty_capture = interner.intern(TyKind::Class(capture_def_id));
+    let ty_func = interner.func(vec![ty_int], ty_bool);
+
+    let lambda_expr = TypedExpr::Lambda {
+        ty: ty_func,
+        span: dummy_span(),
+        params: vec![("value".to_string(), ty_int)],
+        ret_ty: ty_bool,
+        captures: vec![Capture {
+            name: "state".to_string(),
+            ty: ty_capture,
+            mode: CaptureMode::ByValue,
+            binding_span: dummy_span(),
+        }],
+        body: Box::new(TypedExpr::Literal {
+            ty: ty_bool,
+            span: dummy_span(),
+            value: TypedLiteral::Bool(true),
+        }),
+    };
+    let ast = TypedAst {
+        decls: vec![
+            TypedDecl::Class {
+                def_id: capture_def_id,
+            },
+            TypedDecl::Fn {
+                def_id: fn_def_id,
+                body: lambda_expr,
+                param_name_spans: vec![],
+            },
+        ],
+        def_map,
+        struct_field_types: FxHashMap::default(),
+        conditional_fns: FxHashMap::default(),
+        fallback_for_conditional: FxHashMap::default(),
+    };
+
+    let mut builder = ModuleBuilder::new();
+    builder.add_typedef(
+        "CapturedRef",
+        "",
+        TypeDefKind::Class,
+        0,
+        Some(capture_def_id),
+    );
+    builder.def_token_map.insert(
+        capture_def_id,
+        MetadataToken::new(TableId::TypeDef, 1),
+    );
+    let infos = pre_scan_lambdas(&ast, &interner, &mut builder);
+    assert_eq!(infos.len(), 1);
+    builder.finalize();
+
+    let method = builder.finalized_method_defs().next().unwrap();
+    assert_eq!(builder.string_heap.get_str(method.name), "__invoke_0");
+    assert_eq!(method.owner.table(), TableId::TypeDef);
+    assert_eq!(method.param_count, 2, "r0 is env and r1 is value");
+    assert_eq!(method.flags & (1 << 1), 0, "capturing closure must be instance");
+
+    let signature = writ_module::heap::read_blob(builder.blob_heap.data(), method.signature).unwrap();
+    let (params, ret) = decode_method_signature(signature).unwrap();
+    assert_eq!(params, vec![TypeSignature::Int]);
+    assert_eq!(ret, TypeSignature::Bool);
+
+    let param = builder.finalized_param_defs().next().unwrap();
+    assert_eq!(builder.string_heap.get_str(param.name), "value");
+    assert_eq!(param.sequence, 0);
+    let param_type = writ_module::heap::read_blob(builder.blob_heap.data(), param.type_sig).unwrap();
+    assert_eq!(decode_type_signature(param_type).unwrap(), TypeSignature::Int);
+
+    let capture_field = builder.finalized_field_defs().next().unwrap();
+    assert_eq!(builder.string_heap.get_str(capture_field.name), "state");
+    let capture_type =
+        writ_module::heap::read_blob(builder.blob_heap.data(), capture_field.type_sig).unwrap();
+    assert_eq!(
+        decode_type_signature(capture_type).unwrap(),
+        TypeSignature::Named(writ_module::MetadataToken(
+            ((TableId::TypeDef as u32) << 24) | 1
+        ))
+    );
+}
+
+#[test]
+fn test_zero_capture_lambda_method_metadata_decodes_static_signature() {
+    use writ_module::signature::{TypeSignature, decode_method_signature, decode_type_signature};
+
+    let mut interner = make_interner();
+    let ty_float = interner.float();
+    let ty_string = interner.string_ty();
+    let ty_func = interner.func(vec![ty_float], ty_string);
+    let (def_map, fn_def_id) = make_def_id();
+
+    let lambda_expr = TypedExpr::Lambda {
+        ty: ty_func,
+        span: dummy_span(),
+        params: vec![("value".to_string(), ty_float)],
+        ret_ty: ty_string,
+        captures: vec![],
+        body: Box::new(TypedExpr::Literal {
+            ty: ty_string,
+            span: dummy_span(),
+            value: TypedLiteral::String("done".to_string()),
+        }),
+    };
+    let ast = TypedAst {
+        decls: vec![TypedDecl::Fn {
+            def_id: fn_def_id,
+            body: lambda_expr,
+            param_name_spans: vec![],
+        }],
+        def_map,
+        struct_field_types: FxHashMap::default(),
+        conditional_fns: FxHashMap::default(),
+        fallback_for_conditional: FxHashMap::default(),
+    };
+
+    let mut builder = ModuleBuilder::new();
+    let infos = pre_scan_lambdas(&ast, &interner, &mut builder);
+    assert_eq!(infos.len(), 1);
+    builder.finalize();
+
+    let method = builder.finalized_method_defs().next().unwrap();
+    assert_eq!(method.param_count, 1, "first regular parameter is r0");
+    assert_ne!(method.flags & (1 << 1), 0, "zero-capture closure must be static");
+
+    let signature = writ_module::heap::read_blob(builder.blob_heap.data(), method.signature).unwrap();
+    let (params, ret) = decode_method_signature(signature).unwrap();
+    assert_eq!(params, vec![TypeSignature::Float]);
+    assert_eq!(ret, TypeSignature::String);
+
+    let param = builder.finalized_param_defs().next().unwrap();
+    assert_eq!(builder.string_heap.get_str(param.name), "value");
+    assert_eq!(param.sequence, 0);
+    let param_type = writ_module::heap::read_blob(builder.blob_heap.data(), param.type_sig).unwrap();
+    assert_eq!(decode_type_signature(param_type).unwrap(), TypeSignature::Float);
+}
+
+#[test]
+fn test_capturing_lambda_body_places_params_before_capture_temporaries() {
+    let mut interner = make_interner();
+    let ty_int = interner.int();
+    let ty_func = interner.func(vec![ty_int], ty_int);
+    let (def_map, fn_def_id) = make_def_id();
+
+    let lambda_expr = TypedExpr::Lambda {
+        ty: ty_func,
+        span: dummy_span(),
+        params: vec![("value".to_string(), ty_int)],
+        ret_ty: ty_int,
+        captures: vec![Capture {
+            name: "bonus".to_string(),
+            ty: ty_int,
+            mode: CaptureMode::ByValue,
+            binding_span: dummy_span(),
+        }],
+        body: Box::new(TypedExpr::Binary {
+            ty: ty_int,
+            span: dummy_span(),
+            left: Box::new(TypedExpr::Var {
+                ty: ty_int,
+                span: dummy_span(),
+                name: "value".to_string(),
+            }),
+            op: BinaryOp::Add,
+            right: Box::new(TypedExpr::Var {
+                ty: ty_int,
+                span: dummy_span(),
+                name: "bonus".to_string(),
+            }),
+        }),
+    };
+    let ast = TypedAst {
+        decls: vec![TypedDecl::Fn {
+            def_id: fn_def_id,
+            body: lambda_expr,
+            param_name_spans: vec![],
+        }],
+        def_map,
+        struct_field_types: FxHashMap::default(),
+        conditional_fns: FxHashMap::default(),
+        fallback_for_conditional: FxHashMap::default(),
+    };
+
+    let mut builder = ModuleBuilder::new();
+    let infos = pre_scan_lambdas(&ast, &interner, &mut builder);
+    builder.finalize();
+    let (bodies, diags) = emit_all_bodies(
+        &ast,
+        &interner,
+        &builder,
+        &infos,
+        &FxHashMap::default(),
+        &[],
+    );
+
+    assert!(diags.is_empty(), "Expected no diagnostics, got {diags:?}");
+    let body = &bodies[1];
+    assert_eq!(body.reg_types[1], ty_int, "explicit value parameter must be r1");
+    assert_eq!(body.reg_types[2], ty_int, "captured bonus temporary must follow params");
+    assert!(matches!(
+        body.instructions.first(),
+        Some(Instruction::GetField { r_dst: 2, r_obj: 0, .. })
+    ));
+    assert!(body.instructions.iter().any(|instruction| matches!(
+        instruction,
+        Instruction::AddI { r_dst: 3, r_a: 1, r_b: 2 }
+    )));
+    assert!(matches!(body.instructions.last(), Some(Instruction::Ret { r_src: 3 })));
+}
+
+#[test]
+fn test_zero_capture_lambda_body_starts_params_at_r0() {
+    let mut interner = make_interner();
+    let ty_int = interner.int();
+    let ty_func = interner.func(vec![ty_int], ty_int);
+    let (def_map, fn_def_id) = make_def_id();
+
+    let lambda_expr = TypedExpr::Lambda {
+        ty: ty_func,
+        span: dummy_span(),
+        params: vec![("value".to_string(), ty_int)],
+        ret_ty: ty_int,
+        captures: vec![],
+        body: Box::new(TypedExpr::Var {
+            ty: ty_int,
+            span: dummy_span(),
+            name: "value".to_string(),
+        }),
+    };
+    let ast = TypedAst {
+        decls: vec![TypedDecl::Fn {
+            def_id: fn_def_id,
+            body: lambda_expr,
+            param_name_spans: vec![],
+        }],
+        def_map,
+        struct_field_types: FxHashMap::default(),
+        conditional_fns: FxHashMap::default(),
+        fallback_for_conditional: FxHashMap::default(),
+    };
+
+    let mut builder = ModuleBuilder::new();
+    let infos = pre_scan_lambdas(&ast, &interner, &mut builder);
+    builder.finalize();
+    let (bodies, diags) = emit_all_bodies(
+        &ast,
+        &interner,
+        &builder,
+        &infos,
+        &FxHashMap::default(),
+        &[],
+    );
+
+    assert!(diags.is_empty(), "Expected no diagnostics, got {diags:?}");
+    let body = &bodies[1];
+    assert_eq!(body.reg_types, vec![ty_int]);
+    assert_eq!(body.reg_count, 1);
+    assert!(matches!(body.instructions.as_slice(), [Instruction::Ret { r_src: 0 }]));
+}
+
+#[test]
 fn test_nullable_lambda_tail_is_lifted_into_some() {
     let mut interner = make_interner();
     let ty_int = interner.int();
@@ -2857,6 +3136,20 @@ fn test_nullable_lambda_tail_is_lifted_into_some() {
     let mut builder = ModuleBuilder::new();
     let lambda_infos = pre_scan_lambdas(&ast, &interner, &mut builder);
     builder.finalize();
+    let method = builder.finalized_method_defs().next().unwrap();
+    let signature =
+        writ_module::heap::read_blob(builder.blob_heap.data(), method.signature).unwrap();
+    let (_, metadata_return) =
+        writ_module::signature::decode_method_signature(signature).unwrap();
+    assert_eq!(
+        metadata_return,
+        writ_module::signature::TypeSignature::Generic {
+            namespace: "writ".to_string(),
+            name: "Option".to_string(),
+            args: vec![writ_module::signature::TypeSignature::Int],
+        },
+        "lambda metadata and body must agree on the lifted Option return"
+    );
     let (bodies, diags) = emit_all_bodies(
         &ast,
         &interner,

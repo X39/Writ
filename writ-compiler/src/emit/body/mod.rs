@@ -671,14 +671,25 @@ pub fn emit_all_bodies(
             TyKind::Option(_)
         );
 
-        // If this lambda has captures, register r0 as the capture struct (self/target)
-        // and emit GET_FIELD instructions to load each captured variable into a named local.
+        // A capturing lambda receives its environment as the delegate target in r0.
+        // Explicit source parameters must immediately follow all entry parameters;
+        // captured values are ordinary temporaries and are loaded only afterward.
+        if !info.captures_info.is_empty() {
+            // r0 = capture struct reference (passed as the delegate target)
+            let env_ty = crate::check::ty::Ty(4); // Void placeholder — synthetic type has no Ty
+            emitter.alloc_reg(env_ty);
+        }
+
+        // Zero-capture lambdas are static, so their first explicit parameter is
+        // r0. Capturing lambdas are instance methods, so parameters start at r1.
+        for (pname, pty) in params {
+            let r_param = emitter.alloc_reg(*pty);
+            emitter.locals.insert(pname.clone(), r_param);
+        }
+
         if !info.captures_info.is_empty() {
             let closure_name = format!("__closure_{}", info.closure_idx);
-            // r0 = capture struct reference (passed as the delegate target)
-            let env_ty = crate::check::ty::Ty(4); // Void placeholder — type not used by VM for field access
-            let r_self = emitter.alloc_reg(env_ty);
-
+            let r_self = 0;
             for (cap_name, cap_ty) in &info.captures_info {
                 let r_cap = emitter.alloc_reg(*cap_ty);
                 let field_idx = builder.field_token_by_name_on_closure(&closure_name, cap_name).unwrap_or(0);
@@ -689,12 +700,6 @@ pub fn emit_all_bodies(
                 });
                 emitter.locals.insert(cap_name.clone(), r_cap);
             }
-        }
-
-        // Register lambda params in locals AFTER captures so captures come first in reg layout.
-        for (pname, pty) in params {
-            let r_param = emitter.alloc_reg(*pty);
-            emitter.locals.insert(pname.clone(), r_param);
         }
 
         let r = expr::emit_expr(&mut emitter, lambda_body);
