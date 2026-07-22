@@ -3,7 +3,7 @@
     .type "List" class pub {
         .field "items" array<T0>
     }
-    .impl List : contract_167772179 {
+    .impl List : contract_50331684 {
         .method "get_type" () -> Type pub {
             .reg r0 int
             .reg r1 int

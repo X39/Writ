@@ -6,7 +6,7 @@
     .type "Beta" struct {
         .field "b" int
     }
-    .impl Alpha : contract_167772179 {
+    .impl Alpha : contract_50331684 {
         .method "get_type" () -> Type pub {
             .reg r0 int
             .reg r1 int
@@ -14,7 +14,7 @@
             RET r1
         }
     }
-    .impl Beta : contract_167772179 {
+    .impl Beta : contract_50331684 {
         .method "get_type" () -> Type pub {
             .reg r0 int
             .reg r1 int

@@ -4,7 +4,7 @@
         .field "keys" array<T0>
         .field "values" array<T1>
     }
-    .impl Map : contract_167772179 {
+    .impl Map : contract_50331684 {
         .method "get_type" () -> Type pub {
             .reg r0 int
             .reg r1 int

@@ -6,7 +6,7 @@
         .field "name" string
         .field "has_quest" bool
     }
-    .impl QuestState : contract_167772179 {
+    .impl QuestState : contract_50331684 {
         .method "get_type" () -> Type pub {
             .reg r0 int
             .reg r1 int
@@ -14,7 +14,7 @@
             RET r1
         }
     }
-    .impl Merchant : contract_167772179 {
+    .impl Merchant : contract_50331684 {
         .method "get_type" () -> Type pub {
             .reg r0 int
             .reg r1 int

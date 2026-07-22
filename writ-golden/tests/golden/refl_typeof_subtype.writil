@@ -6,7 +6,7 @@
     .contract "Animal" {
         .method "speak" () -> string slot 0
     }
-    .impl Dog : contract_167772179 {
+    .impl Dog : contract_50331684 {
         .method "get_type" () -> Type pub {
             .reg r0 int
             .reg r1 int

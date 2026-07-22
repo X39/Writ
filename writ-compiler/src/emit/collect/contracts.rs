@@ -21,6 +21,17 @@ use super::lookup::{
     find_component_decl,
 };
 
+/// Resolve a contract owned by writ-runtime through this module's TypeRef table.
+/// Cross-module ContractDef row numbers are not valid metadata tokens here.
+fn runtime_contract_token(builder: &ModuleBuilder, name: &str) -> MetadataToken {
+    let token = MetadataToken(builder.type_ref_token_by_name(name));
+    assert!(
+        !token.is_null(),
+        "{name} TypeRef must be registered before contract collection"
+    );
+    token
+}
+
 pub(super) fn collect_contract(
     def_id: DefId,
     def_map: &DefMap,
@@ -259,9 +270,8 @@ pub(super) fn collect_impl(
         //   before finalize since contracts are collected before impls in TypedDecl order).
         // - Cross-module contracts (e.g. Add, Eq from writ-runtime): fall back to token_for_def
         //   which resolves TypeRef tokens registered during module refs setup.
-        // - Prelude contracts Iterable and Iterator have no user-module DefId but their
-        //   writ-runtime ContractDef rows are spec-locked at 14 and 15 (1-based). Use those
-        //   hardcoded tokens so the dispatch table type_args_hash matches CALL_VIRT.
+        // - Prelude contracts Iterable and Iterator have no user-module DefId, so resolve
+        //   them through the TypeRefs registered for writ-runtime.
         let base_contract_token = contract_def_id
             .and_then(|id| {
                 contractdef_handles.get(&id).map(|h| {
@@ -269,11 +279,9 @@ pub(super) fn collect_impl(
                 }).or_else(|| builder.token_for_def(id))
             })
             .or_else(|| {
-                // Prelude contract fallback: Iterable (row 14) and Iterator (row 15) are
-                // spec-locked positions in the writ-runtime virtual module contract table.
                 match contract_name {
-                    Some("Iterable") => Some(ITERABLE_CONTRACT_TOKEN),
-                    Some("Iterator") => Some(ITERATOR_CONTRACT_TOKEN),
+                    Some("Iterable") => Some(runtime_contract_token(builder, "Iterable")),
+                    Some("Iterator") => Some(runtime_contract_token(builder, "Iterator")),
                     _ => None,
                 }
             })
@@ -321,33 +329,6 @@ fn ast_type_constructor_name(ty: &crate::ast::types::AstType) -> Option<&str> {
 // Reflectable auto-impl emission
 // =============================================================================
 
-/// The Iterable<T> contract token in the writ-runtime virtual module.
-///
-/// Iterable is ContractDef at 0-based index 13, 1-based row 14.
-/// TableId::ContractDef = 10. This value is spec-locked (virtual_module.rs order).
-///
-/// MetadataToken bit layout: bits 31-24 = table_id, bits 23-0 = row (1-based).
-pub(crate) const ITERABLE_CONTRACT_TOKEN: MetadataToken =
-    MetadataToken((10u32 << 24) | 14u32);
-
-/// The Iterator<T> contract token in the writ-runtime virtual module.
-///
-/// Iterator is ContractDef at 0-based index 14, 1-based row 15.
-/// TableId::ContractDef = 10. This value is spec-locked (virtual_module.rs order).
-///
-/// MetadataToken bit layout: bits 31-24 = table_id, bits 23-0 = row (1-based).
-pub(crate) const ITERATOR_CONTRACT_TOKEN: MetadataToken =
-    MetadataToken((10u32 << 24) | 15u32);
-
-/// The Reflectable contract token in the writ-runtime virtual module.
-///
-/// Reflectable is ContractDef at 0-based index 18, 1-based row 19.
-/// TableId::ContractDef = 10. This value is spec-locked.
-///
-/// MetadataToken bit layout: bits 31-24 = table_id, bits 23-0 = row (1-based).
-pub(super) const REFLECTABLE_CONTRACT_TOKEN: MetadataToken =
-    MetadataToken((10u32 << 24) | 19u32);
-
 /// Emit a synthetic Reflectable ImplDef + get_type() MethodDef for a user-defined type.
 ///
 /// Called immediately after each collect_struct/class/entity/enum to satisfy COMP-03.
@@ -391,7 +372,8 @@ pub(super) fn emit_reflectable_auto_impl(
     let type_token = MetadataToken::new(TableId::TypeDef, (typedef_handle.0 + 1) as u32);
 
     // ImplDef: method_list is derived from the explicit MethodDef owner in finalize().
-    let impl_handle = builder.add_impl_def(type_token, REFLECTABLE_CONTRACT_TOKEN, 0, None);
+    let reflectable_contract = runtime_contract_token(builder, "Reflectable");
+    let impl_handle = builder.add_impl_def(type_token, reflectable_contract, 0, None);
     builder.set_method_impl_owner(method_handle, impl_handle);
 
     // Store def_id for body emission (needed to look up the finalized TypeDef token for TYPEOF).

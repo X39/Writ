@@ -366,6 +366,15 @@ fn reflectable_auto_impl_three_types() {
     assert_eq!(builder.impl_def_count(), 3, "should have 3 Reflectable auto-impls");
     // 3 synthetic get_type() MethodDefs (one per user type)
     assert_eq!(builder.method_def_count(), 3, "should have 3 get_type() MethodDefs");
+    let reflectable_token = MetadataToken(builder.type_ref_token_by_name("Reflectable"));
+    assert!(!reflectable_token.is_null(), "Reflectable TypeRef is missing");
+    assert!(
+        builder
+            .finalized_impl_defs()
+            .iter()
+            .all(|implementation| implementation.contract_token == reflectable_token),
+        "auto-impls must reference writ-runtime::Reflectable through a TypeRef"
+    );
 }
 
 #[test]
