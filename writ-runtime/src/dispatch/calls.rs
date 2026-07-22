@@ -468,6 +468,15 @@ fn validate_call_site_registers(
         "destination",
     )?;
 
+    validate_argument_registers(opcode, caller_register_count, r_base, argc)
+}
+
+pub(super) fn validate_argument_registers(
+    opcode: &str,
+    caller_register_count: usize,
+    r_base: u16,
+    argc: u16,
+) -> Result<(), String> {
     let start = r_base as usize;
     let end = start
         .checked_add(argc as usize)
@@ -496,7 +505,7 @@ fn checked_register(
     Ok(register)
 }
 
-fn validate_callee_register_capacity(
+pub(super) fn validate_callee_register_capacity(
     opcode: &str,
     callee_register_count: usize,
     argc: u16,
@@ -513,7 +522,7 @@ fn validate_callee_register_capacity(
     Ok(())
 }
 
-fn validate_method_param_count(
+pub(super) fn validate_method_param_count(
     opcode: &str,
     expected_param_count: usize,
     actual_param_count: usize,
@@ -561,7 +570,7 @@ fn intrinsic_param_count(id: IntrinsicId) -> usize {
     }
 }
 
-fn checked_method_register_count(
+pub(super) fn checked_method_register_count(
     opcode: &str,
     modules: &[crate::loader::LoadedModule],
     module_idx: usize,
@@ -604,15 +613,36 @@ pub(super) fn exec_tail_call(
     r_base: u16,
     argc: u16,
 ) -> ExecutionResult {
-    let module = &ctx.modules[ctx.current_module_idx];
-    let method_idx = match super::decode_method_token(method_idx) {
-        Some(idx) => idx,
-        None => return ExecutionResult::Crash("TailCall: null method token".into()),
-    };
-    if method_idx >= module.decoded_bodies.len() {
-        return ExecutionResult::Crash(format!("TailCall: invalid method index {}", method_idx));
+    let caller_register_count = ctx.task.call_stack.last().unwrap().registers.len();
+    if let Err(message) =
+        validate_argument_registers("TAIL_CALL", caller_register_count, r_base, argc)
+    {
+        return ExecutionResult::Crash(message);
     }
-    let reg_count = module.module.method_bodies[method_idx].register_types.len();
+
+    let (target_module_idx, method_idx) = match resolve_call_target(
+        method_idx,
+        ctx.modules,
+        ctx.current_module_idx,
+    ) {
+        Ok(target) => target,
+        Err(message) => return ExecutionResult::Crash(format!("TAIL_CALL: {message}")),
+    };
+    let (reg_count, param_count) = match checked_method_register_count(
+        "TAIL_CALL",
+        ctx.modules,
+        target_module_idx,
+        method_idx,
+    ) {
+        Ok(metadata) => metadata,
+        Err(message) => return ExecutionResult::Crash(message),
+    };
+    if let Err(message) = validate_method_param_count("TAIL_CALL", param_count, argc as usize) {
+        return ExecutionResult::Crash(message);
+    }
+    if let Err(message) = validate_callee_register_capacity("TAIL_CALL", reg_count, argc, 0) {
+        return ExecutionResult::Crash(message);
+    }
 
     // Collect args into stack-resident buffer (no heap allocation for argc <= 32)
     const MAX_INLINE_ARGC: usize = 32;
@@ -650,15 +680,14 @@ pub(super) fn exec_tail_call(
 
     // Replace current frame in-place (reuse existing Vec allocation via clear+resize)
     let current = ctx.task.call_stack.last_mut().unwrap();
+    current.module_idx = Some(target_module_idx);
     current.method_idx = method_idx;
     current.pc = 0;
     current.registers.clear();
     current.registers.resize(reg_count, Value::Void);
     if let Some(hv) = heap_args {
         for (i, v) in hv.into_iter().enumerate() {
-            if i < current.registers.len() {
-                current.registers[i] = v;
-            }
+            current.registers[i] = v;
         }
     } else {
         for i in 0..argc_usize {
@@ -671,7 +700,7 @@ pub(super) fn exec_tail_call(
 
 // ──── CALL_VIRT Helpers ───────────────────────────────────────────────
 
-fn resolve_call_target(
+pub(super) fn resolve_call_target(
     token: u32,
     modules: &[crate::loader::LoadedModule],
     current_module_idx: usize,

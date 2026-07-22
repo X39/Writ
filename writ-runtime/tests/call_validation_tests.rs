@@ -2,7 +2,7 @@ use writ_module::module::MethodBody;
 use writ_module::signature::{TypeSignature, encode_method_signature};
 use writ_module::tables::TypeDefKind;
 use writ_module::{Instruction, Module, ModuleBuilder};
-use writ_runtime::{ExecutionLimit, RuntimeBuilder, TaskState};
+use writ_runtime::{ExecutionLimit, RuntimeBuilder, TaskState, Value};
 
 fn body(instructions: &[Instruction], register_count: u16) -> MethodBody {
     let mut code = Vec::new();
@@ -21,6 +21,14 @@ fn signature(parameter_count: usize) -> Vec<u8> {
     encode_method_signature(
         &vec![TypeSignature::Int; parameter_count],
         &TypeSignature::Void,
+    )
+    .expect("encode method signature")
+}
+
+fn returning_int_signature(parameter_count: usize) -> Vec<u8> {
+    encode_method_signature(
+        &vec![TypeSignature::Int; parameter_count],
+        &TypeSignature::Int,
     )
     .expect("encode method signature")
 }
@@ -461,4 +469,128 @@ fn call_indirect_rejects_callee_register_capacity_overflow() {
         0,
         "CALL_INDIRECT: 1 arguments exceed callee register count 0",
     );
+}
+
+#[test]
+fn tail_call_resolves_methodref_and_switches_module() {
+    let method_signature = returning_int_signature(0);
+
+    let mut library = ModuleBuilder::new("tail-call-library");
+    let worker = library.add_type_def("Worker", "lib", TypeDefKind::Class, 0);
+    library.add_type_method(
+        worker,
+        "answer",
+        &method_signature,
+        0,
+        2,
+        body(
+            &[
+                Instruction::LoadInt {
+                    r_dst: 1,
+                    value: 42,
+                },
+                Instruction::Ret { r_src: 1 },
+            ],
+            2,
+        ),
+    );
+
+    let mut user = ModuleBuilder::new("tail-call-user");
+    let library_ref = user.add_module_ref("tail-call-library", "1.0.0");
+    let worker_ref = user.add_type_ref(library_ref, "Worker", "lib");
+    let answer_ref = user.add_method_ref(worker_ref, "answer", &method_signature);
+    user.add_method(
+        "main",
+        &method_signature,
+        0,
+        1,
+        body(
+            &[
+                Instruction::New {
+                    r_dst: 0,
+                    type_idx: worker_ref.0,
+                },
+                Instruction::TailCall {
+                    method_idx: answer_ref.0,
+                    r_base: 0,
+                    argc: 1,
+                },
+            ],
+            1,
+        ),
+    );
+
+    let mut runtime = RuntimeBuilder::new(user.build())
+        .with_library(library.build())
+        .build()
+        .expect("build runtime");
+    let task = runtime.spawn_task(0, vec![]).expect("spawn main");
+    runtime.tick(0.0, ExecutionLimit::None);
+
+    assert_eq!(runtime.task_state(task), Some(TaskState::Completed));
+    assert_eq!(runtime.return_value(task), Some(Value::Int(42)));
+}
+
+#[test]
+fn tail_call_rejects_argument_register_range_out_of_bounds() {
+    let mut builder = ModuleBuilder::new("tail-call-source-bounds");
+    builder.add_type_def("Owner", "test", TypeDefKind::Struct, 0);
+    builder.add_method(
+        "main",
+        &signature(0),
+        0,
+        1,
+        body(
+            &[Instruction::TailCall {
+                method_idx: 0x0700_0002,
+                r_base: 1,
+                argc: 1,
+            }],
+            1,
+        ),
+    );
+    builder.add_method(
+        "callee",
+        &signature(1),
+        0,
+        1,
+        body(&[Instruction::RetVoid], 1),
+    );
+
+    assert_crash(builder.build(), 0, "TAIL_CALL: argument register range");
+}
+
+#[test]
+fn tail_call_rejects_argument_count_mismatching_method_metadata() {
+    let mut builder = ModuleBuilder::new("tail-call-arity");
+    builder.add_type_def("Owner", "test", TypeDefKind::Struct, 0);
+    builder.add_method(
+        "main",
+        &signature(0),
+        0,
+        1,
+        body(
+            &[
+                Instruction::LoadInt {
+                    r_dst: 0,
+                    value: 7,
+                },
+                Instruction::TailCall {
+                    method_idx: 0x0700_0002,
+                    r_base: 0,
+                    argc: 1,
+                },
+            ],
+            1,
+        ),
+    );
+    builder.add_method(
+        "callee",
+        &signature(0),
+        0,
+        1,
+        body(&[Instruction::RetVoid], 1),
+    );
+
+    assert_crash(builder.build(), 0, "TAIL_CALL: argument count 1");
 }
