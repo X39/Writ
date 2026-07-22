@@ -419,6 +419,16 @@ fn resolve_overloaded_method_call(
         }
     };
 
+    // The receiver fixes impl-level generic parameters before method-level
+    // inference begins. Preserve that specialization in the callee signature
+    // used for metadata identity, while leaving method generics open so their
+    // declaration ordinals can still distinguish overloads.
+    let impl_bindings: Vec<_> = bindings
+        .iter()
+        .filter(|(ordinal, _)| *ordinal < impl_generic_count)
+        .copied()
+        .collect();
+
     let mut infer_vars = Vec::with_capacity(signature.generics.len());
     for method_index in 0..signature.generics.len() {
         let ordinal = impl_generic_count + method_index as u32;
@@ -462,8 +472,19 @@ fn resolve_overloaded_method_call(
     if !signature.generics.is_empty() && !signature.bounds.is_empty() {
         check_contract_bounds(ctx, &signature, &infer_vars, call_span);
     }
-    let declaration_params = signature.params.iter().map(|(_, ty)| *ty).collect();
-    let callee_ty = ctx.interner.func(declaration_params, signature.ret);
+    let declaration_params = signature
+        .params
+        .iter()
+        .map(|(_, ty)| {
+            super::super::infer::substitute_bindings(*ty, &impl_bindings, &mut ctx.interner)
+        })
+        .collect();
+    let declaration_ret = super::super::infer::substitute_bindings(
+        signature.ret,
+        &impl_bindings,
+        &mut ctx.interner,
+    );
+    let callee_ty = ctx.interner.func(declaration_params, declaration_ret);
 
     Some(TypedExpr::Call {
         ty: resolved_ret,
