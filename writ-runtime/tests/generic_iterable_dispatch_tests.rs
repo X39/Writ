@@ -1,5 +1,7 @@
 use writ_module::module::MethodBody;
-use writ_module::signature::{encode_type_signature, TypeSignature};
+use writ_module::signature::{
+    TypeSignature, encode_method_signature, encode_type_signature,
+};
 use writ_module::tables::TypeDefKind;
 use writ_module::{Instruction, MetadataToken, ModuleBuilder};
 use writ_runtime::{ExecutionLimit, RuntimeBuilder, TaskState, Value};
@@ -17,6 +19,10 @@ fn body(instructions: &[Instruction], register_count: u16) -> MethodBody {
     }
 }
 
+fn zero_arg_method_signature() -> Vec<u8> {
+    encode_method_signature(&[], &TypeSignature::Void).expect("encode method signature")
+}
+
 #[test]
 fn call_virt_places_receiver_in_callee_register_zero() {
     let mut builder = ModuleBuilder::new("call-virt-self");
@@ -30,7 +36,7 @@ fn call_virt_places_receiver_in_callee_register_zero() {
     builder.add_impl_method(
         implementation,
         "read",
-        &[],
+        &zero_arg_method_signature(),
         0,
         2,
         body(
@@ -127,7 +133,7 @@ fn list_set_and_custom_iterable_dispatch_sequences_complete() {
         builder.add_impl_method(
             iterable_impl,
             &format!("{label}_iterator"),
-            &[],
+            &zero_arg_method_signature(),
             0,
             2,
             body(
@@ -146,7 +152,7 @@ fn list_set_and_custom_iterable_dispatch_sequences_complete() {
         builder.add_impl_method(
             iterator_impl,
             &format!("{label}_next"),
-            &[],
+            &zero_arg_method_signature(),
             0,
             2,
             body(
@@ -233,7 +239,7 @@ fn add_constant_impl(
     builder.add_impl_method(
         implementation,
         name,
-        &[],
+        &zero_arg_method_signature(),
         0,
         2,
         body(
@@ -271,7 +277,7 @@ fn cross_module_typespec_dispatch_distinguishes_named_specializations() {
         library.add_impl_method(
             implementation,
             name,
-            &[],
+            &zero_arg_method_signature(),
             0,
             2,
             body(
@@ -320,7 +326,7 @@ fn cross_module_typespec_dispatch_distinguishes_named_specializations() {
                     contract_idx: select_a_ref.0,
                     slot: 0,
                     r_base: 0,
-                    argc: 0,
+                    argc: 1,
                 },
                 Instruction::CallVirt {
                     r_dst: 2,
@@ -328,7 +334,7 @@ fn cross_module_typespec_dispatch_distinguishes_named_specializations() {
                     contract_idx: select_b_ref.0,
                     slot: 0,
                     r_base: 0,
-                    argc: 0,
+                    argc: 1,
                 },
                 Instruction::AddI {
                     r_dst: 3,
@@ -389,7 +395,7 @@ fn target_typespec_dispatch_distinguishes_same_bare_contract() {
                     contract_idx: carries.0,
                     slot: 0,
                     r_base: 0,
-                    argc: 0,
+                    argc: 1,
                 },
                 Instruction::New {
                     r_dst: 2,
@@ -400,8 +406,8 @@ fn target_typespec_dispatch_distinguishes_same_bare_contract() {
                     r_obj: 2,
                     contract_idx: carries.0,
                     slot: 0,
-                    r_base: 0,
-                    argc: 0,
+                    r_base: 2,
+                    argc: 1,
                 },
                 Instruction::AddI {
                     r_dst: 4,
@@ -480,7 +486,7 @@ fn disjoint_open_target_patterns_do_not_collapse_to_one_dispatch_entry() {
                     contract_idx: carries.0,
                     slot: 0,
                     r_base: 0,
-                    argc: 0,
+                    argc: 1,
                 },
                 Instruction::New {
                     r_dst: 2,
@@ -491,8 +497,8 @@ fn disjoint_open_target_patterns_do_not_collapse_to_one_dispatch_entry() {
                     r_obj: 2,
                     contract_idx: carries.0,
                     slot: 0,
-                    r_base: 0,
-                    argc: 0,
+                    r_base: 2,
+                    argc: 1,
                 },
                 Instruction::AddI {
                     r_dst: 4,
@@ -558,7 +564,7 @@ fn correlated_target_and_contract_parameters_reject_mismatched_call() {
                     contract_idx: carries_string.0,
                     slot: 0,
                     r_base: 0,
-                    argc: 0,
+                    argc: 1,
                 },
                 Instruction::Ret { r_src: 1 },
             ],
@@ -624,7 +630,7 @@ fn ambiguous_structural_specializations_crash_deterministically() {
                     contract_idx: carries_int.0,
                     slot: 0,
                     r_base: 0,
-                    argc: 0,
+                    argc: 1,
                 },
                 Instruction::Ret { r_src: 1 },
             ],
@@ -679,7 +685,7 @@ fn malformed_contract_typespec_fails_closed() {
                     contract_idx: malformed.0,
                     slot: 0,
                     r_base: 0,
-                    argc: 0,
+                    argc: 1,
                 },
                 Instruction::Ret { r_src: 1 },
             ],

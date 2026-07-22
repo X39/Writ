@@ -4,6 +4,7 @@
 //! ticks to completion, and inspects the result.
 
 use writ_module::module::MethodBody;
+use writ_module::signature::{TypeSignature, encode_method_signature};
 use writ_module::tables::TypeDefKind;
 use writ_module::Instruction;
 use writ_module::ModuleBuilder;
@@ -20,6 +21,14 @@ fn encode(instrs: &[Instruction]) -> Vec<u8> {
         instr.encode(&mut code).unwrap();
     }
     code
+}
+
+fn method_signature(parameter_count: usize) -> Vec<u8> {
+    encode_method_signature(
+        &vec![TypeSignature::Int; parameter_count],
+        &TypeSignature::Void,
+    )
+    .expect("encode method signature")
 }
 
 /// Build a module with one type and one method containing the given instructions.
@@ -71,6 +80,7 @@ fn build_two_method_runtime(
     main_reg_count: u16,
     callee_instrs: &[Instruction],
     callee_reg_count: u16,
+    callee_param_count: usize,
 ) -> Runtime<NullHost> {
     let mut builder = ModuleBuilder::new("test");
     builder.add_type_def("TestType", "", TypeDefKind::Struct, 0);
@@ -81,7 +91,7 @@ fn build_two_method_runtime(
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_method("main", &[0], 0, main_reg_count, body0);
+    builder.add_method("main", &method_signature(0), 0, main_reg_count, body0);
 
     let body1 = MethodBody {
         register_types: vec![0; callee_reg_count as usize],
@@ -89,7 +99,13 @@ fn build_two_method_runtime(
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_method("callee", &[0], 0, callee_reg_count, body1);
+    builder.add_method(
+        "callee",
+        &method_signature(callee_param_count),
+        0,
+        callee_reg_count,
+        body1,
+    );
 
     let module = builder.build();
     RuntimeBuilder::new(module).build().unwrap()
@@ -806,7 +822,7 @@ fn call_and_ret_delivers_return_value() {
         Instruction::Ret { r_src: 1 },
     ];
 
-    let mut rt = build_two_method_runtime(&main_instrs, 2, &callee_instrs, 2);
+    let mut rt = build_two_method_runtime(&main_instrs, 2, &callee_instrs, 2, 1);
     let tid = rt.spawn_task(0, vec![]).unwrap();
     rt.tick(0.0, ExecutionLimit::None);
 
@@ -837,7 +853,7 @@ fn call_with_methoddef_token() {
         Instruction::AddI { r_dst: 1, r_a: 0, r_b: 0 }, // 5 + 5 = 10
         Instruction::Ret { r_src: 1 },
     ];
-    let mut rt = build_two_method_runtime(&main_instrs, 2, &callee_instrs, 2);
+    let mut rt = build_two_method_runtime(&main_instrs, 2, &callee_instrs, 2, 1);
     let tid = rt.spawn_task(0, vec![]).unwrap();
     rt.tick(0.0, ExecutionLimit::None);
     assert_eq!(rt.task_state(tid), Some(TaskState::Completed));
@@ -869,7 +885,7 @@ fn nested_calls_unwind_correctly() {
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_method("m0", &[0], 0, 2, body0);
+    builder.add_method("m0", &method_signature(0), 0, 2, body0);
 
     // Method 1: LoadInt 5, Call method 2 (MethodDef token 0x07000003 = table_id=7, row_index=3, array_index=2)
     let body1 = MethodBody {
@@ -887,7 +903,7 @@ fn nested_calls_unwind_correctly() {
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_method("m1", &[0], 0, 2, body1);
+    builder.add_method("m1", &method_signature(0), 0, 2, body1);
 
     // Method 2: r0 has 5, compute 5+5, return 10
     let body2 = MethodBody {
@@ -903,7 +919,7 @@ fn nested_calls_unwind_correctly() {
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_method("m2", &[0], 0, 2, body2);
+    builder.add_method("m2", &method_signature(1), 0, 2, body2);
 
     let module = builder.build();
     let mut rt = RuntimeBuilder::new(module).build().unwrap();
@@ -934,7 +950,7 @@ fn tail_call_does_not_grow_stack() {
 
     let callee_instrs = vec![Instruction::Ret { r_src: 0 }];
 
-    let mut rt = build_two_method_runtime(&main_instrs, 1, &callee_instrs, 1);
+    let mut rt = build_two_method_runtime(&main_instrs, 1, &callee_instrs, 1, 1);
     let tid = rt.spawn_task(0, vec![]).unwrap();
     rt.tick(0.0, ExecutionLimit::None);
 
@@ -962,7 +978,7 @@ fn tail_call_passes_multiple_args() {
         Instruction::Ret { r_src: 2 },
     ];
 
-    let mut rt = build_two_method_runtime(&main_instrs, 2, &callee_instrs, 3);
+    let mut rt = build_two_method_runtime(&main_instrs, 2, &callee_instrs, 3, 2);
     let tid = rt.spawn_task(0, vec![]).unwrap();
     rt.tick(0.0, ExecutionLimit::None);
 
@@ -1558,7 +1574,7 @@ fn new_delegate_and_call_indirect() {
         Instruction::Ret { r_src: 0 },
     ];
 
-    let mut rt = build_two_method_runtime(&main_instrs, 3, &callee_instrs, 1);
+    let mut rt = build_two_method_runtime(&main_instrs, 3, &callee_instrs, 1, 0);
     let tid = rt.spawn_task(0, vec![]).unwrap();
     rt.tick(0.0, ExecutionLimit::None);
 
@@ -1590,7 +1606,7 @@ fn call_indirect_passes_args() {
 
     let callee_instrs = vec![Instruction::Ret { r_src: 0 }];
 
-    let mut rt = build_two_method_runtime(&main_instrs, 4, &callee_instrs, 1);
+    let mut rt = build_two_method_runtime(&main_instrs, 4, &callee_instrs, 1, 1);
     let tid = rt.spawn_task(0, vec![]).unwrap();
     rt.tick(0.0, ExecutionLimit::None);
 
@@ -2361,7 +2377,7 @@ fn batch_dispatch_fib_correctness() {
     ];
 
     // main: 3 registers, fib: 7 registers (r0..r6)
-    let mut rt = build_two_method_runtime(&main_instrs, 2, &fib_instrs, 7);
+    let mut rt = build_two_method_runtime(&main_instrs, 2, &fib_instrs, 7, 1);
     let task_id = rt.spawn_task(0, vec![]).unwrap();
     loop {
         match rt.tick(0.0, ExecutionLimit::None) {

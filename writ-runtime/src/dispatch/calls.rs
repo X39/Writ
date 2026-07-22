@@ -2,7 +2,7 @@ use crate::heap::HeapObject;
 use crate::host::{LogLevel, RequestId};
 use crate::value::Value;
 
-use super::{helpers, intrinsics, DispatchTarget, ExecContext, ExecutionResult};
+use super::{helpers, intrinsics, DispatchTarget, ExecContext, ExecutionResult, IntrinsicId};
 
 #[inline]
 pub(super) fn exec_call(
@@ -12,6 +12,17 @@ pub(super) fn exec_call(
     r_base: u16,
     argc: u16,
 ) -> ExecutionResult {
+    let caller_register_count = ctx.task.call_stack.last().unwrap().registers.len();
+    if let Err(message) = validate_call_site_registers(
+        "CALL",
+        caller_register_count,
+        r_dst,
+        r_base,
+        argc,
+    ) {
+        return ExecutionResult::Crash(message);
+    }
+
     let (target_module_idx, method_idx) = match resolve_call_target(
         method_idx,
         ctx.modules,
@@ -20,14 +31,21 @@ pub(super) fn exec_call(
         Ok(target) => target,
         Err(message) => return ExecutionResult::Crash(message),
     };
-    let module = &ctx.modules[target_module_idx];
-    if method_idx >= module.decoded_bodies.len() {
-        return ExecutionResult::Crash(format!(
-            "call to invalid method index {} in module {}",
-            method_idx, target_module_idx
-        ));
+    let (reg_count, param_count) = match checked_method_register_count(
+        "CALL",
+        ctx.modules,
+        target_module_idx,
+        method_idx,
+    ) {
+        Ok(reg_count) => reg_count,
+        Err(message) => return ExecutionResult::Crash(message),
+    };
+    if let Err(message) = validate_method_param_count("CALL", param_count, argc as usize) {
+        return ExecutionResult::Crash(message);
     }
-    let reg_count = module.module.method_bodies[method_idx].register_types.len();
+    if let Err(message) = validate_callee_register_capacity("CALL", reg_count, argc, 0) {
+        return ExecutionResult::Crash(message);
+    }
 
     // Push callee frame immediately, then use split_at_mut for disjoint caller/callee access
     ctx.task.call_stack.push(crate::frame::CallFrame::with_pool_in_module(
@@ -41,14 +59,8 @@ pub(super) fn exec_call(
     let (bottom, top) = ctx.task.call_stack.split_at_mut(stack_len - 1);
     let caller = bottom.last().unwrap();
     let callee = &mut top[0];
-    // SAFETY: The compiler guarantees argc <= callee reg_count and r_base + argc <= caller
-    // reg_count for every CALL instruction it emits. Both frames were sized from these
-    // values at creation time, so all indices are in-bounds.
     for i in 0..argc as usize {
-        unsafe {
-            *callee.registers.get_unchecked_mut(i) =
-                *caller.registers.get_unchecked(r_base as usize + i);
-        }
+        callee.registers[i] = caller.registers[r_base as usize + i];
     }
 
     if ctx.host.debug_enabled() {
@@ -67,7 +79,36 @@ pub(super) fn exec_call_virt(
     r_base: u16,
     argc: u16,
 ) -> ExecutionResult {
-    let obj_val = ctx.task.call_stack.last().unwrap().registers[r_obj as usize];
+    let caller_register_count = ctx.task.call_stack.last().unwrap().registers.len();
+    if let Err(message) = validate_call_site_registers(
+        "CALL_VIRT",
+        caller_register_count,
+        r_dst,
+        r_base,
+        argc,
+    ) {
+        return ExecutionResult::Crash(message);
+    }
+    let r_obj_idx = match checked_register(
+        "CALL_VIRT",
+        caller_register_count,
+        r_obj,
+        "receiver",
+    ) {
+        Ok(r_obj) => r_obj,
+        Err(message) => return ExecutionResult::Crash(message),
+    };
+    if r_obj != r_base {
+        return ExecutionResult::Crash(format!(
+            "CALL_VIRT: receiver register r{r_obj} must equal argument base r{r_base}"
+        ));
+    }
+    if argc == 0 {
+        return ExecutionResult::Crash(
+            "CALL_VIRT: argument block must include the receiver".to_string(),
+        );
+    }
+    let obj_val = ctx.task.call_stack.last().unwrap().registers[r_obj_idx];
 
     // Determine type_key from the object value's runtime type
     let type_key = resolve_runtime_type_key(obj_val, ctx.heap, ctx.modules);
@@ -140,14 +181,25 @@ pub(super) fn exec_call_virt(
 
     match resolved_target {
         Some(DispatchTarget::Method { module_idx, method_idx }) => {
-            let target_module = &ctx.modules[module_idx];
-            if method_idx >= target_module.decoded_bodies.len() {
-                return ExecutionResult::Crash(format!(
-                    "CALL_VIRT: method index {} out of range in module {}",
-                    method_idx, module_idx
-                ));
+            let (reg_count, param_count) = match checked_method_register_count(
+                "CALL_VIRT",
+                ctx.modules,
+                module_idx,
+                method_idx,
+            ) {
+                Ok(reg_count) => reg_count,
+                Err(message) => return ExecutionResult::Crash(message),
+            };
+            if let Err(message) =
+                validate_method_param_count("CALL_VIRT", param_count, argc as usize)
+            {
+                return ExecutionResult::Crash(message);
             }
-            let reg_count = target_module.module.method_bodies[method_idx].register_types.len();
+            if let Err(message) =
+                validate_callee_register_capacity("CALL_VIRT", reg_count, argc, 0)
+            {
+                return ExecutionResult::Crash(message);
+            }
 
             // Push callee frame immediately, then use split_at_mut for disjoint caller/callee access
             ctx.task.call_stack.push(crate::frame::CallFrame::with_pool_in_module(
@@ -161,14 +213,8 @@ pub(super) fn exec_call_virt(
             let (bottom, top) = ctx.task.call_stack.split_at_mut(stack_len - 1);
             let caller = bottom.last().unwrap();
             let callee = &mut top[0];
-            // SAFETY: CALL_VIRT's argument block includes the receiver at r_base,
-            // followed by explicit arguments. The compiler guarantees argc <=
-            // callee reg_count and r_base + argc <= caller reg_count.
             for i in 0..argc as usize {
-                unsafe {
-                    *callee.registers.get_unchecked_mut(i) =
-                        *caller.registers.get_unchecked(r_base as usize + i);
-                }
+                callee.registers[i] = caller.registers[r_base as usize + i];
             }
 
             if ctx.host.debug_enabled() {
@@ -177,6 +223,12 @@ pub(super) fn exec_call_virt(
             ExecutionResult::Continue
         }
         Some(DispatchTarget::Intrinsic(id)) => {
+            let expected_param_count = intrinsic_param_count(id);
+            if argc as usize != expected_param_count {
+                return ExecutionResult::Crash(format!(
+                    "CALL_VIRT: argument count {argc} does not match intrinsic parameter count {expected_param_count}"
+                ));
+            }
             intrinsics::execute_intrinsic(ctx, id, r_dst, r_obj, r_base, argc)
         }
         None => {
@@ -196,6 +248,17 @@ pub(super) fn exec_call_extern(
     r_base: u16,
     argc: u16,
 ) -> ExecutionResult {
+    let caller_register_count = ctx.task.call_stack.last().unwrap().registers.len();
+    if let Err(message) = validate_call_site_registers(
+        "CALL_EXTERN",
+        caller_register_count,
+        r_dst,
+        r_base,
+        argc,
+    ) {
+        return ExecutionResult::Crash(message);
+    }
+
     let mut args = Vec::with_capacity(argc as usize);
     {
         let frame = ctx.task.call_stack.last().unwrap();
@@ -325,17 +388,49 @@ pub(super) fn exec_call_indirect(
     r_base: u16,
     argc: u16,
 ) -> ExecutionResult {
-    let module = &ctx.modules[ctx.current_module_idx];
-    let delegate_ref = helpers::extract_ref(&ctx.task.call_stack.last().unwrap().registers[r_delegate as usize]);
+    let caller_register_count = ctx.task.call_stack.last().unwrap().registers.len();
+    if let Err(message) = validate_call_site_registers(
+        "CALL_INDIRECT",
+        caller_register_count,
+        r_dst,
+        r_base,
+        argc,
+    ) {
+        return ExecutionResult::Crash(message);
+    }
+    let r_delegate = match checked_register(
+        "CALL_INDIRECT",
+        caller_register_count,
+        r_delegate,
+        "delegate",
+    ) {
+        Ok(r_delegate) => r_delegate,
+        Err(message) => return ExecutionResult::Crash(message),
+    };
+    let delegate_ref = helpers::extract_ref(
+        &ctx.task.call_stack.last().unwrap().registers[r_delegate],
+    );
     let (method_idx, _target) = match ctx.heap.get_object(delegate_ref) {
         Ok(HeapObject::Delegate { method_idx, target }) => (*method_idx, *target),
-        _ => return ExecutionResult::Crash("CallIndirect: not a delegate".into()),
+        _ => return ExecutionResult::Crash("CALL_INDIRECT: not a delegate".into()),
     };
 
-    if method_idx >= module.decoded_bodies.len() {
-        return ExecutionResult::Crash(format!("CallIndirect: invalid method index {}", method_idx));
+    let (reg_count, _param_count) = match checked_method_register_count(
+        "CALL_INDIRECT",
+        ctx.modules,
+        ctx.current_module_idx,
+        method_idx,
+    ) {
+        Ok(reg_count) => reg_count,
+        Err(message) => return ExecutionResult::Crash(message),
+    };
+    // Exact delegate arity depends on whether the stored delegate target supplies
+    // an implicit r0. It is validated when that target is applied.
+    if let Err(message) =
+        validate_callee_register_capacity("CALL_INDIRECT", reg_count, argc, 0)
+    {
+        return ExecutionResult::Crash(message);
     }
-    let reg_count = module.module.method_bodies[method_idx].register_types.len();
 
     // Push callee frame immediately, then use split_at_mut for disjoint caller/callee access
     ctx.task.call_stack.push(crate::frame::CallFrame::with_pool_in_module(
@@ -349,20 +444,157 @@ pub(super) fn exec_call_indirect(
     let (bottom, top) = ctx.task.call_stack.split_at_mut(stack_len - 1);
     let caller = bottom.last().unwrap();
     let callee = &mut top[0];
-    // SAFETY: The compiler guarantees argc <= callee reg_count and r_base + argc <= caller
-    // reg_count for every CALL instruction it emits. Both frames were sized from these
-    // values at creation time, so all indices are in-bounds.
     for i in 0..argc as usize {
-        unsafe {
-            *callee.registers.get_unchecked_mut(i) =
-                *caller.registers.get_unchecked(r_base as usize + i);
-        }
+        callee.registers[i] = caller.registers[r_base as usize + i];
     }
 
     if ctx.host.debug_enabled() {
         ctx.host.on_function_enter(ctx.task.id, method_idx as u32);
     }
     ExecutionResult::Continue
+}
+
+fn validate_call_site_registers(
+    opcode: &str,
+    caller_register_count: usize,
+    r_dst: u16,
+    r_base: u16,
+    argc: u16,
+) -> Result<(), String> {
+    checked_register(
+        opcode,
+        caller_register_count,
+        r_dst,
+        "destination",
+    )?;
+
+    let start = r_base as usize;
+    let end = start
+        .checked_add(argc as usize)
+        .ok_or_else(|| format!("{opcode}: argument register range overflow"))?;
+    if end > caller_register_count {
+        return Err(format!(
+            "{opcode}: argument register range r{start}..r{end} exceeds caller register count {caller_register_count}"
+        ));
+    }
+
+    Ok(())
+}
+
+fn checked_register(
+    opcode: &str,
+    register_count: usize,
+    register: u16,
+    role: &str,
+) -> Result<usize, String> {
+    let register = register as usize;
+    if register >= register_count {
+        return Err(format!(
+            "{opcode}: {role} register r{register} exceeds caller register count {register_count}"
+        ));
+    }
+    Ok(register)
+}
+
+fn validate_callee_register_capacity(
+    opcode: &str,
+    callee_register_count: usize,
+    argc: u16,
+    implicit_argc: usize,
+) -> Result<(), String> {
+    let required = (argc as usize)
+        .checked_add(implicit_argc)
+        .ok_or_else(|| format!("{opcode}: callee register requirement overflow"))?;
+    if required > callee_register_count {
+        return Err(format!(
+            "{opcode}: {required} arguments exceed callee register count {callee_register_count}"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_method_param_count(
+    opcode: &str,
+    expected_param_count: usize,
+    actual_param_count: usize,
+) -> Result<(), String> {
+    if actual_param_count != expected_param_count {
+        return Err(format!(
+            "{opcode}: argument count {actual_param_count} does not match MethodDef.param_count {expected_param_count}"
+        ));
+    }
+    Ok(())
+}
+
+fn intrinsic_param_count(id: IntrinsicId) -> usize {
+    match id {
+        IntrinsicId::IntAdd
+        | IntrinsicId::IntSub
+        | IntrinsicId::IntMul
+        | IntrinsicId::IntDiv
+        | IntrinsicId::IntMod
+        | IntrinsicId::IntEq
+        | IntrinsicId::IntOrd
+        | IntrinsicId::IntBitAnd
+        | IntrinsicId::IntBitOr
+        | IntrinsicId::FloatAdd
+        | IntrinsicId::FloatSub
+        | IntrinsicId::FloatMul
+        | IntrinsicId::FloatDiv
+        | IntrinsicId::FloatMod
+        | IntrinsicId::FloatEq
+        | IntrinsicId::FloatOrd
+        | IntrinsicId::BoolEq
+        | IntrinsicId::StringAdd
+        | IntrinsicId::StringEq
+        | IntrinsicId::StringOrd
+        | IntrinsicId::StringIndexChar
+        | IntrinsicId::ArrayIndex
+        | IntrinsicId::TypeImplements
+        | IntrinsicId::FieldInfoGet => 2,
+        IntrinsicId::StringIndexRange
+        | IntrinsicId::ArrayIndexSet
+        | IntrinsicId::ArraySlice
+        | IntrinsicId::FieldInfoSet
+        | IntrinsicId::MethodInfoInvoke => 3,
+        _ => 1,
+    }
+}
+
+fn checked_method_register_count(
+    opcode: &str,
+    modules: &[crate::loader::LoadedModule],
+    module_idx: usize,
+    method_idx: usize,
+) -> Result<(usize, usize), String> {
+    let module = modules
+        .get(module_idx)
+        .ok_or_else(|| format!("{opcode}: target module index {module_idx} out of range"))?;
+    let method_def = module.module.method_defs.get(method_idx).ok_or_else(|| {
+        format!("{opcode}: MethodDef index {method_idx} out of range in module {module_idx}")
+    })?;
+    if module.decoded_bodies.get(method_idx).is_none() {
+        return Err(format!(
+            "{opcode}: decoded method body index {method_idx} out of range in module {module_idx}"
+        ));
+    }
+    let body = module
+        .module
+        .method_bodies
+        .get(method_idx)
+        .ok_or_else(|| {
+            format!(
+                "{opcode}: MethodBody index {method_idx} out of range in module {module_idx}"
+            )
+        })?;
+    let body_register_count = body.register_types.len();
+    if method_def.reg_count as usize != body_register_count {
+        return Err(format!(
+            "{opcode}: MethodDef.reg_count {} does not match MethodBody register count {body_register_count} for method {method_idx} in module {module_idx}",
+            method_def.reg_count
+        ));
+    }
+    Ok((body_register_count, method_def.param_count as usize))
 }
 
 #[inline]
