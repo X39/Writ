@@ -117,6 +117,10 @@ child row, and the range extends to the next parent's `xxx_list` value (or end o
 6 exception: its explicit `owner` token is authoritative, because top-level functions share the same table and cannot be
 represented unambiguously by adjacent parent ranges.
 
+`TypeDef.field_list` is always a valid 1-based range start, including the one-past-end sentinel and types with no fields.
+An empty type repeats the next type's start; an empty type at the end stores `FieldDef row count + 1`. Thus a TypeDef
+with no fields has an empty range without using `field_list = 0`; zero is not a valid finalized `field_list` value.
+
 | #  | Table                 | Key Fields                                                                               | Purpose                                               |
 |----|-----------------------|------------------------------------------------------------------------------------------|-------------------------------------------------------|
 | 0  | **ModuleDef**         | name(str), version(str), flags(u32)                                                      | Module identity (always 1 row)                        |

@@ -188,7 +188,8 @@ impl ModuleBuilder {
     ///
     /// `field_list` and `method_list` use the "next index" pattern:
     /// the builder records the current counts, so add a type's fields
-    /// and methods immediately after adding the type.
+    /// and methods immediately after adding the type. Empty child ranges still
+    /// receive a valid 1-based start (the current child count plus one).
     pub fn add_type_def(&mut self, name: &str, namespace: &str, kind: TypeDefKind, flags: u16) -> MetadataToken {
         let idx = self.type_defs.len() as u32 + 1;
         let field_list = self.field_defs.len() as u32 + 1;

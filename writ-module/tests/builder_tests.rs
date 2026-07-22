@@ -135,6 +135,29 @@ fn test_builder_multiple_types() {
 }
 
 #[test]
+fn test_builder_zero_field_types_use_next_field_index() {
+    let mut builder = ModuleBuilder::new("empty_field_ranges");
+
+    // Empty types repeat the current 1-based next FieldDef row. This is the
+    // sentinel that makes the preceding type's [start, next_start) range exact.
+    builder.add_type_def("LeadingEmpty", "", TypeDefKind::Struct, 0);
+    builder.add_type_def("HasOne", "", TypeDefKind::Struct, 0);
+    builder.add_field_def("one", &[0x01], 0);
+    builder.add_type_def("MiddleEmpty", "", TypeDefKind::Struct, 0);
+    builder.add_type_def("HasTwo", "", TypeDefKind::Struct, 0);
+    builder.add_field_def("first", &[0x01], 0);
+    builder.add_field_def("second", &[0x01], 0);
+    builder.add_type_def("TrailingEmpty", "", TypeDefKind::Struct, 0);
+
+    let module = builder.build();
+    let starts: Vec<u32> = module.type_defs.iter().map(|ty| ty.field_list).collect();
+
+    assert_eq!(starts, vec![1, 1, 2, 2, 4]);
+    assert!(starts.iter().all(|start| *start > 0));
+    assert!(starts.windows(2).all(|pair| pair[0] <= pair[1]));
+}
+
+#[test]
 fn test_builder_module_name_in_header() {
     let module = ModuleBuilder::new("my_game").build();
     let name = heap::read_string(&module.string_heap, module.header.module_name).unwrap();

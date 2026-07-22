@@ -586,16 +586,25 @@ impl ModuleBuilder {
         self.field_defs.sort_by_key(|f| f.parent.0);
         self.final_field_def_count = self.field_defs.len() as u32;
 
-        // Set TypeDef.field_list to first child row (1-based).
+        // Set every TypeDef.field_list to its first child row (1-based), using
+        // the metadata-table "next index" convention. A type with no fields
+        // repeats the next type's start row; a trailing empty type stores
+        // FieldDef.len() + 1. Zero is not a valid finalized list index.
         {
-            let mut current_parent = None;
-            for (i, entry) in self.field_defs.iter().enumerate() {
-                let row_idx = (i + 1) as u32;
-                if current_parent != Some(entry.parent.0) {
-                    current_parent = Some(entry.parent.0);
-                    self.type_defs[entry.parent.0].field_list = row_idx;
+            let mut field_idx = 0usize;
+            for (type_idx, type_def) in self.type_defs.iter_mut().enumerate() {
+                type_def.field_list = (field_idx + 1) as u32;
+                while field_idx < self.field_defs.len()
+                    && self.field_defs[field_idx].parent.0 == type_idx
+                {
+                    field_idx += 1;
                 }
             }
+            debug_assert_eq!(
+                field_idx,
+                self.field_defs.len(),
+                "every FieldDef must have a TypeDef parent"
+            );
         }
 
         // 3. MethodDef: preserve collection order so provisional handles remain stable.

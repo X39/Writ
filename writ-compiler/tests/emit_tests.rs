@@ -91,6 +91,28 @@ fn struct_fields_emit_fielddefs() {
 }
 
 #[test]
+fn compiler_builder_finalizes_empty_field_ranges_with_next_indices() {
+    let mut builder = ModuleBuilder::new();
+    builder.add_typedef("LeadingEmpty", "", TypeDefKind::Class, 0, None);
+    let list = builder.add_typedef("List", "", TypeDefKind::Class, 0, None);
+    builder.add_fielddef(list, "items", 0, 0);
+    builder.add_typedef("__closure_0", "", TypeDefKind::Class, 0, None);
+    let pair = builder.add_typedef("Pair", "", TypeDefKind::Struct, 0, None);
+    builder.add_fielddef(pair, "left", 0, 0);
+    builder.add_fielddef(pair, "right", 0, 0);
+    builder.add_typedef("TrailingEmpty", "", TypeDefKind::Class, 0, None);
+
+    builder.finalize();
+
+    let starts: Vec<u32> = (0..builder.type_def_count())
+        .map(|idx| builder.typedef_field_list(idx))
+        .collect();
+    assert_eq!(starts, vec![1, 1, 2, 2, 4]);
+    assert!(starts.iter().all(|start| *start > 0));
+    assert!(starts.windows(2).all(|pair| pair[0] <= pair[1]));
+}
+
+#[test]
 fn entity_emits_typedef() {
     let (builder, diags) = emit_src(
         r#"

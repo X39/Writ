@@ -213,7 +213,7 @@ pub struct TypeDefRow {
     pub namespace: u32,  // string heap offset
     pub kind: u8,        // TypeDefKind
     pub flags: u16,
-    pub field_list: u32, // first FieldDef row index (1-based)
+    pub field_list: u32, // next-index start in FieldDef (1-based; never 0 when finalized)
     pub method_list: u32, // first MethodDef row index (1-based)
 }
 

@@ -1,9 +1,9 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
     .type "List" class pub {
+        .field "items" array<?>
     }
     .type "__closure_0" class {
-        .field "items" array<?>
     }
     .impl List : contract_167772179 {
     }

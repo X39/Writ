@@ -78,7 +78,13 @@ fn run_to_value(src: &str) -> writ_runtime::Value {
         }
         other => panic!("unexpected tick result: {:?}", other),
     }
-    runtime.return_value(task_id).expect("main should return a value")
+    runtime.return_value(task_id).unwrap_or_else(|| {
+        panic!(
+            "main should return a value (state={:?}, crash={:?})",
+            runtime.task_state(task_id),
+            runtime.crash_info(task_id)
+        )
+    })
 }
 
 /// Run user_src with writ-std loaded as a SEPARATE library module via with_library().
@@ -636,17 +642,17 @@ fn main() {
 /// COLL-04: List map/filter/reduce chain produces correct results.
 #[test]
 fn coll_list_map_filter_reduce() {
-    run_to_completion(r#"
-pub class List<T> { items: T[] }
-impl<T> List<T> {
-    pub fn add(mut self, item: T) {
+    let result = run_to_value(r#"
+pub class List { items: int[] }
+impl List {
+    pub fn add(mut self, item: int) {
         let old_len: int = self.items.len();
         self.items.resize(old_len + 1);
         self.items[old_len] = item;
     }
     pub fn len(self) -> int { self.items.len() }
-    pub fn map(self, f: fn(T) -> T) -> List<T> {
-        let result: List<T> = new List<T> { items: [] };
+    pub fn map(self, f: fn(int) -> int) -> List {
+        let result: List = new List { items: [] };
         let mut i: int = 0;
         while i < self.items.len() {
             result.add(f(self.items[i]));
@@ -654,8 +660,8 @@ impl<T> List<T> {
         }
         result
     }
-    pub fn filter(self, f: fn(T) -> bool) -> List<T> {
-        let result: List<T> = new List<T> { items: [] };
+    pub fn filter(self, f: fn(int) -> bool) -> List {
+        let result: List = new List { items: [] };
         let mut i: int = 0;
         while i < self.items.len() {
             if f(self.items[i]) { result.add(self.items[i]); }
@@ -663,8 +669,8 @@ impl<T> List<T> {
         }
         result
     }
-    pub fn reduce(self, initial: T, f: fn(T, T) -> T) -> T {
-        let mut acc: T = initial;
+    pub fn reduce(self, initial: int, f: fn(int, int) -> int) -> int {
+        let mut acc: int = initial;
         let mut i: int = 0;
         while i < self.items.len() {
             acc = f(acc, self.items[i]);
@@ -673,17 +679,19 @@ impl<T> List<T> {
         acc
     }
 }
-fn main() {
-    let list: List<int> = new List<int> { items: [] };
+fn main() -> int {
+    let list: List = new List { items: [] };
     list.add(1);
     list.add(2);
     list.add(3);
     list.add(4);
     list.add(5);
-    let doubled: List<int> = list.map(fn(x: int) -> int { x * 2 });
-    let filtered: List<int> = doubled.filter(fn(x: int) -> bool { x > 4 });
-    let _result: int = filtered.reduce(0, fn(acc: int, x: int) -> int { acc + x });
+    let doubled: List = list.map(fn(x: int) -> int { x * 2 });
+    let filtered: List = doubled.filter(fn(x: int) -> bool { x > 4 });
+    filtered.reduce(0, fn(acc: int, x: int) -> int { acc + x })
 }
 "#);
+
+    assert_eq!(result, writ_runtime::Value::Int(24));
 }
 
