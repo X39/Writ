@@ -843,16 +843,32 @@ pub(super) fn execute_intrinsic(
                 ),
             };
 
-            // Validate argument count against method's param_count
-            let param_count = ctx.modules[method_module_idx].module.method_defs[method_idx].param_count as usize;
-            if args.len() != param_count {
+            let method = &ctx.modules[method_module_idx].module.method_defs[method_idx];
+            // MethodDef.param_count includes self for instance methods, while the
+            // reflection API supplies the instance separately from its args array.
+            let receiver_count =
+                usize::from(!method.owner.is_null() && method.flags & (1 << 1) == 0);
+            let expected_arg_count = match (method.param_count as usize).checked_sub(receiver_count) {
+                Some(count) => count,
+                None => return ExecutionResult::Crash(
+                    "MethodInfo.invoke: invalid instance method parameter layout".into()
+                ),
+            };
+            if args.len() != expected_arg_count {
                 return ExecutionResult::Crash(format!(
-                    "MethodInfo.invoke: expected {} args, got {}", param_count, args.len()
+                    "MethodInfo.invoke: expected {} args, got {}", expected_arg_count, args.len()
+                ));
+            }
+
+            let reg_count = ctx.modules[method_module_idx].module.method_bodies[method_idx].register_types.len();
+            if method.param_count as usize > reg_count {
+                return ExecutionResult::Crash(format!(
+                    "MethodInfo.invoke: invalid parameter/register layout: param_count {} exceeds reg_count {}",
+                    method.param_count, reg_count
                 ));
             }
 
             // Push a call frame for the target method; return Continue so the scheduler drives it
-            let reg_count = ctx.modules[method_module_idx].module.method_bodies[method_idx].register_types.len();
             ctx.task.call_stack.push(crate::frame::CallFrame::with_pool_in_module(
                 ctx.pool,
                 method_module_idx,
@@ -863,15 +879,13 @@ pub(super) fn execute_intrinsic(
             let stack_len = ctx.task.call_stack.len();
             let callee = &mut ctx.task.call_stack[stack_len - 1];
 
-            // r0 = instance (self), r1..rN = args
-            if reg_count > 0 {
+            // Instance methods receive self in r0; static and free methods receive
+            // their first regular argument there.
+            if receiver_count != 0 {
                 callee.registers[0] = instance_val;
             }
             for (i, arg) in args.into_iter().enumerate() {
-                let slot = i + 1;
-                if slot < reg_count {
-                    callee.registers[slot] = arg;
-                }
+                callee.registers[i + receiver_count] = arg;
             }
 
             ExecutionResult::Continue

@@ -14,7 +14,7 @@ use crate::emit::module_builder::{ModuleBuilder, TypeDefHandle, MethodDefHandle,
 
 use super::encoding::{
     encode_fn_sig, encode_fn_sig_from_ast_sig, encode_op_sig, encode_type_from_ast,
-    emit_fn_params, resolve_type_handle, ast_type_to_ty_simple,
+    emit_fn_params, resolve_type_handle, ast_type_to_ty_simple, method_param_register_count,
 };
 use super::lookup::{
     find_contract_decl, find_impl_decl,
@@ -141,10 +141,9 @@ pub(super) fn collect_impl(
 
             let flags = method_flags(is_pub, !has_self, is_mut_self, HookKind::None);
 
-            // param_count = number of ParamDef rows emitted (regular params only).
-            // Self occupies r0 but has no ParamDef row; it is not counted here.
-            let regular_param_count = fn_decl.params.iter().filter(|p| matches!(p, AstFnParam::Regular(_))).count() as u16;
-            let param_count = regular_param_count;
+            // The signature and ParamDef rows exclude self, but MethodDef.param_count
+            // describes the entry register layout and therefore includes it at r0.
+            let param_count = method_param_register_count(fn_decl);
 
             // Use impl_def_id as the method's def_id so the body emitter can find it via
             // token_for_def. When there are multiple methods, each gets its own MethodDefHandle
@@ -375,9 +374,9 @@ pub(super) fn emit_reflectable_auto_impl(
     sig_bytes.extend_from_slice(&type_typeref_token.to_le_bytes()); // TypeRef token
     let sig_blob = builder.blob_heap.intern(&sig_bytes);
 
-    // MethodDef: pub, not static, not mut_self, no hook.
-    // param_count = 0: the binary format's param_count counts ParamDef table rows for this
-    // method. Self has no ParamDef row (it is implicit), so 0 regular params = 0 ParamDef rows.
+    // MethodDef: pub, not static, not mut_self, no hook. The synthetic body
+    // reserves r0 for self, so MethodDef.param_count is one even though the
+    // signature contains no regular parameters and there are no ParamDef rows.
     let flags = method_flags(true, false, false, HookKind::None);
     let method_handle = builder.add_methoddef(
         Some(typedef_handle), // retained for type/name lookup during emission
@@ -385,7 +384,7 @@ pub(super) fn emit_reflectable_auto_impl(
         sig_blob,
         flags,
         None, // no DefId — synthetic method
-        0,    // param_count = 0 ParamDef rows (self is implicit, no regular params)
+        1,    // r0 = self
     );
 
     // TypeDef token for the ImplDef.type_token field.

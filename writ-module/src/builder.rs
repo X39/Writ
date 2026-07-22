@@ -545,6 +545,16 @@ impl ModuleBuilder {
 
         // MethodDef
         let method_defs: Vec<MethodDefRow> = self.method_defs.iter().map(|b| {
+            let has_receiver = !b.owner.is_null() && b.flags & (1 << 1) == 0;
+            let param_count = b.signature
+                .get(..2)
+                .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
+                .map(|regular_param_count| {
+                    regular_param_count
+                        .checked_add(u16::from(has_receiver))
+                        .expect("method parameter count exceeds the module format limit")
+                })
+                .unwrap_or(0);
             MethodDefRow {
                 name: intern_str(&b.name),
                 signature: intern_blob(&b.signature),
@@ -552,7 +562,7 @@ impl ModuleBuilder {
                 body_offset: 0, // writer will compute
                 body_size: 1,   // non-zero to indicate body exists
                 reg_count: b.reg_count,
-                param_count: 0, // builder API does not yet track param_count
+                param_count,
                 owner: b.owner,
             }
         }).collect();

@@ -71,6 +71,31 @@ fn test_builder_with_method_body() {
 }
 
 #[test]
+fn test_builder_derives_method_param_register_counts() {
+    fn empty_body(reg_count: usize) -> MethodBody {
+        MethodBody {
+            register_types: vec![0; reg_count],
+            code: Vec::new(),
+            debug_locals: Vec::new(),
+            source_spans: Vec::new(),
+        }
+    }
+
+    // One regular int parameter and a void return.
+    let signature = [1, 0, 0x01, 0x00];
+    let mut builder = ModuleBuilder::new("method_params");
+    let owner = builder.add_type_def("Counter", "", TypeDefKind::Class, 0);
+    builder.add_type_method(owner, "instance", &signature, 0, 2, empty_body(2));
+    builder.add_type_method(owner, "static_method", &signature, 1 << 1, 1, empty_body(1));
+    builder.add_method("free_function", &signature, 1 << 1, 1, empty_body(1));
+
+    let module = builder.build();
+    assert_eq!(module.method_defs[0].param_count, 2, "r0=self, r1=arg");
+    assert_eq!(module.method_defs[1].param_count, 1, "r0=arg");
+    assert_eq!(module.method_defs[2].param_count, 1, "r0=arg");
+}
+
+#[test]
 fn test_builder_round_trip_through_serialization() {
     let mut builder = ModuleBuilder::new("round_trip_test");
 

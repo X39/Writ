@@ -11,7 +11,7 @@ use crate::resolve::def_map::{DefId, DefMap, DefVis};
 use crate::emit::metadata::{TypeDefKind, HookKind, field_flags, method_flags};
 use crate::emit::module_builder::{ModuleBuilder, TypeDefHandle};
 
-use super::encoding::{encode_type_from_ast, encode_empty_sig, emit_generics_for_typedef, encode_hook_sig};
+use super::encoding::{encode_type_from_ast, encode_empty_sig, emit_generics_for_typedef, encode_hook_sig, method_param_register_count};
 use super::lookup::{find_struct_decl, find_entity_decl, find_enum_decl, find_class_decl};
 
 pub(super) fn collect_struct(
@@ -54,7 +54,7 @@ pub(super) fn collect_struct(
                     let flags = method_flags(false, false, true, hook);
                     // Hook methods have no params and void return.
                     let sig_blob = encode_empty_sig(builder);
-                    builder.add_methoddef(Some(handle), &format!("on_{}", event), sig_blob, flags, None, 0);
+                    builder.add_methoddef(Some(handle), &format!("on_{}", event), sig_blob, flags, None, 1);
                 }
             }
         }
@@ -108,7 +108,7 @@ pub(super) fn collect_entity(
                 sig_blob,
                 flags,
                 None,
-                0, // hook methods have no params besides implicit self
+                method_param_register_count(&hook.method),
             );
         }
     }
@@ -195,7 +195,7 @@ pub(super) fn collect_class(
                     let hook = HookKind::from_event_name(event);
                     let flags = method_flags(false, false, true, hook);
                     let sig_blob = encode_empty_sig(builder);
-                    builder.add_methoddef(Some(handle), &format!("on_{}", event), sig_blob, flags, None, 0);
+                    builder.add_methoddef(Some(handle), &format!("on_{}", event), sig_blob, flags, None, 1);
                 }
             }
         }

@@ -12,7 +12,7 @@ use crate::resolve::def_map::{DefId, DefMap, DefVis};
 use crate::emit::metadata::{TypeDefKind, HookKind, field_flags, method_flags, TableId};
 use crate::emit::module_builder::{ModuleBuilder, TypeDefHandle, MethodDefHandle};
 
-use super::encoding::{encode_fn_sig, encode_fn_sig_from_ast_sig, encode_type_from_ast, emit_fn_params, ast_type_to_ty_simple};
+use super::encoding::{encode_fn_sig, encode_fn_sig_from_ast_sig, encode_type_from_ast, emit_fn_params, ast_type_to_ty_simple, method_param_register_count};
 use super::lookup::{find_fn_decl, find_extern_fn_sig, find_component_decl};
 
 pub(super) fn collect_fn(
@@ -32,8 +32,9 @@ pub(super) fn collect_fn(
             encode_fn_sig(fn_decl, interner, &entry.generics, def_map, builder);
         let flags = method_flags(is_pub, true, false, HookKind::None);
 
-        // Free functions have no self; param_count = number of regular params.
-        let param_count = fn_decl.params.iter().filter(|p| matches!(p, AstFnParam::Regular(_))).count() as u16;
+        // Free functions have no self, so every source parameter is a regular
+        // parameter register.
+        let param_count = method_param_register_count(fn_decl);
 
         let method_handle = builder.add_methoddef(None, &entry.name, sig_blob, flags, Some(def_id), param_count);
         methoddef_handles.insert(def_id, method_handle);

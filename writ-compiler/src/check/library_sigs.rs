@@ -152,7 +152,7 @@ fn type_signature_to_ty(
 
 #[cfg(test)]
 mod tests {
-    use super::{impl_generic_param_count, lookup_constructor};
+    use super::{impl_generic_param_count, lookup_constructor, method_param_ranges};
     use rustc_hash::FxHashMap;
     use writ_module::module::MethodBody;
     use writ_module::{MetadataToken, ModuleBuilder};
@@ -189,6 +189,52 @@ mod tests {
         let module = builder.build();
 
         assert_eq!(impl_generic_param_count(&module, [], &[0]), 1);
+    }
+
+    fn two_method_module() -> writ_module::Module {
+        fn empty_body() -> MethodBody {
+            MethodBody {
+                register_types: vec![0],
+                code: Vec::new(),
+                debug_locals: Vec::new(),
+                source_spans: Vec::new(),
+            }
+        }
+
+        let mut builder = ModuleBuilder::new("param_ranges");
+        builder.add_method("broken", &[1, 0, 0x01, 0x01], 1 << 1, 1, empty_body());
+        builder.add_param_def("first", &[0x01], 0);
+        builder.add_method("later", &[1, 0, 0x02, 0x02], 1 << 1, 1, empty_body());
+        builder.add_param_def("second", &[0x02], 0);
+        builder.build()
+    }
+
+    #[test]
+    fn malformed_signature_payload_preserves_later_paramdef_range() {
+        let mut module = two_method_module();
+        let signature = module.method_defs[0].signature as usize;
+        module.blob_heap[signature + 4 + 2] = 0xff;
+        let blob = writ_module::heap::read_blob(
+            &module.blob_heap,
+            module.method_defs[0].signature,
+        ).unwrap();
+        assert!(writ_module::signature::decode_method_signature(blob).is_err());
+
+        let ranges = method_param_ranges(&module);
+        assert_eq!(ranges, vec![(0, 1), (1, 2)]);
+        let later_param = &module.param_defs[ranges[1].0];
+        assert_eq!(
+            writ_module::heap::read_string(&module.string_heap, later_param.name).unwrap(),
+            "second"
+        );
+    }
+
+    #[test]
+    fn unreadable_signature_prefix_invalidates_later_paramdef_ranges() {
+        let mut module = two_method_module();
+        module.method_defs[0].signature = u32::MAX;
+
+        assert_eq!(method_param_ranges(&module), vec![(0, 0), (2, 2)]);
     }
 }
 
@@ -356,14 +402,16 @@ fn build_fn_sig_from_binary(
 
     // Build (name, ty) pairs from ParamDef rows
     let mut params: Vec<(String, Ty)> = Vec::new();
-    let mut self_param: Option<bool> = None;
+    let mut self_param = if !method.owner.is_null() && method.flags & (1 << 1) == 0 {
+        Some(method.flags & (1 << 2) != 0)
+    } else {
+        None
+    };
 
     let param_rows = &module.param_defs[param_start..param_end.min(module.param_defs.len())];
 
-    // The param_tys are in order: first comes self (if any), then regular params.
-    // We need to match them up with param rows. But the method's param_count field
-    // may differ from what's in param_tys (self is encoded separately in the param table).
-    // Strategy: iterate param rows in sequence order; use param_tys index to decode.
+    // Signature types and ParamDef rows both cover regular parameters only. Self
+    // is represented by MethodDef ownership/flags and occupies no ParamDef row.
     let mut param_ty_idx = 0;
     for param_row in param_rows {
         let param_name = writ_module::heap::read_string(&module.string_heap, param_row.name)
@@ -372,7 +420,6 @@ fn build_fn_sig_from_binary(
 
         if param_name == "self" || param_name == "self_" {
             self_param = Some(false);
-            // self is not in param_tys (it's implicit)
         } else if param_name == "mut_self" {
             self_param = Some(true);
         } else {
@@ -387,8 +434,9 @@ fn build_fn_sig_from_binary(
         }
     }
 
-    // If no param rows but we have types, fall back to positional assignment
-    if params.is_empty() && self_param.is_none() && !param_tys.is_empty() {
+    // If ParamDef metadata is unavailable but the signature decoded, retain the
+    // regular parameter types with synthetic names. Self is represented separately.
+    if params.is_empty() && !param_tys.is_empty() {
         for (i, ty) in param_tys.into_iter().enumerate() {
             params.push((format!("p{}", i), ty));
         }
@@ -405,6 +453,52 @@ fn build_fn_sig_from_binary(
         bound_decl_spans: vec![synthetic_span; generic_count],
         fn_file: lib_file_id,
     }
+}
+
+/// Compute each method's ParamDef range from the signature's regular-parameter
+/// count. A malformed type payload still has a usable count prefix; an unreadable
+/// prefix makes ownership of all remaining ParamDefs unknowable, so later ranges
+/// stay empty instead of being associated with the wrong methods.
+fn method_param_ranges(module: &Module) -> Vec<(usize, usize)> {
+    let param_len = module.param_defs.len();
+    let mut ranges = Vec::with_capacity(module.method_defs.len());
+    let mut param_cursor = 0usize;
+    let mut ranges_valid = true;
+
+    for method in &module.method_defs {
+        if !ranges_valid {
+            ranges.push((param_len, param_len));
+            continue;
+        }
+
+        let start = param_cursor.min(param_len);
+        let count = match writ_module::heap::read_blob(&module.blob_heap, method.signature)
+            .ok()
+            .and_then(|blob| blob.get(..2))
+        {
+            Some(bytes) => u16::from_le_bytes([bytes[0], bytes[1]]) as usize,
+            None => {
+                ranges.push((start, start));
+                ranges_valid = false;
+                continue;
+            }
+        };
+
+        let Some(raw_end) = start.checked_add(count) else {
+            ranges.push((start, start));
+            ranges_valid = false;
+            continue;
+        };
+        let end = raw_end.min(param_len);
+        ranges.push((start, end));
+        if raw_end > param_len {
+            ranges_valid = false;
+        } else {
+            param_cursor = end;
+        }
+    }
+
+    ranges
 }
 
 // =============================================================================
@@ -547,26 +641,12 @@ pub fn inject_library_sigs(
                 .collect()
         };
 
-        // Compute param_def ranges for each method:
+        // Compute ParamDef ranges for each method:
         // method_param_ranges[method_idx] = (start, end) in module.param_defs (0-based)
-        // The param_count field in MethodDefRow tells how many params, but we need the
-        // start offset. We rely on the fact that params are ordered by method.
-        // Actually, there's no direct "param_list" in MethodDefRow (unlike TypeDef.field_list).
-        // We use param sequence numbers and match by method index ordering.
-        // Simpler: params are laid out sequentially; method i's params follow method i-1's params.
-        // Use method.param_count to build ranges.
-        let method_param_ranges: Vec<(usize, usize)> = {
-            let mut ranges = Vec::with_capacity(module.method_defs.len());
-            let mut param_cursor = 0usize;
-            for method in &module.method_defs {
-                let start = param_cursor;
-                let count = method.param_count as usize;
-                let end = start + count;
-                ranges.push((start, end));
-                param_cursor = end;
-            }
-            ranges
-        };
+        // ParamDefs are ordered by method but have no parent token or list pointer.
+        // MethodDef.param_count cannot size these ranges because it includes self;
+        // the signature prefix is the authoritative regular-parameter count.
+        let method_param_ranges = method_param_ranges(module);
 
         // ---- Struct fields ----
         for (type_idx, type_def) in module.type_defs.iter().enumerate() {

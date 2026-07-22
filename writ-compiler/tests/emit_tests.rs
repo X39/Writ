@@ -168,6 +168,40 @@ fn fn_params_emit_paramdefs() {
     assert_eq!(builder.param_def_count(), 2, "add should have 2 ParamDefs");
 }
 
+#[test]
+fn methoddef_param_count_matches_entry_register_layout() {
+    let (builder, diags) = emit_src(
+        r#"
+        struct Counter {}
+
+        impl Counter {
+            fn instance(self, value: int) -> int { return value; }
+            fn static_method(value: int) -> int { return value; }
+        }
+
+        fn free_function(value: int) -> int { return value; }
+        "#,
+    );
+    assert!(diags.is_empty(), "unexpected emit diags: {:?}", diags);
+
+    let param_count = |name: &str| {
+        builder
+            .finalized_method_defs()
+            .find(|row| builder.string_heap.get_str(row.name) == name)
+            .unwrap_or_else(|| panic!("missing MethodDef for {name}"))
+            .param_count
+    };
+
+    assert_eq!(param_count("instance"), 2, "r0=self, r1=value");
+    assert_eq!(param_count("static_method"), 1, "r0=value");
+    assert_eq!(param_count("free_function"), 1, "r0=value");
+    assert_eq!(
+        param_count("get_type"),
+        1,
+        "r0=self for synthetic Reflectable method"
+    );
+}
+
 // =========================================================
 // ContractDef tests
 // =========================================================
@@ -626,6 +660,10 @@ fn entity_hooks_emit_methoddefs() {
             on create {
                 let x: int = 1;
             }
+
+            on interact(who: Entity) {
+                let x: int = 2;
+            }
         }
         "#,
     );
@@ -635,6 +673,32 @@ fn entity_hooks_emit_methoddefs() {
         builder.method_def_count() >= 1,
         "should have at least 1 MethodDef for on_create hook"
     );
+
+    let hook_param_count = |name: &str| {
+        builder
+            .finalized_method_defs()
+            .find(|row| builder.string_heap.get_str(row.name) == name)
+            .unwrap_or_else(|| panic!("missing MethodDef for {name}"))
+            .param_count
+    };
+    assert_eq!(hook_param_count("on_OnCreate"), 1, "r0=implicit self");
+    assert_eq!(
+        hook_param_count("on_OnInteract"),
+        2,
+        "r0=implicit self, r1=who"
+    );
+}
+
+#[test]
+fn class_hook_param_count_includes_implicit_self() {
+    let (builder, diags) = emit_src("class Panel { on create { } }");
+    assert!(diags.is_empty(), "unexpected emit diags: {:?}", diags);
+
+    let hook = builder
+        .finalized_method_defs()
+        .find(|row| builder.string_heap.get_str(row.name) == "on_create")
+        .expect("missing class hook MethodDef");
+    assert_eq!(hook.param_count, 1, "r0=implicit self");
 }
 
 // =========================================================

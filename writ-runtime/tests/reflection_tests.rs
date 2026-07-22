@@ -1638,14 +1638,12 @@ fn test_field_info_set_wrong_instance_type_crashes() {
 // ── Test: MethodInfo.invoke() executes the target method (DYN-02) ──────
 
 /// Test that MethodInfo.invoke(instance, args) pushes a CallFrame and the
-/// scheduler drives the callee to completion. The invoked method writes a
-/// fixed value (100) to the instance's field; the caller reads it back.
+/// scheduler drives the callee to completion. The invoked method writes its
+/// regular argument (100) to the instance's field; the caller reads it back.
 /// Verifies DYN-02: MethodInfo.invoke() executes the target method.
 ///
-/// Target method (index 0): r0=instance (struct ref), writes field 0 = 100, RetVoid.
+/// Target method (index 0): r0=instance, r1=value, writes field 0, RetVoid.
 /// Main method (index 1): allocates instance, sets field to 0, invokes target, reads back.
-///
-/// Note: param_count=0 in ModuleBuilder (builder limitation), so the args Array must be empty.
 #[test]
 fn test_method_info_invoke_executes_method() {
     let mut builder = ModuleBuilder::new("test");
@@ -1658,21 +1656,25 @@ fn test_method_info_invoke_executes_method() {
     let type_methods_ref    = builder.add_type_ref(mod_ref, "Type.methods",     "writ");
     let methodinfo_invoke_ref = builder.add_type_ref(mod_ref, "MethodInfo.invoke", "writ");
 
-    // Target method (method index 0): takes only self (r0=Widget instance), sets data=100, returns void
-    // param_count=0 (builder limitation) means invoke passes 0 args; self is always r_base+1.
+    // Target method (method index 0): r0=self, r1=value.
     let target_body = MethodBody {
         register_types: vec![0; 2],
         code: encode(&[
-            // r1 = 100
-            Instruction::LoadInt { r_dst: 1, value: 100 },
-            // r0.data = 100  (r0 is the instance provided by MethodInfoInvoke as callee.registers[0])
+            // r0.data = r1
             Instruction::SetField { r_obj: 0, field_idx: 0, r_val: 1 },
             Instruction::RetVoid,
         ]),
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_type_method(widget_type, "set_data", &[0], 0, 2, target_body);
+    builder.add_type_method(
+        widget_type,
+        "set_data",
+        &[1, 0, 0x01, 0x00], // (int) -> void; param_count = self + value = 2
+        0,
+        2,
+        target_body,
+    );
 
     // Main method (method index 1):
     //   r0=instance, r1=tmp, r2=type_obj, r3=methods_arr, r4=idx_0, r5=mi0,
@@ -1703,8 +1705,13 @@ fn test_method_info_invoke_executes_method() {
             Instruction::LoadInt { r_dst: 4, value: 0 },
             Instruction::ArrayLoad { r_dst: 5, r_arr: 3, r_idx: 4 },
 
-            // r7 = empty args array (param_count=0, so no args beyond self)
+            // r7 = args array [100]
             Instruction::NewArray { r_dst: 7, elem_type: 0 },
+            Instruction::LoadInt { r_dst: 1, value: 1 },
+            Instruction::ArrayResize { r_arr: 7, r_new_len: 1 },
+            Instruction::LoadInt { r_dst: 1, value: 0 },
+            Instruction::LoadInt { r_dst: 8, value: 100 },
+            Instruction::ArrayStore { r_arr: 7, r_idx: 1, r_val: 8 },
 
             // r6 = instance (self for the invoked method)
             Instruction::Mov { r_dst: 6, r_src: 0 },
@@ -1729,6 +1736,7 @@ fn test_method_info_invoke_executes_method() {
     };
     builder.add_method("main", &[0], 0, 10, main_body);
     let module = builder.build();
+    assert_eq!(module.method_defs[0].param_count, 2);
 
     let mut runtime = RuntimeBuilder::new(module).with_gc().build().unwrap();
     // method 0 = set_data, method 1 = main
@@ -1744,14 +1752,117 @@ fn test_method_info_invoke_executes_method() {
     );
 }
 
+fn static_method_info_invoke_module() -> writ_module::module::Module {
+    let mut builder = ModuleBuilder::new("test");
+    let stub_type = builder.add_type_def("Stub", "", TypeDefKind::Struct, 0);
+
+    let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
+    let type_methods_ref = builder.add_type_ref(mod_ref, "Type.methods", "writ");
+    let methodinfo_invoke_ref = builder.add_type_ref(mod_ref, "MethodInfo.invoke", "writ");
+
+    // Static target: one regular parameter enters at r0 and is returned unchanged.
+    let target_body = MethodBody {
+        register_types: vec![0; 1],
+        code: encode(&[Instruction::Ret { r_src: 0 }]),
+        debug_locals: vec![],
+        source_spans: vec![],
+    };
+    builder.add_type_method(
+        stub_type,
+        "identity",
+        &[1, 0, 0x01, 0x01], // (int) -> int
+        1 << 1,              // is_static
+        1,
+        target_body,
+    );
+
+    // r0=type, r1=methods, r2=index, r3=MethodInfo, r4=null instance,
+    // r5=args, r6=array scratch, r7=argument/result.
+    let main_body = MethodBody {
+        register_types: vec![0; 8],
+        code: encode(&[
+            Instruction::TypeOf { r_dst: 0, type_idx: typedef_token(0) },
+            Instruction::CallVirt {
+                r_dst: 1,
+                r_obj: 0,
+                contract_idx: type_methods_ref.0,
+                slot: 0,
+                r_base: 0,
+                argc: 1,
+            },
+            Instruction::LoadInt { r_dst: 2, value: 0 },
+            Instruction::ArrayLoad { r_dst: 3, r_arr: 1, r_idx: 2 },
+            Instruction::LoadNull { r_dst: 4 },
+            Instruction::NewArray { r_dst: 5, elem_type: 0 },
+            Instruction::LoadInt { r_dst: 6, value: 1 },
+            Instruction::ArrayResize { r_arr: 5, r_new_len: 6 },
+            Instruction::LoadInt { r_dst: 6, value: 0 },
+            Instruction::LoadInt { r_dst: 7, value: 42 },
+            Instruction::ArrayStore { r_arr: 5, r_idx: 6, r_val: 7 },
+            Instruction::CallVirt {
+                r_dst: 7,
+                r_obj: 3,
+                contract_idx: methodinfo_invoke_ref.0,
+                slot: 0,
+                r_base: 3,
+                argc: 3,
+            },
+            Instruction::Ret { r_src: 7 },
+        ]),
+        debug_locals: vec![],
+        source_spans: vec![],
+    };
+    builder.add_method("main", &[0, 0, 0x01], 1 << 1, 8, main_body);
+    let module = builder.build();
+    assert_eq!(module.method_defs[0].param_count, 1);
+    assert_ne!(module.method_defs[0].flags & (1 << 1), 0);
+    module
+}
+
+#[test]
+fn test_method_info_invoke_static_method_uses_r0_for_first_argument() {
+    let module = static_method_info_invoke_module();
+    let mut runtime = RuntimeBuilder::new(module).with_gc().build().unwrap();
+    let tid = runtime.spawn_task(1, vec![]).unwrap();
+    runtime.tick(0.0, ExecutionLimit::None);
+
+    assert_eq!(
+        runtime.task_state(tid),
+        Some(TaskState::Completed),
+        "unexpected crash: {:?}",
+        runtime.crash_info(tid)
+    );
+    assert_eq!(runtime.return_value(tid), Some(Value::Int(42)));
+}
+
+#[test]
+fn test_method_info_invoke_rejects_param_count_above_register_count() {
+    let mut module = static_method_info_invoke_module();
+    module.method_defs[0].reg_count = 0;
+    module.method_bodies[0].register_types.clear();
+    module.method_bodies[0].code = encode(&[Instruction::RetVoid]);
+
+    let mut runtime = RuntimeBuilder::new(module).with_gc().build().unwrap();
+    let tid = runtime.spawn_task(1, vec![]).unwrap();
+    runtime.tick(0.0, ExecutionLimit::None);
+
+    assert_eq!(runtime.task_state(tid), Some(TaskState::Cancelled));
+    let crash = runtime.crash_info(tid).unwrap();
+    assert!(
+        crash.message.contains("invalid parameter/register layout"),
+        "unexpected crash: {}",
+        crash.message
+    );
+}
+
 // ── Test: MethodInfo.invoke() with wrong arg count crashes (DYN-02) ────
 
 /// Test that MethodInfo.invoke(instance, args) crashes when the args array
 /// has the wrong number of elements (param_count mismatch).
 /// Verifies DYN-02: wrong arg count produces a descriptive crash.
 ///
-/// Method has param_count=0 (builder limitation). We pass an args array with
-/// 1 element — the mismatch triggers "MethodInfo.invoke: expected 0 args, got 1".
+/// Method has param_count=1 for self and no regular parameters. We pass an args
+/// array with 1 element — the mismatch reports "expected 0 args, got 1".
 #[test]
 fn test_method_info_invoke_wrong_argc_crashes() {
     let mut builder = ModuleBuilder::new("test");
@@ -1762,14 +1873,14 @@ fn test_method_info_invoke_wrong_argc_crashes() {
     let type_methods_ref    = builder.add_type_ref(mod_ref, "Type.methods",     "writ");
     let methodinfo_invoke_ref = builder.add_type_ref(mod_ref, "MethodInfo.invoke", "writ");
 
-    // Target method (index 0): trivial body, param_count=0
+    // Target method (index 0): trivial instance body, param_count=1 for self.
     let noop_body = MethodBody {
         register_types: vec![0; 1],
         code: encode(&[Instruction::RetVoid]),
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_type_method(stub_type, "noop", &[0], 0, 1, noop_body);
+    builder.add_type_method(stub_type, "noop", &[0, 0, 0], 0, 1, noop_body);
 
     // Main method (index 1): pass args array with 1 element to method expecting 0
     // r0=instance, r1=type_obj, r2=methods_arr, r3=idx, r4=mi0,
@@ -1874,7 +1985,7 @@ fn test_method_info_invoke_cooperative_scheduling() {
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_type_method(box_type, "write_n", &[0], 0, 2, target_body);
+    builder.add_type_method(box_type, "write_n", &[0, 0, 0], 0, 2, target_body);
 
     // Main method (index 1): allocate, TypeOf, methods(), extract, build args, invoke, GetField, Ret
     // Total instructions before invoke completes: many — a tight limit causes mid-execution pause
@@ -1939,7 +2050,12 @@ fn test_method_info_invoke_cooperative_scheduling() {
 
     // Now run to completion to verify correctness end-to-end
     runtime.tick(0.0, ExecutionLimit::None);
-    assert_eq!(runtime.task_state(tid), Some(TaskState::Completed));
+    assert_eq!(
+        runtime.task_state(tid),
+        Some(TaskState::Completed),
+        "unexpected crash: {:?}",
+        runtime.crash_info(tid)
+    );
     assert_eq!(
         runtime.return_value(tid),
         Some(Value::Int(999)),

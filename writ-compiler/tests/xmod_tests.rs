@@ -123,6 +123,31 @@ fn xmod_smoke_method_call() {
     )));
 }
 
+#[test]
+fn xmod_instance_param_count_does_not_shift_paramdef_ranges() {
+    let lib_src = r#"
+        pub struct Counter {}
+        impl Counter {
+            pub fn add(self, delta: int) -> int { return delta; }
+        }
+        pub fn later(value: int) -> int { return value; }
+    "#;
+    let lib_bytes = compile(lib_src);
+    let lib_module = writ_module::Module::from_bytes(&lib_bytes).unwrap();
+
+    let user_src = r#"
+        pub fn use_library(c: Counter) -> int {
+            return c.add(1) + later(2);
+        }
+    "#;
+    let result = compile_with_libs(user_src, &[&lib_module]);
+    assert!(
+        result.is_ok(),
+        "instance self must not consume a ParamDef row: {:?}",
+        result.err()
+    );
+}
+
 // =============================================================================
 // XMOD-06: Comprehensive cross-module integration tests (Plan 02)
 // =============================================================================

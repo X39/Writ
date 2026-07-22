@@ -570,6 +570,16 @@ pub(super) fn encode_empty_sig(builder: &mut ModuleBuilder) -> u32 {
     builder.blob_heap.intern(&buf)
 }
 
+/// Number of registers populated with source arguments at method entry.
+///
+/// Unlike the method signature blob, MethodDef.param_count includes an explicit
+/// `self` parameter. Entity hook lowering also materializes its implicit receiver
+/// as an AstFnParam::SelfParam, so the AST parameter count is the runtime count.
+pub(super) fn method_param_register_count(fn_decl: &crate::ast::decl::AstFnDecl) -> u16 {
+    u16::try_from(fn_decl.params.len())
+        .expect("method parameter count exceeds the module format limit")
+}
+
 /// Encode a function signature from an AstFnDecl.
 pub(super) fn encode_fn_sig(
     fn_decl: &crate::ast::decl::AstFnDecl,
