@@ -290,17 +290,15 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
                         let slot = emitter.builder.contract_method_slot_by_name(contract_def_id, field)
                             .unwrap_or(0);
 
-                        // CALL_VIRT layout: r_obj = receiver, r_base = first extra arg, argc = n-1
+                        // CALL_VIRT's argument block starts with the receiver.
                         let r_obj = r_base;
-                        let r_args_base = if arg_regs.len() > 1 { r_base + 1 } else { r_base };
-                        let n_args = (arg_regs.len() as u16).saturating_sub(1);
                         emitter.emit(Instruction::CallVirt {
                             r_dst: r_dst_call,
                             r_obj,
                             contract_idx: contract_token,
                             slot,
-                            r_base: r_args_base,
-                            argc: n_args,
+                            r_base,
+                            argc: arg_regs.len() as u16,
                         });
                         return r_dst_call;
                     }
@@ -380,7 +378,17 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
                 let r_dst_call = emitter.alloc_reg(*ty);
 
                 let TypedExpr::Call { args, .. } = expr else { unreachable!() };
-                let arg_regs: Vec<u16> = args.iter().map(|arg| emit_expr(emitter, arg)).collect();
+                let arg_regs: Vec<u16> = match callee.as_ref() {
+                    TypedExpr::Field { receiver, .. } => {
+                        std::iter::once(emit_expr(emitter, receiver))
+                            .chain(args.iter().map(|arg| emit_expr(emitter, arg)))
+                            .collect()
+                    }
+                    _ if matches!(kind, super::call::CallKind::Virtual { .. }) => {
+                        panic!("virtual call requires a field receiver");
+                    }
+                    _ => args.iter().map(|arg| emit_expr(emitter, arg)).collect(),
+                };
                 let argc = arg_regs.len() as u16;
                 let r_base = pack_args_consecutive(emitter, &arg_regs);
 
@@ -434,13 +442,11 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
                     }
                     super::call::CallKind::Virtual { slot } => {
                         let r_obj = r_base;
-                        let r_args_base = if argc > 0 { r_base + 1 } else { r_base };
-                        let n_args = argc.saturating_sub(1);
                         let contract_idx: u32 = maybe_def_id
                             .and_then(|id| emitter.builder.contract_token_for_method_def_id(id))
                             .map(|t| t.0)
                             .unwrap_or(0);
-                        emitter.emit(Instruction::CallVirt { r_dst: r_dst_call, r_obj, contract_idx, slot, r_base: r_args_base, argc: n_args });
+                        emitter.emit(Instruction::CallVirt { r_dst: r_dst_call, r_obj, contract_idx, slot, r_base, argc });
                     }
                     super::call::CallKind::Extern => {
                         emitter.emit(Instruction::CallExtern { r_dst: r_dst_call, extern_idx: method_idx, r_base, argc });

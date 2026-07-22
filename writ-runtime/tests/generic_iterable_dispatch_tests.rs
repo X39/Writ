@@ -18,6 +18,86 @@ fn body(instructions: &[Instruction], register_count: u16) -> MethodBody {
 }
 
 #[test]
+fn call_virt_places_receiver_in_callee_register_zero() {
+    let mut builder = ModuleBuilder::new("call-virt-self");
+    let receiver = builder.add_type_def("Receiver", "test", TypeDefKind::Class, 0);
+    builder.add_field_def("value", &[0x01], 0);
+
+    let read = builder.add_contract_def("Read", "test");
+    builder.add_contract_method("read", &[], 0);
+
+    let implementation = builder.add_impl_def(receiver, read);
+    builder.add_impl_method(
+        implementation,
+        "read",
+        &[],
+        0,
+        2,
+        body(
+            &[
+                Instruction::GetField {
+                    r_dst: 1,
+                    r_obj: 0,
+                    field_idx: 0,
+                },
+                Instruction::Ret { r_src: 1 },
+            ],
+            2,
+        ),
+    );
+
+    let main = builder.add_method(
+        "main",
+        &[],
+        0,
+        3,
+        body(
+            &[
+                Instruction::New {
+                    r_dst: 0,
+                    type_idx: receiver.0,
+                },
+                Instruction::LoadInt {
+                    r_dst: 1,
+                    value: 42,
+                },
+                Instruction::SetField {
+                    r_obj: 0,
+                    field_idx: 0,
+                    r_val: 1,
+                },
+                Instruction::CallVirt {
+                    r_dst: 2,
+                    r_obj: 0,
+                    contract_idx: read.0,
+                    slot: 0,
+                    r_base: 0,
+                    argc: 1,
+                },
+                Instruction::Ret { r_src: 2 },
+            ],
+            3,
+        ),
+    );
+
+    let mut runtime = RuntimeBuilder::new(builder.build())
+        .build()
+        .expect("build runtime");
+    let task = runtime
+        .spawn_task(main.row_index().expect("main row") as usize - 1, vec![])
+        .expect("spawn main");
+    runtime.tick(0.0, ExecutionLimit::None);
+
+    assert_eq!(
+        runtime.task_state(task),
+        Some(TaskState::Completed),
+        "CALL_VIRT failed: {:?}",
+        runtime.crash_info(task)
+    );
+    assert_eq!(runtime.return_value(task), Some(Value::Int(42)));
+}
+
+#[test]
 fn list_set_and_custom_iterable_dispatch_sequences_complete() {
     let mut builder = ModuleBuilder::new("generic-iterable-dispatch");
 

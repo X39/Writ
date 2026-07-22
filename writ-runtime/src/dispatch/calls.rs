@@ -161,9 +161,9 @@ pub(super) fn exec_call_virt(
             let (bottom, top) = ctx.task.call_stack.split_at_mut(stack_len - 1);
             let caller = bottom.last().unwrap();
             let callee = &mut top[0];
-            // SAFETY: The compiler guarantees argc <= callee reg_count and r_base + argc <= caller
-            // reg_count for every CALL instruction it emits. Both frames were sized from these
-            // values at creation time, so all indices are in-bounds.
+            // SAFETY: CALL_VIRT's argument block includes the receiver at r_base,
+            // followed by explicit arguments. The compiler guarantees argc <=
+            // callee reg_count and r_base + argc <= caller reg_count.
             for i in 0..argc as usize {
                 unsafe {
                     *callee.registers.get_unchecked_mut(i) =

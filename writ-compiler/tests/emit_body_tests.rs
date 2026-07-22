@@ -857,6 +857,74 @@ fn test_call_virt_specialized_to_call_for_concrete_receiver() {
 
 // ─── Task 2: Object model ─────────────────────────────────────────────────────
 
+#[test]
+fn test_emit_expr_known_direct_instance_call_includes_self() {
+    let mut interner = make_interner();
+    let ty_int = interner.int();
+    let (mut def_map, struct_def_id) = make_def_id();
+    let method_def_id = def_map.arena.alloc(DefEntry {
+        id: None,
+        kind: DefKind::Fn,
+        vis: DefVis::Pub,
+        file_id: FileId(0),
+        namespace: String::new(),
+        name: "test_method".to_string(),
+        name_span: dummy_span(),
+        generics: vec![],
+        span: dummy_span(),
+    });
+    let ty_struct = interner.intern(TyKind::Struct(struct_def_id));
+    let callee_ty = interner.intern(TyKind::Func {
+        params: vec![ty_int],
+        ret: ty_int,
+    });
+    let builder = make_builder_with_struct_method(struct_def_id, method_def_id);
+    let mut emitter = make_emitter(&builder, &interner);
+    let r_self = emitter.alloc_reg(ty_struct);
+    emitter.locals.insert("value".to_string(), r_self);
+
+    let call_expr = TypedExpr::Call {
+        ty: ty_int,
+        span: dummy_span(),
+        callee: Box::new(TypedExpr::Field {
+            ty: callee_ty,
+            span: dummy_span(),
+            receiver: Box::new(TypedExpr::Var {
+                ty: ty_struct,
+                span: dummy_span(),
+                name: "value".to_string(),
+            }),
+            field: "test_method".to_string(),
+        }),
+        args: vec![TypedExpr::Literal {
+            ty: ty_int,
+            span: dummy_span(),
+            value: TypedLiteral::Int(7),
+        }],
+        callee_def_id: Some(method_def_id),
+    };
+
+    emit_expr(&mut emitter, &call_expr);
+
+    let (r_base, argc) = emitter
+        .instructions
+        .iter()
+        .find_map(|instruction| match instruction {
+            Instruction::Call { r_base, argc, .. } => Some((*r_base, *argc)),
+            _ => None,
+        })
+        .expect("known instance method must emit CALL");
+    assert_eq!(argc, 2, "CALL argc must include self and one explicit argument");
+    assert!(
+        r_base == r_self
+            || emitter.instructions.iter().any(|instruction| matches!(
+                instruction,
+                Instruction::Mov { r_dst, r_src } if *r_dst == r_base && *r_src == r_self
+            )),
+        "CALL argument block must begin with self"
+    );
+}
+
 /// Helper: make a ModuleBuilder with a struct TypeDef and fields
 fn make_builder_with_struct_fields(
     struct_def_id: DefId,
@@ -3744,16 +3812,22 @@ fn test_call_virt_emits_non_zero_contract_idx_when_registered() {
 
     let mut emitter = make_emitter(&builder, &interner);
 
-    // Self arg in r0
-    emitter.regs.alloc(ty_int); // r0 = self (Int)
+    // Self in r0, followed by one explicit argument.
+    let r_self = emitter.regs.alloc(ty_int);
+    emitter.locals.insert("self".to_string(), r_self);
 
     let call_expr = TypedExpr::Call {
         ty: ty_int,
         span: dummy_span(),
-        callee: Box::new(TypedExpr::Var {
+        callee: Box::new(TypedExpr::Field {
             ty: ty_int,
             span: dummy_span(),
-            name: "into".to_string(),
+            receiver: Box::new(TypedExpr::Var {
+                ty: ty_int,
+                span: dummy_span(),
+                name: "self".to_string(),
+            }),
+            field: "into".to_string(),
         }),
         args: vec![
             TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(42) },
@@ -3767,7 +3841,13 @@ fn test_call_virt_emits_non_zero_contract_idx_when_registered() {
     let call_virt = emitter.instructions.iter().find(|i| matches!(i, Instruction::CallVirt { .. }));
     assert!(call_virt.is_some(), "should have emitted a CALL_VIRT instruction");
 
-    if let Some(Instruction::CallVirt { contract_idx, .. }) = call_virt {
+    if let Some(Instruction::CallVirt {
+        contract_idx,
+        r_obj,
+        r_base,
+        argc,
+        ..
+    }) = call_virt {
         assert_ne!(
             *contract_idx, 0,
             "CALL_VIRT should emit non-zero contract_idx when contract mapping is registered; got {}",
@@ -3778,6 +3858,8 @@ fn test_call_virt_emits_non_zero_contract_idx_when_registered() {
             "contract_idx should equal the registered contract token value; expected {}, got {}",
             contract_token.0, contract_idx
         );
+        assert_eq!(r_obj, r_base, "CALL_VIRT receiver must start its argument block");
+        assert_eq!(*argc, 2, "CALL_VIRT argc must include self and the explicit argument");
     }
 }
 
@@ -3792,14 +3874,21 @@ fn test_call_virt_emits_zero_contract_idx_when_no_mapping() {
     // Builder with no registered contract mapping for method_def_id
     let builder = make_builder_with_fn(method_def_id);
     let mut emitter = make_emitter(&builder, &interner);
+    let r_self = emitter.regs.alloc(ty_int);
+    emitter.locals.insert("self".to_string(), r_self);
 
     let call_expr = TypedExpr::Call {
         ty: ty_int,
         span: dummy_span(),
-        callee: Box::new(TypedExpr::Var {
+        callee: Box::new(TypedExpr::Field {
             ty: ty_int,
             span: dummy_span(),
-            name: "some_virtual".to_string(),
+            receiver: Box::new(TypedExpr::Var {
+                ty: ty_int,
+                span: dummy_span(),
+                name: "self".to_string(),
+            }),
+            field: "some_virtual".to_string(),
         }),
         args: vec![
             TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(1) },
@@ -3812,11 +3901,19 @@ fn test_call_virt_emits_zero_contract_idx_when_no_mapping() {
     let call_virt = emitter.instructions.iter().find(|i| matches!(i, Instruction::CallVirt { .. }));
     assert!(call_virt.is_some(), "should have emitted a CALL_VIRT instruction");
 
-    if let Some(Instruction::CallVirt { contract_idx, .. }) = call_virt {
+    if let Some(Instruction::CallVirt {
+        contract_idx,
+        r_obj,
+        r_base,
+        argc,
+        ..
+    }) = call_virt {
         assert_eq!(
             *contract_idx, 0,
             "CALL_VIRT should emit contract_idx=0 when no contract mapping is registered (legacy fallback)"
         );
+        assert_eq!(r_obj, r_base, "CALL_VIRT receiver must start its argument block");
+        assert_eq!(*argc, 2, "CALL_VIRT argc must include self and the explicit argument");
     }
 }
 
@@ -4142,7 +4239,13 @@ fn test_call_virt_via_emit_expr_uses_callee_def_id_for_contract_idx() {
     // Find CALL_VIRT and verify contract_idx is correct
     let call_virt = emitter.instructions.iter().find(|i| matches!(i, Instruction::CallVirt { .. }));
     assert!(call_virt.is_some(), "generic receiver call should emit CALL_VIRT, got {:?}", emitter.instructions);
-    if let Some(Instruction::CallVirt { contract_idx, .. }) = call_virt {
+    if let Some(Instruction::CallVirt {
+        contract_idx,
+        r_obj,
+        r_base,
+        argc,
+        ..
+    }) = call_virt {
         assert_ne!(
             *contract_idx, 0,
             "CALL_VIRT should emit non-zero contract_idx when callee_def_id has registered contract mapping; got {}",
@@ -4153,6 +4256,8 @@ fn test_call_virt_via_emit_expr_uses_callee_def_id_for_contract_idx() {
             "CALL_VIRT contract_idx should equal the registered contract token; expected {}, got {}",
             contract_token.0, contract_idx
         );
+        assert_eq!(r_obj, r_base, "CALL_VIRT receiver must start its argument block");
+        assert_eq!(*argc, 1, "CALL_VIRT argc must include self");
     }
 }
 
@@ -4338,6 +4443,15 @@ fn test_contract_receiver_emits_call_virt() {
 
     let call_virt = emitter.instructions.iter().find(|i| matches!(i, Instruction::CallVirt { .. }));
     assert!(call_virt.is_some(), "contract-typed receiver call should emit CALL_VIRT, got: {:?}", emitter.instructions);
+    assert!(matches!(
+        call_virt,
+        Some(Instruction::CallVirt {
+            r_obj,
+            r_base,
+            argc: 1,
+            ..
+        }) if r_obj == r_base
+    ));
 
     // Should NOT have CALL or CALL_INDIRECT
     let has_call = emitter.instructions.iter().any(|i| matches!(i, Instruction::Call { .. }));

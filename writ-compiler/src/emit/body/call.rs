@@ -50,8 +50,10 @@ pub fn emit_call(
     callee_def_id: DefId,
     kind: CallKind,
 ) -> u16 {
-    let (ty, args) = match call_expr {
-        TypedExpr::Call { ty, args, .. } => (*ty, args),
+    let (ty, callee, args) = match call_expr {
+        TypedExpr::Call {
+            ty, callee, args, ..
+        } => (*ty, callee, args),
         _ => unreachable!("emit_call called on non-Call expr"),
     };
 
@@ -64,7 +66,19 @@ pub fn emit_call(
     // 2. Allocate a consecutive block (r_base is the first).
     // 3. MOV each arg into its slot if not already consecutive.
 
-    let arg_regs: Vec<u16> = args.iter().map(|arg| emit_expr(emitter, arg)).collect();
+    let arg_regs: Vec<u16> = match callee.as_ref() {
+        TypedExpr::Field { receiver, .. }
+            if matches!(kind, CallKind::Direct | CallKind::Virtual { .. }) =>
+        {
+            std::iter::once(emit_expr(emitter, receiver))
+                .chain(args.iter().map(|arg| emit_expr(emitter, arg)))
+                .collect()
+        }
+        _ if matches!(kind, CallKind::Virtual { .. }) => {
+            panic!("virtual call requires a field receiver");
+        }
+        _ => args.iter().map(|arg| emit_expr(emitter, arg)).collect(),
+    };
     let argc = arg_regs.len() as u16;
 
     // BUG-06 fix: use pack_args_consecutive to avoid phantom MOVs when args
@@ -87,11 +101,9 @@ pub fn emit_call(
             });
         }
         CallKind::Virtual { slot } => {
-            // CALL_VIRT: receiver is r_base (implicit self), remaining args follow.
-            // The spec layout: r_obj = receiver, r_base = first actual arg, argc = n-1
+            // CALL_VIRT's argument block includes the receiver at r_base, followed
+            // by the explicit arguments. r_obj names that same receiver register.
             let r_obj = r_base;
-            let r_args_base = if argc > 0 { r_base + 1 } else { r_base };
-            let n_args = if argc > 0 { argc - 1 } else { 0 };
             // FIX-02: Resolve the contract token for this virtual call site.
             // If the callee DefId has a registered impl-method-to-contract mapping
             // (populated by register_impl_method_contract during collection), emit
@@ -108,8 +120,8 @@ pub fn emit_call(
                 r_obj,
                 contract_idx,
                 slot,
-                r_base: r_args_base,
-                argc: n_args,
+                r_base,
+                argc,
             });
         }
         CallKind::Extern => {
