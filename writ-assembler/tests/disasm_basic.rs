@@ -75,6 +75,42 @@ fn disassemble_method_with_instructions() {
 }
 
 #[test]
+fn disassemble_param_names_ignore_implicit_receiver_registers() {
+    use writ_module::builder::ModuleBuilder;
+    use writ_module::module::MethodBody;
+    use writ_module::signature::{encode_method_signature, encode_type_signature, TypeSignature};
+    use writ_module::TypeDefKind;
+
+    let void_sig = encode_method_signature(&[], &TypeSignature::Void).unwrap();
+    let one_int_sig =
+        encode_method_signature(&[TypeSignature::Int], &TypeSignature::Void).unwrap();
+    let int_sig = encode_type_signature(&TypeSignature::Int).unwrap();
+    let empty_body = || MethodBody {
+        register_types: vec![],
+        code: vec![],
+        debug_locals: vec![],
+        source_spans: vec![],
+    };
+
+    let mut builder = ModuleBuilder::new("param-names");
+    let owner = builder.add_type_def("Widget", "", TypeDefKind::Class, 0);
+    let implementation = builder.add_impl_def(owner, writ_module::MetadataToken::NULL);
+    builder.add_impl_method(implementation, "first", &void_sig, 0, 0, empty_body());
+    builder.add_impl_method(implementation, "second", &void_sig, 0, 0, empty_body());
+    builder.add_method("consume", &one_int_sig, 0, 1, empty_body());
+    builder.add_param_def("value", &int_sig, 0);
+
+    let text = writ_assembler::disassemble(&builder.build());
+
+    assert!(text.contains(".method \"first\" () -> void"), "{text}");
+    assert!(text.contains(".method \"second\" () -> void"), "{text}");
+    assert!(
+        text.contains(".method \"consume\" (value: int) -> void"),
+        "{text}"
+    );
+}
+
+#[test]
 fn disassemble_impl_block() {
     let src = r#"
 .module "test" "1.0.0" {

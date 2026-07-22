@@ -34,23 +34,38 @@ fn disassemble_inner(module: &Module, verbose: bool) -> String {
         read_string(&module.string_heap, offset).unwrap_or("")
     };
 
-    // Precompute cumulative param_def offsets for each MethodDef.
-    // method_param_start[i] = index into module.param_defs where method i's params begin.
+    // Precompute cumulative ParamDef offsets for each MethodDef. MethodDef.param_count
+    // includes an implicit instance receiver, while method signatures and ParamDef rows
+    // describe regular source parameters only. Derive each range from the signature so
+    // receiver registers cannot shift every later method's parameter names.
     let mut method_param_start: Vec<usize> = Vec::with_capacity(module.method_defs.len() + 1);
     {
         let mut running = 0usize;
         for md in &module.method_defs {
             method_param_start.push(running);
-            running += md.param_count as usize;
+            let regular_param_count = read_blob(&module.blob_heap, md.signature)
+                .ok()
+                .and_then(|blob| blob.get(..2))
+                .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]) as usize)
+                .unwrap_or(0);
+            running += regular_param_count;
         }
         method_param_start.push(running); // sentinel
     }
 
     // Helper: get param names for a method index from the ParamDef table.
     let get_param_names = |method_idx: usize| -> Vec<String> {
-        let start = method_param_start.get(method_idx).copied().unwrap_or(0);
-        let end = method_param_start.get(method_idx + 1).copied().unwrap_or(start);
-        let end = end.min(module.param_defs.len());
+        let start = method_param_start
+            .get(method_idx)
+            .copied()
+            .unwrap_or(0)
+            .min(module.param_defs.len());
+        let end = method_param_start
+            .get(method_idx + 1)
+            .copied()
+            .unwrap_or(start)
+            .min(module.param_defs.len())
+            .max(start);
         module.param_defs[start..end]
             .iter()
             .map(|pd| read_string(&module.string_heap, pd.name).unwrap_or("").to_string())
