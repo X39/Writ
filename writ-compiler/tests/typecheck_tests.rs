@@ -294,6 +294,63 @@ fn free_overload_no_arity_reports_arity_mismatch() {
     );
 }
 
+#[test]
+fn duplicate_free_overload_parameter_signature_is_rejected_at_declaration() {
+    let (_ast, diags) = typecheck_src(
+        r#"
+        fn duplicate(value: int) -> int { value }
+        fn duplicate(value: int) -> bool { true }
+        "#,
+    );
+    assert!(
+        has_error(&diags, "E0001"),
+        "return types do not distinguish overload signatures: {diags:?}"
+    );
+}
+
+#[test]
+fn duplicate_extern_overload_parameter_signature_is_rejected_at_declaration() {
+    let (_ast, diags) = typecheck_src(
+        r#"
+        pub extern fn duplicate(value: int) -> int;
+        pub extern fn duplicate(value: int) -> bool;
+        "#,
+    );
+    assert!(
+        has_error(&diags, "E0001"),
+        "extern return types do not distinguish overload signatures: {diags:?}"
+    );
+}
+
+#[test]
+fn duplicate_generic_overload_parameter_signature_is_alpha_equivalent() {
+    let (_ast, diags) = typecheck_src(
+        r#"
+        fn duplicate<T>(value: T) -> int { 1 }
+        fn duplicate<U>(value: U) -> bool { true }
+        "#,
+    );
+    assert!(
+        has_error(&diags, "E0001"),
+        "renaming a generic parameter does not create a distinct signature: {diags:?}"
+    );
+}
+
+#[test]
+fn conditional_function_and_fallback_may_share_a_parameter_signature() {
+    let (_ast, diags) = typecheck_src(
+        r#"
+        [Conditional("debug")]
+        pub fn configured(value: int) -> int { value + 1 }
+        pub fn configured(value: int) -> int { value }
+        "#,
+    );
+    assert!(
+        has_no_errors(&diags),
+        "conditional functions intentionally require an identical fallback signature: {diags:?}"
+    );
+}
+
 // =========================================================
 // Generic inference tests (TYPE-13)
 // =========================================================
@@ -549,6 +606,73 @@ fn method_generic_and_concrete_overloads_are_ambiguous_when_both_match() {
     assert!(
         has_error(&diags, "E0124"),
         "method overloads are ambiguous whenever multiple signatures match: {diags:?}"
+    );
+}
+
+#[test]
+fn duplicate_method_parameter_signature_is_rejected_at_declaration() {
+    let (_typed, diags) = typecheck_src(
+        r#"
+        class Picker {}
+        impl Picker {
+            fn choose(self, value: int) -> int { value }
+            fn choose(self, value: int) -> bool { true }
+        }
+        "#,
+    );
+    assert!(
+        has_error(&diags, "E0001"),
+        "method return types do not distinguish overload signatures: {diags:?}"
+    );
+}
+
+#[test]
+fn immutable_and_mutable_receivers_do_not_distinguish_method_overloads() {
+    let (_typed, diags) = typecheck_src(
+        r#"
+        class Picker {}
+        impl Picker {
+            fn choose(self, value: int) -> int { value }
+            fn choose(mut self, value: int) -> bool { true }
+        }
+        "#,
+    );
+    assert!(
+        has_error(&diags, "E0001"),
+        "receiver mutability does not change its parameter type: {diags:?}"
+    );
+}
+
+#[test]
+fn static_and_instance_methods_with_same_regular_params_are_rejected() {
+    let (_typed, diags) = typecheck_src(
+        r#"
+        class Picker {}
+        impl Picker {
+            fn choose(value: int) -> int { value }
+            fn choose(self, value: int) -> bool { true }
+        }
+        "#,
+    );
+    assert!(
+        has_error(&diags, "E0001"),
+        "method identity excludes the receiver from its signature blob: {diags:?}"
+    );
+}
+
+#[test]
+fn duplicate_contract_method_parameter_signature_is_rejected_at_declaration() {
+    let (_typed, diags) = typecheck_src(
+        r#"
+        contract Picker {
+            fn choose(self, value: int) -> int;
+            fn choose(self, value: int) -> bool;
+        }
+        "#,
+    );
+    assert!(
+        has_error(&diags, "E0001"),
+        "contract method return types do not distinguish overload signatures: {diags:?}"
     );
 }
 

@@ -356,6 +356,12 @@ impl TypeEnv {
             }
         }
 
+        diags.extend(env.validate_duplicate_parameter_signatures(
+            resolved,
+            asts,
+            interner,
+        ));
+
         // Inject synthetic FnSig entries for log-level builtins (log::trace .. log::error).
         // These are injected by inject_log_namespace in the resolver — no AST entry exists,
         // so we construct the FnSig directly: (msg: string) -> void.
@@ -424,6 +430,123 @@ impl TypeEnv {
         (env, diags)
     }
 
+    fn validate_duplicate_parameter_signatures(
+        &self,
+        resolved: &NameResolvedAst,
+        asts: &[(FileId, &Ast)],
+        interner: &TyInterner,
+    ) -> Vec<Diagnostic> {
+        let mut diagnostics = Vec::new();
+
+        for overloads in resolved.def_map.fn_overloads.values() {
+            for right_index in 1..overloads.len() {
+                let right_id = overloads[right_index];
+                if self.conditional_fns.contains_key(&right_id) {
+                    continue;
+                }
+                let Some(right) = self.fn_sigs.get(&right_id) else {
+                    continue;
+                };
+                let duplicate = overloads[..right_index].iter().copied().find(|left_id| {
+                    !self.conditional_fns.contains_key(left_id)
+                        && self.fn_sigs.get(left_id).is_some_and(|left| {
+                            same_parameter_signature(left, right, interner)
+                        })
+                });
+                if let Some(left_id) = duplicate {
+                    let left_entry = resolved.def_map.get_entry(left_id);
+                    let right_entry = resolved.def_map.get_entry(right_id);
+                    diagnostics.push(duplicate_overload_diagnostic(
+                        &right_entry.name,
+                        left_entry.file_id,
+                        left_entry.name_span,
+                        right_entry.file_id,
+                        right_entry.name_span,
+                    ));
+                }
+            }
+        }
+
+        for impl_entries in self.impl_index.values() {
+            for implementation in impl_entries {
+                let impl_entry = resolved.def_map.get_entry(implementation.impl_def_id);
+                let Some(impl_decl) = env_build::find_impl_decl(asts, impl_entry) else {
+                    continue;
+                };
+                let declarations: Vec<_> = impl_decl
+                    .members
+                    .iter()
+                    .filter_map(|member| match member {
+                        crate::ast::decl::AstImplMember::Fn(function) => Some(function),
+                        _ => None,
+                    })
+                    .collect();
+                for right_index in 1..implementation.methods.len() {
+                    let (right_name, right) = &implementation.methods[right_index];
+                    let duplicate = implementation.methods[..right_index]
+                        .iter()
+                        .position(|(left_name, left)| {
+                            left_name == right_name
+                                && same_parameter_signature(left, right, interner)
+                        });
+                    if let Some(left_index) = duplicate
+                        && let (Some(left_decl), Some(right_decl)) =
+                            (declarations.get(left_index), declarations.get(right_index))
+                    {
+                        diagnostics.push(duplicate_overload_diagnostic(
+                            right_name,
+                            impl_entry.file_id,
+                            left_decl.name_span,
+                            impl_entry.file_id,
+                            right_decl.name_span,
+                        ));
+                    }
+                }
+            }
+        }
+
+        for decl in &resolved.decls {
+            let crate::resolve::ir::ResolvedDecl::Contract { def_id } = decl else {
+                continue;
+            };
+            let Some(methods) = self.contract_methods.get(def_id) else {
+                continue;
+            };
+            let entry = resolved.def_map.get_entry(*def_id);
+            let Some(contract_decl) = env_build::find_contract_decl(asts, entry) else {
+                continue;
+            };
+            let declarations: Vec<_> = contract_decl
+                .members
+                .iter()
+                .filter_map(|member| match member {
+                    crate::ast::decl::AstContractMember::FnSig(signature) => Some(signature),
+                    _ => None,
+                })
+                .collect();
+            for right_index in 1..methods.len() {
+                let right = &methods[right_index];
+                let duplicate = methods[..right_index].iter().position(|left| {
+                    left.name == right.name && same_parameter_signature(left, right, interner)
+                });
+                if let Some(left_index) = duplicate
+                    && let (Some(left_decl), Some(right_decl)) =
+                        (declarations.get(left_index), declarations.get(right_index))
+                {
+                    diagnostics.push(duplicate_overload_diagnostic(
+                        &right.name,
+                        entry.file_id,
+                        left_decl.name_span,
+                        entry.file_id,
+                        right_decl.name_span,
+                    ));
+                }
+            }
+        }
+
+        diagnostics
+    }
+
     /// Check every `impl Contract for Type` block for completeness.
     ///
     /// For each impl that has a `contract_def_id`, look up the contract's required
@@ -481,6 +604,36 @@ impl TypeEnv {
 
         errors
     }
+}
+
+fn same_parameter_signature(left: &FnSig, right: &FnSig, interner: &TyInterner) -> bool {
+    left.params.len() == right.params.len()
+        && left
+            .params
+            .iter()
+            .zip(&right.params)
+            .all(|((_, left_ty), (_, right_ty))| {
+                super::infer::types_equal_strict(*left_ty, *right_ty, interner)
+            })
+}
+
+fn duplicate_overload_diagnostic(
+    name: &str,
+    first_file: FileId,
+    first_span: SimpleSpan,
+    second_file: FileId,
+    second_span: SimpleSpan,
+) -> Diagnostic {
+    Diagnostic::error(
+        code::E0001,
+        format!(
+            "duplicate overload `{}` has an identical parameter signature",
+            name
+        ),
+    )
+    .with_primary(second_file, second_span, "duplicate parameter signature")
+    .with_secondary(first_file, first_span, "first declared here")
+    .build()
 }
 
 /// Local variable environment with scoped lookup.
