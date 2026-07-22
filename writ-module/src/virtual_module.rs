@@ -15,12 +15,37 @@
 //! (flag 0x80) since they map to native operations, not IL method bodies.
 
 use crate::module::MethodBody;
-use crate::tables::TypeDefKind;
+use crate::signature::{TypeSignature, encode_type_signature};
+use crate::tables::{TableId, TypeDefKind};
 use crate::token::MetadataToken;
 use crate::{Module, ModuleBuilder};
 
 /// The intrinsic method flag (bit 7).
 const INTRINSIC_FLAG: u16 = 0x80;
+const PUBLIC_FIELD_FLAG: u16 = 1 << 0;
+
+const TYPE_TYPEDEF_ROW: u32 = 10;
+const PARAMETER_INFO_TYPEDEF_ROW: u32 = 11;
+const ATTRIBUTE_INFO_TYPEDEF_ROW: u32 = 12;
+const CONTRACT_INFO_TYPEDEF_ROW: u32 = 13;
+const FIELD_INFO_TYPEDEF_ROW: u32 = 14;
+const METHOD_INFO_TYPEDEF_ROW: u32 = 15;
+const BOX_TYPEDEF_ROW: u32 = 16;
+const ENTITY_LIST_TYPEDEF_ROW: u32 = 17;
+
+fn type_def_token(row: u32) -> MetadataToken {
+    MetadataToken::new(TableId::TypeDef.as_u8(), row)
+}
+
+fn add_typed_field(
+    builder: &mut ModuleBuilder,
+    name: &str,
+    signature: TypeSignature,
+) {
+    let signature = encode_type_signature(&signature)
+        .expect("writ-runtime field signature must fit the module format");
+    builder.add_field_def(name, &signature, PUBLIC_FIELD_FLAG);
+}
 
 /// An empty method body for intrinsic methods (no IL code).
 fn empty_body() -> MethodBody {
@@ -514,44 +539,81 @@ pub fn build_writ_runtime_module() -> Module {
     // TypeDef indices (0-based): Type=9, ParameterInfo=10, AttributeInfo=11,
     // ContractInfo=12, FieldInfo=13, MethodInfo=14
 
-    // Type (index 9) — 5 fields: name(string), namespace(string), kind(string), is_generic(bool), type_args(Array<Type>)
-    // Array<Type> blob: [0x20, 0x10, 0x09, 0x00, 0x00, 0x00] — Array tag (0x20), TypeRef tag (0x10), Type idx 9
+    // Type (row 10) — 5 fields: name(string), namespace(string), kind(string), is_generic(bool), type_args(Array<Type>)
     let type_type = builder.add_type_def("Type", "writ", TypeDefKind::Class, 0);
-    builder.add_field_def("name",       &[0x04], 0);                                  // string
-    builder.add_field_def("namespace",  &[0x04], 0);                                  // string
-    builder.add_field_def("kind",       &[0x04], 0);                                  // string
-    builder.add_field_def("is_generic", &[0x03], 0);                                  // bool
-    builder.add_field_def("type_args",  &[0x20, 0x10, 0x09, 0x00, 0x00, 0x00], 0);  // Array<Type>
+    assert_eq!(type_type, type_def_token(TYPE_TYPEDEF_ROW));
+    add_typed_field(&mut builder, "name", TypeSignature::String);
+    add_typed_field(&mut builder, "namespace", TypeSignature::String);
+    add_typed_field(&mut builder, "kind", TypeSignature::String);
+    add_typed_field(&mut builder, "is_generic", TypeSignature::Bool);
+    add_typed_field(
+        &mut builder,
+        "type_args",
+        TypeSignature::Array(Box::new(TypeSignature::Named(type_type))),
+    );
 
-    // ParameterInfo (index 10) — 2 fields: name(string), parameter_type(Type)
-    // Type is at 0-based index 9 => TypeDef ref encoding: [0x10, 0x09, 0x00, 0x00, 0x00]
+    // ParameterInfo (row 11) — 2 fields: name(string), declared_type(Type)
     let param_info_type = builder.add_type_def("ParameterInfo", "writ", TypeDefKind::Class, 0);
-    builder.add_field_def("name",           &[0x04], 0);                          // string
-    builder.add_field_def("parameter_type", &[0x10, 0x09, 0x00, 0x00, 0x00], 0); // Type (index 9)
+    assert_eq!(param_info_type, type_def_token(PARAMETER_INFO_TYPEDEF_ROW));
+    add_typed_field(&mut builder, "name", TypeSignature::String);
+    add_typed_field(
+        &mut builder,
+        "declared_type",
+        TypeSignature::Named(type_type),
+    );
 
-    // AttributeInfo (index 11) — 2 fields: name(string), args(Array<void>)
-    // Using Array<void> ([0x20, 0x00]) as placeholder for Array<Box> per research.
+    // AttributeInfo (row 12) — 2 fields: name(string), args(Array<Box>).
+    // Box is append-only row 16, so this is the only forward field token.
     let attr_info_type = builder.add_type_def("AttributeInfo", "writ", TypeDefKind::Class, 0);
-    builder.add_field_def("name", &[0x04], 0);          // string
-    builder.add_field_def("args", &[0x20, 0x00], 0);    // Array<void> (placeholder for Box[])
+    assert_eq!(attr_info_type, type_def_token(ATTRIBUTE_INFO_TYPEDEF_ROW));
+    add_typed_field(&mut builder, "name", TypeSignature::String);
+    add_typed_field(
+        &mut builder,
+        "args",
+        TypeSignature::Array(Box::new(TypeSignature::Named(type_def_token(
+            BOX_TYPEDEF_ROW,
+        )))),
+    );
 
-    // ContractInfo (index 12) — 2 fields: name(string), type(Type)
+    // ContractInfo (row 13) — 2 fields: name(string), type(Type)
     let contract_info_type = builder.add_type_def("ContractInfo", "writ", TypeDefKind::Class, 0);
-    builder.add_field_def("name", &[0x04], 0);                           // string
-    builder.add_field_def("type", &[0x10, 0x09, 0x00, 0x00, 0x00], 0);  // Type (index 9)
+    assert_eq!(contract_info_type, type_def_token(CONTRACT_INFO_TYPEDEF_ROW));
+    add_typed_field(&mut builder, "name", TypeSignature::String);
+    add_typed_field(&mut builder, "type", TypeSignature::Named(type_type));
 
-    // FieldInfo (index 13) — 3 fields: name(string), declared_type(Type), is_mutable(bool)
+    // FieldInfo (row 14) — 3 fields: name(string), declared_type(Type), is_mutable(bool)
     let field_info_type = builder.add_type_def("FieldInfo", "writ", TypeDefKind::Class, 0);
-    builder.add_field_def("name",          &[0x04], 0);                          // string
-    builder.add_field_def("declared_type", &[0x10, 0x09, 0x00, 0x00, 0x00], 0); // Type (index 9)
-    builder.add_field_def("is_mutable",    &[0x03], 0);                          // bool
+    assert_eq!(field_info_type, type_def_token(FIELD_INFO_TYPEDEF_ROW));
+    add_typed_field(&mut builder, "name", TypeSignature::String);
+    add_typed_field(
+        &mut builder,
+        "declared_type",
+        TypeSignature::Named(type_type),
+    );
+    add_typed_field(&mut builder, "is_mutable", TypeSignature::Bool);
 
-    // MethodInfo (index 14) — 3 fields: name(string), return_type(Type), parameters(Array<ParameterInfo>)
-    // ParameterInfo is at 0-based index 10 => Array<ParameterInfo> = [0x20, 0x10, 0x0A, 0x00, 0x00, 0x00]
+    // MethodInfo (row 15) — 3 fields: name(string), return_type(Type), parameters(Array<ParameterInfo>)
     let method_info_type = builder.add_type_def("MethodInfo", "writ", TypeDefKind::Class, 0);
-    builder.add_field_def("name",        &[0x04], 0);                                  // string
-    builder.add_field_def("return_type", &[0x10, 0x09, 0x00, 0x00, 0x00], 0);          // Type (index 9)
-    builder.add_field_def("parameters",  &[0x20, 0x10, 0x0A, 0x00, 0x00, 0x00], 0);   // Array<ParameterInfo> (index 10)
+    assert_eq!(method_info_type, type_def_token(METHOD_INFO_TYPEDEF_ROW));
+    add_typed_field(&mut builder, "name", TypeSignature::String);
+    add_typed_field(
+        &mut builder,
+        "return_type",
+        TypeSignature::Named(type_type),
+    );
+    add_typed_field(
+        &mut builder,
+        "parameters",
+        TypeSignature::Array(Box::new(TypeSignature::Named(param_info_type))),
+    );
+
+    // Append-only pseudo types keep the established rows 1..15 stable while
+    // making the spec's dynamic Box and EntityList<T> signatures resolvable.
+    let box_type = builder.add_type_def("Box", "writ", TypeDefKind::Class, 0);
+    assert_eq!(box_type, type_def_token(BOX_TYPEDEF_ROW));
+    let entity_list_type = builder.add_type_def("EntityList", "writ", TypeDefKind::Class, 0);
+    assert_eq!(entity_list_type, type_def_token(ENTITY_LIST_TYPEDEF_ROW));
+    builder.add_generic_param(entity_list_type, 0, 0, "T");
 
     // ────────────────────────────────────────────────────────────────
     // Section 10: Reflection ImplDef entries (Phase 103)
@@ -631,11 +693,32 @@ pub fn build_writ_runtime_module() -> Module {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::heap::read_string;
+    use crate::heap::{read_blob, read_string};
+    use crate::signature::decode_type_signature;
 
     /// Helper to read a string from the module's string heap.
     fn str_from_heap(module: &Module, offset: u32) -> &str {
         read_string(&module.string_heap, offset).expect("valid string")
+    }
+
+    fn field_signature(module: &Module, type_name: &str, field_name: &str) -> TypeSignature {
+        let type_idx = module
+            .type_defs
+            .iter()
+            .position(|row| str_from_heap(module, row.name) == type_name)
+            .expect("TypeDef exists");
+        let start = module.type_defs[type_idx].field_list.saturating_sub(1) as usize;
+        let end = module
+            .type_defs
+            .get(type_idx + 1)
+            .map(|row| row.field_list.saturating_sub(1) as usize)
+            .unwrap_or(module.field_defs.len());
+        let field = module.field_defs[start..end]
+            .iter()
+            .find(|row| str_from_heap(module, row.name) == field_name)
+            .expect("FieldDef exists");
+        let blob = read_blob(&module.blob_heap, field.type_sig).expect("valid field blob");
+        decode_type_signature(blob).expect("valid field signature")
     }
 
     #[test]
@@ -727,12 +810,12 @@ mod tests {
     }
 
     #[test]
-    fn type_defs_include_all_fifteen_types() {
+    fn type_defs_include_all_seventeen_types() {
         let module = build_writ_runtime_module();
         let type_names: Vec<&str> = module.type_defs.iter()
             .map(|t| str_from_heap(&module, t.name))
             .collect();
-        assert_eq!(module.type_defs.len(), 15);
+        assert_eq!(module.type_defs.len(), 17);
         assert!(type_names.contains(&"Option"));
         assert!(type_names.contains(&"Result"));
         assert!(type_names.contains(&"Range"));
@@ -748,6 +831,110 @@ mod tests {
         assert!(type_names.contains(&"ContractInfo"));
         assert!(type_names.contains(&"FieldInfo"));
         assert!(type_names.contains(&"MethodInfo"));
+        assert!(type_names.contains(&"Box"));
+        assert!(type_names.contains(&"EntityList"));
+    }
+
+    #[test]
+    fn reflection_field_signatures_use_canonical_type_tokens() {
+        let module = build_writ_runtime_module();
+        let type_ty = TypeSignature::Named(type_def_token(TYPE_TYPEDEF_ROW));
+        let box_ty = TypeSignature::Named(type_def_token(BOX_TYPEDEF_ROW));
+        let parameter_info_ty =
+            TypeSignature::Named(type_def_token(PARAMETER_INFO_TYPEDEF_ROW));
+
+        let expected = [
+            ("Type", "name", TypeSignature::String),
+            ("Type", "namespace", TypeSignature::String),
+            ("Type", "kind", TypeSignature::String),
+            ("Type", "is_generic", TypeSignature::Bool),
+            (
+                "Type",
+                "type_args",
+                TypeSignature::Array(Box::new(type_ty.clone())),
+            ),
+            ("ParameterInfo", "name", TypeSignature::String),
+            ("ParameterInfo", "declared_type", type_ty.clone()),
+            ("AttributeInfo", "name", TypeSignature::String),
+            (
+                "AttributeInfo",
+                "args",
+                TypeSignature::Array(Box::new(box_ty)),
+            ),
+            ("ContractInfo", "name", TypeSignature::String),
+            ("ContractInfo", "type", type_ty.clone()),
+            ("FieldInfo", "name", TypeSignature::String),
+            ("FieldInfo", "declared_type", type_ty.clone()),
+            ("FieldInfo", "is_mutable", TypeSignature::Bool),
+            ("MethodInfo", "name", TypeSignature::String),
+            ("MethodInfo", "return_type", type_ty),
+            (
+                "MethodInfo",
+                "parameters",
+                TypeSignature::Array(Box::new(parameter_info_ty)),
+            ),
+        ];
+
+        for (type_name, field_name, signature) in expected {
+            assert_eq!(
+                field_signature(&module, type_name, field_name),
+                signature,
+                "{type_name}.{field_name}"
+            );
+        }
+    }
+
+    #[test]
+    fn reflection_fields_are_public() {
+        let module = build_writ_runtime_module();
+        for row in TYPE_TYPEDEF_ROW..=METHOD_INFO_TYPEDEF_ROW {
+            let type_idx = row as usize - 1;
+            let type_name = str_from_heap(&module, module.type_defs[type_idx].name);
+            let start = module.type_defs[type_idx].field_list.saturating_sub(1) as usize;
+            let end = module
+                .type_defs
+                .get(type_idx + 1)
+                .map(|next| next.field_list.saturating_sub(1) as usize)
+                .unwrap_or(module.field_defs.len());
+            assert!(start < end, "{type_name} must define reflection fields");
+            for field in &module.field_defs[start..end] {
+                let field_name = str_from_heap(&module, field.name);
+                assert_ne!(
+                    field.flags & PUBLIC_FIELD_FLAG,
+                    0,
+                    "{type_name}.{field_name} must be public"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn appended_pseudo_types_keep_existing_rows_stable() {
+        let module = build_writ_runtime_module();
+        assert_eq!(
+            str_from_heap(&module, module.type_defs[TYPE_TYPEDEF_ROW as usize - 1].name),
+            "Type"
+        );
+        assert_eq!(
+            str_from_heap(&module, module.type_defs[BOX_TYPEDEF_ROW as usize - 1].name),
+            "Box"
+        );
+        assert_eq!(
+            str_from_heap(
+                &module,
+                module.type_defs[ENTITY_LIST_TYPEDEF_ROW as usize - 1].name,
+            ),
+            "EntityList"
+        );
+        let entity_list_token = type_def_token(ENTITY_LIST_TYPEDEF_ROW);
+        let params: Vec<_> = module
+            .generic_params
+            .iter()
+            .filter(|row| row.owner == entity_list_token && row.owner_kind == 0)
+            .collect();
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].ordinal, 0);
+        assert_eq!(str_from_heap(&module, params[0].name), "T");
     }
 
     #[test]
@@ -1036,7 +1223,7 @@ mod tests {
         let fields = get_type_fields(&module, idx);
         assert_eq!(fields.len(), 2, "ParameterInfo should have 2 fields, got {:?}", fields);
         assert!(fields.contains(&"name"));
-        assert!(fields.contains(&"parameter_type"));
+        assert!(fields.contains(&"declared_type"));
     }
 
     #[test]
