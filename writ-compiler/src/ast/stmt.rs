@@ -6,7 +6,7 @@ use crate::ast::types::AstType;
 ///
 /// Key invariants:
 /// - NO `DlgDecl` variant — dialogue is lowered to `Fn` before reaching the AST.
-/// - NO `Transition` variant — dialogue transitions lower to `Return` statements.
+/// - YES `Transition` variant — dialogue tail-call intent survives lowering.
 /// - `Atomic` survives as-is.
 /// - YES `Error` variant for error recovery (R1).
 /// - All data is owned (`String`, `Box<T>`, `Vec<T>`) — no `'src` lifetime.
@@ -40,6 +40,8 @@ pub enum AstStmt {
     Continue { span: SimpleSpan },
     /// Return: `return [expr]`
     Return { value: Option<AstExpr>, span: SimpleSpan },
+    /// Terminal dialogue transition: `-> target(args)`.
+    Transition { call: AstExpr, span: SimpleSpan },
     /// Atomic block: `atomic { body }`
     Atomic { body: Vec<AstStmt>, span: SimpleSpan },
     /// Error recovery sentinel

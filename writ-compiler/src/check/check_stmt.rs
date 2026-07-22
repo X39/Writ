@@ -8,7 +8,7 @@ use crate::ast::expr::AstExpr;
 use super::check_expr::{check_expr, CheckCtx};
 use super::env::Mutability;
 use super::error::TypeError;
-use super::ir::TypedStmt;
+use super::ir::{TypedExpr, TypedStmt};
 use super::ty::TyKind;
 
 /// Type-check a statement, returning a TypedStmt.
@@ -116,39 +116,19 @@ pub fn check_stmt(ctx: &mut CheckCtx, stmt: &AstStmt) -> TypedStmt {
 
         AstStmt::Return { value, span } => {
             let typed_value = value.as_ref().map(|v| check_expr(ctx, v));
-
-            if let Some(ret_ty) = ctx.current_fn_ret {
-                if let Some(ref tv) = typed_value {
-                    let val_ty = tv.ty();
-
-                    // Contract assignability: if the declared return type is a contract,
-                    // check that the concrete value type implements the contract rather
-                    // than doing plain unification (which would fail for concrete→contract).
-                    ctx.check_assignable(
-                        ret_ty,
-                        val_ty,
-                        *span,
-                        tv.span(),
-                        Some("return value type must match function return type".to_string()),
-                    );
-                } else {
-                    // Return with no value: check function returns void
-                    let void_ty = ctx.interner.void();
-                    if !ctx.is_error(ret_ty) && ret_ty != void_ty {
-                        ctx.emit_error(TypeError::TypeMismatch {
-                            expected: ctx.display_ty(ret_ty),
-                            found: "void".to_string(),
-                            expected_span: *span,
-                            found_span: *span,
-                            file: ctx.current_file,
-                            help: Some("function expects a return value".to_string()),
-                        });
-                    }
-                }
-            }
+            check_return_value(ctx, typed_value.as_ref(), *span);
 
             TypedStmt::Return {
                 value: typed_value,
+                span: *span,
+            }
+        }
+
+        AstStmt::Transition { call, span } => {
+            let typed_call = check_expr(ctx, call);
+            check_return_value(ctx, Some(&typed_call), *span);
+            TypedStmt::Transition {
+                call: typed_call,
                 span: *span,
             }
         }
@@ -283,5 +263,37 @@ pub fn check_stmt(ctx: &mut CheckCtx, stmt: &AstStmt) -> TypedStmt {
         }
 
         AstStmt::Error { span } => TypedStmt::Error { span: *span },
+    }
+}
+
+fn check_return_value(
+    ctx: &mut CheckCtx<'_>,
+    value: Option<&TypedExpr>,
+    span: chumsky::span::SimpleSpan,
+) {
+    let Some(ret_ty) = ctx.current_fn_ret else {
+        return;
+    };
+
+    if let Some(value) = value {
+        ctx.check_assignable(
+            ret_ty,
+            value.ty(),
+            span,
+            value.span(),
+            Some("return value type must match function return type".to_string()),
+        );
+    } else {
+        let void_ty = ctx.interner.void();
+        if !ctx.is_error(ret_ty) && ret_ty != void_ty {
+            ctx.emit_error(TypeError::TypeMismatch {
+                expected: ctx.display_ty(ret_ty),
+                found: "void".to_string(),
+                expected_span: span,
+                found_span: span,
+                file: ctx.current_file,
+                help: Some("function expects a return value".to_string()),
+            });
+        }
     }
 }

@@ -333,14 +333,14 @@ fn dlg_conditional_if() {
     insta::assert_debug_snapshot!(ast);
 }
 
-/// -> target at end of block → AstStmt::Return { Call { target() } }
+/// -> target at end of block preserves AstStmt::Transition { call: target() }
 #[test]
 fn dlg_transition_at_end() {
     let ast = lower_src("dlg intro() { @Narrator Hello.\n-> farewell }");
     insta::assert_debug_snapshot!(ast);
 }
 
-/// -> target(arg) → return target(arg)
+/// -> target(arg) preserves a terminal transition call with arguments
 #[test]
 fn dlg_transition_with_args() {
     let ast = lower_src("dlg intro(name: string) { @Narrator Hello.\n-> farewell(name) }");

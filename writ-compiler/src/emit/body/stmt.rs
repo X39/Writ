@@ -23,6 +23,7 @@ fn stmt_span(stmt: &TypedStmt) -> chumsky::span::SimpleSpan {
         | TypedStmt::Break { span, .. }
         | TypedStmt::Continue { span }
         | TypedStmt::Return { span, .. }
+        | TypedStmt::Transition { span, .. }
         | TypedStmt::Atomic { span, .. }
         | TypedStmt::Error { span } => *span,
     }
@@ -101,32 +102,26 @@ pub fn emit_stmt(emitter: &mut BodyEmitter<'_>, stmt: &TypedStmt) {
         // ── Return ────────────────────────────────────────────────────────────
         TypedStmt::Return { value, .. } => {
             if let Some(v) = value {
-                // EMIT-24: Tail-call optimization — Return(Call(...)) emits TailCall.
-                // Delegate to emit_expr which handles the Return variant including
-                // the tail-call detection pattern.
-                use crate::check::ir::TypedExpr;
-                let needs_option_lift = emitter.returns_option
-                    && !matches!(
-                        emitter.interner.kind(emitter.interner.resolve_infer(v.ty())),
-                        TyKind::Option(_)
-                    );
-                if let TypedExpr::Call {
-                    callee,
-                    args,
-                    callee_def_id,
-                    ..
-                } = v
-                    && !needs_option_lift
-                {
-                    let _ = super::expr::emit_tail_call(emitter, callee, args, *callee_def_id);
-                } else {
-                    let r_src = emit_expr(emitter, v);
-                    let r_src = coerce_option_return(emitter, v.ty(), r_src);
-                    emitter.emit(Instruction::Ret { r_src });
-                }
+                let r_src = emit_expr(emitter, v);
+                let r_src = coerce_option_return(emitter, v.ty(), r_src);
+                emitter.emit(Instruction::Ret { r_src });
             } else {
                 emitter.emit(Instruction::RetVoid);
             }
+        }
+
+        // Dialogue transitions are terminal and intentionally replace this frame.
+        TypedStmt::Transition { call, .. } => {
+            let crate::check::ir::TypedExpr::Call {
+                callee,
+                args,
+                callee_def_id,
+                ..
+            } = call
+            else {
+                unreachable!("typed dialogue transition must contain a call")
+            };
+            let _ = super::expr::emit_tail_call(emitter, callee, args, *callee_def_id);
         }
 
         // ── Break ─────────────────────────────────────────────────────────────

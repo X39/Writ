@@ -601,7 +601,9 @@ pub fn check_block_stmts(
         .last()
         .and_then(|s| match s {
             TypedStmt::Expr { expr, .. } => Some(expr.ty()),
-            TypedStmt::Return { .. } => Some(ctx.interner.void()),
+            TypedStmt::Return { .. } | TypedStmt::Transition { .. } => {
+                Some(ctx.interner.void())
+            }
             _ => None,
         })
         .unwrap_or_else(|| ctx.interner.void());

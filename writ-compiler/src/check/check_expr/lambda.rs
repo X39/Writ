@@ -233,6 +233,9 @@ fn collect_var_refs_stmt(
                 collect_var_refs(v, seen, captures, param_set, local_env);
             }
         }
+        TypedStmt::Transition { call, .. } => {
+            collect_var_refs(call, seen, captures, param_set, local_env);
+        }
         TypedStmt::For { iterable, body, .. } => {
             collect_var_refs(iterable, seen, captures, param_set, local_env);
             for s in body {

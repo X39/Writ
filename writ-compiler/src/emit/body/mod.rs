@@ -369,6 +369,7 @@ fn stmt_has_error(stmt: &TypedStmt) -> bool {
         TypedStmt::Let { value, .. } => expr_has_error(value),
         TypedStmt::Expr { expr, .. } => expr_has_error(expr),
         TypedStmt::Return { value, .. } => value.as_ref().is_some_and(expr_has_error),
+        TypedStmt::Transition { call, .. } => expr_has_error(call),
         TypedStmt::For { iterable, body, .. } => {
             if expr_has_error(iterable) {
                 return true;
@@ -892,6 +893,7 @@ fn collect_lambda_exprs_from_stmt<'a>(stmt: &'a TypedStmt, out: &mut Vec<&'a Typ
                 collect_lambda_exprs_from_expr(v, out);
             }
         }
+        TypedStmt::Transition { call, .. } => collect_lambda_exprs_from_expr(call, out),
         TypedStmt::For { iterable, body, .. } => {
             collect_lambda_exprs_from_expr(iterable, out);
             for s in body {

@@ -418,6 +418,7 @@ fn find_pattern_in_stmt(stmt: &TypedStmt, offset: usize, def_map: &DefMap) -> Op
         TypedStmt::Return { value, .. } | TypedStmt::Break { value, .. } => {
             value.as_ref().and_then(|v| find_pattern_in_expr(v, offset, def_map))
         }
+        TypedStmt::Transition { call, .. } => find_pattern_in_expr(call, offset, def_map),
         TypedStmt::Continue { .. } | TypedStmt::Error { .. } => None,
     }
 }

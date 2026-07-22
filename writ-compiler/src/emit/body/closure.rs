@@ -271,6 +271,9 @@ fn scan_stmt_for_lambdas(
                 scan_expr_for_lambdas(v, interner, builder, counter, infos);
             }
         }
+        TypedStmt::Transition { call, .. } => {
+            scan_expr_for_lambdas(call, interner, builder, counter, infos);
+        }
         TypedStmt::For { iterable, body, .. } => {
             scan_expr_for_lambdas(iterable, interner, builder, counter, infos);
             for s in body {

@@ -134,6 +134,7 @@ fn walk_stmt(stmt: &TypedStmt, ids: &mut FxHashSet<DefId>) {
         TypedStmt::Return { value, .. } => {
             if let Some(v) = value { walk_expr(v, ids); }
         }
+        TypedStmt::Transition { call, .. } => walk_expr(call, ids),
         TypedStmt::Atomic { body, .. } => {
             for s in body { walk_stmt(s, ids); }
         }
@@ -335,6 +336,9 @@ fn walk_stmt_types(
             if let Some(value) = value {
                 walk_expr_types(value, interner, seen, types);
             }
+        }
+        TypedStmt::Transition { call, .. } => {
+            walk_expr_types(call, interner, seen, types);
         }
         TypedStmt::Atomic { body, .. } => {
             for stmt in body {

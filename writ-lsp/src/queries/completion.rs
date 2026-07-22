@@ -903,6 +903,7 @@ fn find_call_in_stmt(stmt: &TypedStmt, offset: usize) -> Option<&TypedExpr> {
         TypedStmt::Return { value, .. } => {
             value.as_ref().and_then(|v| find_call_in_expr(v, offset))
         }
+        TypedStmt::Transition { call, .. } => find_call_in_expr(call, offset),
         TypedStmt::Break { value, .. } => {
             value.as_ref().and_then(|v| find_call_in_expr(v, offset))
         }

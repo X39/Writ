@@ -3461,9 +3461,8 @@ fn test_two_string_literals_produce_different_pending_entries() {
 // ─── Plan 06, Task 1: TailCall and StrBuild emission ────────────────────────
 
 #[test]
-fn test_tail_call_return_call_emits_tail_call() {
-    // Return(Call(...)) -> TailCall instead of Call + Ret
-    // This is the key pattern for dialogue transitions.
+fn test_desugared_return_call_emits_call_then_ret() {
+    // TypedExpr::Return is used by desugaring and is never a dialogue transition.
     let mut interner = make_interner();
     let ty_int = interner.int();
     let builder = ModuleBuilder::new();
@@ -3494,16 +3493,47 @@ fn test_tail_call_return_call_emits_tail_call() {
         let instrs = &emitter.instructions;
         instrs.windows(2).any(|w| matches!(&w[0], Instruction::Call { .. }) && matches!(&w[1], Instruction::Ret { .. }))
     };
-    assert!(has_tail_call, "Return(Call(...)) should emit TailCall, got {:?}", emitter.instructions);
-    assert!(!has_call_then_ret, "Return(Call(...)) must NOT emit Call+Ret sequence, got {:?}", emitter.instructions);
+    assert!(!has_tail_call, "desugared return-call must not emit TailCall: {:?}", emitter.instructions);
+    assert!(has_call_then_ret, "desugared return-call should emit Call+Ret: {:?}", emitter.instructions);
 }
 
 #[test]
-fn test_tail_call_stmt_return_call_emits_tail_call() {
-    // TypedStmt::Return { value: Some(Call(...)) } -> TailCall (not Call + Ret)
+fn test_dialogue_transition_emits_tail_call() {
     let mut interner = make_interner();
     let ty_int = interner.int();
-    let builder = ModuleBuilder::new();
+    let (_, fn_def_id) = make_def_id();
+    let builder = make_builder_with_fn(fn_def_id);
+    let mut emitter = make_emitter(&builder, &interner);
+
+    let transition = TypedStmt::Transition {
+        span: dummy_span(),
+        call: TypedExpr::Call {
+            ty: ty_int,
+            span: dummy_span(),
+            callee: Box::new(TypedExpr::Var {
+                ty: ty_int,
+                span: dummy_span(),
+                name: "some_fn".to_string(),
+            }),
+            args: vec![],
+            callee_def_id: Some(fn_def_id),
+        },
+    };
+
+    emit_stmt(&mut emitter, &transition);
+    let expected_token = builder.token_for_def(fn_def_id).unwrap().0;
+    assert!(matches!(
+        emitter.instructions.as_slice(),
+        [Instruction::TailCall { method_idx, argc: 0, .. }] if *method_idx == expected_token
+    ), "dialogue transition should emit one valid TailCall: {:?}", emitter.instructions);
+}
+
+#[test]
+fn test_ordinary_return_call_emits_call_then_ret() {
+    let mut interner = make_interner();
+    let ty_int = interner.int();
+    let (_, fn_def_id) = make_def_id();
+    let builder = make_builder_with_fn(fn_def_id);
     let mut emitter = make_emitter(&builder, &interner);
 
     let return_stmt = TypedStmt::Return {
@@ -3517,13 +3547,19 @@ fn test_tail_call_stmt_return_call_emits_tail_call() {
                 name: "some_fn".to_string(),
             }),
             args: vec![],
-            callee_def_id: None,
+            callee_def_id: Some(fn_def_id),
         }),
     };
 
     emit_stmt(&mut emitter, &return_stmt);
-    let has_tail_call = emitter.instructions.iter().any(|i| matches!(i, Instruction::TailCall { .. }));
-    assert!(has_tail_call, "TypedStmt::Return(Call(...)) should emit TailCall, got {:?}", emitter.instructions);
+    assert!(!emitter.instructions.iter().any(|instruction| {
+        matches!(instruction, Instruction::TailCall { .. })
+    }));
+    assert!(matches!(
+        emitter.instructions.as_slice(),
+        [Instruction::Call { method_idx, argc: 0, .. }, Instruction::Ret { .. }]
+            if *method_idx == builder.token_for_def(fn_def_id).unwrap().0
+    ), "ordinary return-call should emit Call+Ret: {:?}", emitter.instructions);
 }
 
 #[test]

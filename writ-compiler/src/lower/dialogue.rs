@@ -821,15 +821,15 @@ fn lower_transition(
         })
         .collect();
 
-    AstStmt::Return {
-        value: Some(AstExpr::Call {
+    AstStmt::Transition {
+        call: AstExpr::Call {
             callee: Box::new(AstExpr::Ident {
                 name: trans.target.0.to_string(),
                 span: trans.target.1,
             }),
             args,
             span: trans_span,
-        }),
+        },
         span: trans_span,
     }
 }

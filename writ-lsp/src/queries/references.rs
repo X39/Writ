@@ -203,6 +203,9 @@ fn collect_refs_in_stmt(
                 collect_refs_in_expr(v, target_def_id, def_map, refs);
             }
         }
+        TypedStmt::Transition { call, .. } => {
+            collect_refs_in_expr(call, target_def_id, def_map, refs);
+        }
         TypedStmt::Break { value, .. } => {
             if let Some(v) = value {
                 collect_refs_in_expr(v, target_def_id, def_map, refs);
@@ -331,6 +334,7 @@ fn find_binding_in_stmt(stmt: &TypedStmt, offset: usize) -> Option<BindingInfo> 
         TypedStmt::Return { value, .. } | TypedStmt::Break { value, .. } => {
             value.as_ref().and_then(|v| find_binding_in_expr(v, offset))
         }
+        TypedStmt::Transition { call, .. } => find_binding_in_expr(call, offset),
         TypedStmt::Continue { .. } | TypedStmt::Error { .. } => None,
     }
 }
@@ -432,6 +436,7 @@ fn find_type_ann_in_stmt(stmt: &TypedStmt, offset: usize) -> Option<DefId> {
         TypedStmt::Return { value, .. } | TypedStmt::Break { value, .. } => {
             value.as_ref().and_then(|v| find_type_ann_in_expr(v, offset))
         }
+        TypedStmt::Transition { call, .. } => find_type_ann_in_expr(call, offset),
         TypedStmt::Continue { .. } | TypedStmt::Error { .. } => None,
     }
 }

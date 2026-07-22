@@ -10,7 +10,7 @@ use crate::lower::optional::lower_type;
 /// Calls `lower_expr` on all expression sub-nodes and `lower_type` on
 /// any type annotation sub-nodes.
 ///
-/// `Stmt::Transition` lowers to `AstStmt::Return` with the target as a `Call` expression.
+/// `Stmt::Transition` lowers to `AstStmt::Transition` with a checked call target.
 pub(crate) fn lower_stmt(spanned: Spanned<Stmt<'_>>, ctx: &mut LoweringContext) -> AstStmt {
     let (stmt, span) = spanned;
     match stmt {
@@ -68,8 +68,8 @@ pub(crate) fn lower_stmt(spanned: Spanned<Stmt<'_>>, ctx: &mut LoweringContext) 
             span,
         },
 
-        Stmt::Transition((trans, trans_span)) => AstStmt::Return {
-            value: Some(AstExpr::Call {
+        Stmt::Transition((trans, trans_span)) => AstStmt::Transition {
+            call: AstExpr::Call {
                 callee: Box::new(AstExpr::Ident {
                     name: trans.target.0.to_string(),
                     span: trans.target.1,
@@ -85,7 +85,7 @@ pub(crate) fn lower_stmt(spanned: Spanned<Stmt<'_>>, ctx: &mut LoweringContext) 
                     })
                     .collect(),
                 span: trans_span,
-            }),
+            },
             span,
         },
     }

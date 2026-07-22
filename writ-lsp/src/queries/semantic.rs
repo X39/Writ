@@ -270,6 +270,9 @@ fn collect_tokens_in_stmt(
                 collect_tokens_in_expr(v, interner, source, tokens);
             }
         }
+        TypedStmt::Transition { call, .. } => {
+            collect_tokens_in_expr(call, interner, source, tokens);
+        }
         TypedStmt::Break { value, .. } => {
             if let Some(v) = value {
                 collect_tokens_in_expr(v, interner, source, tokens);

@@ -202,12 +202,6 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
         // ── Return expression ──────────────────────────────────────────────────
         TypedExpr::Return { value, .. } => {
             if let Some(v) = value {
-                // EMIT-24: Tail-call optimization — Return(Call(...)) emits TailCall
-                // instead of Call + Ret. This is required for dialogue transitions
-                // which produce recursive state machine patterns.
-                if let TypedExpr::Call { callee, args, callee_def_id, .. } = v.as_ref() {
-                    return emit_tail_call(emitter, callee, args, *callee_def_id);
-                }
                 let r_src = emit_expr(emitter, v);
                 emitter.emit(Instruction::Ret { r_src });
             } else {
@@ -585,11 +579,10 @@ fn resolve_typeof_type_idx(emitter: &BodyEmitter<'_>, static_ty: Ty) -> u32 {
 
 // ─── Tail-call emission (EMIT-24) ────────────────────────────────────────────
 
-/// Emit a TailCall instruction for a Return(Call(...)) pattern.
+/// Emit a TailCall instruction for a terminal dialogue transition.
 ///
-/// Dialogue transitions are lowered to `Return(Call(...))` at the AST level.
-/// This function detects that pattern and emits TailCall instead of Call + Ret,
-/// which is required for correct stack frame management in recursive state machines.
+/// Transition intent is preserved as `TypedStmt::Transition`; ordinary return-call
+/// expressions use the normal Call + Ret path so defer ordering remains unchanged.
 pub(crate) fn emit_tail_call(
     emitter: &mut BodyEmitter<'_>,
     callee: &TypedExpr,

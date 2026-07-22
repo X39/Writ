@@ -308,6 +308,11 @@ pub enum TypedStmt {
         value: Option<TypedExpr>,
         span: SimpleSpan,
     },
+    /// Terminal dialogue transition preserved from source `->`.
+    Transition {
+        call: TypedExpr,
+        span: SimpleSpan,
+    },
     Atomic {
         body: Vec<TypedStmt>,
         span: SimpleSpan,
