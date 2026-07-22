@@ -83,6 +83,7 @@ impl UnifyKey for InferVar {
 pub struct TyInterner {
     kinds: Vec<TyKind>,
     map: FxHashMap<TyKind, Ty>,
+    infer_resolutions: FxHashMap<InferVar, Ty>,
 }
 
 impl Default for TyInterner {
@@ -96,6 +97,7 @@ impl TyInterner {
         let mut interner = Self {
             kinds: Vec::new(),
             map: FxHashMap::default(),
+            infer_resolutions: FxHashMap::default(),
         };
         // Pre-intern primitives so they always get consistent ids
         interner.intern(TyKind::Int);
@@ -121,6 +123,33 @@ impl TyInterner {
     /// Look up the `TyKind` for a `Ty`.
     pub fn kind(&self, ty: Ty) -> &TyKind {
         &self.kinds[ty.0 as usize]
+    }
+
+    /// Follow inference-variable bindings retained after type checking.
+    ///
+    /// Typed expressions keep their original interned handles, so contextual
+    /// inference (notably an annotated empty array) can otherwise be lost when
+    /// the unification table is dropped before code generation.
+    pub fn resolve_infer(&self, mut ty: Ty) -> Ty {
+        let mut remaining = self.kinds.len();
+        while let TyKind::Infer(var) = self.kind(ty) {
+            if remaining == 0 {
+                break;
+            }
+            remaining -= 1;
+            let Some(&resolved) = self.infer_resolutions.get(var) else {
+                break;
+            };
+            if resolved == ty {
+                break;
+            }
+            ty = resolved;
+        }
+        ty
+    }
+
+    pub(crate) fn record_infer_resolution(&mut self, var: InferVar, ty: Ty) {
+        self.infer_resolutions.insert(var, ty);
     }
 
     // Convenience constructors

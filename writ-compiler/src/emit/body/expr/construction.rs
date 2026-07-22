@@ -2,7 +2,7 @@
 //!
 //! Covers: Range<T>, array literals, struct/entity construction.
 
-use writ_module::instruction::Instruction;
+use writ_module::instruction::{ArrayDefaultKind, Instruction};
 
 use crate::check::ir::TypedExpr;
 use crate::check::ty::{Ty, TyKind};
@@ -76,11 +76,10 @@ pub(super) fn emit_range(
 /// Emit an array literal. Non-empty arrays use ARRAY_INIT; empty arrays use NEW_ARRAY.
 pub(super) fn emit_array_lit(emitter: &mut BodyEmitter<'_>, ty: Ty, elements: &[TypedExpr]) -> u16 {
     let r_dst = emitter.alloc_reg(ty);
+    let elem_type = array_default_kind(emitter, ty).operand();
 
     if elements.is_empty() {
-        // Empty array: NewArray { r_dst, elem_type: 0 }
-        // Element type token is 0 (deferred to Plan 04 full wiring)
-        emitter.emit(Instruction::NewArray { r_dst, elem_type: 0 });
+        emitter.emit(Instruction::NewArray { r_dst, elem_type });
         return r_dst;
     }
 
@@ -91,9 +90,38 @@ pub(super) fn emit_array_lit(emitter: &mut BodyEmitter<'_>, ty: Ty, elements: &[
     // BUG-06 fix: use pack_args_consecutive to avoid phantom MOVs when already consecutive
     let r_base = pack_args_consecutive(emitter, &elem_regs);
 
-    // elem_type token: 0 as placeholder (Plan 04 will wire real type sigs)
-    emitter.emit(Instruction::ArrayInit { r_dst, elem_type: 0, count, r_base });
+    emitter.emit(Instruction::ArrayInit { r_dst, elem_type, count, r_base });
     r_dst
+}
+
+fn array_default_kind(emitter: &BodyEmitter<'_>, array_ty: Ty) -> ArrayDefaultKind {
+    let array_ty = emitter.interner.resolve_infer(array_ty);
+    let TyKind::Array(elem_ty) = emitter.interner.kind(array_ty) else {
+        return ArrayDefaultKind::Unavailable;
+    };
+    let elem_ty = emitter.interner.resolve_infer(*elem_ty);
+    match emitter.interner.kind(elem_ty) {
+        TyKind::Int => ArrayDefaultKind::Int,
+        TyKind::Float => ArrayDefaultKind::Float,
+        TyKind::Bool => ArrayDefaultKind::Bool,
+        TyKind::String => ArrayDefaultKind::String,
+        TyKind::Class(_)
+        | TyKind::Entity(_)
+        | TyKind::AnyEntity
+        | TyKind::Enum(_)
+        | TyKind::Contract(_)
+        | TyKind::Array(_)
+        | TyKind::Func { .. }
+        | TyKind::Option(_)
+        | TyKind::Result(_, _)
+        | TyKind::TaskHandle(_)
+        | TyKind::ReflectionType(_) => ArrayDefaultKind::NullReference,
+        TyKind::Void
+        | TyKind::Struct(_)
+        | TyKind::GenericParam(_)
+        | TyKind::Infer(_)
+        | TyKind::Error => ArrayDefaultKind::Unavailable,
+    }
 }
 
 /// Emit a struct or entity construction sequence.

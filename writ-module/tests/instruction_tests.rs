@@ -1,6 +1,7 @@
 use std::io::Cursor;
 use writ_module::Instruction;
 use writ_module::error::DecodeError;
+use writ_module::instruction::ArrayDefaultKind;
 
 /// Encode an instruction to bytes, then decode it back, and assert equality.
 fn round_trip(instr: &Instruction) -> Instruction {
@@ -151,12 +152,29 @@ fn test_array_store_round_trip() {
 
 #[test]
 fn test_new_array_sized_round_trip() {
-    round_trip(&Instruction::NewArraySized { r_dst: 0, elem_type: 0x04_000001, r_len: 5 });
+    round_trip(&Instruction::NewArraySized { r_dst: 0, elem_type: ArrayDefaultKind::Float.operand(), r_len: 5 });
 }
 
 #[test]
 fn test_new_array_filled_round_trip() {
-    round_trip(&Instruction::NewArrayFilled { r_dst: 0, elem_type: 0x04_000001, r_len: 5, r_fill: 3 });
+    round_trip(&Instruction::NewArrayFilled { r_dst: 0, elem_type: ArrayDefaultKind::String.operand(), r_len: 5, r_fill: 3 });
+}
+
+#[test]
+fn test_array_default_kind_operands_round_trip() {
+    let kinds = [
+        ArrayDefaultKind::Int,
+        ArrayDefaultKind::Float,
+        ArrayDefaultKind::Bool,
+        ArrayDefaultKind::String,
+        ArrayDefaultKind::NullReference,
+        ArrayDefaultKind::Unavailable,
+    ];
+    for kind in kinds {
+        round_trip(&Instruction::NewArray { r_dst: 7, elem_type: kind.operand() });
+        assert_eq!(ArrayDefaultKind::from_operand(kind.operand()), Some(kind));
+    }
+    assert_eq!(ArrayDefaultKind::from_operand(5), None);
 }
 
 // ── Shape RI32 ─────────────────────────────────────────────────
@@ -313,7 +331,7 @@ fn test_get_component_round_trip() {
 
 #[test]
 fn test_array_init_round_trip() {
-    round_trip(&Instruction::ArrayInit { r_dst: 0, elem_type: 0x04_000001, count: 5, r_base: 1 });
+    round_trip(&Instruction::ArrayInit { r_dst: 0, elem_type: ArrayDefaultKind::Bool.operand(), count: 5, r_base: 1 });
 }
 
 #[test]
@@ -415,16 +433,16 @@ fn test_all_91_opcodes_round_trip() {
         Instruction::DestroyEntity { r_entity: 0 },
         Instruction::EntityIsAlive { r_dst: 0, r_entity: 1 },
         // 0x09 Arrays (10)
-        Instruction::NewArray { r_dst: 0, elem_type: 100 },
-        Instruction::ArrayInit { r_dst: 0, elem_type: 200, count: 5, r_base: 1 },
+        Instruction::NewArray { r_dst: 0, elem_type: ArrayDefaultKind::Int.operand() },
+        Instruction::ArrayInit { r_dst: 0, elem_type: ArrayDefaultKind::Unavailable.operand(), count: 5, r_base: 1 },
         Instruction::ArrayLoad { r_dst: 0, r_arr: 1, r_idx: 2 },
         Instruction::ArrayStore { r_arr: 0, r_idx: 1, r_val: 2 },
         Instruction::ArrayLen { r_dst: 0, r_arr: 1 },
         Instruction::ArrayResize { r_arr: 0, r_new_len: 1 },
         Instruction::ArrayCopy { r_dst_arr: 0, r_dst_idx: 1, r_src_arr: 2, r_src_idx: 3, r_len: 4 },
         Instruction::ArraySlice { r_dst: 0, r_arr: 1, r_start: 2, r_end: 3 },
-        Instruction::NewArraySized { r_dst: 0, elem_type: 100, r_len: 5 },
-        Instruction::NewArrayFilled { r_dst: 0, elem_type: 100, r_len: 5, r_fill: 3 },
+        Instruction::NewArraySized { r_dst: 0, elem_type: ArrayDefaultKind::Float.operand(), r_len: 5 },
+        Instruction::NewArrayFilled { r_dst: 0, elem_type: ArrayDefaultKind::String.operand(), r_len: 5, r_fill: 3 },
         // 0x0A Option (4)
         Instruction::WrapSome { r_dst: 0, r_val: 1 },
         Instruction::Unwrap { r_dst: 0, r_opt: 1 },

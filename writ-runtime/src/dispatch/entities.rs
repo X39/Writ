@@ -1,6 +1,7 @@
 use crate::entity::EntityState;
 use crate::host::{HostRequest, HostResponse, LogLevel, RequestId};
 use crate::value::Value;
+use writ_module::instruction::ArrayDefaultKind;
 
 use super::{helpers, ExecContext, ExecutionResult};
 
@@ -180,7 +181,7 @@ pub(super) fn exec_get_or_create(
 
 pub(super) fn exec_find_all(ctx: &mut ExecContext<'_>, r_dst: u16, _type_idx: u32) -> ExecutionResult {
     // FindAll returns an array of entities — stub with empty array
-    let href = ctx.heap.alloc_array(0);
+    let href = ctx.heap.alloc_array(ArrayDefaultKind::NullReference.operand());
     let frame = ctx.task.call_stack.last_mut().unwrap();
     frame.registers[r_dst as usize] = Value::Ref(href);
     ExecutionResult::Continue

@@ -29,7 +29,7 @@ pub(super) fn check_new_construction(
     }
 
     // Get the DefId and expected fields
-    let (def_id, expected_fields) = match ctx.interner.kind(resolved_ty).clone() {
+    let (def_id, mut expected_fields) = match ctx.interner.kind(resolved_ty).clone() {
         TyKind::Struct(did) => {
             let fields = ctx.type_env.struct_fields.get(&did).cloned().unwrap_or_default();
             (did, fields)
@@ -58,6 +58,37 @@ pub(super) fn check_new_construction(
             };
         }
     };
+
+    // Named generic types are currently represented by their base DefId in TyKind,
+    // but their fields still contain GenericParam ordinals. Substitute the concrete
+    // constructor arguments so contextual expressions such as `items: []` retain
+    // the actual element category (`List<float>` must not become an int array).
+    if let AstType::Generic { args, .. } = ast_ty {
+        let empty_generic_map = rustc_hash::FxHashMap::default();
+        let type_args: Vec<_> = args
+            .iter()
+            .enumerate()
+            .map(|(ordinal, arg)| {
+                let resolved = super::super::env::resolve_ast_type_with_file(
+                    arg,
+                    ctx.def_map,
+                    &mut ctx.interner,
+                    &empty_generic_map,
+                    ctx.current_file,
+                );
+                if ctx.is_error(resolved) {
+                    // An argument from an enclosing generic scope remains erased here.
+                    // Preserve that fact instead of pretending it has a concrete default.
+                    ctx.interner.intern(TyKind::GenericParam(ordinal as u32))
+                } else {
+                    resolved
+                }
+            })
+            .collect();
+        for (_, field_ty, _) in &mut expected_fields {
+            *field_ty = super::super::infer::substitute(*field_ty, &type_args, &mut ctx.interner);
+        }
+    }
 
     // Emit W0006 if the constructed type is deprecated and defined in a different file.
     if let Some(msg) = ctx.type_env.deprecated_items.get(&def_id) {

@@ -7,6 +7,7 @@
 
 use rustc_hash::FxHashMap;
 use writ_module::heap::read_string;
+use writ_module::instruction::ArrayDefaultKind;
 
 use crate::gc::GcHeap;
 use crate::heap::HeapObject;
@@ -134,7 +135,7 @@ impl ReflectionIndex {
             let _ = heap.set_field(href, 3, Value::Bool(is_generic));
 
             // Field 4: type_args (Array<Type>) — empty for non-TypeSpec types
-            let empty_arr = heap.alloc_array(0);
+            let empty_arr = heap.alloc_array(ArrayDefaultKind::NullReference.operand());
             let _ = heap.set_field(href, 4, Value::Ref(empty_arr));
         }
 
@@ -184,7 +185,7 @@ impl ReflectionIndex {
         let _ = heap.set_field(href, 3, Value::Bool(false));
 
         // Field 4: type_args (Array<Type>) — empty for primitives
-        let empty_arr = heap.alloc_array(0);
+        let empty_arr = heap.alloc_array(ArrayDefaultKind::NullReference.operand());
         let _ = heap.set_field(href, 4, Value::Ref(empty_arr));
 
         self.type_cache.insert(key, href);
@@ -342,7 +343,7 @@ impl ReflectionIndex {
             let _ = heap.set_field(href, 1, Value::Void);
 
             // Field 2 (parameters): empty Array (full param population in Phase 106)
-            let arr_href = heap.alloc_array(0); // elem_type=0 (void/untyped)
+            let arr_href = heap.alloc_array(ArrayDefaultKind::NullReference.operand());
             let _ = heap.set_field(href, 2, Value::Ref(arr_href));
         }
 
@@ -399,7 +400,7 @@ impl ReflectionIndex {
         let _ = heap.set_field(href, 0, Value::Ref(name_href));
 
         // Field 1 (args): Array of boxed AttrValues
-        let arr_href = heap.alloc_array(0);
+        let arr_href = heap.alloc_array(ArrayDefaultKind::NullReference.operand());
         for arg in args {
             let boxed = match arg {
                 writ_module::attr::AttrValue::String(s) => {
@@ -550,7 +551,7 @@ impl ReflectionIndex {
         let _ = heap.set_field(href, 3, Value::Bool(true));
 
         // Field 4: type_args array
-        let arr_href = heap.alloc_array(0);
+        let arr_href = heap.alloc_array(ArrayDefaultKind::NullReference.operand());
         if let Ok(HeapObject::Array { elements, .. }) = heap.get_object_mut(arr_href) {
             for v in type_arg_hrefs {
                 elements.push(v);

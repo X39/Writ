@@ -52,7 +52,8 @@ impl<T> List<T> {
     }
 
     pub fn map(self, f: fn(T) -> T) -> List<T> {
-        let result: List<T> = new List<T> { items: [] };
+        // Preserve the source array's runtime element category through erasure.
+        let result: List<T> = new List<T> { items: self.items.slice(0, 0) };
         let mut i: int = 0;
         while i < self.items.len() {
             result.add(f(self.items[i]));
@@ -62,7 +63,8 @@ impl<T> List<T> {
     }
 
     pub fn filter(self, f: fn(T) -> bool) -> List<T> {
-        let result: List<T> = new List<T> { items: [] };
+        // Preserve the source array's runtime element category through erasure.
+        let result: List<T> = new List<T> { items: self.items.slice(0, 0) };
         let mut i: int = 0;
         while i < self.items.len() {
             if f(self.items[i]) {

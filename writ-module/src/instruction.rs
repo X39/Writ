@@ -3,6 +3,42 @@ use std::io::{Read, Write};
 
 use crate::error::{DecodeError, EncodeError};
 
+/// Runtime default category carried by array-construction instructions.
+///
+/// The encoded `u32` operand is intentionally a compact value category rather
+/// than a metadata token: array growth only needs to know which runtime value
+/// represents the element type's default. `Unavailable` is used for erased or
+/// unsupported element types and must never be replaced with an arbitrary
+/// default by the VM.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ArrayDefaultKind {
+    Int = 0,
+    Float = 1,
+    Bool = 2,
+    String = 3,
+    NullReference = 4,
+    Unavailable = u32::MAX,
+}
+
+impl ArrayDefaultKind {
+    pub const fn operand(self) -> u32 {
+        self as u32
+    }
+
+    pub const fn from_operand(operand: u32) -> Option<Self> {
+        match operand {
+            0 => Some(Self::Int),
+            1 => Some(Self::Float),
+            2 => Some(Self::Bool),
+            3 => Some(Self::String),
+            4 => Some(Self::NullReference),
+            u32::MAX => Some(Self::Unavailable),
+            _ => None,
+        }
+    }
+}
+
 /// All 93 IL opcodes, grouped by category.
 ///
 /// Operand field names match the spec. Shape comments reference section 4.1.
@@ -135,9 +171,10 @@ pub enum Instruction {
     EntityIsAlive { r_dst: u16, r_entity: u16 },
 
     // ── 0x09 Arrays ────────────────────────────────────────────
-    /// 0x0900 — Shape RI32 (8B)
+    /// 0x0900 — Shape RI32 (8B); `elem_type` is an [`ArrayDefaultKind`] operand.
     NewArray { r_dst: u16, elem_type: u32 },
-    /// 0x0901 — var (12B): u16(op) u16(r_dst) u32(elem_type) u16(count) u16(r_base)
+    /// 0x0901 — var (12B): u16(op) u16(r_dst) u32(elem_type) u16(count) u16(r_base).
+    /// `elem_type` is an [`ArrayDefaultKind`] operand.
     ArrayInit { r_dst: u16, elem_type: u32, count: u16, r_base: u16 },
     /// 0x0902 — Shape RRR (8B)
     ArrayLoad { r_dst: u16, r_arr: u16, r_idx: u16 },
@@ -151,9 +188,11 @@ pub enum Instruction {
     ArrayCopy { r_dst_arr: u16, r_dst_idx: u16, r_src_arr: u16, r_src_idx: u16, r_len: u16 },
     /// 0x0907 — var (10B): u16(op) u16(r_dst) u16(r_arr) u16(r_start) u16(r_end)
     ArraySlice { r_dst: u16, r_arr: u16, r_start: u16, r_end: u16 },
-    /// 0x0908 — var (10B): u16(op) u16(r_dst) u32(elem_type) u16(r_len)
+    /// 0x0908 — var (10B): u16(op) u16(r_dst) u32(elem_type) u16(r_len).
+    /// `elem_type` is an [`ArrayDefaultKind`] operand.
     NewArraySized { r_dst: u16, elem_type: u32, r_len: u16 },
-    /// 0x0909 — var (12B): u16(op) u16(r_dst) u32(elem_type) u16(r_len) u16(r_fill)
+    /// 0x0909 — var (12B): u16(op) u16(r_dst) u32(elem_type) u16(r_len) u16(r_fill).
+    /// `elem_type` is an [`ArrayDefaultKind`] operand.
     NewArrayFilled { r_dst: u16, elem_type: u32, r_len: u16, r_fill: u16 },
 
     // ── 0x0A Type Operations ───────────────────────────────────

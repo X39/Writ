@@ -1,4 +1,5 @@
 use crate::value::Value;
+use writ_module::instruction::ArrayDefaultKind;
 
 use super::{helpers, ExecContext, ExecutionResult};
 
@@ -653,8 +654,7 @@ pub(super) fn exec_str_split(
         let href = ctx.heap.alloc_string(part);
         part_hrefs.push(Value::Ref(href));
     }
-    // Allocate array with elem_type = 0x04 (string)
-    let arr_href = ctx.heap.alloc_array(0x04);
+    let arr_href = ctx.heap.alloc_array(ArrayDefaultKind::String.operand());
     if let Ok(crate::heap::HeapObject::Array { elements, .. }) = ctx.heap.get_object_mut(arr_href) {
         *elements = part_hrefs;
     }

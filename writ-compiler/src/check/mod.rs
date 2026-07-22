@@ -105,7 +105,9 @@ pub fn typecheck(
             })
             .collect();
 
-    // 6. Collect diagnostics and extract interner
+    // 6. Retain contextual inference results needed by code generation, then
+    //    collect diagnostics and extract the interner.
+    ctx.unify.record_resolutions(&mut ctx.interner);
     all_diags.append(&mut ctx.diags);
     let interner = std::mem::take(&mut ctx.interner);
 

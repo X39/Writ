@@ -1,6 +1,7 @@
 use crate::heap::HeapObject;
 use crate::reflection::ReflectionIndex;
 use crate::value::Value;
+use writ_module::instruction::ArrayDefaultKind;
 
 use super::{helpers, ExecContext, ExecutionResult, IntrinsicId};
 
@@ -431,7 +432,7 @@ pub(super) fn execute_intrinsic(
             let (field_start, field_end) = crate::reflection::ReflectionIndex::typedef_field_range_pub(
                 ctx.modules, module_idx, typedef_idx
             );
-            let arr_href = ctx.heap.alloc_array(0);
+            let arr_href = ctx.heap.alloc_array(ArrayDefaultKind::NullReference.operand());
             for offset in 0..(field_end.saturating_sub(field_start)) {
                 let fi = ctx.reflection.get_or_alloc_field_info(
                     module_idx, typedef_idx, offset, ctx.heap, ctx.modules
@@ -456,7 +457,7 @@ pub(super) fn execute_intrinsic(
             let method_indices = crate::reflection::ReflectionIndex::typedef_method_indices_pub(
                 ctx.modules, module_idx, typedef_idx
             );
-            let arr_href = ctx.heap.alloc_array(0);
+            let arr_href = ctx.heap.alloc_array(ArrayDefaultKind::NullReference.operand());
             for method_idx in method_indices {
                 let mi = ctx.reflection.get_or_alloc_method_info(
                     module_idx, method_idx, ctx.heap, ctx.modules
@@ -505,7 +506,7 @@ pub(super) fn execute_intrinsic(
                 }
             }
 
-            let arr_href = ctx.heap.alloc_array(0);
+            let arr_href = ctx.heap.alloc_array(ArrayDefaultKind::NullReference.operand());
             for (ordinal, (name, args)) in attr_data.iter().enumerate() {
                 let ai = ctx.reflection.get_or_alloc_attribute_info(
                     name, args, ordinal, module_idx, typedef_idx, ctx.heap
@@ -548,7 +549,7 @@ pub(super) fn execute_intrinsic(
                 }
             }
 
-            let arr_href = ctx.heap.alloc_array(0);
+            let arr_href = ctx.heap.alloc_array(ArrayDefaultKind::NullReference.operand());
             for contract_idx in impl_contract_idxs {
                 let ci = ctx.reflection.get_or_alloc_contract_info(
                     module_idx, contract_idx, ctx.heap, ctx.modules
@@ -915,7 +916,7 @@ pub(super) fn execute_intrinsic(
                     attr_data.push((name, args));
                 }
             }
-            let arr_href = ctx.heap.alloc_array(0);
+            let arr_href = ctx.heap.alloc_array(ArrayDefaultKind::NullReference.operand());
             for (ordinal, (name, args)) in attr_data.iter().enumerate() {
                 let ai = ctx.reflection.get_or_alloc_method_attribute_info(
                     name, args, ordinal, method_module_idx, method_idx, ctx.heap
@@ -963,7 +964,7 @@ pub(super) fn execute_intrinsic(
                     attr_data.push((name, args));
                 }
             }
-            let arr_href = ctx.heap.alloc_array(0);
+            let arr_href = ctx.heap.alloc_array(ArrayDefaultKind::NullReference.operand());
             for (ordinal, (name, args)) in attr_data.iter().enumerate() {
                 let ai = ctx.reflection.get_or_alloc_field_attribute_info(
                     name, args, ordinal, module_idx, abs_field_idx, ctx.heap

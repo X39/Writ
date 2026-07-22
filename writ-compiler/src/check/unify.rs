@@ -14,6 +14,7 @@ pub struct UnifyError {
 /// Unification context wrapping an ena `InPlaceUnificationTable`.
 pub struct UnifyCtx {
     table: InPlaceUnificationTable<InferVar>,
+    vars: Vec<InferVar>,
 }
 
 impl Default for UnifyCtx {
@@ -26,12 +27,15 @@ impl UnifyCtx {
     pub fn new() -> Self {
         Self {
             table: InPlaceUnificationTable::new(),
+            vars: Vec::new(),
         }
     }
 
     /// Create a fresh inference variable.
     pub fn new_var(&mut self) -> InferVar {
-        self.table.new_key(InferValue(None))
+        let var = self.table.new_key(InferValue(None));
+        self.vars.push(var);
+        var
     }
 
     /// Resolve an inference variable to its value (if any).
@@ -50,6 +54,15 @@ impl UnifyCtx {
                 }
             }
             _ => ty,
+        }
+    }
+
+    /// Persist resolved inference bindings in the interner for code generation.
+    pub fn record_resolutions(&mut self, interner: &mut TyInterner) {
+        for var in self.vars.clone() {
+            if let Some(ty) = self.resolve(var) {
+                interner.record_infer_resolution(var, ty);
+            }
         }
     }
 
