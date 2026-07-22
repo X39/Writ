@@ -10,14 +10,14 @@
             TYPEOF r1, 33554433
             RET r1
         }
-        .method "main" () -> void mut {
-            .locals {
-                r0: Guard "g" [8, 10)
-            }
-            .reg r0 Guard
-            GET_OR_CREATE r0, 33554433  ; line:7 col:5
-            RET_VOID
+    }
+    .method "main" () -> void mut {
+        .locals {
+            r0: Guard "g" [8, 10)
         }
+        .reg r0 Guard
+        GET_OR_CREATE r0, 33554433  ; line:7 col:5
+        RET_VOID
     }
     .attribute 33554433 0 "Singleton"
 }

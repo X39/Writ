@@ -4,7 +4,7 @@
     .method "greet" () -> void pub mut {
         .reg r0 void
         .reg r1 string
-        LOAD_STRING r1, 179  ; line:7 col:5
+        LOAD_STRING r1, 2477  ; line:7 col:5
         CALL_EXTERN r0, 268435457, r1, 1
         RET_VOID
     }

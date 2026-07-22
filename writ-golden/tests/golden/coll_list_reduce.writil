@@ -1,34 +1,41 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
     .type "List" class pub {
-        .field "items" array<?>
+        .field "items" array<T0>
     }
     .type "__closure_0" class {
+        .method "__invoke_0" (acc: int, x: int) -> int mut {
+            .reg r0 int
+            .reg r1 int
+            .reg r2 int
+            ADD_I r2, r0, r1  ; line:32 col:66
+            RET r2
+        }
     }
     .impl List : contract_167772179 {
-    }
-    .impl List : ? {
         .method "get_type" () -> Type pub {
             .reg r0 int
             .reg r1 int
             TYPEOF r1, 33554433
             RET r1
         }
-        .method "add" (item: ?) -> void pub static {
+    }
+    .impl List : ? {
+        .method "add" (item: T0) -> void pub static {
             .locals {
-                r0: ? "self" [0, 72)
-                r1: ? "item" [0, 72)
+                r0: List<T0> "self" [0, 72)
+                r1: T0 "item" [0, 72)
                 r3: int "old_len" [16, 72)
             }
-            .reg r0 int
-            .reg r1 int
-            .reg r2 array<?>
+            .reg r0 List<T0>
+            .reg r1 T0
+            .reg r2 array<T0>
             .reg r3 int
-            .reg r4 array<?>
+            .reg r4 array<T0>
             .reg r5 int
             .reg r6 int
             .reg r7 void
-            .reg r8 array<?>
+            .reg r8 array<T0>
             GET_FIELD r2, r0, 0  ; line:7 col:9
             ARRAY_LEN r3, r2
             GET_FIELD r4, r0, 0  ; line:8 col:9
@@ -41,34 +48,34 @@
         }
         .method "len" () -> int pub {
             .locals {
-                r0: ? "self" [0, 20)
+                r0: List<T0> "self" [0, 20)
             }
-            .reg r0 int
-            .reg r1 array<?>
+            .reg r0 List<T0>
+            .reg r1 array<T0>
             .reg r2 int
             GET_FIELD r1, r0, 0  ; line:13 col:9
             ARRAY_LEN r2, r1
             RET r2
         }
-        .method "reduce" (initial: ?) -> void pub {
+        .method "reduce" (initial: T0, f: fn(T0, T0) -> T0) -> T0 pub {
             .locals {
-                r0: ? "self" [0, 128)
-                r1: ? "initial" [0, 128)
-                r2: ? "f" [0, 128)
+                r0: List<T0> "self" [0, 128)
+                r1: T0 "initial" [0, 128)
+                r2: fn(T0, T0) -> T0 "f" [0, 128)
                 r3: int "i" [12, 128)
             }
-            .reg r0 int
-            .reg r1 int
-            .reg r2 int
+            .reg r0 List<T0>
+            .reg r1 T0
+            .reg r2 fn(T0, T0) -> T0
             .reg r3 int
-            .reg r4 array<?>
+            .reg r4 array<T0>
             .reg r5 int
             .reg r6 bool
-            .reg r7 ?
-            .reg r8 array<?>
-            .reg r9 ?
-            .reg r10 int
-            .reg r11 ?
+            .reg r7 T0
+            .reg r8 array<T0>
+            .reg r9 T0
+            .reg r10 T0
+            .reg r11 T0
             .reg r12 int
             .reg r13 int
             LOAD_INT r3, 0  ; line:18 col:9
@@ -88,63 +95,56 @@
             BR -104
             RET r1  ; line:23 col:9
         }
-        .method "__invoke_0" () -> void {
-            .reg r0 int
-            .reg r1 int
-            .reg r2 int
-            ADD_I r2, r0, r1  ; line:32 col:66
-            RET r2
+    }
+    .method "main" () -> void mut {
+        .locals {
+            r0: List<int> "list" [26, 192)
+            r14: int "_sum" [190, 192)
         }
-        .method "main" () -> void mut {
-            .locals {
-                r0: List "list" [26, 192)
-                r14: ? "_sum" [190, 192)
-            }
-            .reg r0 List
-            .reg r1 array<void>
-            .reg r2 void
-            .reg r3 int
-            .reg r4 List
-            .reg r5 int
-            .reg r6 void
-            .reg r7 int
-            .reg r8 List
-            .reg r9 int
-            .reg r10 void
-            .reg r11 int
-            .reg r12 List
-            .reg r13 int
-            .reg r14 ?
-            .reg r15 int
-            .reg r16 ?
-            .reg r17 void
-            .reg r18 List
-            .reg r19 int
-            .reg r20 ?
-            NEW r0, 33554433  ; line:28 col:5
-            NEW_ARRAY r1, 0
-            SET_FIELD r0, 0, r1
-            LOAD_INT r3, 1  ; line:29 col:5
-            MOV r4, r0
-            MOV r5, r3
-            CALL r2, 117440514, r4, 2
-            LOAD_INT r7, 2  ; line:30 col:5
-            MOV r8, r0
-            MOV r9, r7
-            CALL r6, 117440514, r8, 2
-            LOAD_INT r11, 3  ; line:31 col:5
-            MOV r12, r0
-            MOV r13, r11
-            CALL r10, 117440514, r12, 2
-            LOAD_INT r15, 0  ; line:32 col:5
-            LOAD_NULL r17
-            NEW_DELEGATE r16, 117440517, r17
-            MOV r18, r0
-            MOV r19, r15
-            MOV r20, r16
-            CALL r14, 117440516, r18, 3
-            RET_VOID
-        }
+        .reg r0 List<int>
+        .reg r1 array<int>
+        .reg r2 void
+        .reg r3 int
+        .reg r4 List<int>
+        .reg r5 int
+        .reg r6 void
+        .reg r7 int
+        .reg r8 List<int>
+        .reg r9 int
+        .reg r10 void
+        .reg r11 int
+        .reg r12 List<int>
+        .reg r13 int
+        .reg r14 int
+        .reg r15 int
+        .reg r16 fn(int, int) -> int
+        .reg r17 void
+        .reg r18 List<int>
+        .reg r19 int
+        .reg r20 fn(int, int) -> int
+        NEW r0, 67108866  ; line:28 col:5
+        NEW_ARRAY r1, 0
+        SET_FIELD r0, 0, r1
+        LOAD_INT r3, 1  ; line:29 col:5
+        MOV r4, r0
+        MOV r5, r3
+        CALL r2, 117440514, r4, 2
+        LOAD_INT r7, 2  ; line:30 col:5
+        MOV r8, r0
+        MOV r9, r7
+        CALL r6, 117440514, r8, 2
+        LOAD_INT r11, 3  ; line:31 col:5
+        MOV r12, r0
+        MOV r13, r11
+        CALL r10, 117440514, r12, 2
+        LOAD_INT r15, 0  ; line:32 col:5
+        LOAD_NULL r17
+        NEW_DELEGATE r16, 117440518, r17
+        MOV r18, r0
+        MOV r19, r15
+        MOV r20, r16
+        CALL r14, 117440516, r18, 3
+        RET_VOID
     }
     .export "List" type 33554433
 }

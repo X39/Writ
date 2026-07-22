@@ -28,7 +28,7 @@
         .reg r3 string
         LOAD_INT r1, 42  ; line:10 col:5
         CALL r0, 117440513, r1, 1
-        LOAD_STRING r3, 169  ; line:11 col:5
+        LOAD_STRING r3, 2485  ; line:11 col:5
         CALL r2, 117440514, r3, 1
         RET_VOID
     }

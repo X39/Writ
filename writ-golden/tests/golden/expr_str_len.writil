@@ -6,7 +6,7 @@
         }
         .reg r0 string
         .reg r1 int
-        LOAD_STRING r0, 139  ; line:6 col:5
+        LOAD_STRING r0, 2455  ; line:6 col:5
         STR_LEN r1, r0  ; line:7 col:5
         RET r1
     }

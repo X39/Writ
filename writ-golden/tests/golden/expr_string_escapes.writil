@@ -19,14 +19,14 @@
         .reg r5 string
         .reg r6 string
         .reg r7 string
-        LOAD_STRING r0, 139  ; line:2 col:5
-        LOAD_STRING r1, 148  ; line:3 col:5
-        LOAD_STRING r2, 164  ; line:4 col:5
-        LOAD_STRING r3, 179  ; line:5 col:5
-        LOAD_STRING r4, 192  ; line:6 col:5
-        LOAD_STRING r5, 206  ; line:7 col:5
-        LOAD_STRING r6, 219  ; line:8 col:5
-        LOAD_STRING r7, 230  ; line:9 col:5
+        LOAD_STRING r0, 2455  ; line:2 col:5
+        LOAD_STRING r1, 2464  ; line:3 col:5
+        LOAD_STRING r2, 2480  ; line:4 col:5
+        LOAD_STRING r3, 2495  ; line:5 col:5
+        LOAD_STRING r4, 2508  ; line:6 col:5
+        LOAD_STRING r5, 2522  ; line:7 col:5
+        LOAD_STRING r6, 2535  ; line:8 col:5
+        LOAD_STRING r7, 2546  ; line:9 col:5
         RET_VOID
     }
 }

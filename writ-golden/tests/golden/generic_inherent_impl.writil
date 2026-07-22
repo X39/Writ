@@ -1,47 +1,47 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
     .type "Box" class pub {
-        .field "value" ?
+        .field "value" T0
     }
     .impl Box : contract_167772179 {
-    }
-    .impl Box : ? {
         .method "get_type" () -> Type pub {
             .reg r0 int
             .reg r1 int
             TYPEOF r1, 33554433
             RET r1
         }
-        .method "get" () -> ? pub {
+    }
+    .impl Box : ? {
+        .method "get" () -> T0 pub {
             .locals {
-                r0: ? "self" [0, 14)
+                r0: Box<T0> "self" [0, 14)
             }
-            .reg r0 int
-            .reg r1 ?
+            .reg r0 Box<T0>
+            .reg r1 T0
             GET_FIELD r1, r0, 0  ; line:7 col:9
             RET r1
         }
-        .method "set" (v: ?) -> void pub static {
+        .method "set" (v: T0) -> void pub static {
             .locals {
-                r0: ? "self" [0, 12)
-                r1: ? "v" [0, 12)
+                r0: Box<T0> "self" [0, 12)
+                r1: T0 "v" [0, 12)
             }
-            .reg r0 int
-            .reg r1 int
+            .reg r0 Box<T0>
+            .reg r1 T0
             SET_FIELD r0, 0, r1  ; line:11 col:9
             RET_VOID
         }
-        .method "main" () -> void mut {
-            .locals {
-                r0: Box "b" [30, 32)
-            }
-            .reg r0 Box
-            .reg r1 int
-            NEW r0, 33554433  ; line:16 col:5
-            LOAD_INT r1, 42
-            SET_FIELD r0, 0, r1
-            RET_VOID
+    }
+    .method "main" () -> void mut {
+        .locals {
+            r0: Box<int> "b" [30, 32)
         }
+        .reg r0 Box<int>
+        .reg r1 int
+        NEW r0, 67108866  ; line:16 col:5
+        LOAD_INT r1, 42
+        SET_FIELD r0, 0, r1
+        RET_VOID
     }
     .export "Box" type 33554433
 }

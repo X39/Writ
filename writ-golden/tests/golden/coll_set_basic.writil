@@ -1,34 +1,34 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
     .type "Set" class pub {
-        .field "items" array<?>
+        .field "items" array<T0>
     }
     .impl Set : contract_167772179 {
-    }
-    .impl Set : ? {
         .method "get_type" () -> Type pub {
             .reg r0 int
             .reg r1 int
             TYPEOF r1, 33554433
             RET r1
         }
-        .method "add" (item: ?) -> void pub static {
+    }
+    .impl Set : ? {
+        .method "add" (item: T0) -> void pub static {
             .locals {
-                r0: ? "self" [0, 110)
-                r1: ? "item" [0, 110)
+                r0: Set<T0> "self" [0, 110)
+                r1: T0 "item" [0, 110)
                 r5: int "old_len" [54, 110)
             }
-            .reg r0 int
-            .reg r1 int
+            .reg r0 Set<T0>
+            .reg r1 T0
             .reg r2 bool
             .reg r3 void
-            .reg r4 array<?>
+            .reg r4 array<T0>
             .reg r5 int
-            .reg r6 array<?>
+            .reg r6 array<T0>
             .reg r7 int
             .reg r8 int
             .reg r9 void
-            .reg r10 array<?>
+            .reg r10 array<T0>
             CALL r2, 117440516, r0, 2  ; line:7 col:9
             BR_FALSE r2, 24
             RET_VOID  ; line:7 col:29
@@ -45,187 +45,195 @@
             ARRAY_STORE r10, r5, r1
             RET_VOID
         }
-        .method "remove" (item: ?) -> void pub static {
+        .method "remove" (item: T0) -> void pub static {
             .locals {
-                r0: ? "self" [0, 310)
-                r1: ? "item" [0, 310)
-                r2: int "i" [12, 310)
-                r11: int "old_len" [94, 310)
+                r0: Set<T0> "self" [0, 330)
+                r1: T0 "item" [0, 330)
+                r2: int "i" [12, 330)
+                r13: int "old_len" [114, 330)
             }
-            .reg r0 int
-            .reg r1 int
+            .reg r0 Set<T0>
+            .reg r1 T0
             .reg r2 int
-            .reg r3 array<?>
+            .reg r3 array<T0>
             .reg r4 int
             .reg r5 bool
-            .reg r6 array<?>
-            .reg r7 ?
+            .reg r6 array<T0>
+            .reg r7 T0
             .reg r8 bool
-            .reg r9 void
-            .reg r10 array<?>
-            .reg r11 int
-            .reg r12 int
+            .reg r9 T0
+            .reg r10 T0
+            .reg r11 void
+            .reg r12 array<T0>
             .reg r13 int
-            .reg r14 bool
-            .reg r15 array<?>
-            .reg r16 int
-            .reg r17 int
-            .reg r18 ?
-            .reg r19 array<?>
-            .reg r20 int
-            .reg r21 int
-            .reg r22 array<?>
+            .reg r14 int
+            .reg r15 int
+            .reg r16 bool
+            .reg r17 array<T0>
+            .reg r18 int
+            .reg r19 int
+            .reg r20 T0
+            .reg r21 array<T0>
+            .reg r22 int
             .reg r23 int
-            .reg r24 int
-            .reg r25 void
+            .reg r24 array<T0>
+            .reg r25 int
             .reg r26 int
-            .reg r27 int
+            .reg r27 void
+            .reg r28 int
+            .reg r29 int
             LOAD_INT r2, 0  ; line:14 col:9
             GET_FIELD r3, r0, 0  ; line:15 col:9
             ARRAY_LEN r4, r3
             CMP_LT_I r5, r2, r4
-            BR_FALSE r5, 272
+            BR_FALSE r5, 292
             GET_FIELD r6, r0, 0  ; line:16 col:13
             ARRAY_LOAD r7, r6, r2
-            CMP_EQ_I r8, r7, r1
+            MOV r9, r7
+            MOV r10, r1
+            CALL_VIRT r8, r9, 50331655, 0, r9, 2
             BR_FALSE r8, 202
-            GET_FIELD r10, r0, 0  ; line:17 col:17
-            ARRAY_LEN r11, r10
-            LOAD_INT r12, 1  ; line:19 col:17
-            SUB_I r13, r11, r12
-            CMP_LT_I r14, r2, r13
-            BR_FALSE r14, 98
-            GET_FIELD r15, r0, 0  ; line:20 col:21
-            LOAD_INT r16, 1
-            ADD_I r17, r2, r16
-            ARRAY_LOAD r18, r15, r17
-            GET_FIELD r19, r0, 0
-            ARRAY_STORE r19, r2, r18
-            LOAD_INT r20, 1  ; line:21 col:21
-            ADD_I r21, r2, r20
-            MOV r2, r21
+            GET_FIELD r12, r0, 0  ; line:17 col:17
+            ARRAY_LEN r13, r12
+            LOAD_INT r14, 1  ; line:19 col:17
+            SUB_I r15, r13, r14
+            CMP_LT_I r16, r2, r15
+            BR_FALSE r16, 98
+            GET_FIELD r17, r0, 0  ; line:20 col:21
+            LOAD_INT r18, 1
+            ADD_I r19, r2, r18
+            ARRAY_LOAD r20, r17, r19
+            GET_FIELD r21, r0, 0
+            ARRAY_STORE r21, r2, r20
+            LOAD_INT r22, 1  ; line:21 col:21
+            ADD_I r23, r2, r22
+            MOV r2, r23
             BR -118
-            GET_FIELD r22, r0, 0  ; line:23 col:17
-            LOAD_INT r23, 1
-            SUB_I r24, r11, r23
-            ARRAY_RESIZE r22, r24
+            GET_FIELD r24, r0, 0  ; line:23 col:17
+            LOAD_INT r25, 1
+            SUB_I r26, r13, r25
+            ARRAY_RESIZE r24, r26
             RET_VOID  ; line:24 col:17
-            MOV r9, r0
+            MOV r11, r0
             BR 10
             NOP
-            LOAD_INT r26, 1  ; line:26 col:13
-            ADD_I r27, r2, r26
-            MOV r2, r27
-            BR -288
+            LOAD_INT r28, 1  ; line:26 col:13
+            ADD_I r29, r2, r28
+            MOV r2, r29
+            BR -308
             RET_VOID
         }
-        .method "has" (item: ?) -> void pub {
+        .method "has" (item: T0) -> bool pub {
             .locals {
-                r0: ? "self" [0, 144)
-                r1: ? "item" [0, 144)
-                r2: int "i" [12, 144)
+                r0: Set<T0> "self" [0, 164)
+                r1: T0 "item" [0, 164)
+                r2: int "i" [12, 164)
             }
-            .reg r0 int
-            .reg r1 int
+            .reg r0 Set<T0>
+            .reg r1 T0
             .reg r2 int
-            .reg r3 array<?>
+            .reg r3 array<T0>
             .reg r4 int
             .reg r5 bool
-            .reg r6 array<?>
-            .reg r7 ?
+            .reg r6 array<T0>
+            .reg r7 T0
             .reg r8 bool
-            .reg r9 void
-            .reg r10 bool
-            .reg r11 int
-            .reg r12 int
-            .reg r13 bool
+            .reg r9 T0
+            .reg r10 T0
+            .reg r11 void
+            .reg r12 bool
+            .reg r13 int
+            .reg r14 int
+            .reg r15 bool
             LOAD_INT r2, 0  ; line:31 col:9
             GET_FIELD r3, r0, 0  ; line:32 col:9
             ARRAY_LEN r4, r3
             CMP_LT_I r5, r2, r4
-            BR_FALSE r5, 100
+            BR_FALSE r5, 120
             GET_FIELD r6, r0, 0  ; line:33 col:13
             ARRAY_LOAD r7, r6, r2
-            CMP_EQ_I r8, r7, r1
+            MOV r9, r7
+            MOV r10, r1
+            CALL_VIRT r8, r9, 50331655, 0, r9, 2
             BR_FALSE r8, 30
-            LOAD_TRUE r10  ; line:33 col:40
-            RET r10
-            MOV r9, r0
+            LOAD_TRUE r12  ; line:33 col:40
+            RET r12
+            MOV r11, r0
             BR 10
             NOP
-            LOAD_INT r11, 1  ; line:34 col:13
-            ADD_I r12, r2, r11
-            MOV r2, r12
-            BR -116
-            LOAD_FALSE r13  ; line:36 col:9
-            RET r13
+            LOAD_INT r13, 1  ; line:34 col:13
+            ADD_I r14, r2, r13
+            MOV r2, r14
+            BR -136
+            LOAD_FALSE r15  ; line:36 col:9
+            RET r15
         }
         .method "len" () -> int pub {
             .locals {
-                r0: ? "self" [0, 20)
+                r0: Set<T0> "self" [0, 20)
             }
-            .reg r0 int
-            .reg r1 array<?>
+            .reg r0 Set<T0>
+            .reg r1 array<T0>
             .reg r2 int
             GET_FIELD r1, r0, 0  ; line:40 col:9
             ARRAY_LEN r2, r1
             RET r2
         }
-        .method "main" () -> void mut {
-            .locals {
-                r0: Set "s" [26, 220)
-                r14: bool "_has" [170, 220)
-                r18: int "_len" [182, 220)
-            }
-            .reg r0 Set
-            .reg r1 array<void>
-            .reg r2 void
-            .reg r3 int
-            .reg r4 Set
-            .reg r5 int
-            .reg r6 void
-            .reg r7 int
-            .reg r8 Set
-            .reg r9 int
-            .reg r10 void
-            .reg r11 int
-            .reg r12 Set
-            .reg r13 int
-            .reg r14 bool
-            .reg r15 int
-            .reg r16 Set
-            .reg r17 int
-            .reg r18 int
-            .reg r19 void
-            .reg r20 int
-            .reg r21 Set
-            .reg r22 int
-            NEW r0, 33554433  ; line:45 col:5
-            NEW_ARRAY r1, 0
-            SET_FIELD r0, 0, r1
-            LOAD_INT r3, 1  ; line:46 col:5
-            MOV r4, r0
-            MOV r5, r3
-            CALL r2, 117440514, r4, 2
-            LOAD_INT r7, 2  ; line:47 col:5
-            MOV r8, r0
-            MOV r9, r7
-            CALL r6, 117440514, r8, 2
-            LOAD_INT r11, 1  ; line:48 col:5
-            MOV r12, r0
-            MOV r13, r11
-            CALL r10, 117440514, r12, 2
-            LOAD_INT r15, 1  ; line:49 col:5
-            MOV r16, r0
-            MOV r17, r15
-            CALL r14, 117440516, r16, 2
-            CALL r18, 117440517, r0, 1  ; line:50 col:5
-            LOAD_INT r20, 1  ; line:51 col:5
-            MOV r21, r0
-            MOV r22, r20
-            CALL r19, 117440515, r21, 2
-            RET_VOID
+    }
+    .method "main" () -> void mut {
+        .locals {
+            r0: Set<int> "s" [26, 220)
+            r14: bool "_has" [170, 220)
+            r18: int "_len" [182, 220)
         }
+        .reg r0 Set<int>
+        .reg r1 array<int>
+        .reg r2 void
+        .reg r3 int
+        .reg r4 Set<int>
+        .reg r5 int
+        .reg r6 void
+        .reg r7 int
+        .reg r8 Set<int>
+        .reg r9 int
+        .reg r10 void
+        .reg r11 int
+        .reg r12 Set<int>
+        .reg r13 int
+        .reg r14 bool
+        .reg r15 int
+        .reg r16 Set<int>
+        .reg r17 int
+        .reg r18 int
+        .reg r19 void
+        .reg r20 int
+        .reg r21 Set<int>
+        .reg r22 int
+        NEW r0, 67108866  ; line:45 col:5
+        NEW_ARRAY r1, 0
+        SET_FIELD r0, 0, r1
+        LOAD_INT r3, 1  ; line:46 col:5
+        MOV r4, r0
+        MOV r5, r3
+        CALL r2, 117440514, r4, 2
+        LOAD_INT r7, 2  ; line:47 col:5
+        MOV r8, r0
+        MOV r9, r7
+        CALL r6, 117440514, r8, 2
+        LOAD_INT r11, 1  ; line:48 col:5
+        MOV r12, r0
+        MOV r13, r11
+        CALL r10, 117440514, r12, 2
+        LOAD_INT r15, 1  ; line:49 col:5
+        MOV r16, r0
+        MOV r17, r15
+        CALL r14, 117440516, r16, 2
+        CALL r18, 117440517, r0, 1  ; line:50 col:5
+        LOAD_INT r20, 1  ; line:51 col:5
+        MOV r21, r0
+        MOV r22, r20
+        CALL r19, 117440515, r21, 2
+        RET_VOID
     }
     .export "Set" type 33554433
 }

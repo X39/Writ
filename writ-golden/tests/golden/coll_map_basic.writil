@@ -1,346 +1,362 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
     .type "Map" class pub {
-        .field "keys" array<?>
-        .field "values" array<?>
+        .field "keys" array<T0>
+        .field "values" array<T1>
     }
     .impl Map : contract_167772179 {
-    }
-    .impl Map : ? {
         .method "get_type" () -> Type pub {
             .reg r0 int
             .reg r1 int
             TYPEOF r1, 33554433
             RET r1
         }
+    }
+    .impl Map : ? {
         .method "len" () -> int pub {
             .locals {
-                r0: ? "self" [0, 20)
+                r0: Map<T0, T1> "self" [0, 20)
             }
-            .reg r0 int
-            .reg r1 array<?>
+            .reg r0 Map<T0, T1>
+            .reg r1 array<T0>
             .reg r2 int
             GET_FIELD r1, r0, 0  ; line:8 col:9
             ARRAY_LEN r2, r1
             RET r2
         }
-        .method "has" (key: ?) -> void pub {
+        .method "has" (key: T0) -> bool pub {
             .locals {
-                r0: ? "self" [0, 144)
-                r1: ? "key" [0, 144)
-                r2: int "i" [12, 144)
+                r0: Map<T0, T1> "self" [0, 164)
+                r1: T0 "key" [0, 164)
+                r2: int "i" [12, 164)
             }
-            .reg r0 int
-            .reg r1 int
+            .reg r0 Map<T0, T1>
+            .reg r1 T0
             .reg r2 int
-            .reg r3 array<?>
+            .reg r3 array<T0>
             .reg r4 int
             .reg r5 bool
-            .reg r6 array<?>
-            .reg r7 ?
+            .reg r6 array<T0>
+            .reg r7 T0
             .reg r8 bool
-            .reg r9 void
-            .reg r10 bool
-            .reg r11 int
-            .reg r12 int
-            .reg r13 bool
+            .reg r9 T0
+            .reg r10 T0
+            .reg r11 void
+            .reg r12 bool
+            .reg r13 int
+            .reg r14 int
+            .reg r15 bool
             LOAD_INT r2, 0  ; line:12 col:9
             GET_FIELD r3, r0, 0  ; line:13 col:9
             ARRAY_LEN r4, r3
             CMP_LT_I r5, r2, r4
-            BR_FALSE r5, 100
+            BR_FALSE r5, 120
             GET_FIELD r6, r0, 0  ; line:14 col:13
             ARRAY_LOAD r7, r6, r2
-            CMP_EQ_I r8, r7, r1
+            MOV r9, r7
+            MOV r10, r1
+            CALL_VIRT r8, r9, 50331655, 0, r9, 2
             BR_FALSE r8, 30
-            LOAD_TRUE r10  ; line:14 col:38
-            RET r10
-            MOV r9, r0
+            LOAD_TRUE r12  ; line:14 col:38
+            RET r12
+            MOV r11, r0
             BR 10
             NOP
-            LOAD_INT r11, 1  ; line:15 col:13
-            ADD_I r12, r2, r11
-            MOV r2, r12
-            BR -116
-            LOAD_FALSE r13  ; line:17 col:9
-            RET r13
+            LOAD_INT r13, 1  ; line:15 col:13
+            ADD_I r14, r2, r13
+            MOV r2, r14
+            BR -136
+            LOAD_FALSE r15  ; line:17 col:9
+            RET r15
         }
-        .method "get" (key: ?) -> void pub {
+        .method "get" (key: T0) -> T1 pub {
             .locals {
-                r0: ? "self" [0, 184)
-                r1: ? "key" [0, 184)
-                r2: int "i" [12, 184)
+                r0: Map<T0, T1> "self" [0, 204)
+                r1: T0 "key" [0, 204)
+                r2: int "i" [12, 204)
             }
-            .reg r0 int
-            .reg r1 int
+            .reg r0 Map<T0, T1>
+            .reg r1 T0
             .reg r2 int
-            .reg r3 array<?>
+            .reg r3 array<T0>
             .reg r4 int
             .reg r5 bool
-            .reg r6 array<?>
-            .reg r7 ?
+            .reg r6 array<T0>
+            .reg r7 T0
             .reg r8 bool
-            .reg r9 void
-            .reg r10 array<?>
-            .reg r11 ?
-            .reg r12 int
-            .reg r13 int
-            .reg r14 array<?>
+            .reg r9 T0
+            .reg r10 T0
+            .reg r11 void
+            .reg r12 array<T1>
+            .reg r13 T1
+            .reg r14 int
             .reg r15 int
-            .reg r16 ?
+            .reg r16 array<T1>
+            .reg r17 int
+            .reg r18 T1
             LOAD_INT r2, 0  ; line:21 col:9
             GET_FIELD r3, r0, 0  ; line:22 col:9
             ARRAY_LEN r4, r3
             CMP_LT_I r5, r2, r4
-            BR_FALSE r5, 114
+            BR_FALSE r5, 134
             GET_FIELD r6, r0, 0  ; line:23 col:13
             ARRAY_LOAD r7, r6, r2
-            CMP_EQ_I r8, r7, r1
+            MOV r9, r7
+            MOV r10, r1
+            CALL_VIRT r8, r9, 50331655, 0, r9, 2
             BR_FALSE r8, 44
-            GET_FIELD r10, r0, 1  ; line:23 col:38
-            ARRAY_LOAD r11, r10, r2
-            RET r11
-            MOV r9, r0
+            GET_FIELD r12, r0, 1  ; line:23 col:38
+            ARRAY_LOAD r13, r12, r2
+            RET r13
+            MOV r11, r0
             BR 10
             NOP
-            LOAD_INT r12, 1  ; line:24 col:13
-            ADD_I r13, r2, r12
-            MOV r2, r13
-            BR -130
-            GET_FIELD r14, r0, 1  ; line:26 col:9
-            LOAD_INT r15, 0
-            ARRAY_LOAD r16, r14, r15
-            RET r16
+            LOAD_INT r14, 1  ; line:24 col:13
+            ADD_I r15, r2, r14
+            MOV r2, r15
+            BR -150
+            GET_FIELD r16, r0, 1  ; line:26 col:9
+            LOAD_INT r17, 0
+            ARRAY_LOAD r18, r16, r17
+            RET r18
         }
-        .method "set" (key: ?) -> void pub static {
+        .method "set" (key: T0, value: T1) -> void pub static {
             .locals {
-                r0: ? "self" [0, 274)
-                r1: ? "key" [0, 274)
-                r2: ? "value" [0, 274)
-                r3: int "i" [12, 274)
-                r15: int "old_len" [164, 274)
+                r0: Map<T0, T1> "self" [0, 294)
+                r1: T0 "key" [0, 294)
+                r2: T1 "value" [0, 294)
+                r3: int "i" [12, 294)
+                r17: int "old_len" [184, 294)
             }
-            .reg r0 int
-            .reg r1 int
-            .reg r2 int
+            .reg r0 Map<T0, T1>
+            .reg r1 T0
+            .reg r2 T1
             .reg r3 int
-            .reg r4 array<?>
+            .reg r4 array<T0>
             .reg r5 int
             .reg r6 bool
-            .reg r7 array<?>
-            .reg r8 ?
+            .reg r7 array<T0>
+            .reg r8 T0
             .reg r9 bool
-            .reg r10 void
-            .reg r11 array<?>
-            .reg r12 int
-            .reg r13 int
-            .reg r14 array<?>
+            .reg r10 T0
+            .reg r11 T0
+            .reg r12 void
+            .reg r13 array<T1>
+            .reg r14 int
             .reg r15 int
-            .reg r16 array<?>
+            .reg r16 array<T0>
             .reg r17 int
-            .reg r18 int
-            .reg r19 void
-            .reg r20 array<?>
-            .reg r21 int
-            .reg r22 int
-            .reg r23 void
-            .reg r24 array<?>
-            .reg r25 array<?>
+            .reg r18 array<T0>
+            .reg r19 int
+            .reg r20 int
+            .reg r21 void
+            .reg r22 array<T1>
+            .reg r23 int
+            .reg r24 int
+            .reg r25 void
+            .reg r26 array<T0>
+            .reg r27 array<T1>
             LOAD_INT r3, 0  ; line:30 col:9
             GET_FIELD r4, r0, 0  ; line:31 col:9
             ARRAY_LEN r5, r4
             CMP_LT_I r6, r3, r5
-            BR_FALSE r6, 112
+            BR_FALSE r6, 132
             GET_FIELD r7, r0, 0  ; line:32 col:13
             ARRAY_LOAD r8, r7, r3
-            CMP_EQ_I r9, r8, r1
+            MOV r10, r8
+            MOV r11, r1
+            CALL_VIRT r9, r10, 50331655, 0, r10, 2
             BR_FALSE r9, 42
-            GET_FIELD r11, r0, 1  ; line:33 col:17
-            ARRAY_STORE r11, r3, r2
+            GET_FIELD r13, r0, 1  ; line:33 col:17
+            ARRAY_STORE r13, r3, r2
             RET_VOID  ; line:34 col:17
-            MOV r10, r0
+            MOV r12, r0
             BR 10
             NOP
-            LOAD_INT r12, 1  ; line:36 col:13
-            ADD_I r13, r3, r12
-            MOV r3, r13
-            BR -128
-            GET_FIELD r14, r0, 0  ; line:38 col:9
-            ARRAY_LEN r15, r14
-            GET_FIELD r16, r0, 0  ; line:39 col:9
-            LOAD_INT r17, 1
-            ADD_I r18, r15, r17
-            ARRAY_RESIZE r16, r18
-            GET_FIELD r20, r0, 1  ; line:40 col:9
-            LOAD_INT r21, 1
-            ADD_I r22, r15, r21
-            ARRAY_RESIZE r20, r22
-            GET_FIELD r24, r0, 0  ; line:41 col:9
-            ARRAY_STORE r24, r15, r1
-            GET_FIELD r25, r0, 1  ; line:42 col:9
-            ARRAY_STORE r25, r15, r2
+            LOAD_INT r14, 1  ; line:36 col:13
+            ADD_I r15, r3, r14
+            MOV r3, r15
+            BR -148
+            GET_FIELD r16, r0, 0  ; line:38 col:9
+            ARRAY_LEN r17, r16
+            GET_FIELD r18, r0, 0  ; line:39 col:9
+            LOAD_INT r19, 1
+            ADD_I r20, r17, r19
+            ARRAY_RESIZE r18, r20
+            GET_FIELD r22, r0, 1  ; line:40 col:9
+            LOAD_INT r23, 1
+            ADD_I r24, r17, r23
+            ARRAY_RESIZE r22, r24
+            GET_FIELD r26, r0, 0  ; line:41 col:9
+            ARRAY_STORE r26, r17, r1
+            GET_FIELD r27, r0, 1  ; line:42 col:9
+            ARRAY_STORE r27, r17, r2
             RET_VOID
         }
-        .method "remove" (key: ?) -> void pub static {
+        .method "remove" (key: T0) -> void pub static {
             .locals {
-                r0: ? "self" [0, 402)
-                r1: ? "key" [0, 402)
-                r2: int "i" [12, 402)
-                r11: int "old_len" [94, 402)
+                r0: Map<T0, T1> "self" [0, 422)
+                r1: T0 "key" [0, 422)
+                r2: int "i" [12, 422)
+                r13: int "old_len" [114, 422)
             }
-            .reg r0 int
-            .reg r1 int
+            .reg r0 Map<T0, T1>
+            .reg r1 T0
             .reg r2 int
-            .reg r3 array<?>
+            .reg r3 array<T0>
             .reg r4 int
             .reg r5 bool
-            .reg r6 array<?>
-            .reg r7 ?
+            .reg r6 array<T0>
+            .reg r7 T0
             .reg r8 bool
-            .reg r9 void
-            .reg r10 array<?>
-            .reg r11 int
-            .reg r12 int
+            .reg r9 T0
+            .reg r10 T0
+            .reg r11 void
+            .reg r12 array<T0>
             .reg r13 int
-            .reg r14 bool
-            .reg r15 array<?>
-            .reg r16 int
-            .reg r17 int
-            .reg r18 ?
-            .reg r19 array<?>
-            .reg r20 array<?>
-            .reg r21 int
-            .reg r22 int
-            .reg r23 ?
-            .reg r24 array<?>
-            .reg r25 int
-            .reg r26 int
-            .reg r27 array<?>
+            .reg r14 int
+            .reg r15 int
+            .reg r16 bool
+            .reg r17 array<T0>
+            .reg r18 int
+            .reg r19 int
+            .reg r20 T0
+            .reg r21 array<T0>
+            .reg r22 array<T1>
+            .reg r23 int
+            .reg r24 int
+            .reg r25 T1
+            .reg r26 array<T1>
+            .reg r27 int
             .reg r28 int
-            .reg r29 int
-            .reg r30 void
-            .reg r31 array<?>
-            .reg r32 int
-            .reg r33 int
-            .reg r34 void
+            .reg r29 array<T0>
+            .reg r30 int
+            .reg r31 int
+            .reg r32 void
+            .reg r33 array<T1>
+            .reg r34 int
             .reg r35 int
-            .reg r36 int
+            .reg r36 void
+            .reg r37 int
+            .reg r38 int
             LOAD_INT r2, 0  ; line:46 col:9
             GET_FIELD r3, r0, 0  ; line:47 col:9
             ARRAY_LEN r4, r3
             CMP_LT_I r5, r2, r4
-            BR_FALSE r5, 364
+            BR_FALSE r5, 384
             GET_FIELD r6, r0, 0  ; line:48 col:13
             ARRAY_LOAD r7, r6, r2
-            CMP_EQ_I r8, r7, r1
+            MOV r9, r7
+            MOV r10, r1
+            CALL_VIRT r8, r9, 50331655, 0, r9, 2
             BR_FALSE r8, 294
-            GET_FIELD r10, r0, 0  ; line:49 col:17
-            ARRAY_LEN r11, r10
-            LOAD_INT r12, 1  ; line:51 col:17
-            SUB_I r13, r11, r12
-            CMP_LT_I r14, r2, r13
-            BR_FALSE r14, 154
-            GET_FIELD r15, r0, 0  ; line:52 col:21
-            LOAD_INT r16, 1
-            ADD_I r17, r2, r16
-            ARRAY_LOAD r18, r15, r17
-            GET_FIELD r19, r0, 0
-            ARRAY_STORE r19, r2, r18
-            GET_FIELD r20, r0, 1  ; line:53 col:21
-            LOAD_INT r21, 1
-            ADD_I r22, r2, r21
-            ARRAY_LOAD r23, r20, r22
-            GET_FIELD r24, r0, 1
-            ARRAY_STORE r24, r2, r23
-            LOAD_INT r25, 1  ; line:54 col:21
-            ADD_I r26, r2, r25
-            MOV r2, r26
+            GET_FIELD r12, r0, 0  ; line:49 col:17
+            ARRAY_LEN r13, r12
+            LOAD_INT r14, 1  ; line:51 col:17
+            SUB_I r15, r13, r14
+            CMP_LT_I r16, r2, r15
+            BR_FALSE r16, 154
+            GET_FIELD r17, r0, 0  ; line:52 col:21
+            LOAD_INT r18, 1
+            ADD_I r19, r2, r18
+            ARRAY_LOAD r20, r17, r19
+            GET_FIELD r21, r0, 0
+            ARRAY_STORE r21, r2, r20
+            GET_FIELD r22, r0, 1  ; line:53 col:21
+            LOAD_INT r23, 1
+            ADD_I r24, r2, r23
+            ARRAY_LOAD r25, r22, r24
+            GET_FIELD r26, r0, 1
+            ARRAY_STORE r26, r2, r25
+            LOAD_INT r27, 1  ; line:54 col:21
+            ADD_I r28, r2, r27
+            MOV r2, r28
             BR -174
-            GET_FIELD r27, r0, 0  ; line:56 col:17
-            LOAD_INT r28, 1
-            SUB_I r29, r11, r28
-            ARRAY_RESIZE r27, r29
-            GET_FIELD r31, r0, 1  ; line:57 col:17
-            LOAD_INT r32, 1
-            SUB_I r33, r11, r32
-            ARRAY_RESIZE r31, r33
+            GET_FIELD r29, r0, 0  ; line:56 col:17
+            LOAD_INT r30, 1
+            SUB_I r31, r13, r30
+            ARRAY_RESIZE r29, r31
+            GET_FIELD r33, r0, 1  ; line:57 col:17
+            LOAD_INT r34, 1
+            SUB_I r35, r13, r34
+            ARRAY_RESIZE r33, r35
             RET_VOID  ; line:58 col:17
-            MOV r9, r0
+            MOV r11, r0
             BR 10
             NOP
-            LOAD_INT r35, 1  ; line:60 col:13
-            ADD_I r36, r2, r35
-            MOV r2, r36
-            BR -380
+            LOAD_INT r37, 1  ; line:60 col:13
+            ADD_I r38, r2, r37
+            MOV r2, r38
+            BR -400
             RET_VOID
         }
-        .method "main" () -> void mut {
-            .locals {
-                r0: Map "map" [44, 254)
-                r15: ? "_v" [176, 254)
-                r19: bool "_has" [208, 254)
-                r23: int "_len" [220, 254)
-            }
-            .reg r0 Map
-            .reg r1 array<void>
-            .reg r2 array<void>
-            .reg r3 void
-            .reg r4 string
-            .reg r5 int
-            .reg r6 Map
-            .reg r7 string
-            .reg r8 int
-            .reg r9 void
-            .reg r10 string
-            .reg r11 int
-            .reg r12 Map
-            .reg r13 string
-            .reg r14 int
-            .reg r15 ?
-            .reg r16 string
-            .reg r17 Map
-            .reg r18 string
-            .reg r19 bool
-            .reg r20 string
-            .reg r21 Map
-            .reg r22 string
-            .reg r23 int
-            .reg r24 void
-            .reg r25 string
-            .reg r26 Map
-            .reg r27 string
-            NEW r0, 33554433  ; line:66 col:5
-            NEW_ARRAY r1, 0
-            SET_FIELD r0, 0, r1
-            NEW_ARRAY r2, 0
-            SET_FIELD r0, 1, r2
-            LOAD_STRING r4, 240  ; line:67 col:5
-            LOAD_INT r5, 1
-            MOV r6, r0
-            MOV r7, r4
-            MOV r8, r5
-            CALL r3, 117440517, r6, 3
-            LOAD_STRING r10, 245  ; line:68 col:5
-            LOAD_INT r11, 2
-            MOV r12, r0
-            MOV r13, r10
-            MOV r14, r11
-            CALL r9, 117440517, r12, 3
-            LOAD_STRING r16, 240  ; line:69 col:5
-            MOV r17, r0
-            MOV r18, r16
-            CALL r15, 117440516, r17, 2
-            LOAD_STRING r20, 245  ; line:70 col:5
-            MOV r21, r0
-            MOV r22, r20
-            CALL r19, 117440515, r21, 2
-            CALL r23, 117440514, r0, 1  ; line:71 col:5
-            LOAD_STRING r25, 240  ; line:72 col:5
-            MOV r26, r0
-            MOV r27, r25
-            CALL r24, 117440518, r26, 2
-            RET_VOID
+    }
+    .method "main" () -> void mut {
+        .locals {
+            r0: Map<string, int> "map" [44, 254)
+            r15: int "_v" [176, 254)
+            r19: bool "_has" [208, 254)
+            r23: int "_len" [220, 254)
         }
+        .reg r0 Map<string, int>
+        .reg r1 array<string>
+        .reg r2 array<int>
+        .reg r3 void
+        .reg r4 string
+        .reg r5 int
+        .reg r6 Map<string, int>
+        .reg r7 string
+        .reg r8 int
+        .reg r9 void
+        .reg r10 string
+        .reg r11 int
+        .reg r12 Map<string, int>
+        .reg r13 string
+        .reg r14 int
+        .reg r15 int
+        .reg r16 string
+        .reg r17 Map<string, int>
+        .reg r18 string
+        .reg r19 bool
+        .reg r20 string
+        .reg r21 Map<string, int>
+        .reg r22 string
+        .reg r23 int
+        .reg r24 void
+        .reg r25 string
+        .reg r26 Map<string, int>
+        .reg r27 string
+        NEW r0, 67108866  ; line:66 col:5
+        NEW_ARRAY r1, 3
+        SET_FIELD r0, 0, r1
+        NEW_ARRAY r2, 0
+        SET_FIELD r0, 1, r2
+        LOAD_STRING r4, 2542  ; line:67 col:5
+        LOAD_INT r5, 1
+        MOV r6, r0
+        MOV r7, r4
+        MOV r8, r5
+        CALL r3, 117440517, r6, 3
+        LOAD_STRING r10, 2547  ; line:68 col:5
+        LOAD_INT r11, 2
+        MOV r12, r0
+        MOV r13, r10
+        MOV r14, r11
+        CALL r9, 117440517, r12, 3
+        LOAD_STRING r16, 2542  ; line:69 col:5
+        MOV r17, r0
+        MOV r18, r16
+        CALL r15, 117440516, r17, 2
+        LOAD_STRING r20, 2547  ; line:70 col:5
+        MOV r21, r0
+        MOV r22, r20
+        CALL r19, 117440515, r21, 2
+        CALL r23, 117440514, r0, 1  ; line:71 col:5
+        LOAD_STRING r25, 2542  ; line:72 col:5
+        MOV r26, r0
+        MOV r27, r25
+        CALL r24, 117440518, r26, 2
+        RET_VOID
     }
     .export "Map" type 33554433
 }
