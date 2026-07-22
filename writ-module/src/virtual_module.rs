@@ -4,8 +4,8 @@
 //! defined in spec section 2.18, constructed in memory without reading
 //! any file from disk. It contains:
 //!
-//! - 18 contracts (Add, Sub, Mul, Div, Mod, Neg, Not, Eq, Ord, Index,
-//!   IndexSet, BitAnd, BitOr, Iterable, Iterator, Into, Error, Speaker)
+//! - The normative operator/runtime contracts plus synthetic reflection
+//!   dispatch contracts
 //! - Core types: Option<T>, Result<T,E>, Range<T>
 //! - Primitive pseudo-TypeDefs: Int, Float, Bool, String
 //! - Array<T> with methods and contract implementations
@@ -15,7 +15,7 @@
 //! (flag 0x80) since they map to native operations, not IL method bodies.
 
 use crate::module::MethodBody;
-use crate::signature::{TypeSignature, encode_type_signature};
+use crate::signature::{TypeSignature, encode_method_signature, encode_type_signature};
 use crate::tables::{TableId, TypeDefKind};
 use crate::token::MetadataToken;
 use crate::{Module, ModuleBuilder};
@@ -23,6 +23,12 @@ use crate::{Module, ModuleBuilder};
 /// The intrinsic method flag (bit 7).
 const INTRINSIC_FLAG: u16 = 0x80;
 const PUBLIC_FIELD_FLAG: u16 = 1 << 0;
+const PUBLIC_FLAG: u16 = 1 << 0;
+const STATIC_FLAG: u16 = 1 << 1;
+const MUT_SELF_FLAG: u16 = 1 << 2;
+const TYPE_GENERIC_OWNER_KIND: u8 = 0;
+const METHOD_GENERIC_OWNER_KIND: u8 = 1;
+const CONTRACT_GENERIC_OWNER_KIND: u8 = 2;
 
 const TYPE_TYPEDEF_ROW: u32 = 10;
 const PARAMETER_INFO_TYPEDEF_ROW: u32 = 11;
@@ -47,6 +53,196 @@ fn add_typed_field(
     builder.add_field_def(name, &signature, PUBLIC_FIELD_FLAG);
 }
 
+fn generic_type(name: &str, args: Vec<TypeSignature>) -> TypeSignature {
+    TypeSignature::Generic {
+        namespace: "writ".to_string(),
+        name: name.to_string(),
+        args,
+    }
+}
+
+fn range_of(element: TypeSignature) -> TypeSignature {
+    generic_type("Range", vec![element])
+}
+
+fn iterator_of(element: TypeSignature) -> TypeSignature {
+    generic_type("Iterator", vec![element])
+}
+
+fn option_of(element: TypeSignature) -> TypeSignature {
+    generic_type("Option", vec![element])
+}
+
+fn entity_list_of(element: TypeSignature) -> TypeSignature {
+    generic_type("EntityList", vec![element])
+}
+
+fn array_of(element: TypeSignature) -> TypeSignature {
+    TypeSignature::Array(Box::new(element))
+}
+
+fn named_type(row: u32) -> TypeSignature {
+    TypeSignature::Named(type_def_token(row))
+}
+
+fn method_signature(params: &[TypeSignature], ret: &TypeSignature) -> Vec<u8> {
+    encode_method_signature(params, ret)
+        .expect("writ-runtime method signature must fit the module format")
+}
+
+fn intrinsic_register_count(params: &[TypeSignature], flags: u16) -> u16 {
+    let regular_params = u16::try_from(params.len())
+        .expect("writ-runtime intrinsic parameter count must fit the module format");
+    regular_params
+        .checked_add(u16::from(flags & STATIC_FLAG == 0))
+        .expect("writ-runtime intrinsic register count must fit the module format")
+}
+
+fn add_typed_contract_method(
+    builder: &mut ModuleBuilder,
+    name: &str,
+    params: &[TypeSignature],
+    ret: TypeSignature,
+) -> MetadataToken {
+    let signature = method_signature(params, &ret);
+    builder.add_contract_method(name, &signature, 0)
+}
+
+fn intrinsic_method_metadata(
+    name: &str,
+) -> (Vec<TypeSignature>, TypeSignature, u16) {
+    let generic_param = || TypeSignature::GenericParam(0);
+    let type_type = || named_type(TYPE_TYPEDEF_ROW);
+    let box_type = || named_type(BOX_TYPEDEF_ROW);
+    let attribute_info = || named_type(ATTRIBUTE_INFO_TYPEDEF_ROW);
+    let contract_info = || named_type(CONTRACT_INFO_TYPEDEF_ROW);
+    let field_info = || named_type(FIELD_INFO_TYPEDEF_ROW);
+    let method_info = || named_type(METHOD_INFO_TYPEDEF_ROW);
+    let parameter_info = || named_type(PARAMETER_INFO_TYPEDEF_ROW);
+
+    let (params, ret, extra_flags) = match name {
+        "int_add" | "int_sub" | "int_mul" | "int_div" | "int_mod" | "int_bitand"
+        | "int_bitor" => (vec![TypeSignature::Int], TypeSignature::Int, 0),
+        "int_neg" | "int_not" => (vec![], TypeSignature::Int, 0),
+        "int_eq" | "int_ord" => (vec![TypeSignature::Int], TypeSignature::Bool, 0),
+        "int_into_float" => (vec![], TypeSignature::Float, 0),
+        "int_into_string" => (vec![], TypeSignature::String, 0),
+
+        "float_add" | "float_sub" | "float_mul" | "float_div" | "float_mod" => {
+            (vec![TypeSignature::Float], TypeSignature::Float, 0)
+        }
+        "float_neg" => (vec![], TypeSignature::Float, 0),
+        "float_eq" | "float_ord" => {
+            (vec![TypeSignature::Float], TypeSignature::Bool, 0)
+        }
+        "float_into_int" => (vec![], TypeSignature::Int, 0),
+        "float_into_string" => (vec![], TypeSignature::String, 0),
+
+        "bool_eq" => (vec![TypeSignature::Bool], TypeSignature::Bool, 0),
+        "bool_not" => (vec![], TypeSignature::Bool, 0),
+        "bool_into_string" => (vec![], TypeSignature::String, 0),
+
+        "string_add" => (vec![TypeSignature::String], TypeSignature::String, 0),
+        "string_eq" | "string_ord" => {
+            (vec![TypeSignature::String], TypeSignature::Bool, 0)
+        }
+        "string_index_int" => (vec![TypeSignature::Int], TypeSignature::String, 0),
+        "string_index_range" => (
+            vec![range_of(TypeSignature::Int)],
+            TypeSignature::String,
+            0,
+        ),
+        "string_into_string" => (vec![], TypeSignature::String, 0),
+
+        "int_get_type" | "float_get_type" | "bool_get_type" | "string_get_type" => {
+            (vec![], type_type(), 0)
+        }
+        "int_hash" | "float_hash" | "bool_hash" | "string_hash" => {
+            (vec![], TypeSignature::Int, 0)
+        }
+
+        "add" => (vec![generic_param()], TypeSignature::Void, MUT_SELF_FLAG),
+        "removeAt" => (vec![TypeSignature::Int], TypeSignature::Void, MUT_SELF_FLAG),
+        "insert" => (
+            vec![TypeSignature::Int, generic_param()],
+            TypeSignature::Void,
+            MUT_SELF_FLAG,
+        ),
+        "contains" => (vec![generic_param()], TypeSignature::Bool, 0),
+        "slice" => (
+            vec![range_of(TypeSignature::Int)],
+            array_of(generic_param()),
+            0,
+        ),
+        "iterator" | "array_iterable" => {
+            (vec![], iterator_of(generic_param()), 0)
+        }
+        "array_index" => (vec![TypeSignature::Int], generic_param(), 0),
+        "array_index_set" => (
+            vec![TypeSignature::Int, generic_param()],
+            TypeSignature::Void,
+            MUT_SELF_FLAG,
+        ),
+        "array_index_range" => (
+            vec![range_of(TypeSignature::Int)],
+            array_of(generic_param()),
+            0,
+        ),
+
+        "destroy" => (
+            vec![TypeSignature::Entity],
+            TypeSignature::Void,
+            STATIC_FLAG,
+        ),
+        "isAlive" => (
+            vec![TypeSignature::Entity],
+            TypeSignature::Bool,
+            STATIC_FLAG,
+        ),
+        "getOrCreate" => (vec![], generic_param(), STATIC_FLAG),
+        "findAll" => (vec![], entity_list_of(generic_param()), STATIC_FLAG),
+
+        "fields" => (vec![], array_of(field_info()), PUBLIC_FLAG),
+        "methods" => (vec![], array_of(method_info()), PUBLIC_FLAG),
+        "attributes" => (vec![], array_of(attribute_info()), PUBLIC_FLAG),
+        "contracts" => (vec![], array_of(contract_info()), PUBLIC_FLAG),
+        "implements" => (vec![type_type()], TypeSignature::Bool, PUBLIC_FLAG),
+        "type_get_name" | "type_get_namespace" | "type_get_kind" => {
+            (vec![], TypeSignature::String, 0)
+        }
+        "type_get_is_generic" => (vec![], TypeSignature::Bool, 0),
+        "type_args" => (vec![], array_of(type_type()), PUBLIC_FLAG),
+
+        "get" => (vec![box_type()], box_type(), PUBLIC_FLAG),
+        "fieldinfo_get_name" => (vec![], TypeSignature::String, 0),
+        "fieldinfo_get_declared_type" => (vec![], type_type(), 0),
+        "fieldinfo_get_is_mutable" => (vec![], TypeSignature::Bool, 0),
+        "set" => (
+            vec![box_type(), box_type()],
+            TypeSignature::Void,
+            PUBLIC_FLAG,
+        ),
+
+        "methodinfo_get_name" => (vec![], TypeSignature::String, 0),
+        "methodinfo_get_return_type" => (vec![], type_type(), 0),
+        "methodinfo_get_parameters" => (vec![], array_of(parameter_info()), 0),
+        "invoke" => (
+            vec![box_type(), array_of(box_type())],
+            box_type(),
+            PUBLIC_FLAG,
+        ),
+
+        "paraminfo_get_name" | "attrinfo_get_name" | "contractinfo_get_name" => {
+            (vec![], TypeSignature::String, 0)
+        }
+        "paraminfo_get_type" | "contractinfo_get_type" => (vec![], type_type(), 0),
+        "attrinfo_get_args" => (vec![], array_of(box_type()), 0),
+        other => panic!("missing writ-runtime intrinsic signature for {other}"),
+    };
+
+    (params, ret, extra_flags)
+}
+
 /// An empty method body for intrinsic methods (no IL code).
 fn empty_body() -> MethodBody {
     MethodBody {
@@ -65,7 +261,39 @@ fn add_intrinsic_impl(
     name: &str,
 ) -> MetadataToken {
     let impl_token = builder.add_impl_def(type_token, contract);
-    builder.add_impl_method(impl_token, name, &[], INTRINSIC_FLAG, 0, empty_body())
+    let (params, ret, flags) = intrinsic_method_metadata(name);
+    let signature = method_signature(&params, &ret);
+    let reg_count = intrinsic_register_count(&params, flags);
+    builder.add_impl_method(
+        impl_token,
+        name,
+        &signature,
+        INTRINSIC_FLAG | flags,
+        reg_count,
+        empty_body(),
+    )
+}
+
+fn add_intrinsic_generic_impl(
+    builder: &mut ModuleBuilder,
+    type_token: MetadataToken,
+    contract_name: &str,
+    contract_args: Vec<TypeSignature>,
+    name: &str,
+) -> MetadataToken {
+    let contract = generic_type(contract_name, contract_args);
+    let contract = encode_type_signature(&contract)
+        .expect("writ-runtime contract specialization must fit the module format");
+    let contract = builder.add_type_spec(&contract);
+    add_intrinsic_impl(builder, type_token, contract, name)
+}
+
+fn add_intrinsic_contract_method(
+    builder: &mut ModuleBuilder,
+    name: &str,
+) -> MetadataToken {
+    let (params, ret, _) = intrinsic_method_metadata(name);
+    add_typed_contract_method(builder, name, &params, ret)
 }
 
 /// Add an intrinsic method owned directly by a type.
@@ -74,7 +302,17 @@ fn add_intrinsic_type_method(
     owner: MetadataToken,
     name: &str,
 ) -> MetadataToken {
-    builder.add_type_method(owner, name, &[], INTRINSIC_FLAG, 0, empty_body())
+    let (params, ret, flags) = intrinsic_method_metadata(name);
+    let signature = method_signature(&params, &ret);
+    let reg_count = intrinsic_register_count(&params, flags);
+    builder.add_type_method(
+        owner,
+        name,
+        &signature,
+        PUBLIC_FLAG | INTRINSIC_FLAG | flags,
+        reg_count,
+        empty_body(),
+    )
 }
 
 /// Build the complete `writ-runtime` virtual module.
@@ -86,144 +324,206 @@ pub fn build_writ_runtime_module() -> Module {
     let mut builder = ModuleBuilder::new("writ-runtime");
 
     // ────────────────────────────────────────────────────────────────
-    // Section 1: Define all 17 contracts (spec section 2.18.3)
+    // Section 1: Define the normative contracts (spec section 2.18.3 and extensions)
     // ────────────────────────────────────────────────────────────────
     //
     // Each contract gets:
     //   1. add_contract_def(name, namespace) -- creates the ContractDef row
     //   2. add_contract_method(name, sig, slot) -- the single required method at slot 0
-    //   3. add_generic_param(owner, owner_kind=0, ordinal, name) -- for generic contracts
+    //   3. add_generic_param(owner, owner_kind=2, ordinal, name) -- for generic contracts
     //
-    // Note: Generic params for contracts use owner_kind=0 (treating contracts
-    // as type-like entities). The ModuleBuilder accepts arbitrary tokens as owners.
+    // Contract generic parameters use the format-defined ContractDef owner kind.
     // The generic_param_list in ContractDefBuilder is set at the time add_contract_def
     // is called, so we must add generic params immediately after the contract def
     // (before the next contract def is added) to maintain correct list ownership.
 
     // Contract 1: Add<T, R>
     let add_contract = builder.add_contract_def("Add", "writ");
-    builder.add_contract_method("op_add", &[], 0);
-    builder.add_generic_param(add_contract, 0, 0, "T");
-    builder.add_generic_param(add_contract, 0, 1, "R");
+    add_typed_contract_method(
+        &mut builder,
+        "op_add",
+        &[TypeSignature::GenericParam(0)],
+        TypeSignature::GenericParam(1),
+    );
+    builder.add_generic_param(add_contract, CONTRACT_GENERIC_OWNER_KIND, 0, "T");
+    builder.add_generic_param(add_contract, CONTRACT_GENERIC_OWNER_KIND, 1, "R");
 
     // Contract 2: Sub<T, R>
     let sub_contract = builder.add_contract_def("Sub", "writ");
-    builder.add_contract_method("op_sub", &[], 0);
-    builder.add_generic_param(sub_contract, 0, 0, "T");
-    builder.add_generic_param(sub_contract, 0, 1, "R");
+    add_typed_contract_method(
+        &mut builder,
+        "op_sub",
+        &[TypeSignature::GenericParam(0)],
+        TypeSignature::GenericParam(1),
+    );
+    builder.add_generic_param(sub_contract, CONTRACT_GENERIC_OWNER_KIND, 0, "T");
+    builder.add_generic_param(sub_contract, CONTRACT_GENERIC_OWNER_KIND, 1, "R");
 
     // Contract 3: Mul<T, R>
     let mul_contract = builder.add_contract_def("Mul", "writ");
-    builder.add_contract_method("op_mul", &[], 0);
-    builder.add_generic_param(mul_contract, 0, 0, "T");
-    builder.add_generic_param(mul_contract, 0, 1, "R");
+    add_typed_contract_method(
+        &mut builder,
+        "op_mul",
+        &[TypeSignature::GenericParam(0)],
+        TypeSignature::GenericParam(1),
+    );
+    builder.add_generic_param(mul_contract, CONTRACT_GENERIC_OWNER_KIND, 0, "T");
+    builder.add_generic_param(mul_contract, CONTRACT_GENERIC_OWNER_KIND, 1, "R");
 
     // Contract 4: Div<T, R>
     let div_contract = builder.add_contract_def("Div", "writ");
-    builder.add_contract_method("op_div", &[], 0);
-    builder.add_generic_param(div_contract, 0, 0, "T");
-    builder.add_generic_param(div_contract, 0, 1, "R");
+    add_typed_contract_method(
+        &mut builder,
+        "op_div",
+        &[TypeSignature::GenericParam(0)],
+        TypeSignature::GenericParam(1),
+    );
+    builder.add_generic_param(div_contract, CONTRACT_GENERIC_OWNER_KIND, 0, "T");
+    builder.add_generic_param(div_contract, CONTRACT_GENERIC_OWNER_KIND, 1, "R");
 
     // Contract 5: Mod<T, R>
     let mod_contract = builder.add_contract_def("Mod", "writ");
-    builder.add_contract_method("op_mod", &[], 0);
-    builder.add_generic_param(mod_contract, 0, 0, "T");
-    builder.add_generic_param(mod_contract, 0, 1, "R");
+    add_typed_contract_method(
+        &mut builder,
+        "op_mod",
+        &[TypeSignature::GenericParam(0)],
+        TypeSignature::GenericParam(1),
+    );
+    builder.add_generic_param(mod_contract, CONTRACT_GENERIC_OWNER_KIND, 0, "T");
+    builder.add_generic_param(mod_contract, CONTRACT_GENERIC_OWNER_KIND, 1, "R");
 
     // Contract 6: Neg<R>
     let neg_contract = builder.add_contract_def("Neg", "writ");
-    builder.add_contract_method("op_neg", &[], 0);
-    builder.add_generic_param(neg_contract, 0, 0, "R");
+    add_typed_contract_method(
+        &mut builder,
+        "op_neg",
+        &[],
+        TypeSignature::GenericParam(0),
+    );
+    builder.add_generic_param(neg_contract, CONTRACT_GENERIC_OWNER_KIND, 0, "R");
 
     // Contract 7: Not<R>
     let not_contract = builder.add_contract_def("Not", "writ");
-    builder.add_contract_method("op_not", &[], 0);
-    builder.add_generic_param(not_contract, 0, 0, "R");
+    add_typed_contract_method(
+        &mut builder,
+        "op_not",
+        &[],
+        TypeSignature::GenericParam(0),
+    );
+    builder.add_generic_param(not_contract, CONTRACT_GENERIC_OWNER_KIND, 0, "R");
 
     // Contract 8: Eq<T>
     let eq_contract = builder.add_contract_def("Eq", "writ");
-    builder.add_contract_method("op_eq", &[], 0);
-    builder.add_generic_param(eq_contract, 0, 0, "T");
+    add_typed_contract_method(
+        &mut builder,
+        "op_eq",
+        &[TypeSignature::GenericParam(0)],
+        TypeSignature::Bool,
+    );
+    builder.add_generic_param(eq_contract, CONTRACT_GENERIC_OWNER_KIND, 0, "T");
 
     // Contract 9: Ord<T>
     let ord_contract = builder.add_contract_def("Ord", "writ");
-    builder.add_contract_method("op_lt", &[], 0);
-    builder.add_generic_param(ord_contract, 0, 0, "T");
+    add_typed_contract_method(
+        &mut builder,
+        "op_lt",
+        &[TypeSignature::GenericParam(0)],
+        TypeSignature::Bool,
+    );
+    builder.add_generic_param(ord_contract, CONTRACT_GENERIC_OWNER_KIND, 0, "T");
 
     // Contract 10: Index<K, V>
     let index_contract = builder.add_contract_def("Index", "writ");
-    builder.add_contract_method("op_index", &[], 0);
-    builder.add_generic_param(index_contract, 0, 0, "K");
-    builder.add_generic_param(index_contract, 0, 1, "V");
+    add_typed_contract_method(
+        &mut builder,
+        "op_index",
+        &[TypeSignature::GenericParam(0)],
+        TypeSignature::GenericParam(1),
+    );
+    builder.add_generic_param(index_contract, CONTRACT_GENERIC_OWNER_KIND, 0, "K");
+    builder.add_generic_param(index_contract, CONTRACT_GENERIC_OWNER_KIND, 1, "V");
 
     // Contract 11: IndexSet<K, V>
     let indexset_contract = builder.add_contract_def("IndexSet", "writ");
-    builder.add_contract_method("op_index_set", &[], 0);
-    builder.add_generic_param(indexset_contract, 0, 0, "K");
-    builder.add_generic_param(indexset_contract, 0, 1, "V");
+    add_typed_contract_method(
+        &mut builder,
+        "op_index_set",
+        &[
+            TypeSignature::GenericParam(0),
+            TypeSignature::GenericParam(1),
+        ],
+        TypeSignature::Void,
+    );
+    builder.add_generic_param(indexset_contract, CONTRACT_GENERIC_OWNER_KIND, 0, "K");
+    builder.add_generic_param(indexset_contract, CONTRACT_GENERIC_OWNER_KIND, 1, "V");
 
     // Contract 12: BitAnd<T, R>
     let bitand_contract = builder.add_contract_def("BitAnd", "writ");
-    builder.add_contract_method("op_bitand", &[], 0);
-    builder.add_generic_param(bitand_contract, 0, 0, "T");
-    builder.add_generic_param(bitand_contract, 0, 1, "R");
+    add_typed_contract_method(
+        &mut builder,
+        "op_bitand",
+        &[TypeSignature::GenericParam(0)],
+        TypeSignature::GenericParam(1),
+    );
+    builder.add_generic_param(bitand_contract, CONTRACT_GENERIC_OWNER_KIND, 0, "T");
+    builder.add_generic_param(bitand_contract, CONTRACT_GENERIC_OWNER_KIND, 1, "R");
 
     // Contract 13: BitOr<T, R>
     let bitor_contract = builder.add_contract_def("BitOr", "writ");
-    builder.add_contract_method("op_bitor", &[], 0);
-    builder.add_generic_param(bitor_contract, 0, 0, "T");
-    builder.add_generic_param(bitor_contract, 0, 1, "R");
+    add_typed_contract_method(
+        &mut builder,
+        "op_bitor",
+        &[TypeSignature::GenericParam(0)],
+        TypeSignature::GenericParam(1),
+    );
+    builder.add_generic_param(bitor_contract, CONTRACT_GENERIC_OWNER_KIND, 0, "T");
+    builder.add_generic_param(bitor_contract, CONTRACT_GENERIC_OWNER_KIND, 1, "R");
 
     // Contract 14: Iterable<T>
     let iterable_contract = builder.add_contract_def("Iterable", "writ");
-    builder.add_contract_method("iterator", &[], 0);
-    builder.add_generic_param(iterable_contract, 0, 0, "T");
+    add_typed_contract_method(
+        &mut builder,
+        "iterator",
+        &[],
+        iterator_of(TypeSignature::GenericParam(0)),
+    );
+    builder.add_generic_param(iterable_contract, CONTRACT_GENERIC_OWNER_KIND, 0, "T");
 
     // Contract 15: Iterator<T>
     let iterator_contract = builder.add_contract_def("Iterator", "writ");
-    builder.add_contract_method("next", &[], 0);
-    builder.add_generic_param(iterator_contract, 0, 0, "T");
+    add_typed_contract_method(
+        &mut builder,
+        "next",
+        &[],
+        option_of(TypeSignature::GenericParam(0)),
+    );
+    builder.add_generic_param(iterator_contract, CONTRACT_GENERIC_OWNER_KIND, 0, "T");
 
     // Contract 16: Into<T> (base generic contract)
     let into_contract = builder.add_contract_def("Into", "writ");
-    builder.add_contract_method("into", &[], 0);
-    builder.add_generic_param(into_contract, 0, 0, "T");
+    add_typed_contract_method(
+        &mut builder,
+        "into",
+        &[],
+        TypeSignature::GenericParam(0),
+    );
+    builder.add_generic_param(into_contract, CONTRACT_GENERIC_OWNER_KIND, 0, "T");
 
     // Contract 17: Error (no generic params)
     let _error_contract = builder.add_contract_def("Error", "writ");
-    builder.add_contract_method("message", &[], 0);
+    add_typed_contract_method(&mut builder, "message", &[], TypeSignature::String);
 
     // Contract 18: Speaker (no generic params) — optional display name override for dialogue
     let _speaker_contract = builder.add_contract_def("Speaker", "writ");
-    builder.add_contract_method("speaker_name", &[], 0);
+    add_typed_contract_method(&mut builder, "speaker_name", &[], TypeSignature::String);
 
     // Contract 19: Reflectable (no generic params) — runtime type query
     let reflectable_contract = builder.add_contract_def("Reflectable", "writ");
-    builder.add_contract_method("get_type", &[], 0);
+    add_typed_contract_method(&mut builder, "get_type", &[], named_type(TYPE_TYPEDEF_ROW));
 
     // Contract 20: Hashable (no generic params) — deterministic hash for primitive types (Phase 116)
     let hashable_contract = builder.add_contract_def("Hashable", "writ");
-    builder.add_contract_method("hash", &[], 0);
-
-    // Specialization contracts 20-24 for generic dispatch (FIX-02).
-    // Each represents a monomorphized specialization of a generic contract.
-    // Distinct tokens allow build_dispatch_table to assign distinct type_args_hash
-    // values (= impl_def.contract.0) per specialization, eliminating DispatchKey
-    // collisions between e.g. Int:Into<Float> and Int:Into<String>.
-    let into_float_spec = builder.add_contract_def("Into<Float>", "writ");
-    builder.add_contract_method("into", &[], 0);
-
-    let into_int_spec = builder.add_contract_def("Into<Int>", "writ");
-    builder.add_contract_method("into", &[], 0);
-
-    let into_string_spec = builder.add_contract_def("Into<String>", "writ");
-    builder.add_contract_method("into", &[], 0);
-
-    let index_int_spec = builder.add_contract_def("Index<Int>", "writ");
-    builder.add_contract_method("op_index", &[], 0);
-
-    let index_range_spec = builder.add_contract_def("Index<Range>", "writ");
-    builder.add_contract_method("op_index", &[], 0);
+    add_typed_contract_method(&mut builder, "hash", &[], TypeSignature::Int);
 
     // ────────────────────────────────────────────────────────────────
     // Section 2: Core types (spec section 2.18.1 - 2.18.2)
@@ -231,12 +531,12 @@ pub fn build_writ_runtime_module() -> Module {
 
     // Option<T> (kind=Enum=1)
     let option_type = builder.add_type_def("Option", "writ", TypeDefKind::Enum, 0);
-    builder.add_generic_param(option_type, 0, 0, "T");
+    builder.add_generic_param(option_type, TYPE_GENERIC_OWNER_KIND, 0, "T");
 
     // Result<T, E> (kind=Enum=1)
     let result_type = builder.add_type_def("Result", "writ", TypeDefKind::Enum, 0);
-    builder.add_generic_param(result_type, 0, 0, "T");
-    builder.add_generic_param(result_type, 0, 1, "E");
+    builder.add_generic_param(result_type, TYPE_GENERIC_OWNER_KIND, 0, "T");
+    builder.add_generic_param(result_type, TYPE_GENERIC_OWNER_KIND, 1, "E");
 
     // Range<T> (kind=Struct=0) with 4 fields
     let range_type = builder.add_type_def("Range", "writ", TypeDefKind::Struct, 0);
@@ -244,7 +544,7 @@ pub fn build_writ_runtime_module() -> Module {
     builder.add_field_def("end", &[0x12, 0x00, 0x00], 0);
     builder.add_field_def("start_inclusive", &[0x03], 0);             // bool
     builder.add_field_def("end_inclusive", &[0x03], 0);
-    builder.add_generic_param(range_type, 0, 0, "T");
+    builder.add_generic_param(range_type, TYPE_GENERIC_OWNER_KIND, 0, "T");
 
     // ────────────────────────────────────────────────────────────────
     // Section 3: Primitive pseudo-TypeDefs (spec section 2.18.4)
@@ -263,72 +563,264 @@ pub fn build_writ_runtime_module() -> Module {
     // Each intrinsic method records its ImplDef owner explicitly.
 
     // --- Int implementations (13) ---
-    add_intrinsic_impl(&mut builder, int_type, add_contract, "int_add");
+    add_intrinsic_generic_impl(
+        &mut builder,
+        int_type,
+        "Add",
+        vec![TypeSignature::Int, TypeSignature::Int],
+        "int_add",
+    );
 
-    add_intrinsic_impl(&mut builder, int_type, sub_contract, "int_sub");
+    add_intrinsic_generic_impl(
+        &mut builder,
+        int_type,
+        "Sub",
+        vec![TypeSignature::Int, TypeSignature::Int],
+        "int_sub",
+    );
 
-    add_intrinsic_impl(&mut builder, int_type, mul_contract, "int_mul");
+    add_intrinsic_generic_impl(
+        &mut builder,
+        int_type,
+        "Mul",
+        vec![TypeSignature::Int, TypeSignature::Int],
+        "int_mul",
+    );
 
-    add_intrinsic_impl(&mut builder, int_type, div_contract, "int_div");
+    add_intrinsic_generic_impl(
+        &mut builder,
+        int_type,
+        "Div",
+        vec![TypeSignature::Int, TypeSignature::Int],
+        "int_div",
+    );
 
-    add_intrinsic_impl(&mut builder, int_type, mod_contract, "int_mod");
+    add_intrinsic_generic_impl(
+        &mut builder,
+        int_type,
+        "Mod",
+        vec![TypeSignature::Int, TypeSignature::Int],
+        "int_mod",
+    );
 
-    add_intrinsic_impl(&mut builder, int_type, neg_contract, "int_neg");
+    add_intrinsic_generic_impl(
+        &mut builder,
+        int_type,
+        "Neg",
+        vec![TypeSignature::Int],
+        "int_neg",
+    );
 
-    add_intrinsic_impl(&mut builder, int_type, not_contract, "int_not");
+    add_intrinsic_generic_impl(
+        &mut builder,
+        int_type,
+        "Not",
+        vec![TypeSignature::Int],
+        "int_not",
+    );
 
-    add_intrinsic_impl(&mut builder, int_type, eq_contract, "int_eq");
+    add_intrinsic_generic_impl(
+        &mut builder,
+        int_type,
+        "Eq",
+        vec![TypeSignature::Int],
+        "int_eq",
+    );
 
-    add_intrinsic_impl(&mut builder, int_type, ord_contract, "int_ord");
+    add_intrinsic_generic_impl(
+        &mut builder,
+        int_type,
+        "Ord",
+        vec![TypeSignature::Int],
+        "int_ord",
+    );
 
-    add_intrinsic_impl(&mut builder, int_type, bitand_contract, "int_bitand");
+    add_intrinsic_generic_impl(
+        &mut builder,
+        int_type,
+        "BitAnd",
+        vec![TypeSignature::Int, TypeSignature::Int],
+        "int_bitand",
+    );
 
-    add_intrinsic_impl(&mut builder, int_type, bitor_contract, "int_bitor");
+    add_intrinsic_generic_impl(
+        &mut builder,
+        int_type,
+        "BitOr",
+        vec![TypeSignature::Int, TypeSignature::Int],
+        "int_bitor",
+    );
 
-    add_intrinsic_impl(&mut builder, int_type, into_float_spec, "int_into_float"); // Int:Into<Float>
+    add_intrinsic_generic_impl(
+        &mut builder,
+        int_type,
+        "Into",
+        vec![TypeSignature::Float],
+        "int_into_float",
+    );
 
-    add_intrinsic_impl(&mut builder, int_type, into_string_spec, "int_into_string"); // Int:Into<String>
+    add_intrinsic_generic_impl(
+        &mut builder,
+        int_type,
+        "Into",
+        vec![TypeSignature::String],
+        "int_into_string",
+    );
 
     // --- Float implementations (10) ---
-    add_intrinsic_impl(&mut builder, float_type, add_contract, "float_add");
+    add_intrinsic_generic_impl(
+        &mut builder,
+        float_type,
+        "Add",
+        vec![TypeSignature::Float, TypeSignature::Float],
+        "float_add",
+    );
 
-    add_intrinsic_impl(&mut builder, float_type, sub_contract, "float_sub");
+    add_intrinsic_generic_impl(
+        &mut builder,
+        float_type,
+        "Sub",
+        vec![TypeSignature::Float, TypeSignature::Float],
+        "float_sub",
+    );
 
-    add_intrinsic_impl(&mut builder, float_type, mul_contract, "float_mul");
+    add_intrinsic_generic_impl(
+        &mut builder,
+        float_type,
+        "Mul",
+        vec![TypeSignature::Float, TypeSignature::Float],
+        "float_mul",
+    );
 
-    add_intrinsic_impl(&mut builder, float_type, div_contract, "float_div");
+    add_intrinsic_generic_impl(
+        &mut builder,
+        float_type,
+        "Div",
+        vec![TypeSignature::Float, TypeSignature::Float],
+        "float_div",
+    );
 
-    add_intrinsic_impl(&mut builder, float_type, mod_contract, "float_mod");
+    add_intrinsic_generic_impl(
+        &mut builder,
+        float_type,
+        "Mod",
+        vec![TypeSignature::Float, TypeSignature::Float],
+        "float_mod",
+    );
 
-    add_intrinsic_impl(&mut builder, float_type, neg_contract, "float_neg");
+    add_intrinsic_generic_impl(
+        &mut builder,
+        float_type,
+        "Neg",
+        vec![TypeSignature::Float],
+        "float_neg",
+    );
 
-    add_intrinsic_impl(&mut builder, float_type, eq_contract, "float_eq");
+    add_intrinsic_generic_impl(
+        &mut builder,
+        float_type,
+        "Eq",
+        vec![TypeSignature::Float],
+        "float_eq",
+    );
 
-    add_intrinsic_impl(&mut builder, float_type, ord_contract, "float_ord");
+    add_intrinsic_generic_impl(
+        &mut builder,
+        float_type,
+        "Ord",
+        vec![TypeSignature::Float],
+        "float_ord",
+    );
 
-    add_intrinsic_impl(&mut builder, float_type, into_int_spec, "float_into_int"); // Float:Into<Int>
+    add_intrinsic_generic_impl(
+        &mut builder,
+        float_type,
+        "Into",
+        vec![TypeSignature::Int],
+        "float_into_int",
+    );
 
-    add_intrinsic_impl(&mut builder, float_type, into_string_spec, "float_into_string"); // Float:Into<String>
+    add_intrinsic_generic_impl(
+        &mut builder,
+        float_type,
+        "Into",
+        vec![TypeSignature::String],
+        "float_into_string",
+    );
 
     // --- Bool implementations (3) ---
-    add_intrinsic_impl(&mut builder, bool_type, eq_contract, "bool_eq");
+    add_intrinsic_generic_impl(
+        &mut builder,
+        bool_type,
+        "Eq",
+        vec![TypeSignature::Bool],
+        "bool_eq",
+    );
 
-    add_intrinsic_impl(&mut builder, bool_type, not_contract, "bool_not");
+    add_intrinsic_generic_impl(
+        &mut builder,
+        bool_type,
+        "Not",
+        vec![TypeSignature::Bool],
+        "bool_not",
+    );
 
-    add_intrinsic_impl(&mut builder, bool_type, into_string_spec, "bool_into_string"); // Bool:Into<String>
+    add_intrinsic_generic_impl(
+        &mut builder,
+        bool_type,
+        "Into",
+        vec![TypeSignature::String],
+        "bool_into_string",
+    );
 
     // --- String implementations (6) ---
-    add_intrinsic_impl(&mut builder, string_type, add_contract, "string_add");
+    add_intrinsic_generic_impl(
+        &mut builder,
+        string_type,
+        "Add",
+        vec![TypeSignature::String, TypeSignature::String],
+        "string_add",
+    );
 
-    add_intrinsic_impl(&mut builder, string_type, eq_contract, "string_eq");
+    add_intrinsic_generic_impl(
+        &mut builder,
+        string_type,
+        "Eq",
+        vec![TypeSignature::String],
+        "string_eq",
+    );
 
-    add_intrinsic_impl(&mut builder, string_type, ord_contract, "string_ord");
+    add_intrinsic_generic_impl(
+        &mut builder,
+        string_type,
+        "Ord",
+        vec![TypeSignature::String],
+        "string_ord",
+    );
 
-    add_intrinsic_impl(&mut builder, string_type, index_int_spec, "string_index_int"); // String:Index<Int>
+    add_intrinsic_generic_impl(
+        &mut builder,
+        string_type,
+        "Index",
+        vec![TypeSignature::Int, TypeSignature::String],
+        "string_index_int",
+    );
 
-    add_intrinsic_impl(&mut builder, string_type, index_range_spec, "string_index_range"); // String:Index<Range>
+    add_intrinsic_generic_impl(
+        &mut builder,
+        string_type,
+        "Index",
+        vec![range_of(TypeSignature::Int), TypeSignature::String],
+        "string_index_range",
+    );
 
-    add_intrinsic_impl(&mut builder, string_type, into_string_spec, "string_into_string"); // String:Into<String>
+    add_intrinsic_generic_impl(
+        &mut builder,
+        string_type,
+        "Into",
+        vec![TypeSignature::String],
+        "string_into_string",
+    );
 
     // --- Primitive Reflectable implementations (4) ---
     add_intrinsic_impl(&mut builder, int_type, reflectable_contract, "int_get_type");
@@ -354,24 +846,51 @@ pub fn build_writ_runtime_module() -> Module {
 
     let array_type = builder.add_type_def("Array", "writ", TypeDefKind::Struct, 0);
     builder.add_field_def("length", &[0x01], 0x01);  // int type, read-only flag
-    builder.add_generic_param(array_type, 0, 0, "T");
+    builder.add_generic_param(array_type, TYPE_GENERIC_OWNER_KIND, 0, "T");
 
     // Array intrinsic instance methods
-    add_intrinsic_type_method(&mut builder, array_type, "array_add");
-    add_intrinsic_type_method(&mut builder, array_type, "array_remove_at");
-    add_intrinsic_type_method(&mut builder, array_type, "array_insert");
-    add_intrinsic_type_method(&mut builder, array_type, "array_contains");
-    add_intrinsic_type_method(&mut builder, array_type, "array_slice");
-    add_intrinsic_type_method(&mut builder, array_type, "array_iterator");
+    add_intrinsic_type_method(&mut builder, array_type, "add");
+    add_intrinsic_type_method(&mut builder, array_type, "removeAt");
+    add_intrinsic_type_method(&mut builder, array_type, "insert");
+    add_intrinsic_type_method(&mut builder, array_type, "contains");
+    add_intrinsic_type_method(&mut builder, array_type, "slice");
+    add_intrinsic_type_method(&mut builder, array_type, "iterator");
 
     // Array contract implementations (4 ImplDef entries)
-    add_intrinsic_impl(&mut builder, array_type, index_int_spec, "array_index"); // Array:Index<Int>
+    add_intrinsic_generic_impl(
+        &mut builder,
+        array_type,
+        "Index",
+        vec![TypeSignature::Int, TypeSignature::GenericParam(0)],
+        "array_index",
+    );
 
-    add_intrinsic_impl(&mut builder, array_type, indexset_contract, "array_index_set"); // IndexSet<int, T>
+    add_intrinsic_generic_impl(
+        &mut builder,
+        array_type,
+        "IndexSet",
+        vec![TypeSignature::Int, TypeSignature::GenericParam(0)],
+        "array_index_set",
+    );
 
-    add_intrinsic_impl(&mut builder, array_type, index_range_spec, "array_index_range"); // Array:Index<Range>
+    add_intrinsic_generic_impl(
+        &mut builder,
+        array_type,
+        "Index",
+        vec![
+            range_of(TypeSignature::Int),
+            array_of(TypeSignature::GenericParam(0)),
+        ],
+        "array_index_range",
+    );
 
-    add_intrinsic_impl(&mut builder, array_type, iterable_contract, "array_iterable"); // Iterable<T>
+    add_intrinsic_generic_impl(
+        &mut builder,
+        array_type,
+        "Iterable",
+        vec![TypeSignature::GenericParam(0)],
+        "array_iterable",
+    );
 
     // ────────────────────────────────────────────────────────────────
     // Section 6: Entity base TypeDef (spec section 2.18.7)
@@ -380,10 +899,18 @@ pub fn build_writ_runtime_module() -> Module {
     let entity_type = builder.add_type_def("Entity", "writ", TypeDefKind::Entity, 0);
 
     // Entity intrinsic static methods
-    add_intrinsic_type_method(&mut builder, entity_type, "entity_destroy");
-    add_intrinsic_type_method(&mut builder, entity_type, "entity_is_alive");
-    add_intrinsic_type_method(&mut builder, entity_type, "entity_get_or_create");
-    add_intrinsic_type_method(&mut builder, entity_type, "entity_find_all");
+    add_intrinsic_type_method(&mut builder, entity_type, "destroy");
+    add_intrinsic_type_method(&mut builder, entity_type, "isAlive");
+    let get_or_create =
+        add_intrinsic_type_method(&mut builder, entity_type, "getOrCreate");
+    builder.add_generic_param(
+        get_or_create,
+        METHOD_GENERIC_OWNER_KIND,
+        0,
+        "T",
+    );
+    let find_all = add_intrinsic_type_method(&mut builder, entity_type, "findAll");
+    builder.add_generic_param(find_all, METHOD_GENERIC_OWNER_KIND, 0, "T");
 
     // ────────────────────────────────────────────────────────────────
     // Section 7: Builtin Attribute Declarations (UATTR-03)
@@ -437,97 +964,97 @@ pub fn build_writ_runtime_module() -> Module {
     // so the dispatch table can resolve CALL_VIRT on Type/FieldInfo/etc.
     // methods to the correct IntrinsicId via the standard ImplDef pathway.
     //
-    // Contract indices start at 24 (0-based).
+    // Synthetic reflection contracts follow the 20 normative/base contracts.
 
     // Type method contracts (5)
     let type_fields_contract   = builder.add_contract_def("Type.fields",       "writ");
-    builder.add_contract_method("type_fields", &[], 0);
+    add_intrinsic_contract_method(&mut builder, "fields");
 
     let type_methods_contract  = builder.add_contract_def("Type.methods",      "writ");
-    builder.add_contract_method("type_methods", &[], 0);
+    add_intrinsic_contract_method(&mut builder, "methods");
 
     let type_attrs_contract    = builder.add_contract_def("Type.attributes",   "writ");
-    builder.add_contract_method("type_attributes", &[], 0);
+    add_intrinsic_contract_method(&mut builder, "attributes");
 
     let type_contracts_contract = builder.add_contract_def("Type.contracts",   "writ");
-    builder.add_contract_method("type_contracts", &[], 0);
+    add_intrinsic_contract_method(&mut builder, "contracts");
 
     let type_impl_contract     = builder.add_contract_def("Type.implements",   "writ");
-    builder.add_contract_method("type_implements", &[], 0);
+    add_intrinsic_contract_method(&mut builder, "implements");
 
     // Type field accessor contracts (4)
     let type_get_name_contract      = builder.add_contract_def("Type.get_name",       "writ");
-    builder.add_contract_method("type_get_name", &[], 0);
+    add_intrinsic_contract_method(&mut builder, "type_get_name");
 
     let type_get_ns_contract        = builder.add_contract_def("Type.get_namespace",  "writ");
-    builder.add_contract_method("type_get_namespace", &[], 0);
+    add_intrinsic_contract_method(&mut builder, "type_get_namespace");
 
     let type_get_kind_contract      = builder.add_contract_def("Type.get_kind",       "writ");
-    builder.add_contract_method("type_get_kind", &[], 0);
+    add_intrinsic_contract_method(&mut builder, "type_get_kind");
 
     let type_get_is_generic_contract = builder.add_contract_def("Type.get_is_generic", "writ");
-    builder.add_contract_method("type_get_is_generic", &[], 0);
+    add_intrinsic_contract_method(&mut builder, "type_get_is_generic");
 
     // FieldInfo method contracts (4)
     let fieldinfo_get_contract          = builder.add_contract_def("FieldInfo.get",           "writ");
-    builder.add_contract_method("fieldinfo_get", &[], 0);
+    add_intrinsic_contract_method(&mut builder, "get");
 
     let fieldinfo_get_name_contract     = builder.add_contract_def("FieldInfo.get_name",      "writ");
-    builder.add_contract_method("fieldinfo_get_name", &[], 0);
+    add_intrinsic_contract_method(&mut builder, "fieldinfo_get_name");
 
     let fieldinfo_get_type_contract     = builder.add_contract_def("FieldInfo.get_declared_type", "writ");
-    builder.add_contract_method("fieldinfo_get_declared_type", &[], 0);
+    add_intrinsic_contract_method(&mut builder, "fieldinfo_get_declared_type");
 
     let fieldinfo_get_mut_contract      = builder.add_contract_def("FieldInfo.get_is_mutable", "writ");
-    builder.add_contract_method("fieldinfo_get_is_mutable", &[], 0);
+    add_intrinsic_contract_method(&mut builder, "fieldinfo_get_is_mutable");
 
     // MethodInfo method contracts (3)
     let methodinfo_get_name_contract    = builder.add_contract_def("MethodInfo.get_name",       "writ");
-    builder.add_contract_method("methodinfo_get_name", &[], 0);
+    add_intrinsic_contract_method(&mut builder, "methodinfo_get_name");
 
     let methodinfo_get_ret_contract     = builder.add_contract_def("MethodInfo.get_return_type", "writ");
-    builder.add_contract_method("methodinfo_get_return_type", &[], 0);
+    add_intrinsic_contract_method(&mut builder, "methodinfo_get_return_type");
 
     let methodinfo_get_params_contract  = builder.add_contract_def("MethodInfo.get_parameters",  "writ");
-    builder.add_contract_method("methodinfo_get_parameters", &[], 0);
+    add_intrinsic_contract_method(&mut builder, "methodinfo_get_parameters");
 
     // ParameterInfo method contracts (2)
     let paraminfo_get_name_contract     = builder.add_contract_def("ParameterInfo.get_name", "writ");
-    builder.add_contract_method("paraminfo_get_name", &[], 0);
+    add_intrinsic_contract_method(&mut builder, "paraminfo_get_name");
 
     let paraminfo_get_type_contract     = builder.add_contract_def("ParameterInfo.get_type", "writ");
-    builder.add_contract_method("paraminfo_get_type", &[], 0);
+    add_intrinsic_contract_method(&mut builder, "paraminfo_get_type");
 
     // AttributeInfo method contracts (2)
     let attrinfo_get_name_contract      = builder.add_contract_def("AttributeInfo.get_name", "writ");
-    builder.add_contract_method("attrinfo_get_name", &[], 0);
+    add_intrinsic_contract_method(&mut builder, "attrinfo_get_name");
 
     let attrinfo_get_args_contract      = builder.add_contract_def("AttributeInfo.get_args", "writ");
-    builder.add_contract_method("attrinfo_get_args", &[], 0);
+    add_intrinsic_contract_method(&mut builder, "attrinfo_get_args");
 
     // ContractInfo method contracts (2)
     let contractinfo_get_name_contract  = builder.add_contract_def("ContractInfo.get_name", "writ");
-    builder.add_contract_method("contractinfo_get_name", &[], 0);
+    add_intrinsic_contract_method(&mut builder, "contractinfo_get_name");
 
     let contractinfo_get_type_contract  = builder.add_contract_def("ContractInfo.get_type", "writ");
-    builder.add_contract_method("contractinfo_get_type", &[], 0);
+    add_intrinsic_contract_method(&mut builder, "contractinfo_get_type");
 
     // Phase 107: Dynamic invocation contracts (2)
     let fieldinfo_set_contract          = builder.add_contract_def("FieldInfo.set",          "writ");
-    builder.add_contract_method("fieldinfo_set", &[], 0);
+    add_intrinsic_contract_method(&mut builder, "set");
 
     let methodinfo_invoke_contract      = builder.add_contract_def("MethodInfo.invoke",      "writ");
-    builder.add_contract_method("methodinfo_invoke", &[], 0);
+    add_intrinsic_contract_method(&mut builder, "invoke");
 
     // Phase 108: Generic reflection + per-member attributes (3)
     let type_type_args_contract         = builder.add_contract_def("Type.type_args",         "writ");
-    builder.add_contract_method("type_type_args", &[], 0);
+    add_intrinsic_contract_method(&mut builder, "type_args");
 
     let methodinfo_attrs_contract       = builder.add_contract_def("MethodInfo.attributes",  "writ");
-    builder.add_contract_method("methodinfo_attributes", &[], 0);
+    add_intrinsic_contract_method(&mut builder, "attributes");
 
     let fieldinfo_attrs_contract        = builder.add_contract_def("FieldInfo.attributes",   "writ");
-    builder.add_contract_method("fieldinfo_attributes", &[], 0);
+    add_intrinsic_contract_method(&mut builder, "attributes");
 
     // ────────────────────────────────────────────────────────────────
     // Section 9: Reflection TypeDefs (spec section 2.18.9)
@@ -613,7 +1140,7 @@ pub fn build_writ_runtime_module() -> Module {
     assert_eq!(box_type, type_def_token(BOX_TYPEDEF_ROW));
     let entity_list_type = builder.add_type_def("EntityList", "writ", TypeDefKind::Class, 0);
     assert_eq!(entity_list_type, type_def_token(ENTITY_LIST_TYPEDEF_ROW));
-    builder.add_generic_param(entity_list_type, 0, 0, "T");
+    builder.add_generic_param(entity_list_type, TYPE_GENERIC_OWNER_KIND, 0, "T");
 
     // ────────────────────────────────────────────────────────────────
     // Section 10: Reflection ImplDef entries (Phase 103)
@@ -622,15 +1149,15 @@ pub fn build_writ_runtime_module() -> Module {
     // Link each reflection TypeDef to its synthetic method contracts.
 
     // --- Type implementations (9) ---
-    add_intrinsic_impl(&mut builder, type_type, type_fields_contract, "type_fields");
+    add_intrinsic_impl(&mut builder, type_type, type_fields_contract, "fields");
 
-    add_intrinsic_impl(&mut builder, type_type, type_methods_contract, "type_methods");
+    add_intrinsic_impl(&mut builder, type_type, type_methods_contract, "methods");
 
-    add_intrinsic_impl(&mut builder, type_type, type_attrs_contract, "type_attributes");
+    add_intrinsic_impl(&mut builder, type_type, type_attrs_contract, "attributes");
 
-    add_intrinsic_impl(&mut builder, type_type, type_contracts_contract, "type_contracts");
+    add_intrinsic_impl(&mut builder, type_type, type_contracts_contract, "contracts");
 
-    add_intrinsic_impl(&mut builder, type_type, type_impl_contract, "type_implements");
+    add_intrinsic_impl(&mut builder, type_type, type_impl_contract, "implements");
 
     add_intrinsic_impl(&mut builder, type_type, type_get_name_contract, "type_get_name");
 
@@ -656,7 +1183,7 @@ pub fn build_writ_runtime_module() -> Module {
     add_intrinsic_impl(&mut builder, contract_info_type, contractinfo_get_type_contract, "contractinfo_get_type");
 
     // --- FieldInfo implementations (4) ---
-    add_intrinsic_impl(&mut builder, field_info_type, fieldinfo_get_contract, "fieldinfo_get");
+    add_intrinsic_impl(&mut builder, field_info_type, fieldinfo_get_contract, "get");
 
     add_intrinsic_impl(&mut builder, field_info_type, fieldinfo_get_name_contract, "fieldinfo_get_name");
 
@@ -672,16 +1199,16 @@ pub fn build_writ_runtime_module() -> Module {
     add_intrinsic_impl(&mut builder, method_info_type, methodinfo_get_params_contract, "methodinfo_get_parameters");
 
     // --- Phase 107: Dynamic invocation implementations (2) ---
-    add_intrinsic_impl(&mut builder, field_info_type, fieldinfo_set_contract, "fieldinfo_set");
+    add_intrinsic_impl(&mut builder, field_info_type, fieldinfo_set_contract, "set");
 
-    add_intrinsic_impl(&mut builder, method_info_type, methodinfo_invoke_contract, "methodinfo_invoke");
+    add_intrinsic_impl(&mut builder, method_info_type, methodinfo_invoke_contract, "invoke");
 
     // --- Phase 108: Generic reflection + per-member attributes (3) ---
-    add_intrinsic_impl(&mut builder, type_type, type_type_args_contract, "type_type_args");
+    add_intrinsic_impl(&mut builder, type_type, type_type_args_contract, "type_args");
 
-    add_intrinsic_impl(&mut builder, method_info_type, methodinfo_attrs_contract, "methodinfo_attributes");
+    add_intrinsic_impl(&mut builder, method_info_type, methodinfo_attrs_contract, "attributes");
 
-    add_intrinsic_impl(&mut builder, field_info_type, fieldinfo_attrs_contract, "fieldinfo_attributes");
+    add_intrinsic_impl(&mut builder, field_info_type, fieldinfo_attrs_contract, "attributes");
 
     // ────────────────────────────────────────────────────────────────
     // Section 11: Build and return
@@ -694,7 +1221,7 @@ pub fn build_writ_runtime_module() -> Module {
 mod tests {
     use super::*;
     use crate::heap::{read_blob, read_string};
-    use crate::signature::decode_type_signature;
+    use crate::signature::{decode_method_signature, decode_type_signature};
 
     /// Helper to read a string from the module's string heap.
     fn str_from_heap(module: &Module, offset: u32) -> &str {
@@ -721,6 +1248,97 @@ mod tests {
         decode_type_signature(blob).expect("valid field signature")
     }
 
+    fn decoded_method_signature(
+        module: &Module,
+        signature_offset: u32,
+    ) -> (Vec<TypeSignature>, TypeSignature) {
+        let blob = read_blob(&module.blob_heap, signature_offset).expect("valid method blob");
+        decode_method_signature(blob).expect("valid canonical method signature")
+    }
+
+    fn contract_signature(
+        module: &Module,
+        contract_name: &str,
+    ) -> (Vec<TypeSignature>, TypeSignature) {
+        let contract_idx = module
+            .contract_defs
+            .iter()
+            .position(|row| str_from_heap(module, row.name) == contract_name)
+            .expect("ContractDef exists");
+        let start = module.contract_defs[contract_idx]
+            .method_list
+            .saturating_sub(1) as usize;
+        let end = module
+            .contract_defs
+            .get(contract_idx + 1)
+            .map(|row| row.method_list.saturating_sub(1) as usize)
+            .unwrap_or(module.contract_methods.len());
+        assert_eq!(end - start, 1, "{contract_name} must have one method");
+        decoded_method_signature(module, module.contract_methods[start].signature)
+    }
+
+    fn type_method<'a>(module: &'a Module, type_name: &str, method_name: &str) -> &'a crate::tables::MethodDefRow {
+        let type_idx = module
+            .type_defs
+            .iter()
+            .position(|row| str_from_heap(module, row.name) == type_name)
+            .expect("TypeDef exists");
+        module
+            .type_method_indices(type_idx)
+            .into_iter()
+            .map(|idx| &module.method_defs[idx])
+            .find(|row| str_from_heap(module, row.name) == method_name)
+            .expect("direct MethodDef exists")
+    }
+
+    fn impl_method<'a>(
+        module: &'a Module,
+        type_name: &str,
+        method_name: &str,
+    ) -> &'a crate::tables::MethodDefRow {
+        let type_idx = module
+            .type_defs
+            .iter()
+            .position(|row| str_from_heap(module, row.name) == type_name)
+            .expect("TypeDef exists");
+        let type_token = type_def_token(type_idx as u32 + 1);
+        module
+            .impl_defs
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row.type_token == type_token)
+            .flat_map(|(idx, _)| module.impl_method_indices(idx))
+            .map(|idx| &module.method_defs[idx])
+            .find(|row| str_from_heap(module, row.name) == method_name)
+            .expect("Impl MethodDef exists")
+    }
+
+    fn method_signature_for(
+        module: &Module,
+        method: &crate::tables::MethodDefRow,
+    ) -> (Vec<TypeSignature>, TypeSignature) {
+        decoded_method_signature(module, method.signature)
+    }
+
+    fn contract_specialization_for_method(module: &Module, method_name: &str) -> TypeSignature {
+        let method = module
+            .method_defs
+            .iter()
+            .find(|row| str_from_heap(module, row.name) == method_name)
+            .expect("MethodDef exists");
+        assert_eq!(method.owner.table_id(), TableId::ImplDef.as_u8());
+        let impl_idx = method.owner.row_index().expect("ImplDef row") as usize - 1;
+        let contract = module.impl_defs[impl_idx].contract;
+        assert_eq!(contract.table_id(), TableId::TypeSpec.as_u8());
+        let type_spec_idx = contract.row_index().expect("TypeSpec row") as usize - 1;
+        let blob = read_blob(
+            &module.blob_heap,
+            module.type_specs[type_spec_idx].signature,
+        )
+        .expect("valid TypeSpec blob");
+        decode_type_signature(blob).expect("canonical contract TypeSpec")
+    }
+
     #[test]
     fn module_name_is_writ_runtime() {
         let module = build_writ_runtime_module();
@@ -730,15 +1348,11 @@ mod tests {
     }
 
     #[test]
-    fn has_exactly_51_contract_defs() {
+    fn has_exactly_47_contract_defs() {
         let module = build_writ_runtime_module();
-        // 18 base contracts + Reflectable + 5 specialization contracts (Into<Float>, Into<Int>,
-        // Into<String>, Index<Int>, Index<Range>) = 24
-        // + 22 Phase 103 reflection method contracts = 46
-        // + 2 Phase 107 dynamic invocation contracts (FieldInfo.set, MethodInfo.invoke) = 48
-        // + 3 Phase 108 generic reflection contracts (Type.type_args, MethodInfo.attributes, FieldInfo.attributes) = 51
-        // + 1 Phase 116 Hashable contract = 52
-        assert_eq!(module.contract_defs.len(), 52);
+        // 20 normative/base contracts + 22 reflection accessor contracts
+        // + 2 dynamic invocation contracts + 3 generic/member reflection contracts.
+        assert_eq!(module.contract_defs.len(), 47);
     }
 
     #[test]
@@ -766,6 +1380,7 @@ mod tests {
         assert!(names.contains(&"Error"));
         assert!(names.contains(&"Speaker"));
         assert!(names.contains(&"Reflectable"));
+        assert!(names.contains(&"Hashable"));
     }
 
     #[test]
@@ -780,11 +1395,7 @@ mod tests {
     #[test]
     fn each_contract_has_one_method() {
         let module = build_writ_runtime_module();
-        // 51 contracts (18 base + Reflectable + 5 specializations + 22 reflection method contracts
-        // + 2 Phase 107 dynamic invocation contracts + 3 Phase 108 generic reflection contracts),
-        // each with exactly one method.
-        // + 1 Phase 116 Hashable contract = 52 total.
-        assert_eq!(module.contract_methods.len(), 52);
+        assert_eq!(module.contract_methods.len(), 47);
 
         // Verify slot assignments are all 0
         for cm in &module.contract_methods {
@@ -807,6 +1418,177 @@ mod tests {
         for name in &expected {
             assert!(method_names.contains(name), "missing contract method: {}", name);
         }
+    }
+
+    #[test]
+    fn normative_contract_signatures_match_spec() {
+        let module = build_writ_runtime_module();
+        let gp0 = TypeSignature::GenericParam(0);
+        let gp1 = TypeSignature::GenericParam(1);
+        let binary = || (vec![gp0.clone()], gp1.clone());
+
+        for name in ["Add", "Sub", "Mul", "Div", "Mod", "BitAnd", "BitOr"] {
+            assert_eq!(contract_signature(&module, name), binary(), "{name}");
+        }
+        for name in ["Neg", "Not"] {
+            assert_eq!(
+                contract_signature(&module, name),
+                (vec![], gp0.clone()),
+                "{name}"
+            );
+        }
+        for name in ["Eq", "Ord"] {
+            assert_eq!(
+                contract_signature(&module, name),
+                (vec![gp0.clone()], TypeSignature::Bool),
+                "{name}"
+            );
+        }
+        assert_eq!(
+            contract_signature(&module, "Index"),
+            (vec![gp0.clone()], gp1.clone())
+        );
+        assert_eq!(
+            contract_signature(&module, "IndexSet"),
+            (vec![gp0.clone(), gp1], TypeSignature::Void)
+        );
+        assert_eq!(
+            contract_signature(&module, "Iterable"),
+            (vec![], iterator_of(gp0.clone()))
+        );
+        assert_eq!(
+            contract_signature(&module, "Iterator"),
+            (vec![], option_of(gp0.clone()))
+        );
+        assert_eq!(
+            contract_signature(&module, "Into"),
+            (vec![], gp0)
+        );
+        assert_eq!(
+            contract_signature(&module, "Error"),
+            (vec![], TypeSignature::String)
+        );
+        assert_eq!(
+            contract_signature(&module, "Speaker"),
+            (vec![], TypeSignature::String)
+        );
+        assert_eq!(
+            contract_signature(&module, "Reflectable"),
+            (vec![], named_type(TYPE_TYPEDEF_ROW))
+        );
+        assert_eq!(
+            contract_signature(&module, "Hashable"),
+            (vec![], TypeSignature::Int)
+        );
+    }
+
+    #[test]
+    fn every_contract_and_intrinsic_method_has_a_canonical_signature() {
+        let module = build_writ_runtime_module();
+        for method in &module.contract_methods {
+            decoded_method_signature(&module, method.signature);
+        }
+        for method in &module.method_defs {
+            decoded_method_signature(&module, method.signature);
+        }
+    }
+
+    #[test]
+    fn intrinsic_parameter_and_register_counts_follow_the_calling_convention() {
+        let module = build_writ_runtime_module();
+        for method in &module.method_defs {
+            let name = str_from_heap(&module, method.name);
+            let (params, _) = decoded_method_signature(&module, method.signature);
+            let has_receiver = !method.owner.is_null() && method.flags & STATIC_FLAG == 0;
+            let expected = params.len() + usize::from(has_receiver);
+            assert_eq!(method.param_count as usize, expected, "{name} param_count");
+            assert!(
+                method.param_count <= method.reg_count,
+                "{name} has param_count {} greater than reg_count {}",
+                method.param_count,
+                method.reg_count
+            );
+        }
+
+        let exact = [
+            ("Array", "add", 2),
+            ("Array", "insert", 3),
+            ("Array", "iterator", 1),
+            ("Entity", "destroy", 1),
+            ("Entity", "isAlive", 1),
+            ("Entity", "getOrCreate", 0),
+            ("Entity", "findAll", 0),
+        ];
+        for (type_name, method_name, expected) in exact {
+            let method = type_method(&module, type_name, method_name);
+            assert_eq!(
+                method.param_count, expected,
+                "{type_name}.{method_name} param_count"
+            );
+            assert_eq!(
+                method.reg_count, expected,
+                "{type_name}.{method_name} reg_count"
+            );
+        }
+    }
+
+    #[test]
+    fn generic_impls_use_canonical_contract_typespecs() {
+        let module = build_writ_runtime_module();
+        let contract_names: Vec<_> = module
+            .contract_defs
+            .iter()
+            .map(|row| str_from_heap(&module, row.name))
+            .collect();
+        for removed in [
+            "Into<Float>",
+            "Into<Int>",
+            "Into<String>",
+            "Index<Int>",
+            "Index<Range>",
+        ] {
+            assert!(!contract_names.contains(&removed), "removed fake contract {removed}");
+        }
+
+        let specialized_impls: Vec<_> = module
+            .impl_defs
+            .iter()
+            .filter(|row| row.contract.table_id() == TableId::TypeSpec.as_u8())
+            .collect();
+        assert_eq!(specialized_impls.len(), 36);
+
+        assert_eq!(
+            contract_specialization_for_method(&module, "int_into_float"),
+            generic_type("Into", vec![TypeSignature::Float])
+        );
+        assert_eq!(
+            contract_specialization_for_method(&module, "float_into_int"),
+            generic_type("Into", vec![TypeSignature::Int])
+        );
+        assert_eq!(
+            contract_specialization_for_method(&module, "string_index_range"),
+            generic_type(
+                "Index",
+                vec![range_of(TypeSignature::Int), TypeSignature::String],
+            )
+        );
+        assert_eq!(
+            contract_specialization_for_method(&module, "array_index"),
+            generic_type(
+                "Index",
+                vec![TypeSignature::Int, TypeSignature::GenericParam(0)],
+            )
+        );
+        assert_eq!(
+            contract_specialization_for_method(&module, "array_index_range"),
+            generic_type(
+                "Index",
+                vec![
+                    range_of(TypeSignature::Int),
+                    array_of(TypeSignature::GenericParam(0)),
+                ],
+            )
+        );
     }
 
     #[test]
@@ -1092,6 +1874,29 @@ mod tests {
             6,
             "Array should have exactly 6 directly owned methods"
         );
+        let methods: Vec<_> = method_indices
+            .into_iter()
+            .map(|idx| &module.method_defs[idx])
+            .collect();
+        let names: Vec<_> = methods
+            .iter()
+            .map(|row| str_from_heap(&module, row.name))
+            .collect();
+        assert_eq!(
+            names,
+            ["add", "removeAt", "insert", "contains", "slice", "iterator"]
+        );
+        for method in methods {
+            let name = str_from_heap(&module, method.name);
+            assert_ne!(method.flags & PUBLIC_FLAG, 0, "Array.{name} must be public");
+            assert_ne!(method.flags & INTRINSIC_FLAG, 0, "Array.{name} must be intrinsic");
+            let expected_mut = matches!(name, "add" | "removeAt" | "insert");
+            assert_eq!(
+                method.flags & MUT_SELF_FLAG != 0,
+                expected_mut,
+                "Array.{name} mut-self flag"
+            );
+        }
     }
 
     #[test]
@@ -1115,10 +1920,196 @@ mod tests {
             .map(|idx| str_from_heap(&module, module.method_defs[idx].name))
             .collect();
         assert_eq!(method_names.len(), 4, "Entity should have 4 static methods");
-        assert!(method_names.contains(&"entity_destroy"));
-        assert!(method_names.contains(&"entity_is_alive"));
-        assert!(method_names.contains(&"entity_get_or_create"));
-        assert!(method_names.contains(&"entity_find_all"));
+        assert_eq!(method_names, ["destroy", "isAlive", "getOrCreate", "findAll"]);
+        for name in method_names {
+            let method = type_method(&module, "Entity", name);
+            assert_ne!(method.flags & PUBLIC_FLAG, 0, "Entity.{name} must be public");
+            assert_ne!(method.flags & STATIC_FLAG, 0, "Entity.{name} must be static");
+            assert_ne!(method.flags & INTRINSIC_FLAG, 0, "Entity.{name} must be intrinsic");
+        }
+    }
+
+    #[test]
+    fn array_and_entity_method_signatures_match_spec() {
+        let module = build_writ_runtime_module();
+        let gp0 = TypeSignature::GenericParam(0);
+
+        let array_cases = [
+            ("add", vec![gp0.clone()], TypeSignature::Void),
+            ("removeAt", vec![TypeSignature::Int], TypeSignature::Void),
+            (
+                "insert",
+                vec![TypeSignature::Int, gp0.clone()],
+                TypeSignature::Void,
+            ),
+            ("contains", vec![gp0.clone()], TypeSignature::Bool),
+            (
+                "slice",
+                vec![range_of(TypeSignature::Int)],
+                array_of(gp0.clone()),
+            ),
+            ("iterator", vec![], iterator_of(gp0.clone())),
+        ];
+        for (name, params, ret) in array_cases {
+            assert_eq!(
+                method_signature_for(&module, type_method(&module, "Array", name)),
+                (params, ret),
+                "Array.{name}"
+            );
+        }
+
+        let entity_cases = [
+            (
+                "destroy",
+                vec![TypeSignature::Entity],
+                TypeSignature::Void,
+            ),
+            (
+                "isAlive",
+                vec![TypeSignature::Entity],
+                TypeSignature::Bool,
+            ),
+            ("getOrCreate", vec![], gp0.clone()),
+            ("findAll", vec![], entity_list_of(gp0)),
+        ];
+        for (name, params, ret) in entity_cases {
+            assert_eq!(
+                method_signature_for(&module, type_method(&module, "Entity", name)),
+                (params, ret),
+                "Entity.{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn entity_generic_methods_own_their_type_parameter() {
+        let module = build_writ_runtime_module();
+        for name in ["getOrCreate", "findAll"] {
+            let method = type_method(&module, "Entity", name);
+            let direct_owner = module
+                .method_defs
+                .iter()
+                .position(|row| std::ptr::eq(row, method))
+                .map(|idx| MetadataToken::new(TableId::MethodDef.as_u8(), idx as u32 + 1))
+                .expect("MethodDef index");
+            let params: Vec<_> = module
+                .generic_params
+                .iter()
+                .filter(|row| row.owner == direct_owner)
+                .collect();
+            assert_eq!(params.len(), 1, "Entity.{name} generic parameter count");
+            assert_eq!(params[0].owner_kind, METHOD_GENERIC_OWNER_KIND);
+            assert_eq!(params[0].ordinal, 0);
+            assert_eq!(str_from_heap(&module, params[0].name), "T");
+        }
+    }
+
+    #[test]
+    fn reflection_public_methods_use_spec_names_signatures_and_visibility() {
+        let module = build_writ_runtime_module();
+        let type_ty = named_type(TYPE_TYPEDEF_ROW);
+        let box_ty = named_type(BOX_TYPEDEF_ROW);
+        let attr_ty = named_type(ATTRIBUTE_INFO_TYPEDEF_ROW);
+
+        let cases = [
+            (
+                "Type",
+                "fields",
+                vec![],
+                array_of(named_type(FIELD_INFO_TYPEDEF_ROW)),
+            ),
+            (
+                "Type",
+                "methods",
+                vec![],
+                array_of(named_type(METHOD_INFO_TYPEDEF_ROW)),
+            ),
+            ("Type", "attributes", vec![], array_of(attr_ty.clone())),
+            (
+                "Type",
+                "contracts",
+                vec![],
+                array_of(named_type(CONTRACT_INFO_TYPEDEF_ROW)),
+            ),
+            (
+                "Type",
+                "implements",
+                vec![type_ty.clone()],
+                TypeSignature::Bool,
+            ),
+            ("Type", "type_args", vec![], array_of(type_ty)),
+            (
+                "FieldInfo",
+                "get",
+                vec![box_ty.clone()],
+                box_ty.clone(),
+            ),
+            (
+                "FieldInfo",
+                "set",
+                vec![box_ty.clone(), box_ty.clone()],
+                TypeSignature::Void,
+            ),
+            (
+                "FieldInfo",
+                "attributes",
+                vec![],
+                array_of(attr_ty.clone()),
+            ),
+            (
+                "MethodInfo",
+                "invoke",
+                vec![box_ty.clone(), array_of(box_ty.clone())],
+                box_ty,
+            ),
+            ("MethodInfo", "attributes", vec![], array_of(attr_ty)),
+        ];
+
+        for (type_name, name, params, ret) in cases {
+            let method = impl_method(&module, type_name, name);
+            assert_eq!(
+                method_signature_for(&module, method),
+                (params, ret),
+                "{type_name}.{name}"
+            );
+            assert_ne!(
+                method.flags & PUBLIC_FLAG,
+                0,
+                "{type_name}.{name} must be public"
+            );
+            assert_ne!(
+                method.flags & INTRINSIC_FLAG,
+                0,
+                "{type_name}.{name} must be intrinsic"
+            );
+        }
+
+        let internal_getters = [
+            ("Type", "type_get_name"),
+            ("Type", "type_get_namespace"),
+            ("Type", "type_get_kind"),
+            ("Type", "type_get_is_generic"),
+            ("FieldInfo", "fieldinfo_get_name"),
+            ("FieldInfo", "fieldinfo_get_declared_type"),
+            ("FieldInfo", "fieldinfo_get_is_mutable"),
+            ("MethodInfo", "methodinfo_get_name"),
+            ("MethodInfo", "methodinfo_get_return_type"),
+            ("MethodInfo", "methodinfo_get_parameters"),
+            ("ParameterInfo", "paraminfo_get_name"),
+            ("ParameterInfo", "paraminfo_get_type"),
+            ("AttributeInfo", "attrinfo_get_name"),
+            ("AttributeInfo", "attrinfo_get_args"),
+            ("ContractInfo", "contractinfo_get_name"),
+            ("ContractInfo", "contractinfo_get_type"),
+        ];
+        for (type_name, name) in internal_getters {
+            let method = impl_method(&module, type_name, name);
+            assert_eq!(
+                method.flags & PUBLIC_FLAG,
+                0,
+                "{type_name}.{name} must remain internal"
+            );
+        }
     }
 
     #[test]
@@ -1147,6 +2138,16 @@ mod tests {
             .collect();
         assert_eq!(neg_params.len(), 1, "Neg should have 1 generic param");
         assert_eq!(str_from_heap(&module, neg_params[0].name), "R");
+
+        for param in module.generic_params.iter().filter(|param| {
+            param.owner.table_id() == TableId::ContractDef.as_u8()
+        }) {
+            assert_eq!(
+                param.owner_kind,
+                CONTRACT_GENERIC_OWNER_KIND,
+                "ContractDef generic parameters must use owner_kind=2"
+            );
+        }
     }
 
     // -- Reflection type tests (TYPE-01 through TYPE-08) --

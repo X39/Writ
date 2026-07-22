@@ -198,26 +198,26 @@ pub fn resolve_intrinsic_id(type_name: &str, method_name: &str) -> Option<Intrin
         ("Bool",   "bool_get_type")   => Some(IntrinsicId::BoolGetType),
         ("String", "string_get_type") => Some(IntrinsicId::StringGetType),
         // Reflection — Type methods (Phase 103)
-        ("Type", "type_fields")          => Some(IntrinsicId::TypeFields),
-        ("Type", "type_methods")         => Some(IntrinsicId::TypeMethods),
-        ("Type", "type_attributes")      => Some(IntrinsicId::TypeAttributes),
-        ("Type", "type_contracts")       => Some(IntrinsicId::TypeContracts),
-        ("Type", "type_implements")      => Some(IntrinsicId::TypeImplements),
+        ("Type", "fields")               => Some(IntrinsicId::TypeFields),
+        ("Type", "methods")              => Some(IntrinsicId::TypeMethods),
+        ("Type", "attributes")           => Some(IntrinsicId::TypeAttributes),
+        ("Type", "contracts")            => Some(IntrinsicId::TypeContracts),
+        ("Type", "implements")           => Some(IntrinsicId::TypeImplements),
         ("Type", "type_get_name")        => Some(IntrinsicId::TypeGetName),
         ("Type", "type_get_namespace")   => Some(IntrinsicId::TypeGetNamespace),
         ("Type", "type_get_kind")        => Some(IntrinsicId::TypeGetKind),
         ("Type", "type_get_is_generic")  => Some(IntrinsicId::TypeGetIsGeneric),
         // Reflection — FieldInfo methods (Phase 103)
-        ("FieldInfo", "fieldinfo_get")                => Some(IntrinsicId::FieldInfoGet),
+        ("FieldInfo", "get")                          => Some(IntrinsicId::FieldInfoGet),
         ("FieldInfo", "fieldinfo_get_name")           => Some(IntrinsicId::FieldInfoGetName),
         ("FieldInfo", "fieldinfo_get_declared_type")  => Some(IntrinsicId::FieldInfoGetDeclaredType),
         ("FieldInfo", "fieldinfo_get_is_mutable")     => Some(IntrinsicId::FieldInfoGetIsMutable),
-        ("FieldInfo", "fieldinfo_set")                => Some(IntrinsicId::FieldInfoSet),
+        ("FieldInfo", "set")                          => Some(IntrinsicId::FieldInfoSet),
         // Reflection — MethodInfo methods (Phase 103, Phase 107)
         ("MethodInfo", "methodinfo_get_name")         => Some(IntrinsicId::MethodInfoGetName),
         ("MethodInfo", "methodinfo_get_return_type")  => Some(IntrinsicId::MethodInfoGetReturnType),
         ("MethodInfo", "methodinfo_get_parameters")   => Some(IntrinsicId::MethodInfoGetParameters),
-        ("MethodInfo", "methodinfo_invoke")           => Some(IntrinsicId::MethodInfoInvoke),
+        ("MethodInfo", "invoke")                      => Some(IntrinsicId::MethodInfoInvoke),
         // Reflection — ParameterInfo methods (Phase 103)
         ("ParameterInfo", "paraminfo_get_name") => Some(IntrinsicId::ParameterInfoGetName),
         ("ParameterInfo", "paraminfo_get_type") => Some(IntrinsicId::ParameterInfoGetType),
@@ -228,15 +228,72 @@ pub fn resolve_intrinsic_id(type_name: &str, method_name: &str) -> Option<Intrin
         ("ContractInfo", "contractinfo_get_name") => Some(IntrinsicId::ContractInfoGetName),
         ("ContractInfo", "contractinfo_get_type") => Some(IntrinsicId::ContractInfoGetType),
         // Reflection — Generic type queries (Phase 108)
-        ("Type",       "type_type_args")        => Some(IntrinsicId::TypeTypeArgs),
+        ("Type",       "type_args")             => Some(IntrinsicId::TypeTypeArgs),
         // Reflection — Per-member attributes (Phase 108)
-        ("MethodInfo", "methodinfo_attributes") => Some(IntrinsicId::MethodInfoAttributes),
-        ("FieldInfo",  "fieldinfo_attributes")  => Some(IntrinsicId::FieldInfoAttributes),
+        ("MethodInfo", "attributes")            => Some(IntrinsicId::MethodInfoAttributes),
+        ("FieldInfo",  "attributes")            => Some(IntrinsicId::FieldInfoAttributes),
         // Hashable (4) — Phase 116
         ("Int",    "int_hash")    => Some(IntrinsicId::IntHash),
         ("Float",  "float_hash")  => Some(IntrinsicId::FloatHash),
         ("Bool",   "bool_hash")   => Some(IntrinsicId::BoolHash),
         ("String", "string_hash") => Some(IntrinsicId::StringHash),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn public_reflection_names_resolve_to_intrinsics() {
+        let cases = [
+            ("Type", "fields", IntrinsicId::TypeFields),
+            ("Type", "methods", IntrinsicId::TypeMethods),
+            ("Type", "attributes", IntrinsicId::TypeAttributes),
+            ("Type", "contracts", IntrinsicId::TypeContracts),
+            ("Type", "implements", IntrinsicId::TypeImplements),
+            ("Type", "type_args", IntrinsicId::TypeTypeArgs),
+            ("FieldInfo", "get", IntrinsicId::FieldInfoGet),
+            ("FieldInfo", "set", IntrinsicId::FieldInfoSet),
+            (
+                "FieldInfo",
+                "attributes",
+                IntrinsicId::FieldInfoAttributes,
+            ),
+            ("MethodInfo", "invoke", IntrinsicId::MethodInfoInvoke),
+            (
+                "MethodInfo",
+                "attributes",
+                IntrinsicId::MethodInfoAttributes,
+            ),
+        ];
+
+        for (type_name, method_name, expected) in cases {
+            assert_eq!(
+                resolve_intrinsic_id(type_name, method_name),
+                Some(expected),
+                "{type_name}.{method_name}"
+            );
+        }
+    }
+
+    #[test]
+    fn obsolete_public_reflection_internal_names_do_not_resolve() {
+        for (type_name, method_name) in [
+            ("Type", "type_fields"),
+            ("Type", "type_methods"),
+            ("Type", "type_attributes"),
+            ("Type", "type_contracts"),
+            ("Type", "type_implements"),
+            ("Type", "type_type_args"),
+            ("FieldInfo", "fieldinfo_get"),
+            ("FieldInfo", "fieldinfo_set"),
+            ("FieldInfo", "fieldinfo_attributes"),
+            ("MethodInfo", "methodinfo_invoke"),
+            ("MethodInfo", "methodinfo_attributes"),
+        ] {
+            assert_eq!(resolve_intrinsic_id(type_name, method_name), None);
+        }
     }
 }
