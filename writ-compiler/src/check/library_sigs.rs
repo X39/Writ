@@ -836,8 +836,15 @@ pub fn inject_library_sigs(
                 .to_string();
             if method_name.is_empty() { continue; }
 
-            // Look up DefId in DefMap (was registered by inject_module_types)
-            let def_id = match def_map.get(&method_name) {
+            // Resolve this exact MethodDef row. A name-only lookup would bind
+            // every overload to the first declaration and leave later
+            // signatures unavailable to overload resolution.
+            let def_id = match crate::resolve::inject_library::library_top_level_method_def_id(
+                def_map,
+                lib_file_id,
+                method_idx,
+                &method_name,
+            ) {
                 Some(id) => id,
                 None => continue,
             };

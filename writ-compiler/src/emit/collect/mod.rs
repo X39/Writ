@@ -493,10 +493,12 @@ fn register_library_method_refs(
             let method = &module.method_defs[method_index];
             let method_name = writ_module::heap::read_string(&module.string_heap, method.name)
                 .unwrap_or("");
-            let Some(def_id) = def_map.get(method_name) else { continue };
-            if def_map.get_entry(def_id).file_id != lib_file_id {
-                continue;
-            }
+            let Some(def_id) = crate::resolve::inject_library::library_top_level_method_def_id(
+                def_map,
+                lib_file_id,
+                method_index,
+                method_name,
+            ) else { continue };
             let Ok(signature) = writ_module::heap::read_blob(
                 &module.blob_heap, method.signature
             ) else { continue };
