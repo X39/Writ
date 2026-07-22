@@ -432,14 +432,9 @@ fn typedef_tokens_are_one_based() {
         "#,
     );
     assert!(diags.is_empty());
-    // After finalize, DefIds have tokens: 3 TypeDef (A/B/C). Log-level externs are
-    // only emitted when referenced, so they don't contribute tokens here.
-    assert_eq!(
-        builder.def_token_map.len(),
-        3,
-        "should have 3 tokens: 3 structs (no log refs)"
-    );
-    // The 3 struct tokens should be TypeDef table with 1-based rows
+    // Canonical core declarations are injected into every compilation and also
+    // contribute entries to def_token_map. Restrict this assertion to the three
+    // user TypeDefs; their rows must remain one-based regardless of core size.
     let typedef_tokens: Vec<_> = builder
         .def_token_map
         .values()
@@ -486,11 +481,21 @@ fn pub_items_emit_exportdef() {
         "#,
     );
     assert!(diags.is_empty());
-    // Only the pub item should produce an ExportDef (synthetic log-level externs are excluded).
+    // Canonical core exports are injected into every compilation. Assert the
+    // visibility behavior of this source without depending on the core's size.
+    let export_names: Vec<_> = builder
+        .export_defs
+        .iter()
+        .map(|row| builder.string_heap.get_str(row.name))
+        .collect();
     assert_eq!(
-        builder.export_def_count(),
+        export_names.iter().filter(|name| **name == "Visible").count(),
         1,
-        "should have 1 ExportDef for Visible"
+        "Visible should be exported exactly once"
+    );
+    assert!(
+        !export_names.contains(&"Hidden"),
+        "Hidden must not be exported"
     );
 }
 
