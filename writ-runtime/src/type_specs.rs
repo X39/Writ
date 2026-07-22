@@ -8,12 +8,16 @@ use crate::loader::LoadedModule;
 
 const MAX_RESOLUTION_DEPTH: usize = 64;
 const INVALID_KEY: u32 = u32::MAX;
-type NominalKey = (usize, usize);
+/// Tagged domain-wide identity. TypeDef row 0 and ContractDef row 0 in the
+/// same module must remain distinct when comparing method signatures.
+type NominalKey = (u8, usize, usize);
 
 #[derive(Clone, Copy)]
 pub(crate) enum NominalSpace {
     Type,
     Contract,
+    /// Method signatures may contain both concrete types and contracts.
+    Any,
 }
 
 pub(crate) fn resolve_type_key(
@@ -319,7 +323,7 @@ fn hash_signature(
             hash_nominal_key(hash, key);
             hash_bytes(hash, &(args.len() as u32).to_le_bytes());
             for arg in args {
-                if !hash_signature(arg, module_idx, modules, NominalSpace::Type, hash) {
+                if !hash_signature(arg, module_idx, modules, nested_space(space), hash) {
                     return false;
                 }
             }
@@ -330,7 +334,7 @@ fn hash_signature(
         }
         TypeSignature::Array(element) => {
             hash_byte(hash, 0x20);
-            if !hash_signature(element, module_idx, modules, NominalSpace::Type, hash) {
+            if !hash_signature(element, module_idx, modules, nested_space(space), hash) {
                 return false;
             }
         }
@@ -338,11 +342,11 @@ fn hash_signature(
             hash_byte(hash, 0x30);
             hash_bytes(hash, &(params.len() as u32).to_le_bytes());
             for param in params {
-                if !hash_signature(param, module_idx, modules, NominalSpace::Type, hash) {
+                if !hash_signature(param, module_idx, modules, nested_space(space), hash) {
                     return false;
                 }
             }
-            if !hash_signature(ret, module_idx, modules, NominalSpace::Type, hash) {
+            if !hash_signature(ret, module_idx, modules, nested_space(space), hash) {
                 return false;
             }
         }
@@ -358,12 +362,21 @@ fn constructor_key(
     space: NominalSpace,
 ) -> Option<NominalKey> {
     match space {
-        NominalSpace::Type => find_type_location(module_idx, namespace, name, modules),
-        NominalSpace::Contract => find_contract_location(module_idx, namespace, name, modules),
+        NominalSpace::Type => find_type_location(module_idx, namespace, name, modules)
+            .map(|(owner, row)| (0, owner, row)),
+        NominalSpace::Contract => find_contract_location(module_idx, namespace, name, modules)
+            .map(|(owner, row)| (1, owner, row)),
+        NominalSpace::Any => find_type_location(module_idx, namespace, name, modules)
+            .map(|(owner, row)| (0, owner, row))
+            .or_else(|| {
+                find_contract_location(module_idx, namespace, name, modules)
+                    .map(|(owner, row)| (1, owner, row))
+            }),
     }
 }
 
-fn hash_nominal_key(hash: &mut u32, (module_idx, row): NominalKey) {
+fn hash_nominal_key(hash: &mut u32, (kind, module_idx, row): NominalKey) {
+    hash_byte(hash, kind);
     hash_bytes(hash, &(module_idx as u64).to_le_bytes());
     hash_bytes(hash, &(row as u64).to_le_bytes());
 }
@@ -394,6 +407,54 @@ pub(crate) fn matches_impl_specialization(
         modules,
         &mut bindings,
     )
+}
+
+/// Match a method definition against a MethodRef, carrying the impl target's
+/// generic bindings into the method signature comparison. Impl generics and
+/// method generics share one ordinal space in emitted method signatures.
+pub(crate) fn matches_method_specialization(
+    pattern_parent: Option<(usize, &TypeSignature)>,
+    actual_parent: Option<(usize, &TypeSignature)>,
+    pattern_params: &[TypeSignature],
+    pattern_ret: &TypeSignature,
+    pattern_module: usize,
+    actual_params: &[TypeSignature],
+    actual_ret: &TypeSignature,
+    actual_module: usize,
+    modules: &[LoadedModule],
+) -> bool {
+    let mut bindings = FxHashMap::default();
+    optional_pattern_matches(
+        pattern_parent,
+        actual_parent,
+        NominalSpace::Type,
+        false,
+        modules,
+        &mut bindings,
+    ) && pattern_params.len() == actual_params.len()
+        && pattern_params
+            .iter()
+            .zip(actual_params)
+            .all(|(pattern, actual)| {
+                match_signature(
+                    pattern,
+                    pattern_module,
+                    actual,
+                    actual_module,
+                    NominalSpace::Any,
+                    modules,
+                    &mut bindings,
+                )
+            })
+        && match_signature(
+            pattern_ret,
+            pattern_module,
+            actual_ret,
+            actual_module,
+            NominalSpace::Any,
+            modules,
+            &mut bindings,
+        )
 }
 
 fn optional_pattern_matches(
@@ -446,16 +507,16 @@ fn signature_is_resolvable(
         } => {
             constructor_key(module_idx, namespace, name, modules, space).is_some()
                 && args.iter().all(|argument| {
-                    signature_is_resolvable(argument, module_idx, NominalSpace::Type, modules)
+                    signature_is_resolvable(argument, module_idx, nested_space(space), modules)
                 })
         }
         TypeSignature::Array(element) => {
-            signature_is_resolvable(element, module_idx, NominalSpace::Type, modules)
+            signature_is_resolvable(element, module_idx, nested_space(space), modules)
         }
         TypeSignature::Function { params, ret } => {
             params.iter().all(|parameter| {
-                signature_is_resolvable(parameter, module_idx, NominalSpace::Type, modules)
-            }) && signature_is_resolvable(ret, module_idx, NominalSpace::Type, modules)
+                signature_is_resolvable(parameter, module_idx, nested_space(space), modules)
+            }) && signature_is_resolvable(ret, module_idx, nested_space(space), modules)
         }
     }
 }
@@ -476,7 +537,7 @@ fn match_signature(
                 *bound_module,
                 actual,
                 actual_module,
-                NominalSpace::Type,
+                nested_space(space),
                 modules,
             ),
             None => {
@@ -529,7 +590,7 @@ fn match_signature(
                     pattern_module,
                     right,
                     actual_module,
-                    NominalSpace::Type,
+                    nested_space(space),
                     modules,
                     bindings,
                 )
@@ -540,7 +601,7 @@ fn match_signature(
             pattern_module,
             right,
             actual_module,
-            NominalSpace::Type,
+            nested_space(space),
             modules,
             bindings,
         ),
@@ -561,7 +622,7 @@ fn match_signature(
                         pattern_module,
                         right,
                         actual_module,
-                        NominalSpace::Type,
+                        nested_space(space),
                         modules,
                         bindings,
                     )
@@ -571,7 +632,7 @@ fn match_signature(
                     pattern_module,
                     right_ret,
                     actual_module,
-                    NominalSpace::Type,
+                    nested_space(space),
                     modules,
                     bindings,
                 )
@@ -634,7 +695,7 @@ fn signatures_equal(
                         left_module,
                         right,
                         right_module,
-                        NominalSpace::Type,
+                        nested_space(space),
                         modules,
                     )
                 })
@@ -644,7 +705,7 @@ fn signatures_equal(
             left_module,
             right,
             right_module,
-            NominalSpace::Type,
+            nested_space(space),
             modules,
         ),
         (
@@ -664,7 +725,7 @@ fn signatures_equal(
                         left_module,
                         right,
                         right_module,
-                        NominalSpace::Type,
+                        nested_space(space),
                         modules,
                     )
                 })
@@ -673,7 +734,7 @@ fn signatures_equal(
                     left_module,
                     right_ret,
                     right_module,
-                    NominalSpace::Type,
+                    nested_space(space),
                     modules,
                 )
         }
@@ -701,8 +762,24 @@ fn nominal_token_key(
     space: NominalSpace,
 ) -> Option<NominalKey> {
     match space {
-        NominalSpace::Type => resolve_type_location(module_idx, token, modules),
-        NominalSpace::Contract => resolve_contract_location(module_idx, token, modules),
+        NominalSpace::Type => {
+            resolve_type_location(module_idx, token, modules).map(|(owner, row)| (0, owner, row))
+        }
+        NominalSpace::Contract => resolve_contract_location(module_idx, token, modules)
+            .map(|(owner, row)| (1, owner, row)),
+        NominalSpace::Any => resolve_type_location(module_idx, token, modules)
+            .map(|(owner, row)| (0, owner, row))
+            .or_else(|| {
+                resolve_contract_location(module_idx, token, modules)
+                    .map(|(owner, row)| (1, owner, row))
+            }),
+    }
+}
+
+fn nested_space(space: NominalSpace) -> NominalSpace {
+    match space {
+        NominalSpace::Any => NominalSpace::Any,
+        NominalSpace::Type | NominalSpace::Contract => NominalSpace::Type,
     }
 }
 
@@ -822,9 +899,9 @@ mod tests {
     #[test]
     fn canonical_nominal_hash_does_not_truncate_metadata_rows() {
         let mut high_row = 0x811c_9dc5;
-        hash_nominal_key(&mut high_row, (0, 1 << 16));
+        hash_nominal_key(&mut high_row, (0, 0, 1 << 16));
         let mut next_module = 0x811c_9dc5;
-        hash_nominal_key(&mut next_module, (1, 0));
+        hash_nominal_key(&mut next_module, (0, 1, 0));
 
         assert_ne!(high_row, next_module);
     }

@@ -78,7 +78,8 @@ fn xmod_smoke_method_call() {
     // User code calls a library method — this requires TypeEnv.impl_index to be populated
     let user_src = r#"
         pub fn read_counter(c: Counter) -> int {
-            return c.get();
+            let value = c.get();
+            return value;
         }
     "#;
     let result = compile_with_libs(user_src, &[&lib_module]);
@@ -237,11 +238,33 @@ fn xmod_top_level_function_call() {
 
     let user_src = r#"
         pub fn main() -> int {
-            return add_ints(3, 4);
+            let result = add_ints(3, 4);
+            return result;
         }
     "#;
-    let result = compile_with_libs(user_src, &[&lib_module]);
-    assert!(result.is_ok(), "expected compile success calling library top-level fn, got: {:?}", result.err());
+    let result = compile_with_libs(user_src, &[&lib_module])
+        .expect("library top-level call should compile");
+    let user = writ_module::Module::from_bytes(&result).unwrap();
+    let method_ref = user.method_refs.iter().find(|method| {
+        writ_module::heap::read_string(&user.string_heap, method.name).ok()
+            == Some("add_ints")
+    }).expect("top-level MethodRef");
+    assert_eq!(
+        method_ref.parent.table_id(),
+        writ_module::tables::TableId::ModuleRef.as_u8()
+    );
+    let body = &user.method_bodies[user.top_level_method_indices()[0]];
+    let mut cursor = std::io::Cursor::new(&body.code);
+    assert!(std::iter::from_fn(|| {
+        ((cursor.position() as usize) < body.code.len())
+            .then(|| writ_module::Instruction::decode(&mut cursor).unwrap())
+    }).any(|instruction| matches!(
+        instruction,
+        writ_module::Instruction::Call { method_idx, argc: 2, .. }
+            if method_idx != 0
+                && writ_module::MetadataToken(method_idx).table_id()
+                    == writ_module::tables::TableId::MethodRef.as_u8()
+    )));
 }
 
 /// XMOD-06: Library class with impl methods type-checks from user code.
@@ -918,4 +941,165 @@ fn xmod_contract_signature_resolves_contractdef_token_table() {
         invalid.is_err(),
         "non-contract argument must be rejected"
     );
+}
+
+#[test]
+fn xmod_method_overloads_emit_distinct_signature_refs_and_calls() {
+    use writ_module::signature::TypeSignature;
+
+    let library_bytes = compile(r#"
+        pub class Picker {}
+        impl Picker {
+            pub fn choose(self, value: int) -> int { return value; }
+            pub fn choose(self, value: string) -> int { return 2; }
+        }
+    "#);
+    let library = writ_module::Module::from_bytes(&library_bytes).unwrap();
+    let user_bytes = compile_with_libs(r#"
+        pub fn choose_int(value: Picker) -> int {
+            let selected = value.choose(1);
+            return selected;
+        }
+        pub fn choose_string(value: Picker) -> int {
+            let selected = value.choose("one");
+            return selected;
+        }
+    "#, &[&library]).expect("cross-module overloads should compile");
+    let user = writ_module::Module::from_bytes(&user_bytes).unwrap();
+
+    let choose_refs: Vec<_> = user.method_refs.iter().filter(|method| {
+        writ_module::heap::read_string(&user.string_heap, method.name).ok() == Some("choose")
+    }).map(|method| {
+        let blob = writ_module::heap::read_blob(&user.blob_heap, method.signature).unwrap();
+        writ_module::signature::decode_method_signature(blob).unwrap().0
+    }).collect();
+    assert_eq!(choose_refs.len(), 2);
+    assert!(choose_refs.iter().any(|params| {
+        matches!(params.as_slice(), [TypeSignature::Int])
+    }));
+    assert!(choose_refs.iter().any(|params| {
+        matches!(params.as_slice(), [TypeSignature::String])
+    }));
+
+    let mut called_refs = Vec::new();
+    for body in &user.method_bodies {
+        let mut cursor = std::io::Cursor::new(&body.code);
+        while (cursor.position() as usize) < body.code.len() {
+            if let writ_module::Instruction::Call { method_idx, .. } =
+                writ_module::Instruction::decode(&mut cursor).unwrap()
+            {
+                let token = writ_module::MetadataToken(method_idx);
+                if token.table_id() == writ_module::tables::TableId::MethodRef.as_u8() {
+                    called_refs.push(method_idx);
+                }
+            }
+        }
+    }
+    called_refs.sort_unstable();
+    called_refs.dedup();
+    assert_eq!(called_refs.len(), 2);
+}
+
+#[test]
+fn xmod_specialized_impl_methods_keep_distinct_typespec_parents() {
+    let library_bytes = compile(r#"
+        pub class Crate<T> {}
+        impl Crate<int> { pub fn marker(self) -> int { return 1; } }
+        impl Crate<string> { pub fn marker(self) -> int { return 2; } }
+    "#);
+    let library = writ_module::Module::from_bytes(&library_bytes).unwrap();
+    let user_bytes = compile_with_libs(r#"
+        pub fn int_marker(value: Crate<int>) -> int {
+            let result = value.marker();
+            return result;
+        }
+        pub fn string_marker(value: Crate<string>) -> int {
+            let result = value.marker();
+            return result;
+        }
+    "#, &[&library]).expect("disjoint specialized methods should compile");
+    let user = writ_module::Module::from_bytes(&user_bytes).unwrap();
+    let parents: Vec<_> = user.method_refs.iter().filter(|method| {
+        writ_module::heap::read_string(&user.string_heap, method.name).ok() == Some("marker")
+    }).map(|method| method.parent).collect();
+    assert_eq!(parents.len(), 2);
+    assert!(parents.iter().all(|parent| {
+        parent.table_id() == writ_module::tables::TableId::TypeSpec.as_u8()
+    }));
+    assert_ne!(parents[0], parents[1]);
+}
+
+#[test]
+fn xmod_generic_impl_call_uses_open_parent_and_signature() {
+    use writ_module::signature::TypeSignature;
+
+    let library_bytes = compile(r#"
+        pub class Crate<T> {}
+        impl<T> Crate<T> {
+            pub fn choose<U>(self, value: U) -> U { return value; }
+        }
+    "#);
+    let library = writ_module::Module::from_bytes(&library_bytes).unwrap();
+    let user_bytes = compile_with_libs(r#"
+        pub fn choose<T, U>(value: Crate<T>, item: U) -> U {
+            let selected = value.choose(item);
+            return selected;
+        }
+        pub fn choose_int(value: Crate<int>) -> int {
+            let selected = value.choose(7);
+            return selected;
+        }
+    "#, &[&library]).expect("open generic method call should compile");
+    let user = writ_module::Module::from_bytes(&user_bytes).unwrap();
+    let method_ref = user.method_refs.iter().find(|method| {
+        writ_module::heap::read_string(&user.string_heap, method.name).ok() == Some("choose")
+    }).expect("choose MethodRef");
+    assert_eq!(method_ref.parent.table_id(), writ_module::tables::TableId::TypeSpec.as_u8());
+    let blob = writ_module::heap::read_blob(&user.blob_heap, method_ref.signature).unwrap();
+    let (params, ret) = writ_module::signature::decode_method_signature(blob).unwrap();
+    assert!(matches!(params.as_slice(), [TypeSignature::GenericParam(_)]));
+    assert!(matches!(ret, TypeSignature::GenericParam(_)));
+    for body in &user.method_bodies {
+        let mut cursor = std::io::Cursor::new(&body.code);
+        while (cursor.position() as usize) < body.code.len() {
+            if let writ_module::Instruction::Call { method_idx, .. } =
+                writ_module::Instruction::decode(&mut cursor).unwrap()
+            {
+                assert_ne!(method_idx, 0);
+            }
+        }
+    }
+}
+
+#[test]
+fn xmod_static_methodref_does_not_prepend_qualified_receiver() {
+    let library_bytes = compile(r#"
+        pub class Utility {}
+        impl Utility {
+            pub fn identity(value: int) -> int { return value; }
+        }
+    "#);
+    let library = writ_module::Module::from_bytes(&library_bytes).unwrap();
+    let user_bytes = compile_with_libs(r#"
+        pub fn main() -> int {
+            let utility = new Utility {};
+            let value = utility.identity(7);
+            return value;
+        }
+    "#, &[&library]).expect("qualified static library method should compile");
+    let user = writ_module::Module::from_bytes(&user_bytes).unwrap();
+    let body = &user.method_bodies[user.top_level_method_indices()[0]];
+    let mut cursor = std::io::Cursor::new(&body.code);
+    let mut call = None;
+    while (cursor.position() as usize) < body.code.len() {
+        if let instruction @ writ_module::Instruction::Call { .. } =
+            writ_module::Instruction::decode(&mut cursor).unwrap()
+        {
+            call = Some(instruction);
+        }
+    }
+    assert!(matches!(
+        call,
+        Some(writ_module::Instruction::Call { argc: 1, .. })
+    ));
 }

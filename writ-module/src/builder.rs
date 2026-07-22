@@ -438,6 +438,13 @@ impl ModuleBuilder {
 
     /// Add a cross-module method reference.
     pub fn add_method_ref(&mut self, parent: MetadataToken, name: &str, signature: &[u8]) -> MetadataToken {
+        if let Some(index) = self.method_refs.iter().position(|method_ref| {
+            method_ref.parent == parent
+                && method_ref.name == name
+                && method_ref.signature == signature
+        }) {
+            return MetadataToken::new(TableId::MethodRef.as_u8(), (index + 1) as u32);
+        }
         let idx = self.method_refs.len() as u32 + 1;
         self.method_refs.push(MethodRefBuilder {
             parent,

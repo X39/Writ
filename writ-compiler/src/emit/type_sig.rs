@@ -143,3 +143,25 @@ pub fn encode_method_sig(
         .expect("compiler method signature exceeds module format limits");
     blob_heap.intern(&buf)
 }
+
+/// Encode the declaration-level function type carried by a checked call.
+///
+/// Unlike rebuilding a signature from the call's argument expressions, this
+/// preserves open GenericParam descriptors and therefore matches the method's
+/// metadata identity exactly.
+pub fn encode_method_sig_for_fn_ty(
+    ty: Ty,
+    interner: &TyInterner,
+    token_for_def: &dyn Fn(DefId) -> MetadataToken,
+) -> Option<Vec<u8>> {
+    let ty = interner.resolve_infer(ty);
+    let TyKind::Func { params, ret } = interner.full_kind(ty) else {
+        return None;
+    };
+    let params = params
+        .iter()
+        .map(|param| type_signature_for_ty(*param, interner, token_for_def))
+        .collect::<Vec<_>>();
+    let ret = type_signature_for_ty(*ret, interner, token_for_def);
+    encode_method_signature(&params, &ret).ok()
+}

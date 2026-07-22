@@ -96,7 +96,12 @@ pub fn collect_defs(
     builder.add_type_ref(runtime_mod_idx, "Iterator", "writ");
 
     register_library_type_refs(library_modules, &library_module_refs, def_map, builder);
-    register_library_method_refs(library_modules, def_map, builder);
+    register_library_method_refs(
+        library_modules,
+        &library_module_refs,
+        def_map,
+        builder,
+    );
     register_provisional_named_tokens(typed_ast, builder);
     for ty in collect_addressable_generic_types(typed_ast, interner) {
         intern_type_spec_for_ty(ty, interner, builder);
@@ -419,12 +424,14 @@ fn register_library_type_ref(
 
 fn register_library_method_refs(
     library_modules: &[&writ_module::Module],
+    library_module_refs: &[usize],
     def_map: &DefMap,
     builder: &mut ModuleBuilder,
 ) {
     for (lib_index, module) in library_modules.iter().enumerate() {
         let lib_file_id = FileId(u32::MAX - 1 - lib_index as u32);
 
+        // Direct TypeDef methods keep a bare imported parent.
         for (type_index, type_def) in module.type_defs.iter().enumerate() {
             let name = writ_module::heap::read_string(&module.string_heap, type_def.name)
                 .unwrap_or("");
@@ -447,78 +454,198 @@ fn register_library_method_refs(
             let Some(parent) = builder.token_for_def(def_id) else {
                 continue;
             };
-
-            let type_token = writ_module::MetadataToken::new(
-                writ_module::tables::TableId::TypeDef.as_u8(),
-                (type_index + 1) as u32,
+            register_library_method_rows(
+                module,
+                module.type_method_indices(type_index),
+                parent,
+                true,
+                def_map,
+                builder,
             );
-            let mut method_indices = module.type_method_indices(type_index);
-            for (impl_index, impl_def) in module.impl_defs.iter().enumerate() {
-                if impl_targets_type(module, impl_def.type_token, type_index, type_token) {
-                    method_indices.extend(module.impl_method_indices(impl_index));
-                }
-            }
+        }
 
-            for method_index in method_indices {
-                let method = &module.method_defs[method_index];
-                let method_name = writ_module::heap::read_string(
-                    &module.string_heap,
-                    method.name,
-                )
+        // ImplDefs may target imported types or exact specializations, so walk
+        // them independently rather than flattening them under a local TypeDef.
+        for (impl_index, implementation) in module.impl_defs.iter().enumerate() {
+            let Some(parent) = remap_library_method_parent(
+                module,
+                implementation.type_token,
+                def_map,
+                builder,
+            ) else {
+                continue;
+            };
+            register_library_method_rows(
+                module,
+                module.impl_method_indices(impl_index),
+                parent,
+                implementation.contract.is_null(),
+                def_map,
+                builder,
+            );
+        }
+
+        let module_parent = MetadataToken::new(
+            TableId::ModuleRef,
+            (library_module_refs[lib_index] + 1) as u32,
+        );
+        for method_index in module.top_level_method_indices() {
+            let method = &module.method_defs[method_index];
+            let method_name = writ_module::heap::read_string(&module.string_heap, method.name)
                 .unwrap_or("");
-                if method_name.is_empty() {
-                    continue;
-                }
-                let signature = writ_module::heap::read_blob(
-                    &module.blob_heap,
-                    method.signature,
-                )
-                .unwrap_or(&[]);
-                builder.add_method_ref(parent, method_name, signature);
+            let Some(def_id) = def_map.get(method_name) else { continue };
+            if def_map.get_entry(def_id).file_id != lib_file_id {
+                continue;
             }
+            let Ok(signature) = writ_module::heap::read_blob(
+                &module.blob_heap, method.signature
+            ) else { continue };
+            let Some(signature) = remap_library_method_signature(
+                module, signature, def_map, builder
+            ) else { continue };
+            let row = builder.add_method_ref_with_origin(
+                module_parent, method_name, &signature, true, false
+            );
+            builder.def_token_map.insert(
+                def_id,
+                MetadataToken::new(TableId::MethodRef, (row + 1) as u32),
+            );
         }
     }
 }
 
-fn impl_targets_type(
+fn register_library_method_rows(
+    module: &writ_module::Module,
+    method_indices: Vec<usize>,
+    parent: MetadataToken,
+    inherent: bool,
+    def_map: &DefMap,
+    builder: &mut ModuleBuilder,
+) {
+    for method_index in method_indices {
+        let method = &module.method_defs[method_index];
+        let method_name = writ_module::heap::read_string(&module.string_heap, method.name)
+            .unwrap_or("");
+        if method_name.is_empty() {
+            continue;
+        }
+        let Ok(signature) = writ_module::heap::read_blob(&module.blob_heap, method.signature)
+        else {
+            continue;
+        };
+        let Some(signature) = remap_library_method_signature(module, signature, def_map, builder)
+        else {
+            continue;
+        };
+        let has_receiver = !method.owner.is_null() && method.flags & (1 << 1) == 0;
+        builder.add_method_ref_with_origin(
+            parent,
+            method_name,
+            &signature,
+            inherent,
+            has_receiver,
+        );
+    }
+}
+
+fn remap_library_method_parent(
+    module: &writ_module::Module,
+    parent: writ_module::MetadataToken,
+    def_map: &DefMap,
+    builder: &mut ModuleBuilder,
+) -> Option<MetadataToken> {
+    if parent.table_id() != writ_module::tables::TableId::TypeSpec.as_u8() {
+        return consumer_token_for_library_named(module, parent, def_map, builder);
+    }
+    let row = parent.row_index()?.checked_sub(1)? as usize;
+    let type_spec = module.type_specs.get(row)?;
+    let blob = writ_module::heap::read_blob(&module.blob_heap, type_spec.signature).ok()?;
+    let signature = writ_module::signature::decode_type_signature(blob).ok()?;
+    let signature = remap_library_type_signature(module, &signature, def_map, builder)?;
+    let encoded = writ_module::signature::encode_type_signature(&signature).ok()?;
+    let signature = builder.blob_heap.intern(&encoded);
+    Some(builder.add_type_spec_signature(signature))
+}
+
+fn remap_library_method_signature(
+    module: &writ_module::Module,
+    signature: &[u8],
+    def_map: &DefMap,
+    builder: &ModuleBuilder,
+) -> Option<Vec<u8>> {
+    let (params, ret) = writ_module::signature::decode_method_signature(signature).ok()?;
+    let params = params
+        .iter()
+        .map(|param| remap_library_type_signature(module, param, def_map, builder))
+        .collect::<Option<Vec<_>>>()?;
+    let ret = remap_library_type_signature(module, &ret, def_map, builder)?;
+    writ_module::signature::encode_method_signature(&params, &ret).ok()
+}
+
+fn remap_library_type_signature(
+    module: &writ_module::Module,
+    signature: &writ_module::signature::TypeSignature,
+    def_map: &DefMap,
+    builder: &ModuleBuilder,
+) -> Option<writ_module::signature::TypeSignature> {
+    use writ_module::signature::TypeSignature;
+    Some(match signature {
+        TypeSignature::Named(token) => TypeSignature::Named(writ_module::MetadataToken(
+            consumer_token_for_library_named(module, *token, def_map, builder)?.0,
+        )),
+        TypeSignature::Generic { namespace, name, args } => TypeSignature::Generic {
+            namespace: namespace.clone(),
+            name: name.clone(),
+            args: args.iter()
+                .map(|arg| remap_library_type_signature(module, arg, def_map, builder))
+                .collect::<Option<Vec<_>>>()?,
+        },
+        TypeSignature::Array(element) => TypeSignature::Array(Box::new(
+            remap_library_type_signature(module, element, def_map, builder)?,
+        )),
+        TypeSignature::Function { params, ret } => TypeSignature::Function {
+            params: params.iter()
+                .map(|param| remap_library_type_signature(module, param, def_map, builder))
+                .collect::<Option<Vec<_>>>()?,
+            ret: Box::new(remap_library_type_signature(module, ret, def_map, builder)?),
+        },
+        other => other.clone(),
+    })
+}
+
+fn consumer_token_for_library_named(
     module: &writ_module::Module,
     token: writ_module::MetadataToken,
-    type_index: usize,
-    type_token: writ_module::MetadataToken,
-) -> bool {
-    if token == type_token {
-        return true;
-    }
-    if token.table_id() != writ_module::tables::TableId::TypeSpec.as_u8() {
-        return false;
-    }
-
-    let Some(type_spec_index) = token.row_index().map(|row| row.saturating_sub(1) as usize) else {
-        return false;
-    };
-    let Some(type_spec) = module.type_specs.get(type_spec_index) else {
-        return false;
-    };
-    let Ok(blob) = writ_module::heap::read_blob(&module.blob_heap, type_spec.signature) else {
-        return false;
-    };
-    let Ok(signature) = writ_module::signature::decode_type_signature(blob) else {
-        return false;
-    };
-
-    match signature {
-        writ_module::signature::TypeSignature::Named(named) => named == type_token,
-        writ_module::signature::TypeSignature::Generic { namespace, name, .. } => {
-            let Some(type_def) = module.type_defs.get(type_index) else {
-                return false;
-            };
-            writ_module::heap::read_string(&module.string_heap, type_def.name).ok()
-                == Some(name.as_str())
-                && writ_module::heap::read_string(&module.string_heap, type_def.namespace).ok()
-                    == Some(namespace.as_str())
+    def_map: &DefMap,
+    builder: &ModuleBuilder,
+) -> Option<MetadataToken> {
+    let row = token.row_index()?.checked_sub(1)? as usize;
+    let (name, namespace) = match token.table_id() {
+        id if id == writ_module::tables::TableId::TypeDef.as_u8() => {
+            let definition = module.type_defs.get(row)?;
+            (
+                writ_module::heap::read_string(&module.string_heap, definition.name).ok()?,
+                writ_module::heap::read_string(&module.string_heap, definition.namespace).ok()?,
+            )
         }
-        _ => false,
-    }
+        id if id == writ_module::tables::TableId::TypeRef.as_u8() => {
+            let reference = module.type_refs.get(row)?;
+            (
+                writ_module::heap::read_string(&module.string_heap, reference.name).ok()?,
+                writ_module::heap::read_string(&module.string_heap, reference.namespace).ok()?,
+            )
+        }
+        id if id == writ_module::tables::TableId::ContractDef.as_u8() => {
+            let definition = module.contract_defs.get(row)?;
+            (
+                writ_module::heap::read_string(&module.string_heap, definition.name).ok()?,
+                writ_module::heap::read_string(&module.string_heap, definition.namespace).ok()?,
+            )
+        }
+        _ => return None,
+    };
+    let fqn = if namespace.is_empty() { name.to_string() } else { format!("{}::{}", namespace, name) };
+    builder.token_for_def(def_map.get(&fqn)?)
 }
 
 /// Collect exports and attributes that depend on finalized tokens.

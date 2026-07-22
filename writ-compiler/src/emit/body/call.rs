@@ -69,7 +69,7 @@ pub fn emit_call(
     let direct_has_receiver = emitter
         .builder
         .token_for_def(callee_def_id)
-        .and_then(|token| emitter.builder.methoddef_has_receiver(token))
+        .and_then(|token| emitter.builder.method_has_receiver(token))
         .unwrap_or(true);
     let arg_regs: Vec<u16> = match (kind, callee.as_ref()) {
         (CallKind::Direct, TypedExpr::Field { receiver, .. }) if direct_has_receiver => {

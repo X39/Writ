@@ -52,7 +52,11 @@ resolves cross-module references at load time.
 
 - **TypeRef** rows reference a type in another module by `(ModuleRef, namespace, name)`. At load time, the runtime
   resolves each TypeRef to a TypeDef in the target module.
-- **MethodRef** rows reference a method by `(parent type, name, signature)`. Resolved to a MethodDef at load time.
+- **MethodRef** rows reference a method by `(parent, name, signature)`. The parent is a ModuleRef for a top-level
+  function, a bare TypeDef/TypeRef for methods declared on the nominal type, or a TypeSpec for a method declared by a
+  matching specialized ImplDef target (the most-specific matching target wins).
+  The complete tuple is the method identity and is resolved to one MethodDef at load time; name-only overload selection
+  is invalid.
 - **FieldRef** rows reference a field by `(parent type, name, type signature)`. Resolved to a FieldDef at load time.
   This provides ABI-safe cross-module field access — recompiling a dependency that reorders fields does not break
   dependent modules as long as field names and types are preserved.
@@ -131,7 +135,7 @@ with no fields has an empty range without using `field_list = 0`; zero is not a 
 | 5  | **FieldDef**          | name(str), type_sig(blob), flags(u16)                                                    | Fields on types defined here                          |
 | 6  | **FieldRef**          | parent(token), name(str), type_sig(blob)                                                 | Fields in other modules (resolved at load time)       |
 | 7  | **MethodDef**         | name(str), signature(blob), flags(u16), body_offset(u32), body_size(u32), reg_count(u16), param_count(u16), owner(token) | Methods/functions defined here                        |
-| 8  | **MethodRef**         | parent(token), name(str), signature(blob)                                                | Methods in other modules (resolved at load time)      |
+| 8  | **MethodRef**         | parent(token:ModuleRef/TypeDef/TypeRef/TypeSpec), name(str), signature(blob)             | Functions/methods in other modules (resolved by parent/name/signature) |
 | 9  | **ParamDef**          | name(str), type_sig(blob), sequence(u16)                                                 | Method parameters                                     |
 | 10 | **ContractDef**       | name(str), namespace(str), method_list, generic_param_list                               | Contract declarations                                 |
 | 11 | **ContractMethod**    | name(str), signature(blob), slot(u16)                                                    | Method slots within a contract                        |

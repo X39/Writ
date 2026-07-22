@@ -247,6 +247,12 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
         // ── Call dispatch (EMIT-09, EMIT-21, EMIT-27) ─────────────────────────
         TypedExpr::Call { callee, ty, callee_def_id, .. } => {
             let callee_ty = callee.ty();
+            let concrete_target = resolve_concrete_call_target(
+                emitter,
+                callee,
+                callee_ty,
+                *callee_def_id,
+            );
 
             // ── Built-in shortcut: Option/Result/Array methods ────────────────
             // Before standard dispatch, check if this is a built-in method call
@@ -310,31 +316,27 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
             // from `impl Contract for Foo`), look up the MethodDef by type+name
             // and emit a direct CALL rather than CALL_INDIRECT.
             if !is_static_call && matches!(emitter.interner.kind(callee_ty), TyKind::Func { .. }) {
-                if let TypedExpr::Field { receiver, field, .. } = callee.as_ref() {
-                    let receiver_def_id = extract_type_def_id(emitter, receiver.ty());
-                    if let Some(rdid) = receiver_def_id {
-                        if let Some(method_token) = emitter
-                            .builder
-                            .methoddef_token_by_type_and_name(rdid, field)
-                            .or_else(|| {
-                                emitter
-                                    .builder
-                                    .methodref_token_by_type_and_name(rdid, field)
-                            })
-                        {
-                            // Found a MethodDef: emit direct CALL (not CALL_INDIRECT).
-                            let r_dst_call = emitter.alloc_reg(*ty);
-                            let TypedExpr::Call { args, .. } = expr else { unreachable!() };
-                            // First arg is self (the receiver object).
-                            let r_self = emit_expr(emitter, receiver);
-                            let arg_regs: Vec<u16> = std::iter::once(r_self)
+                if let TypedExpr::Field { receiver, .. } = callee.as_ref() {
+                    if let Some(target) = concrete_target {
+                        // Found a MethodDef: emit direct CALL (not CALL_INDIRECT).
+                        let r_dst_call = emitter.alloc_reg(*ty);
+                        let TypedExpr::Call { args, .. } = expr else { unreachable!() };
+                        let arg_regs: Vec<u16> = if target.prepend_receiver {
+                            std::iter::once(emit_expr(emitter, receiver))
                                 .chain(args.iter().map(|arg| emit_expr(emitter, arg)))
-                                .collect();
-                            let argc = arg_regs.len() as u16;
-                            let r_base = pack_args_consecutive(emitter, &arg_regs);
-                            emitter.emit(Instruction::Call { r_dst: r_dst_call, method_idx: method_token, r_base, argc });
-                            return r_dst_call;
-                        }
+                                .collect()
+                        } else {
+                            args.iter().map(|arg| emit_expr(emitter, arg)).collect()
+                        };
+                        let argc = arg_regs.len() as u16;
+                        let r_base = pack_args_consecutive(emitter, &arg_regs);
+                        emitter.emit(Instruction::Call {
+                            r_dst: r_dst_call,
+                            method_idx: target.token,
+                            r_base,
+                            argc,
+                        });
+                        return r_dst_call;
                     }
                 }
 
@@ -378,8 +380,12 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
                     (
                         super::call::CallKind::Direct,
                         TypedExpr::Field { receiver, .. },
-                    ) if declared_token
-                        .and_then(|token| emitter.builder.methoddef_has_receiver(token))
+                    ) if concrete_target
+                        .map(|target| target.prepend_receiver)
+                        .or_else(|| {
+                            declared_token
+                                .and_then(|token| emitter.builder.method_has_receiver(token))
+                        })
                         .unwrap_or(true) =>
                     {
                         std::iter::once(emit_expr(emitter, receiver))
@@ -412,25 +418,10 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
                 // (receiver_type_def_id, method_name) which is always unique and correct.
                 // Fall back to token_for_def only for free-function calls where the def_id
                 // uniquely identifies a single method.
-                let method_idx = if let TypedExpr::Field { receiver, field, .. } = callee.as_ref() {
+                let method_idx = if let TypedExpr::Field { receiver, .. } = callee.as_ref() {
                     match emitter.interner.kind(receiver.ty()) {
-                        TyKind::Struct(rdid) | TyKind::Class(rdid) | TyKind::Entity(rdid) => {
-                            let rdid = *rdid;
-                            emitter
-                                .builder
-                                .methoddef_token_by_type_and_name(rdid, field)
-                                .or_else(|| {
-                                    emitter
-                                        .builder
-                                        .methodref_token_by_type_and_name(rdid, field)
-                                })
-                                .unwrap_or_else(|| {
-                                    // Fallback: token_for_def (works for non-impl methods)
-                                    maybe_def_id
-                                        .and_then(|id| emitter.builder.token_for_def(id))
-                                        .map(|t| t.0)
-                                        .unwrap_or(0)
-                                })
+                        TyKind::Struct(_) | TyKind::Class(_) | TyKind::Entity(_) => {
+                            concrete_target.map(|target| target.token).unwrap_or(0)
                         }
                         _ => {
                             maybe_def_id
@@ -636,5 +627,74 @@ pub(crate) fn extract_type_def_id(
     match emitter.interner.kind(ty) {
         TyKind::Struct(def_id) | TyKind::Class(def_id) | TyKind::Entity(def_id) | TyKind::Enum(def_id) => Some(*def_id),
         _ => None,
+    }
+}
+
+/// A statically resolvable CALL target and its ABI receiver requirement.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ConcreteCallTarget {
+    pub token: u32,
+    pub prepend_receiver: bool,
+}
+
+/// Resolve only calls that can use the concrete CALL ABI. Extern, virtual,
+/// and delegate calls return `None`, allowing tail/spawn lowering to decline
+/// the optimization rather than emit a null target.
+pub(crate) fn resolve_concrete_call_target(
+    emitter: &BodyEmitter<'_>,
+    callee: &TypedExpr,
+    checked_func_ty: Ty,
+    callee_def_id: Option<crate::resolve::def_map::DefId>,
+) -> Option<ConcreteCallTarget> {
+    use crate::emit::metadata::{MetadataToken, TableId};
+
+    let declared_token = callee_def_id.and_then(|id| emitter.builder.token_for_def(id));
+    if declared_token.is_some_and(|token| token.table() == TableId::ExternDef) {
+        return None;
+    }
+
+    match callee {
+        TypedExpr::Field { receiver, field, .. } => {
+            if !matches!(
+                emitter.interner.kind(receiver.ty()),
+                TyKind::Struct(_) | TyKind::Class(_) | TyKind::Entity(_) | TyKind::Enum(_)
+            ) {
+                return None;
+            }
+            let signature = crate::emit::type_sig::encode_method_sig_for_fn_ty(
+                checked_func_ty,
+                emitter.interner,
+                &|def_id| {
+                    emitter.builder.token_for_def(def_id).unwrap_or(MetadataToken::NULL)
+                },
+            )?;
+            let receiver_ty = emitter.interner.resolve_infer(receiver.ty());
+            let base_parent = extract_type_def_id(emitter, receiver_ty)
+                .and_then(|def_id| emitter.builder.token_for_def(def_id));
+            let exact_parent = emitter
+                .builder
+                .type_spec_token_for_encoded_ty(receiver_ty, emitter.interner)
+                .or(base_parent)?;
+            let token = emitter.builder.method_token_by_parent_name_and_signature(
+                exact_parent,
+                base_parent,
+                field,
+                &signature,
+            )?;
+            let token_metadata = MetadataToken(token);
+            Some(ConcreteCallTarget {
+                token,
+                prepend_receiver: emitter
+                    .builder
+                    .method_has_receiver(token_metadata)
+                    .unwrap_or(true),
+            })
+        }
+        _ => {
+            let token = declared_token?;
+            matches!(token.table(), TableId::MethodDef | TableId::MethodRef).then_some(
+                ConcreteCallTarget { token: token.0, prepend_receiver: false },
+            )
+        }
     }
 }
