@@ -594,3 +594,156 @@ fn tail_call_rejects_argument_count_mismatching_method_metadata() {
 
     assert_crash(builder.build(), 0, "TAIL_CALL: argument count 1");
 }
+
+#[test]
+fn spawn_instructions_resolve_methodrefs_in_the_target_module() {
+    let method_signature = returning_int_signature(0);
+
+    let mut library = ModuleBuilder::new("spawn-library");
+    let worker = library.add_type_def("Worker", "lib", TypeDefKind::Class, 0);
+    library.add_type_method(
+        worker,
+        "answer",
+        &method_signature,
+        0,
+        2,
+        body(
+            &[
+                Instruction::LoadInt {
+                    r_dst: 1,
+                    value: 42,
+                },
+                Instruction::Ret { r_src: 1 },
+            ],
+            2,
+        ),
+    );
+
+    let mut user = ModuleBuilder::new("spawn-user");
+    let library_ref = user.add_module_ref("spawn-library", "1.0.0");
+    let worker_ref = user.add_type_ref(library_ref, "Worker", "lib");
+    let answer_ref = user.add_method_ref(worker_ref, "answer", &method_signature);
+    user.add_method(
+        "main",
+        &method_signature,
+        0,
+        7,
+        body(
+            &[
+                Instruction::New {
+                    r_dst: 0,
+                    type_idx: worker_ref.0,
+                },
+                Instruction::SpawnTask {
+                    r_dst: 1,
+                    method_idx: answer_ref.0,
+                    r_base: 0,
+                    argc: 1,
+                },
+                Instruction::Join {
+                    r_dst: 2,
+                    r_task: 1,
+                },
+                Instruction::New {
+                    r_dst: 3,
+                    type_idx: worker_ref.0,
+                },
+                Instruction::SpawnDetached {
+                    r_dst: 4,
+                    method_idx: answer_ref.0,
+                    r_base: 3,
+                    argc: 1,
+                },
+                Instruction::Join {
+                    r_dst: 5,
+                    r_task: 4,
+                },
+                Instruction::AddI {
+                    r_dst: 6,
+                    r_a: 2,
+                    r_b: 5,
+                },
+                Instruction::Ret { r_src: 6 },
+            ],
+            7,
+        ),
+    );
+
+    let mut runtime = RuntimeBuilder::new(user.build())
+        .with_library(library.build())
+        .build()
+        .expect("build runtime");
+    let task = runtime.spawn_task(0, vec![]).expect("spawn main");
+    for _ in 0..8 {
+        runtime.tick(0.0, ExecutionLimit::None);
+        if matches!(
+            runtime.task_state(task),
+            Some(TaskState::Completed | TaskState::Cancelled)
+        ) {
+            break;
+        }
+    }
+
+    assert_eq!(runtime.task_state(task), Some(TaskState::Completed));
+    assert_eq!(runtime.return_value(task), Some(Value::Int(84)));
+}
+
+#[test]
+fn spawn_task_rejects_argument_register_range_out_of_bounds() {
+    let mut builder = ModuleBuilder::new("spawn-source-bounds");
+    builder.add_type_def("Owner", "test", TypeDefKind::Struct, 0);
+    builder.add_method(
+        "main",
+        &signature(0),
+        0,
+        1,
+        body(
+            &[Instruction::SpawnTask {
+                r_dst: 0,
+                method_idx: 0x0700_0002,
+                r_base: 1,
+                argc: 1,
+            }],
+            1,
+        ),
+    );
+    builder.add_method(
+        "callee",
+        &signature(1),
+        0,
+        1,
+        body(&[Instruction::RetVoid], 1),
+    );
+
+    assert_crash(builder.build(), 0, "SPAWN_TASK: argument register range");
+}
+
+#[test]
+fn spawn_detached_rejects_argument_count_mismatching_method_metadata() {
+    let mut builder = ModuleBuilder::new("spawn-detached-arity");
+    builder.add_type_def("Owner", "test", TypeDefKind::Struct, 0);
+    builder.add_method(
+        "main",
+        &signature(0),
+        0,
+        1,
+        body(
+            &[Instruction::SpawnDetached {
+                r_dst: 0,
+                method_idx: 0x0700_0002,
+                r_base: 0,
+                argc: 0,
+            }],
+            1,
+        ),
+    );
+    builder.add_method(
+        "callee",
+        &signature(1),
+        0,
+        1,
+        body(&[Instruction::RetVoid], 1),
+    );
+
+    assert_crash(builder.build(), 0, "SPAWN_DETACHED: argument count 0");
+}

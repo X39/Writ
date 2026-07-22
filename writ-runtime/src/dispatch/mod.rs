@@ -247,12 +247,14 @@ pub(crate) enum ExecutionResult {
     /// Task wants to spawn a scoped child task.
     SpawnChild {
         r_dst: u16,
+        module_idx: usize,
         method_idx: usize,
         args: Vec<Value>,
     },
     /// Task wants to spawn a detached task.
     SpawnDetachedTask {
         r_dst: u16,
+        module_idx: usize,
         method_idx: usize,
         args: Vec<Value>,
     },

@@ -454,7 +454,7 @@ pub(super) fn exec_call_indirect(
     ExecutionResult::Continue
 }
 
-fn validate_call_site_registers(
+pub(super) fn validate_call_site_registers(
     opcode: &str,
     caller_register_count: usize,
     r_dst: u16,

@@ -1,3 +1,5 @@
+use crate::value::Value;
+
 use super::{ExecContext, ExecutionResult};
 
 pub(super) fn exec_spawn_task(
@@ -7,20 +9,21 @@ pub(super) fn exec_spawn_task(
     r_base: u16,
     argc: u16,
 ) -> ExecutionResult {
-    let decoded_idx = match super::decode_method_token(method_idx) {
-        Some(idx) => idx,
-        None => return ExecutionResult::Crash("SpawnTask: null method token".into()),
+    let (module_idx, method_idx, args) = match prepare_spawn(
+        ctx,
+        "SPAWN_TASK",
+        r_dst,
+        method_idx,
+        r_base,
+        argc,
+    ) {
+        Ok(spawn) => spawn,
+        Err(message) => return ExecutionResult::Crash(message),
     };
-    let mut args = Vec::with_capacity(argc as usize);
-    {
-        let frame = ctx.task.call_stack.last().unwrap();
-        for i in 0..argc as usize {
-            args.push(frame.registers[r_base as usize + i]);
-        }
-    }
     ExecutionResult::SpawnChild {
         r_dst,
-        method_idx: decoded_idx,
+        module_idx,
+        method_idx,
         args,
     }
 }
@@ -32,10 +35,56 @@ pub(super) fn exec_spawn_detached(
     r_base: u16,
     argc: u16,
 ) -> ExecutionResult {
-    let decoded_idx = match super::decode_method_token(method_idx) {
-        Some(idx) => idx,
-        None => return ExecutionResult::Crash("SpawnDetached: null method token".into()),
+    let (module_idx, method_idx, args) = match prepare_spawn(
+        ctx,
+        "SPAWN_DETACHED",
+        r_dst,
+        method_idx,
+        r_base,
+        argc,
+    ) {
+        Ok(spawn) => spawn,
+        Err(message) => return ExecutionResult::Crash(message),
     };
+    ExecutionResult::SpawnDetachedTask {
+        r_dst,
+        module_idx,
+        method_idx,
+        args,
+    }
+}
+
+fn prepare_spawn(
+    ctx: &mut ExecContext<'_>,
+    opcode: &str,
+    r_dst: u16,
+    method_token: u32,
+    r_base: u16,
+    argc: u16,
+) -> Result<(usize, usize, Vec<Value>), String> {
+    let caller_register_count = ctx.task.call_stack.last().unwrap().registers.len();
+    super::calls::validate_call_site_registers(
+        opcode,
+        caller_register_count,
+        r_dst,
+        r_base,
+        argc,
+    )?;
+    let (module_idx, method_idx) = super::calls::resolve_call_target(
+        method_token,
+        ctx.modules,
+        ctx.current_module_idx,
+    )
+    .map_err(|message| format!("{opcode}: {message}"))?;
+    let (register_count, param_count) = super::calls::checked_method_register_count(
+        opcode,
+        ctx.modules,
+        module_idx,
+        method_idx,
+    )?;
+    super::calls::validate_method_param_count(opcode, param_count, argc as usize)?;
+    super::calls::validate_callee_register_capacity(opcode, register_count, argc, 0)?;
+
     let mut args = Vec::with_capacity(argc as usize);
     {
         let frame = ctx.task.call_stack.last().unwrap();
@@ -43,11 +92,7 @@ pub(super) fn exec_spawn_detached(
             args.push(frame.registers[r_base as usize + i]);
         }
     }
-    ExecutionResult::SpawnDetachedTask {
-        r_dst,
-        method_idx: decoded_idx,
-        args,
-    }
+    Ok((module_idx, method_idx, args))
 }
 
 pub(super) fn exec_join(ctx: &mut ExecContext<'_>, r_dst: u16, r_task: u16) -> ExecutionResult {

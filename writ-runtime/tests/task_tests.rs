@@ -8,6 +8,7 @@
 //! - TASK-07: SPAWN/JOIN/CANCEL task lifecycle
 
 use writ_module::module::MethodBody;
+use writ_module::signature::{TypeSignature, encode_method_signature};
 use writ_module::tables::TypeDefKind;
 use writ_module::Instruction;
 use writ_module::ModuleBuilder;
@@ -67,16 +68,37 @@ fn build_multi_method_runtime_with_globals(
     methods: Vec<(&str, &[Instruction], u16)>,
     global_count: usize,
 ) -> Runtime<NullHost> {
+    let parameter_counts = vec![0; methods.len()];
+    build_multi_method_runtime_with_globals_and_params(
+        methods,
+        global_count,
+        &parameter_counts,
+    )
+}
+
+fn build_multi_method_runtime_with_globals_and_params(
+    methods: Vec<(&str, &[Instruction], u16)>,
+    global_count: usize,
+    parameter_counts: &[usize],
+) -> Runtime<NullHost> {
+    assert_eq!(methods.len(), parameter_counts.len());
     let mut builder = ModuleBuilder::new("test");
     builder.add_type_def("TestType", "", TypeDefKind::Struct, 0);
-    for (name, instrs, reg_count) in &methods {
+    for ((name, instrs, reg_count), parameter_count) in
+        methods.iter().zip(parameter_counts.iter().copied())
+    {
         let body = MethodBody {
             register_types: vec![0; *reg_count as usize],
             code: encode(instrs),
             debug_locals: vec![],
             source_spans: vec![],
         };
-        builder.add_method(name, &[0], 0, *reg_count, body);
+        let signature = encode_method_signature(
+            &vec![TypeSignature::Int; parameter_count],
+            &TypeSignature::Void,
+        )
+        .expect("encode test method signature");
+        builder.add_method(name, &signature, 0, *reg_count, body);
     }
     for i in 0..global_count {
         builder.add_global_def(&format!("g{}", i), &[0x01], 0, &[]);
@@ -1214,13 +1236,14 @@ fn spawn_task_with_arguments() {
         Instruction::Ret { r_src: 0 },
     ];
 
-    let mut runtime = build_multi_method_runtime_with_globals(
+    let mut runtime = build_multi_method_runtime_with_globals_and_params(
         vec![
             ("main", &main_instrs, 4),
             ("child", &child_instrs, 4),
             ("reader", &reader, 1),
         ],
         1,
+        &[0, 1, 0],
     );
 
     let main_id = runtime.spawn_task(0, vec![]).unwrap();
@@ -1232,7 +1255,12 @@ fn spawn_task_with_arguments() {
         }
     }
 
-    assert_eq!(runtime.task_state(main_id), Some(TaskState::Completed));
+    assert_eq!(
+        runtime.task_state(main_id),
+        Some(TaskState::Completed),
+        "main task crash: {:?}",
+        runtime.crash_info(main_id)
+    );
 
     let val = runtime.call_sync(2, vec![]).unwrap();
     assert_eq!(val, Value::Int(15));
