@@ -112,16 +112,7 @@ pub fn emit_stmt(emitter: &mut BodyEmitter<'_>, stmt: &TypedStmt) {
 
         // Dialogue transitions are terminal and intentionally replace this frame.
         TypedStmt::Transition { call, .. } => {
-            let crate::check::ir::TypedExpr::Call {
-                callee,
-                args,
-                callee_def_id,
-                ..
-            } = call
-            else {
-                unreachable!("typed dialogue transition must contain a call")
-            };
-            let _ = super::expr::emit_tail_call(emitter, callee, args, *callee_def_id);
+            let _ = super::expr::emit_tail_call(emitter, call);
         }
 
         // ── Break ─────────────────────────────────────────────────────────────

@@ -3624,6 +3624,164 @@ fn test_dialogue_transition_emits_tail_call() {
 }
 
 #[test]
+fn test_cross_module_overloaded_instance_transition_packs_self_and_resolves_methodref() {
+    use writ_module::signature::{TypeSignature, encode_method_signature};
+
+    let mut interner = make_interner();
+    let ty_int = interner.int();
+    let (_, remote_type_def_id) = make_def_id();
+    let ty_remote = interner.intern(TyKind::Class(remote_type_def_id));
+    let callee_ty = interner.intern(TyKind::Func {
+        params: vec![ty_int],
+        ret: ty_int,
+    });
+
+    let mut builder = ModuleBuilder::new();
+    let module_ref = builder.add_module_ref("dialogues", "1.0.0");
+    let type_ref = builder.add_type_ref(module_ref, "RemoteDialogue", "");
+    let parent = MetadataToken::new(TableId::TypeRef, (type_ref + 1) as u32);
+    builder.def_token_map.insert(remote_type_def_id, parent);
+    let int_signature = encode_method_signature(&[TypeSignature::Int], &TypeSignature::Int)
+        .expect("valid int overload signature");
+    let string_signature =
+        encode_method_signature(&[TypeSignature::String], &TypeSignature::Int)
+            .expect("valid string overload signature");
+    let expected_row = builder.add_method_ref_with_origin(
+        parent,
+        "choose",
+        &int_signature,
+        true,
+        true,
+    );
+    builder.add_method_ref_with_origin(
+        parent,
+        "choose",
+        &string_signature,
+        true,
+        true,
+    );
+    builder.finalize();
+
+    let mut emitter = make_emitter(&builder, &interner);
+    let r_self = emitter.alloc_reg(ty_remote);
+    emitter.locals.insert("remote".to_string(), r_self);
+    let transition = TypedStmt::Transition {
+        span: dummy_span(),
+        call: TypedExpr::Call {
+            ty: ty_int,
+            span: dummy_span(),
+            callee: Box::new(TypedExpr::Field {
+                ty: callee_ty,
+                span: dummy_span(),
+                receiver: Box::new(TypedExpr::Var {
+                    ty: ty_remote,
+                    span: dummy_span(),
+                    name: "remote".to_string(),
+                }),
+                field: "choose".to_string(),
+            }),
+            args: vec![TypedExpr::Literal {
+                ty: ty_int,
+                span: dummy_span(),
+                value: TypedLiteral::Int(7),
+            }],
+            callee_def_id: None,
+            callee_has_receiver: Some(true),
+        },
+    };
+
+    emit_stmt(&mut emitter, &transition);
+    let expected_token = MetadataToken::new(TableId::MethodRef, (expected_row + 1) as u32).0;
+    let Instruction::TailCall {
+        method_idx,
+        r_base,
+        argc,
+    } = emitter.instructions.last().expect("transition must emit TailCall")
+    else {
+        panic!("expected TailCall, got {:?}", emitter.instructions);
+    };
+    assert_eq!(*method_idx, expected_token, "signature must select the int overload");
+    assert_ne!(*method_idx, 0);
+    assert_eq!(MetadataToken(*method_idx).table(), TableId::MethodRef);
+    assert_eq!(*argc, 2, "instance transition must pass self plus the explicit argument");
+    assert_eq!(*r_base, r_self, "self must start the packed argument block");
+}
+
+#[test]
+fn test_cross_module_static_qualified_transition_excludes_qualifier() {
+    use writ_module::signature::{TypeSignature, encode_method_signature};
+
+    let mut interner = make_interner();
+    let ty_int = interner.int();
+    let (_, remote_type_def_id) = make_def_id();
+    let ty_remote = interner.intern(TyKind::Class(remote_type_def_id));
+    let callee_ty = interner.intern(TyKind::Func {
+        params: vec![ty_int],
+        ret: ty_int,
+    });
+
+    let mut builder = ModuleBuilder::new();
+    let module_ref = builder.add_module_ref("dialogues", "1.0.0");
+    let type_ref = builder.add_type_ref(module_ref, "RemoteDialogue", "");
+    let parent = MetadataToken::new(TableId::TypeRef, (type_ref + 1) as u32);
+    builder.def_token_map.insert(remote_type_def_id, parent);
+    let signature = encode_method_signature(&[TypeSignature::Int], &TypeSignature::Int)
+        .expect("valid static method signature");
+    let expected_row = builder.add_method_ref_with_origin(
+        parent,
+        "select",
+        &signature,
+        true,
+        false,
+    );
+    builder.finalize();
+
+    let mut emitter = make_emitter(&builder, &interner);
+    let r_qualifier = emitter.alloc_reg(ty_remote);
+    emitter.locals.insert("remote".to_string(), r_qualifier);
+    let transition = TypedStmt::Transition {
+        span: dummy_span(),
+        call: TypedExpr::Call {
+            ty: ty_int,
+            span: dummy_span(),
+            callee: Box::new(TypedExpr::Field {
+                ty: callee_ty,
+                span: dummy_span(),
+                receiver: Box::new(TypedExpr::Var {
+                    ty: ty_remote,
+                    span: dummy_span(),
+                    name: "remote".to_string(),
+                }),
+                field: "select".to_string(),
+            }),
+            args: vec![TypedExpr::Literal {
+                ty: ty_int,
+                span: dummy_span(),
+                value: TypedLiteral::Int(7),
+            }],
+            callee_def_id: None,
+            callee_has_receiver: Some(false),
+        },
+    };
+
+    emit_stmt(&mut emitter, &transition);
+    let expected_token = MetadataToken::new(TableId::MethodRef, (expected_row + 1) as u32).0;
+    let Instruction::TailCall {
+        method_idx,
+        r_base,
+        argc,
+    } = emitter.instructions.last().expect("transition must emit TailCall")
+    else {
+        panic!("expected TailCall, got {:?}", emitter.instructions);
+    };
+    assert_eq!(*method_idx, expected_token);
+    assert_ne!(*method_idx, 0);
+    assert_eq!(MetadataToken(*method_idx).table(), TableId::MethodRef);
+    assert_eq!(*argc, 1, "static transition must pass only explicit arguments");
+    assert_ne!(*r_base, r_qualifier, "static qualifier must not enter the argument block");
+}
+
+#[test]
 fn test_ordinary_return_call_emits_call_then_ret() {
     let mut interner = make_interner();
     let ty_int = interner.int();

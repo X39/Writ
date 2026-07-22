@@ -323,20 +323,18 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
             // from `impl Contract for Foo`), look up the MethodDef by type+name
             // and emit a direct CALL rather than CALL_INDIRECT.
             if !is_static_call && matches!(emitter.interner.kind(callee_ty), TyKind::Func { .. }) {
-                if let TypedExpr::Field { receiver, .. } = callee.as_ref() {
+                if let TypedExpr::Field { .. } = callee.as_ref() {
                     if let Some(target) = concrete_target {
                         // Found a MethodDef: emit direct CALL (not CALL_INDIRECT).
                         let r_dst_call = emitter.alloc_reg(*ty);
                         let TypedExpr::Call { args, .. } = expr else { unreachable!() };
-                        let arg_regs: Vec<u16> = if target.prepend_receiver {
-                            std::iter::once(emit_expr(emitter, receiver))
-                                .chain(args.iter().map(|arg| emit_expr(emitter, arg)))
-                                .collect()
-                        } else {
-                            args.iter().map(|arg| emit_expr(emitter, arg)).collect()
-                        };
-                        let argc = arg_regs.len() as u16;
-                        let r_base = pack_args_consecutive(emitter, &arg_regs);
+                        let (r_base, argc) = pack_concrete_call_args(
+                            emitter,
+                            callee,
+                            args,
+                            target,
+                        )
+                        .expect("resolved instance call must have a field receiver");
                         emitter.emit(Instruction::Call {
                             r_dst: r_dst_call,
                             method_idx: target.token,
@@ -383,37 +381,38 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
                 let r_dst_call = emitter.alloc_reg(*ty);
 
                 let TypedExpr::Call { args, .. } = expr else { unreachable!() };
-                let arg_regs: Vec<u16> = match (kind, callee.as_ref()) {
-                    (
-                        super::call::CallKind::Direct,
-                        TypedExpr::Field { receiver, .. },
-                    ) if concrete_target
-                        .map(|target| target.prepend_receiver)
-                        .or_else(|| {
-                            declared_token
-                                .and_then(|token| emitter.builder.method_has_receiver(token))
-                        })
-                        .unwrap_or(true) =>
-                    {
-                        std::iter::once(emit_expr(emitter, receiver))
-                            .chain(args.iter().map(|arg| emit_expr(emitter, arg)))
-                            .collect()
+                let packed_concrete_args = match (kind, concrete_target) {
+                    (super::call::CallKind::Direct, Some(target)) => {
+                        pack_concrete_call_args(emitter, callee, args, target)
                     }
-                    (
-                        super::call::CallKind::Virtual { .. },
-                        TypedExpr::Field { receiver, .. },
-                    ) => {
-                        std::iter::once(emit_expr(emitter, receiver))
-                            .chain(args.iter().map(|arg| emit_expr(emitter, arg)))
-                            .collect()
-                    }
-                    (super::call::CallKind::Virtual { .. }, _) => {
-                        panic!("virtual call requires a field receiver");
-                    }
-                    _ => args.iter().map(|arg| emit_expr(emitter, arg)).collect(),
+                    _ => None,
                 };
-                let argc = arg_regs.len() as u16;
-                let r_base = pack_args_consecutive(emitter, &arg_regs);
+                let (r_base, argc) = if let Some(packed) = packed_concrete_args {
+                    packed
+                } else {
+                    let arg_regs: Vec<u16> = match (kind, callee.as_ref()) {
+                        (
+                            super::call::CallKind::Direct,
+                            TypedExpr::Field { receiver, .. },
+                        ) if declared_token
+                            .and_then(|token| emitter.builder.method_has_receiver(token))
+                            .unwrap_or(true) => std::iter::once(emit_expr(emitter, receiver))
+                            .chain(args.iter().map(|arg| emit_expr(emitter, arg)))
+                            .collect(),
+                        (
+                            super::call::CallKind::Virtual { .. },
+                            TypedExpr::Field { receiver, .. },
+                        ) => std::iter::once(emit_expr(emitter, receiver))
+                            .chain(args.iter().map(|arg| emit_expr(emitter, arg)))
+                            .collect(),
+                        (super::call::CallKind::Virtual { .. }, _) => {
+                            panic!("virtual call requires a field receiver");
+                        }
+                        _ => args.iter().map(|arg| emit_expr(emitter, arg)).collect(),
+                    };
+                    let argc = arg_regs.len() as u16;
+                    (pack_args_consecutive(emitter, &arg_regs), argc)
+                };
 
                 // IMPL-METHOD-TOKEN fix: impl methods share the impl_def_id as their callee_def_id
                 // (all methods in an impl block have the same DefId — the impl block's DefId).
@@ -603,23 +602,34 @@ fn resolve_typeof_type_idx(emitter: &BodyEmitter<'_>, static_ty: Ty) -> u32 {
 /// expressions use the normal Call + Ret path so defer ordering remains unchanged.
 pub(crate) fn emit_tail_call(
     emitter: &mut BodyEmitter<'_>,
-    callee: &TypedExpr,
-    args: &[TypedExpr],
-    callee_def_id: Option<crate::resolve::def_map::DefId>,
+    call: &TypedExpr,
 ) -> u16 {
-    // Emit arguments; pack into consecutive block (BUG-06 fix: skip MOV if already consecutive)
-    let arg_regs: Vec<u16> = args.iter().map(|arg| emit_expr(emitter, arg)).collect();
-    let argc = arg_regs.len() as u16;
-    let r_base = pack_args_consecutive(emitter, &arg_regs);
+    let TypedExpr::Call {
+        callee,
+        args,
+        callee_def_id,
+        callee_has_receiver,
+        ..
+    } = call
+    else {
+        unreachable!("typed dialogue transition must contain a call")
+    };
+    let target = resolve_concrete_call_target(
+        emitter,
+        callee,
+        callee.ty(),
+        *callee_def_id,
+        *callee_has_receiver,
+    )
+    .expect("checked dialogue transition has no concrete non-null method target");
+    let (r_base, argc) = pack_concrete_call_args(emitter, callee, args, target)
+        .expect("resolved instance transition must have a field receiver");
 
-    // MC-01 fix: use the callee_def_id propagated from TypedExpr::Call.
-    let _ = callee; // callee sub-expression no longer needed for DefId resolution
-    let method_idx = callee_def_id
-        .and_then(|id| emitter.builder.token_for_def(id))
-        .map(|t| t.0)
-        .unwrap_or(0);
-
-    emitter.emit(Instruction::TailCall { method_idx, r_base, argc });
+    emitter.emit(Instruction::TailCall {
+        method_idx: target.token,
+        r_base,
+        argc,
+    });
 
     // TailCall does not return to this frame; return a void register to satisfy
     // the invariant that every emit_expr call returns a register.
@@ -646,6 +656,29 @@ pub(crate) fn extract_type_def_id(
 pub(crate) struct ConcreteCallTarget {
     pub token: u32,
     pub prepend_receiver: bool,
+}
+
+/// Emit and pack the argument block for a statically resolved concrete call.
+/// Instance methods receive `self` first; static qualified calls intentionally
+/// do not evaluate or pass the qualifier as an implicit argument.
+pub(crate) fn pack_concrete_call_args(
+    emitter: &mut BodyEmitter<'_>,
+    callee: &TypedExpr,
+    args: &[TypedExpr],
+    target: ConcreteCallTarget,
+) -> Option<(u16, u16)> {
+    let arg_regs: Vec<u16> = if target.prepend_receiver {
+        let TypedExpr::Field { receiver, .. } = callee else {
+            return None;
+        };
+        std::iter::once(emit_expr(emitter, receiver))
+            .chain(args.iter().map(|arg| emit_expr(emitter, arg)))
+            .collect()
+    } else {
+        args.iter().map(|arg| emit_expr(emitter, arg)).collect()
+    };
+    let argc = arg_regs.len() as u16;
+    Some((pack_args_consecutive(emitter, &arg_regs), argc))
 }
 
 /// Resolve only calls that can use the concrete CALL ABI. Extern, virtual,
