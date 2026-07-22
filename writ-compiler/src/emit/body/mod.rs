@@ -4,6 +4,8 @@
 //! method bodies in a TypedAst. It consumes the populated ModuleBuilder from
 //! Phase 24 and the TypedAst/TyInterner from Phase 23.
 
+use std::collections::HashSet;
+
 pub mod reg_alloc;
 pub mod labels;
 pub mod expr;
@@ -408,10 +410,31 @@ pub fn emit_all_bodies(
     struct_field_types: &FxHashMap<DefId, Vec<(String, crate::check::ty::Ty)>>,
     reflectable_infos: &[ReflectableInfo],
 ) -> (Vec<EmittedBody>, Vec<writ_diagnostics::Diagnostic>) {
+    emit_all_bodies_excluding(
+        typed_ast,
+        interner,
+        builder,
+        lambda_infos,
+        struct_field_types,
+        reflectable_infos,
+        &HashSet::new(),
+    )
+}
+
+/// Emit executable bodies while omitting conditionally suppressed functions.
+pub(in crate::emit) fn emit_all_bodies_excluding(
+    typed_ast: &TypedAst,
+    interner: &TyInterner,
+    builder: &ModuleBuilder,
+    lambda_infos: &[closure::LambdaInfo],
+    struct_field_types: &FxHashMap<DefId, Vec<(String, crate::check::ty::Ty)>>,
+    reflectable_infos: &[ReflectableInfo],
+    skipped_def_ids: &HashSet<DefId>,
+) -> (Vec<EmittedBody>, Vec<writ_diagnostics::Diagnostic>) {
     let mut diags = Vec::new();
     let mut bodies = Vec::new();
     let mut lambda_exprs: Vec<&TypedExpr> = Vec::new();
-    collect_lambda_exprs_from_ast(typed_ast, &mut lambda_exprs);
+    collect_lambda_exprs_from_ast(typed_ast, skipped_def_ids, &mut lambda_exprs);
     assert_eq!(
         lambda_exprs.len(),
         lambda_infos.len(),
@@ -425,7 +448,7 @@ pub fn emit_all_bodies(
 
     for decl in &typed_ast.decls {
         match decl {
-            TypedDecl::Fn { def_id, body, .. } => {
+            TypedDecl::Fn { def_id, body, .. } if !skipped_def_ids.contains(def_id) => {
                 // Per-function error check: skip broken bodies instead of aborting all.
                 if expr_has_error(body) {
                     // Look up a human-readable name for the diagnostic.
@@ -768,10 +791,14 @@ pub fn emit_all_bodies(
 
 /// Walk the TypedAst in the same pre-order as `pre_scan_lambdas` and collect
 /// references to each Lambda expression node (not just the body).
-fn collect_lambda_exprs_from_ast<'a>(typed_ast: &'a TypedAst, out: &mut Vec<&'a TypedExpr>) {
+fn collect_lambda_exprs_from_ast<'a>(
+    typed_ast: &'a TypedAst,
+    skipped_def_ids: &HashSet<DefId>,
+    out: &mut Vec<&'a TypedExpr>,
+) {
     for decl in &typed_ast.decls {
         match decl {
-            TypedDecl::Fn { body, .. } => {
+            TypedDecl::Fn { def_id, body, .. } if !skipped_def_ids.contains(def_id) => {
                 collect_lambda_exprs_from_expr(body, out);
             }
             TypedDecl::Impl { methods, .. } => {

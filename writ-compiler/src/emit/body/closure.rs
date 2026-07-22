@@ -8,6 +8,8 @@
 //! **Critical ordering (Pitfall 2 from RESEARCH.md):**
 //! `pre_scan_lambdas()` MUST be called BEFORE `builder.finalize()`.
 
+use std::collections::HashSet;
+
 use crate::check::ir::{Capture, TypedDecl, TypedExpr, TypedAst};
 use crate::check::ty::{Ty, TyInterner};
 use crate::emit::metadata::{HookKind, MetadataToken, TypeDefKind, method_flags};
@@ -40,12 +42,22 @@ pub fn pre_scan_lambdas(
     interner: &TyInterner,
     builder: &mut ModuleBuilder,
 ) -> Vec<LambdaInfo> {
+    pre_scan_lambdas_excluding(typed_ast, interner, builder, &HashSet::new())
+}
+
+/// Pre-scan executable bodies while omitting conditionally suppressed functions.
+pub(in crate::emit) fn pre_scan_lambdas_excluding(
+    typed_ast: &TypedAst,
+    interner: &TyInterner,
+    builder: &mut ModuleBuilder,
+    skipped_def_ids: &HashSet<DefId>,
+) -> Vec<LambdaInfo> {
     let mut infos = Vec::new();
     let mut counter = 0usize;
 
     for decl in &typed_ast.decls {
         match decl {
-            TypedDecl::Fn { body, .. } => {
+            TypedDecl::Fn { def_id, body, .. } if !skipped_def_ids.contains(def_id) => {
                 scan_expr_for_lambdas(body, interner, builder, &mut counter, &mut infos);
             }
             TypedDecl::Impl { methods, .. } => {

@@ -1,5 +1,7 @@
 //! AST walker for collecting called DefIds (dead-import elimination).
 
+use std::collections::HashSet;
+
 use rustc_hash::FxHashSet;
 
 use crate::check::ir::{TypedAst, TypedDecl, TypedExpr, TypedStmt};
@@ -14,11 +16,16 @@ use crate::resolve::def_map::DefId;
 ///
 /// Used by `inject_log_extern_defs` and `inject_dialogue_extern_defs` to avoid
 /// emitting ExternDef rows for builtin functions that are never called.
-pub(super) fn collect_called_def_ids(typed_ast: &TypedAst) -> FxHashSet<DefId> {
+pub(super) fn collect_called_def_ids(
+    typed_ast: &TypedAst,
+    skipped_def_ids: &HashSet<DefId>,
+) -> FxHashSet<DefId> {
     let mut ids = FxHashSet::default();
     for decl in &typed_ast.decls {
         match decl {
-            TypedDecl::Fn { body, .. } => walk_expr(body, &mut ids),
+            TypedDecl::Fn { def_id, body, .. } if !skipped_def_ids.contains(def_id) => {
+                walk_expr(body, &mut ids)
+            }
             TypedDecl::Impl { methods, .. } => {
                 for (_, body) in methods {
                     walk_expr(body, &mut ids);
@@ -154,12 +161,15 @@ fn walk_stmt(stmt: &TypedStmt, ids: &mut FxHashSet<DefId>) {
 pub(super) fn collect_addressable_generic_types(
     typed_ast: &TypedAst,
     interner: &TyInterner,
+    skipped_def_ids: &HashSet<DefId>,
 ) -> Vec<Ty> {
     let mut seen = FxHashSet::default();
     let mut types = Vec::new();
     for decl in &typed_ast.decls {
         match decl {
-            TypedDecl::Fn { body, .. } => walk_expr_types(body, interner, &mut seen, &mut types),
+            TypedDecl::Fn { def_id, body, .. } if !skipped_def_ids.contains(def_id) => {
+                walk_expr_types(body, interner, &mut seen, &mut types)
+            }
             TypedDecl::Impl { methods, .. } => {
                 for (_, body) in methods {
                     walk_expr_types(body, interner, &mut seen, &mut types);

@@ -43,7 +43,7 @@ pub fn emit(
     // Pass 1: collect all definitions into provisional rows.
     // The `emit` function is used for metadata-only (no conditions needed here).
     let empty_conditions = std::collections::HashSet::new();
-    let _reflectable_infos = collect::collect_defs(
+    let (_reflectable_infos, _skipped_def_ids) = collect::collect_defs(
         typed_ast,
         asts,
         interner,
@@ -121,7 +121,7 @@ pub fn emit_bodies_with_libraries(
 
     // Pass 1: collect all definitions (TypeDef, MethodDef, FieldDef, ExternDef, etc.)
     // When asts is non-empty, this populates all 21 metadata tables including exports.
-    let reflectable_infos = collect::collect_defs(
+    let (reflectable_infos, skipped_def_ids) = collect::collect_defs(
         typed_ast,
         asts,
         interner,
@@ -139,7 +139,12 @@ pub fn emit_bodies_with_libraries(
     slots::assign_vtable_slots(&mut builder);
 
     // Pre-scan lambdas before finalize (must run before builder.finalize())
-    let lambda_infos = body::closure::pre_scan_lambdas(typed_ast, interner, &mut builder);
+    let lambda_infos = body::closure::pre_scan_lambdas_excluding(
+        typed_ast,
+        interner,
+        &mut builder,
+        &skipped_def_ids,
+    );
 
     // Finalize: assign contiguous row indices, populate def_token_map.
     builder.finalize();
@@ -161,7 +166,15 @@ pub fn emit_bodies_with_libraries(
     // Reflectable get_type() bodies via reflectable_infos).
     // Per-function error nodes cause that function's body to be skipped with an E9001
     // diagnostic; other functions in the same file are still emitted.
-    let (mut bodies, body_diags) = body::emit_all_bodies(typed_ast, interner, &builder, &lambda_infos, &typed_ast.struct_field_types, &reflectable_infos);
+    let (mut bodies, body_diags) = body::emit_all_bodies_excluding(
+        typed_ast,
+        interner,
+        &builder,
+        &lambda_infos,
+        &typed_ast.struct_field_types,
+        &reflectable_infos,
+        &skipped_def_ids,
+    );
     diags.extend(body_diags);
 
     // Only return Err if there are ZERO valid bodies AND there are diagnostics.

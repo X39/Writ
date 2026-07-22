@@ -936,6 +936,31 @@ fn test_conditional_inactive() {
     run_golden_test_with_conditions("conditional_inactive", &[]);
 }
 
+/// A suppressed conditional body must not contribute executable metadata or imports.
+#[test]
+fn conditional_active_omits_fallback_body_artifacts() {
+    let actual = compile_and_disassemble_with_conditions(
+        r#"
+        [Conditional("debug")]
+        pub fn selected() -> int { 1 }
+
+        pub fn selected() -> int {
+            let hidden: fn() -> int = fn() -> int { 99 };
+            log::info("fallback only");
+            hidden()
+        }
+
+        pub fn main() -> int { selected() }
+        "#,
+        &["debug"],
+    );
+
+    assert!(!actual.contains("__closure_"), "{actual}");
+    assert!(!actual.contains("__invoke_"), "{actual}");
+    assert!(!actual.contains("log::info"), "{actual}");
+    assert!(!actual.contains("fallback only"), "{actual}");
+}
+
 // ─── Section O: Reflection golden tests ──────────────────────────────────────
 
 /// Golden test: typeof() lowers to TYPEOF instruction.

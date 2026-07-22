@@ -57,7 +57,7 @@ pub fn collect_defs(
     diags: &mut Vec<writ_diagnostics::Diagnostic>,
     active_conditions: &HashSet<String>,
     library_modules: &[&writ_module::Module],
-) -> Vec<ReflectableInfo> {
+) -> (Vec<ReflectableInfo>, HashSet<DefId>) {
     let def_map = &typed_ast.def_map;
 
     // 1. ModuleDef: always exactly 1 row.
@@ -104,9 +104,6 @@ pub fn collect_defs(
         builder,
     );
     register_provisional_named_tokens(typed_ast, builder);
-    for ty in collect_addressable_generic_types(typed_ast, interner) {
-        intern_type_spec_for_ty(ty, interner, builder);
-    }
 
     // Pre-scan: compute the set of DefIds to skip at emit time.
     // Active conditional variant: emit the conditional fn, skip its fallback.
@@ -149,6 +146,10 @@ pub fn collect_defs(
                 .build(),
             );
         }
+    }
+
+    for ty in collect_addressable_generic_types(typed_ast, interner, &skipped_def_ids) {
+        intern_type_spec_for_ty(ty, interner, builder);
     }
 
     // 3. Walk TypedDecl list and emit rows.
@@ -247,11 +248,11 @@ pub fn collect_defs(
     // 6. Inject synthetic ExternDef rows for log-level builtins AFTER all user-declared
     //    externs so that existing user extern token indices are not shifted.
     //    Only inject those actually referenced by the source code.
-    let called_ids = collect_called_def_ids(typed_ast);
+    let called_ids = collect_called_def_ids(typed_ast, &skipped_def_ids);
     inject_log_extern_defs(def_map, builder, &called_ids);
     inject_dialogue_extern_defs(def_map, builder, &called_ids);
 
-    reflectable_infos
+    (reflectable_infos, skipped_def_ids)
 }
 
 /// Redirect calls resolved to a suppressed fallback to the active conditional body.
