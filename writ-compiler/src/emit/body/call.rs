@@ -66,15 +66,23 @@ pub fn emit_call(
     // 2. Allocate a consecutive block (r_base is the first).
     // 3. MOV each arg into its slot if not already consecutive.
 
-    let arg_regs: Vec<u16> = match callee.as_ref() {
-        TypedExpr::Field { receiver, .. }
-            if matches!(kind, CallKind::Direct | CallKind::Virtual { .. }) =>
-        {
+    let direct_has_receiver = emitter
+        .builder
+        .token_for_def(callee_def_id)
+        .and_then(|token| emitter.builder.methoddef_has_receiver(token))
+        .unwrap_or(true);
+    let arg_regs: Vec<u16> = match (kind, callee.as_ref()) {
+        (CallKind::Direct, TypedExpr::Field { receiver, .. }) if direct_has_receiver => {
             std::iter::once(emit_expr(emitter, receiver))
                 .chain(args.iter().map(|arg| emit_expr(emitter, arg)))
                 .collect()
         }
-        _ if matches!(kind, CallKind::Virtual { .. }) => {
+        (CallKind::Virtual { .. }, TypedExpr::Field { receiver, .. }) => {
+            std::iter::once(emit_expr(emitter, receiver))
+                .chain(args.iter().map(|arg| emit_expr(emitter, arg)))
+                .collect()
+        }
+        (CallKind::Virtual { .. }, _) => {
             panic!("virtual call requires a field receiver");
         }
         _ => args.iter().map(|arg| emit_expr(emitter, arg)).collect(),

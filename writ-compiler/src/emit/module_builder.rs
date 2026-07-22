@@ -1017,6 +1017,16 @@ impl ModuleBuilder {
         self.method_defs[handle.0].row.flags
     }
 
+    /// Whether a finalized MethodDef token names an instance method with a receiver.
+    pub fn methoddef_has_receiver(&self, token: MetadataToken) -> Option<bool> {
+        if token.table() != TableId::MethodDef {
+            return None;
+        }
+        let index = token.row().checked_sub(1)? as usize;
+        let method = self.method_defs.get(index)?;
+        Some(method.parent.is_some() && method.row.flags & (1 << 1) == 0)
+    }
+
     /// Get the number of GlobalDef rows.
     pub fn global_def_count(&self) -> usize {
         self.global_defs.len()

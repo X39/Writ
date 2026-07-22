@@ -344,47 +344,57 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
                 // MC-01 fix: use the DefId stored directly in callee_def_id (populated by
                 // check_call_with_sig and check_generic_call during type checking).
                 let maybe_def_id = *callee_def_id;
+                let declared_token = maybe_def_id
+                    .and_then(|id| emitter.builder.token_for_def(id));
+                let is_extern = declared_token.is_some_and(|token| {
+                    use crate::emit::metadata::TableId;
+                    token.table() == TableId::ExternDef
+                });
 
-                let kind = match callee.as_ref() {
-                    TypedExpr::Field { receiver, .. } => {
-                        // Dispatch based on receiver's concrete/generic type
-                        match emitter.interner.kind(receiver.ty()) {
-                            TyKind::Struct(_) | TyKind::Class(_) | TyKind::Entity(_) => {
-                                super::call::CallKind::Direct
+                let kind = if is_extern {
+                    super::call::CallKind::Extern
+                } else {
+                    match callee.as_ref() {
+                        TypedExpr::Field { receiver, .. } => {
+                            // Dispatch based on receiver's concrete/generic type
+                            match emitter.interner.kind(receiver.ty()) {
+                                TyKind::Struct(_) | TyKind::Class(_) | TyKind::Entity(_) => {
+                                    super::call::CallKind::Direct
+                                }
+                                TyKind::GenericParam(_) => {
+                                    super::call::CallKind::Virtual { slot: 0 }
+                                }
+                                _ => super::call::CallKind::Direct,
                             }
-                            TyKind::GenericParam(_) => {
-                                super::call::CallKind::Virtual { slot: 0 }
-                            }
-                            _ => super::call::CallKind::Direct,
                         }
-                    }
-                    _ => {
-                        // Check if callee_def_id maps to an ExternDef token (BUG-05 fix).
-                        let is_extern = maybe_def_id
-                            .and_then(|id| emitter.builder.token_for_def(id))
-                            .map(|t| {
-                                use crate::emit::metadata::TableId;
-                                t.table() == TableId::ExternDef
-                            })
-                            .unwrap_or(false);
-                        if is_extern {
-                            super::call::CallKind::Extern
-                        } else {
-                            super::call::CallKind::Direct
-                        }
+                        _ => super::call::CallKind::Direct,
                     }
                 };
 
                 let r_dst_call = emitter.alloc_reg(*ty);
 
                 let TypedExpr::Call { args, .. } = expr else { unreachable!() };
-                let arg_regs: Vec<u16> = match callee.as_ref() {
-                    TypedExpr::Field { receiver, .. } => {
+                let arg_regs: Vec<u16> = match (kind, callee.as_ref()) {
+                    (
+                        super::call::CallKind::Direct,
+                        TypedExpr::Field { receiver, .. },
+                    ) if declared_token
+                        .and_then(|token| emitter.builder.methoddef_has_receiver(token))
+                        .unwrap_or(true) =>
+                    {
                         std::iter::once(emit_expr(emitter, receiver))
                             .chain(args.iter().map(|arg| emit_expr(emitter, arg)))
                             .collect()
                     }
-                    _ if matches!(kind, super::call::CallKind::Virtual { .. }) => {
+                    (
+                        super::call::CallKind::Virtual { .. },
+                        TypedExpr::Field { receiver, .. },
+                    ) => {
+                        std::iter::once(emit_expr(emitter, receiver))
+                            .chain(args.iter().map(|arg| emit_expr(emitter, arg)))
+                            .collect()
+                    }
+                    (super::call::CallKind::Virtual { .. }, _) => {
                         panic!("virtual call requires a field receiver");
                     }
                     _ => args.iter().map(|arg| emit_expr(emitter, arg)).collect(),

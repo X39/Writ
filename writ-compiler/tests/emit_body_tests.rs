@@ -4362,6 +4362,112 @@ fn test_emit_expr_extern_call_emits_call_extern() {
 
 // ─── Phase 85: CALL_VIRT for contract-typed receivers (EMIT-01, EMIT-02) ─────
 
+#[test]
+fn test_emit_expr_qualified_extern_call_keeps_explicit_argument_block() {
+    let mut interner = make_interner();
+    let ty_int = interner.int();
+    let (_, extern_def_id) = make_def_id();
+    let builder = make_builder_with_extern(extern_def_id);
+    let mut emitter = make_emitter(&builder, &interner);
+    let r_namespace = emitter.alloc_reg(ty_int);
+    emitter.locals.insert("namespace".to_string(), r_namespace);
+
+    let call_expr = TypedExpr::Call {
+        ty: ty_int,
+        span: dummy_span(),
+        callee: Box::new(TypedExpr::Field {
+            ty: ty_int,
+            span: dummy_span(),
+            receiver: Box::new(TypedExpr::Var {
+                ty: ty_int,
+                span: dummy_span(),
+                name: "namespace".to_string(),
+            }),
+            field: "ext_fn".to_string(),
+        }),
+        args: vec![TypedExpr::Literal {
+            ty: ty_int,
+            span: dummy_span(),
+            value: TypedLiteral::Int(99),
+        }],
+        callee_def_id: Some(extern_def_id),
+    };
+
+    emit_expr(&mut emitter, &call_expr);
+
+    assert!(matches!(
+        emitter.instructions.last(),
+        Some(Instruction::CallExtern { argc: 1, .. })
+    ));
+}
+
+#[test]
+fn test_emit_expr_static_field_call_keeps_explicit_argument_block() {
+    let mut interner = make_interner();
+    let ty_int = interner.int();
+    let (mut def_map, struct_def_id) = make_def_id();
+    let method_def_id = def_map.arena.alloc(DefEntry {
+        id: None,
+        kind: DefKind::Fn,
+        vis: DefVis::Pub,
+        file_id: FileId(0),
+        namespace: String::new(),
+        name: "test_method".to_string(),
+        name_span: dummy_span(),
+        generics: vec![],
+        span: dummy_span(),
+    });
+    let ty_struct = interner.intern(TyKind::Struct(struct_def_id));
+    let mut builder = ModuleBuilder::new();
+    let owner = builder.add_typedef(
+        "TestStruct",
+        "",
+        TypeDefKind::Struct,
+        0,
+        Some(struct_def_id),
+    );
+    builder.add_methoddef(
+        Some(owner),
+        "test_method",
+        0,
+        1 << 1,
+        Some(method_def_id),
+        1,
+    );
+    builder.finalize();
+    let mut emitter = make_emitter(&builder, &interner);
+    let r_type = emitter.alloc_reg(ty_struct);
+    emitter.locals.insert("type_name".to_string(), r_type);
+
+    let call_expr = TypedExpr::Call {
+        ty: ty_int,
+        span: dummy_span(),
+        callee: Box::new(TypedExpr::Field {
+            ty: ty_int,
+            span: dummy_span(),
+            receiver: Box::new(TypedExpr::Var {
+                ty: ty_struct,
+                span: dummy_span(),
+                name: "type_name".to_string(),
+            }),
+            field: "test_method".to_string(),
+        }),
+        args: vec![TypedExpr::Literal {
+            ty: ty_int,
+            span: dummy_span(),
+            value: TypedLiteral::Int(7),
+        }],
+        callee_def_id: Some(method_def_id),
+    };
+
+    emit_expr(&mut emitter, &call_expr);
+
+    assert!(matches!(
+        emitter.instructions.last(),
+        Some(Instruction::Call { argc: 1, .. })
+    ));
+}
+
 /// Helper: build a ModuleBuilder with a ContractDef that has a DefId, plus methods and an impl.
 /// Returns a builder with vtable slots assigned and finalized.
 fn make_builder_with_contract_receiver(
