@@ -2,6 +2,7 @@ use crate::heap::HeapObject;
 use crate::reflection::ReflectionIndex;
 use crate::value::Value;
 use writ_module::instruction::ArrayDefaultKind;
+use writ_module::tables::FIELD_FLAG_READONLY;
 
 use super::{helpers, ExecContext, ExecutionResult, IntrinsicId};
 
@@ -750,9 +751,9 @@ pub(super) fn execute_intrinsic(
             let td = &ctx.modules[module_idx].module.type_defs[typedef_idx];
             let abs_idx = td.field_list.saturating_sub(1) as usize + field_offset;
 
-            // Check readonly flag: bit 0x01 = FIELD_FLAG_READONLY (let field)
+            // Read-only is independent of visibility in FieldDef metadata.
             let flags = ctx.modules[module_idx].module.field_defs[abs_idx].flags;
-            if flags & 0x01 != 0 {
+            if flags & FIELD_FLAG_READONLY != 0 {
                 // Field is readonly — read the field name for the error message
                 let name_offset = ctx.modules[module_idx].module.field_defs[abs_idx].name;
                 let field_name = writ_module::heap::read_string(

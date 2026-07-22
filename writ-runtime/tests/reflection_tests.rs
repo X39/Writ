@@ -15,7 +15,7 @@
 //! - REFL-09: GC survival after full reflection op chain (TypeOf → fields() → FieldInfo.get)
 
 use writ_module::module::MethodBody;
-use writ_module::tables::TypeDefKind;
+use writ_module::tables::{FIELD_FLAG_PUBLIC, FIELD_FLAG_READONLY, TypeDefKind};
 use writ_module::token::MetadataToken;
 use writ_module::Instruction;
 use writ_module::ModuleBuilder;
@@ -175,10 +175,14 @@ fn test_type_object_survives_gc() {
 fn test_type_fields_returns_array() {
     let mut builder = ModuleBuilder::new("test");
 
-    // Struct with 2 fields: `x` (mutable, flags=0), `y` (readonly, flags=1)
+    // Struct with 2 public fields: `x` is writable and `y` is metadata-read-only.
     builder.add_type_def("Vec2", "", TypeDefKind::Struct, 0);
-    builder.add_field_def("x", &[0x01], 0);   // int, flags=0 (mutable)
-    builder.add_field_def("y", &[0x01], 1);   // int, flags=1 (readonly = let)
+    builder.add_field_def("x", &[0x01], FIELD_FLAG_PUBLIC);
+    builder.add_field_def(
+        "y",
+        &[0x01],
+        FIELD_FLAG_PUBLIC | FIELD_FLAG_READONLY,
+    );
 
     // Add TypeRef to writ-runtime "Type.fields" contract
     let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
@@ -227,22 +231,22 @@ fn test_type_fields_returns_array() {
     };
     assert_eq!(elements.len(), 2, "Vec2 should have 2 fields");
 
-    // Check FieldInfo[0]: is_mutable=true (flags=0)
+    // Check FieldInfo[0]: public visibility does not make the field read-only.
     let fi0_href = match elements[0] {
         Value::Ref(href) => href,
         other => panic!("expected Ref for FieldInfo[0], got {:?}", other),
     };
     // FieldInfo field 2 = is_mutable
     let is_mutable_0 = runtime.heap().get_field(fi0_href, 2).expect("is_mutable field");
-    assert_eq!(is_mutable_0, Value::Bool(true), "field 'x' (flags=0) should be mutable");
+    assert_eq!(is_mutable_0, Value::Bool(true), "public field 'x' should be mutable");
 
-    // Check FieldInfo[1]: is_mutable=false (flags=1 = readonly)
+    // Check FieldInfo[1]: the distinct read-only bit makes it immutable.
     let fi1_href = match elements[1] {
         Value::Ref(href) => href,
         other => panic!("expected Ref for FieldInfo[1], got {:?}", other),
     };
     let is_mutable_1 = runtime.heap().get_field(fi1_href, 2).expect("is_mutable field");
-    assert_eq!(is_mutable_1, Value::Bool(false), "field 'y' (flags=1) should be readonly");
+    assert_eq!(is_mutable_1, Value::Bool(false), "field 'y' should be read-only");
 }
 
 // ── Test: Type.attributes() uses unified attribute path (RT-05) ───────
@@ -1406,9 +1410,9 @@ fn test_method_info_attributes_empty_when_none() {
 fn test_field_info_set_mut_field() {
     let mut builder = ModuleBuilder::new("test");
 
-    // Struct with one mutable int field (flags=0 = mutable)
+    // Struct with one public, writable int field.
     builder.add_type_def("Counter", "", TypeDefKind::Struct, 0);
-    builder.add_field_def("val", &[0x01], 0); // int, flags=0 (mutable)
+    builder.add_field_def("val", &[0x01], FIELD_FLAG_PUBLIC);
 
     let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
     let type_fields_ref  = builder.add_type_ref(mod_ref, "Type.fields",  "writ");
@@ -1484,15 +1488,19 @@ fn test_field_info_set_mut_field() {
 // ── Test: FieldInfo.set() on a readonly field crashes (DYN-01) ────────
 
 /// Test that FieldInfo.set(instance, value) crashes with "immutable field" message
-/// when the field has flags=0x01 (readonly / let-field).
-/// Verifies DYN-01: FieldInfo.set() on a let field crashes with descriptive message.
+/// when the field has the FieldDef read-only metadata bit.
+/// Verifies DYN-01: FieldInfo.set() on a read-only field crashes descriptively.
 #[test]
 fn test_field_info_set_readonly_crashes() {
     let mut builder = ModuleBuilder::new("test");
 
-    // Struct with one readonly int field (flags=0x01 = readonly)
+    // Struct with one public, metadata-read-only int field.
     builder.add_type_def("Frozen", "", TypeDefKind::Struct, 0);
-    builder.add_field_def("immut_val", &[0x01], 1); // int, flags=1 (readonly)
+    builder.add_field_def(
+        "immut_val",
+        &[0x01],
+        FIELD_FLAG_PUBLIC | FIELD_FLAG_READONLY,
+    );
 
     let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
     let type_fields_ref   = builder.add_type_ref(mod_ref, "Type.fields",   "writ");

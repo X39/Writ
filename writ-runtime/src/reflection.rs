@@ -8,6 +8,7 @@
 use rustc_hash::FxHashMap;
 use writ_module::heap::read_string;
 use writ_module::instruction::ArrayDefaultKind;
+use writ_module::tables::FIELD_FLAG_READONLY;
 
 use crate::gc::GcHeap;
 use crate::heap::HeapObject;
@@ -295,8 +296,9 @@ impl ReflectionIndex {
             // Field 1 (declared_type): Value::Void placeholder (full type resolution in Phase 106)
             let _ = heap.set_field(href, 1, Value::Void);
 
-            // Field 2 (is_mutable): 0x01 = FIELD_FLAG_READONLY; is_mutable = (flags & 0x01) == 0
-            let is_mutable = (fd.flags & 0x01) == 0;
+            // Source fields are writable by default. Programmatic modules can
+            // opt out with the distinct read-only metadata bit.
+            let is_mutable = (fd.flags & FIELD_FLAG_READONLY) == 0;
             let _ = heap.set_field(href, 2, Value::Bool(is_mutable));
         }
 

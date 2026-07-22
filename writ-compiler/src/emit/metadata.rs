@@ -101,6 +101,10 @@ impl MetadataToken {
 // TypeDef kind and hook kind enums
 // =============================================================================
 
+use writ_module::tables::{
+    FIELD_FLAG_COMPONENT, FIELD_FLAG_HAS_DEFAULT, FIELD_FLAG_PUBLIC,
+};
+
 /// TypeDef kind discriminant — re-exported from writ_module for a single source of truth.
 pub use writ_module::TypeDefKind;
 
@@ -173,16 +177,18 @@ pub fn extract_hook_kind(flags: u16) -> HookKind {
 /// Pack FieldDef flags into a u16.
 ///
 /// Layout: bit 0 = is_pub, bit 1 = has_default, bit 2 = is_component_field.
+/// Bit 3 is the module-level read-only flag; source fields are writable, so the
+/// compiler intentionally leaves it clear.
 pub fn field_flags(is_pub: bool, has_default: bool, is_component_field: bool) -> u16 {
     let mut flags: u16 = 0;
     if is_pub {
-        flags |= 1 << 0;
+        flags |= FIELD_FLAG_PUBLIC;
     }
     if has_default {
-        flags |= 1 << 1;
+        flags |= FIELD_FLAG_HAS_DEFAULT;
     }
     if is_component_field {
-        flags |= 1 << 2;
+        flags |= FIELD_FLAG_COMPONENT;
     }
     flags
 }

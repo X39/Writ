@@ -316,7 +316,7 @@ Describes a single public field of a type.
 |----------------|--------|----------------------------------------------------|
 | `name`         | `string` | Field name                                       |
 | `declared_type`| `Type`   | Type of the field                                |
-| `is_mutable`   | `bool`   | true if declared with `mut`, false if `let`      |
+| `is_mutable`   | `bool`   | false when FieldDef's read-only bit is set       |
 
 **Methods (intrinsic):**
 
@@ -326,7 +326,9 @@ Describes a single public field of a type.
 | `set`  | `fn set(self, instance: Box, value: Box)`           | `FieldSet`       |
 | `attributes` | `fn attributes(self) -> AttributeInfo[]`       | `FieldAttributes`|
 
-`FieldInfo.set()` on an immutable field (`is_mutable == false`) crashes the current task.
+`FieldInfo.set()` on an immutable field (`is_mutable == false`) crashes the current task. Source field declarations
+have no per-field `let`/`mut` modifier and compile as mutable; runtime-provided and programmatically-authored module
+metadata may set FieldDef bit 3 to expose a read-only field.
 
 ### MethodInfo
 

@@ -1,5 +1,21 @@
 use crate::token::MetadataToken;
 
+/// FieldDef flag: the field is visible outside its declaring scope.
+pub const FIELD_FLAG_PUBLIC: u16 = 1 << 0;
+/// FieldDef flag: the field has a declaration-time default value.
+pub const FIELD_FLAG_HAS_DEFAULT: u16 = 1 << 1;
+/// FieldDef flag: the field belongs to a component definition.
+pub const FIELD_FLAG_COMPONENT: u16 = 1 << 2;
+/// FieldDef flag: reflection must not mutate the field.
+///
+/// Writ source currently has no per-field `let`/`mut` modifier, so the compiler
+/// leaves this bit clear. Runtime-provided and programmatically-authored modules
+/// may use it for metadata-only read-only fields such as `Array.length`.
+pub const FIELD_FLAG_READONLY: u16 = 1 << 3;
+
+/// MethodDef flag: the method is visible outside its declaring scope.
+pub const METHOD_FLAG_PUBLIC: u16 = 1 << 0;
+
 /// TypeDef kind discriminant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]

@@ -11,6 +11,7 @@ use writ_compiler::emit::module_builder::ModuleBuilder;
 use writ_compiler::lower::lower;
 use writ_compiler::resolve;
 use writ_diagnostics::{Diagnostic, FileId, Severity};
+use writ_module::tables::{FIELD_FLAG_PUBLIC, FIELD_FLAG_READONLY};
 
 // =========================================================
 // Test helpers
@@ -88,6 +89,21 @@ fn struct_fields_emit_fielddefs() {
     let (builder, diags) = emit_src("struct Point { x: int, y: int }");
     assert!(diags.is_empty());
     assert_eq!(builder.field_def_count(), 2, "Point should have 2 FieldDefs");
+}
+
+#[test]
+fn source_field_flags_keep_visibility_distinct_from_readonly() {
+    let (builder, diags) = emit_src("struct Point { pub x: int, y: int }");
+    assert!(diags.is_empty());
+
+    let flags: Vec<u16> = builder.finalized_field_defs().map(|field| field.flags).collect();
+    assert_eq!(flags.len(), 2);
+    assert_ne!(flags[0] & FIELD_FLAG_PUBLIC, 0, "pub field must carry visibility bit");
+    assert_eq!(flags[1] & FIELD_FLAG_PUBLIC, 0, "private field must not carry visibility bit");
+    assert!(
+        flags.iter().all(|flags| flags & FIELD_FLAG_READONLY == 0),
+        "source grammar has no read-only field modifier"
+    );
 }
 
 #[test]

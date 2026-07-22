@@ -151,7 +151,11 @@ with no fields has an empty range without using `field_list = 0`; zero is not a 
 3=finalize, 4=serialize, 5=deserialize, 6=interact), and an **intrinsic** flag for `writ-runtime` native
 implementations (§2.16.8).
 
-**FieldDef.flags** includes: visibility (pub/private), has_default, is_component_field.
+**FieldDef.flags** is a `u16` bitset: bit 0 = public visibility, bit 1 = has_default, bit 2 =
+is_component_field, and bit 3 = read-only through reflection. Remaining bits are reserved. Adding bit 3 does not
+change the row layout. The source grammar currently has no per-field `let`/`mut` modifier, so the compiler leaves
+bit 3 clear for source-declared fields; runtime-provided or programmatically-authored modules may set it for
+metadata-only read-only fields such as `Array.length`.
 
 **MethodDef.param_count:** The number of parameter registers at method entry — registers `r0` through `r(param_count-1)` hold argument values as described in §2.16.6. For methods with an explicit `self`, `r0` is `self` and counts toward `param_count`. For free functions, `r0` is the first regular parameter. This field allows tooling to determine the register layout without parsing the method body or counting entries in the ParamDef table.
 

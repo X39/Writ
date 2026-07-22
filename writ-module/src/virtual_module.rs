@@ -16,13 +16,14 @@
 
 use crate::module::MethodBody;
 use crate::signature::{TypeSignature, encode_method_signature, encode_type_signature};
-use crate::tables::{TableId, TypeDefKind};
+use crate::tables::{
+    FIELD_FLAG_PUBLIC, FIELD_FLAG_READONLY, TableId, TypeDefKind,
+};
 use crate::token::MetadataToken;
 use crate::{Module, ModuleBuilder};
 
 /// The intrinsic method flag (bit 7).
 const INTRINSIC_FLAG: u16 = 0x80;
-const PUBLIC_FIELD_FLAG: u16 = 1 << 0;
 const PUBLIC_FLAG: u16 = 1 << 0;
 const STATIC_FLAG: u16 = 1 << 1;
 const MUT_SELF_FLAG: u16 = 1 << 2;
@@ -50,7 +51,7 @@ fn add_typed_field(
 ) {
     let signature = encode_type_signature(&signature)
         .expect("writ-runtime field signature must fit the module format");
-    builder.add_field_def(name, &signature, PUBLIC_FIELD_FLAG);
+    builder.add_field_def(name, &signature, FIELD_FLAG_PUBLIC);
 }
 
 fn generic_type(name: &str, args: Vec<TypeSignature>) -> TypeSignature {
@@ -845,7 +846,11 @@ pub fn build_writ_runtime_module() -> Module {
     // ────────────────────────────────────────────────────────────────
 
     let array_type = builder.add_type_def("Array", "writ", TypeDefKind::Struct, 0);
-    builder.add_field_def("length", &[0x01], 0x01);  // int type, read-only flag
+    builder.add_field_def(
+        "length",
+        &[0x01],
+        FIELD_FLAG_PUBLIC | FIELD_FLAG_READONLY,
+    ); // public int, read-only through reflection
     builder.add_generic_param(array_type, TYPE_GENERIC_OWNER_KIND, 0, "T");
 
     // Array intrinsic instance methods
@@ -1682,7 +1687,7 @@ mod tests {
             for field in &module.field_defs[start..end] {
                 let field_name = str_from_heap(&module, field.name);
                 assert_ne!(
-                    field.flags & PUBLIC_FIELD_FLAG,
+                    field.flags & FIELD_FLAG_PUBLIC,
                     0,
                     "{type_name}.{field_name} must be public"
                 );
@@ -1851,6 +1856,16 @@ mod tests {
         assert_eq!(
             str_from_heap(&module, module.field_defs[field_start].name),
             "length"
+        );
+        assert_ne!(
+            module.field_defs[field_start].flags & FIELD_FLAG_PUBLIC,
+            0,
+            "Array.length should be public"
+        );
+        assert_ne!(
+            module.field_defs[field_start].flags & FIELD_FLAG_READONLY,
+            0,
+            "Array.length should be read-only through reflection"
         );
 
         // Generic param

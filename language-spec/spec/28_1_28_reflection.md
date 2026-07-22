@@ -45,12 +45,12 @@ The reflection system exposes six types. All are class types (GC-allocated, refe
 |-------|------|-------------|
 | `name` | `string` | Field name |
 | `declared_type` | `Type` | Type of the field |
-| `is_mutable` | `bool` | `true` if declared with `mut`, `false` if `let` |
+| `is_mutable` | `bool` | `false` when the FieldDef read-only metadata bit is set; otherwise `true` |
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `get` | `fn get(self, instance: Box) -> Box` | Read field value dynamically (boxed) |
-| `set` | `fn set(self, instance: Box, value: Box)` | Write field value dynamically (boxed). Crashes task if field is immutable (`let`). |
+| `set` | `fn set(self, instance: Box, value: Box)` | Write field value dynamically (boxed). Crashes the task for a metadata-read-only field. |
 
 ---
 
@@ -194,10 +194,14 @@ Reflection supports dynamic field access and method invocation through `FieldInf
 **`FieldInfo.get(instance)` and `FieldInfo.set(instance, value)`:**
 
 - `get()` reads the field value from the given instance and returns it as a `Box`.
-- `set()` writes a new value. If the field was declared with `let` (immutable binding), calling `set()` **crashes
+- `set()` writes a new value. If the FieldDef read-only metadata bit is set, calling `set()` **crashes
   the current task** with the message: `"Reflection write to immutable field '{field_name}'"`.
-- If the field was declared with `mut`, `set()` writes the new value.
-- The runtime determines immutability from the `is_mutable` flag stored in the field's declaration metadata.
+- Otherwise, `set()` writes the new value.
+- The source field grammar is `[visibility] name: type [= default]`; it has no per-field `let`/`mut` modifier.
+  Consequently, compiler-emitted source fields are writable, while runtime-provided or programmatically-authored
+  modules may mark fields read-only. Normal source mutation still obeys binding and receiver rules such as `mut self`.
+- The runtime determines immutability from the dedicated FieldDef read-only flag (section 2.16.5), not from the
+  visibility flag.
 
 **`MethodInfo.invoke(instance, args)`:**
 
@@ -220,8 +224,8 @@ All reflection API parameters and return values use `Box` (see section 3.15).
 ```writ
 let t    = typeof(Player);
 let hp   = t.fields().find(fn(f) = f.name == "hp")!;
-hp.set(player, 100);  // OK if hp is 'mut'
-// If hp was declared 'let', task crashes: "Reflection write to immutable field 'hp'"
+hp.set(player, 100);  // OK for a normal source-declared field
+// A runtime-provided read-only field crashes: "Reflection write to immutable field 'name'"
 
 let greet = t.methods().find(fn(m) = m.name == "greet")!;
 greet.invoke(player, []);  // args boxed automatically by compiler
