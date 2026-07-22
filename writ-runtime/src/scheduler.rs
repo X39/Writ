@@ -16,7 +16,9 @@ pub struct Scheduler {
     pub(crate) tasks: FxHashMap<TaskId, Task>,
     pub(crate) ready_queue: VecDeque<TaskId>,
     pub(crate) next_task_index: u32,
-    pub(crate) globals: Vec<Value>,
+    /// Module-local global storage, indexed first by Domain module index and
+    /// then by the module's zero-based GlobalDef row.
+    pub(crate) globals: Vec<Vec<Value>>,
     pub(crate) global_locks: FxHashMap<u32, TaskId>,
     /// Tasks waiting to join on another task. Maps target_task_id -> Vec<(waiting_task_id, r_dst)>.
     pub(crate) join_waiters: FxHashMap<TaskId, Vec<(TaskId, u16)>>,

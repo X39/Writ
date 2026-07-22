@@ -142,11 +142,12 @@ impl<H: RuntimeHost> RuntimeBuilder<H> {
         // Build dispatch table
         let dispatch_table = domain.build_dispatch_table();
 
-        let user_module = &domain.modules[user_idx];
-        let global_count = user_module.module.global_defs.len();
-
         let mut scheduler = Scheduler::new();
-        scheduler.globals = vec![Value::Void; global_count];
+        scheduler.globals = domain
+            .modules
+            .iter()
+            .map(|loaded| vec![Value::Void; loaded.module.global_defs.len()])
+            .collect();
 
         let heap: Box<dyn GcHeap> = if self.use_gc {
             Box::new(MarkSweepHeap::new())
@@ -620,8 +621,10 @@ impl<H: RuntimeHost> Runtime<H> {
         }
 
         // Globals
-        for global in &self.scheduler.globals {
-            collect_value_refs(global, &mut roots);
+        for module_globals in &self.scheduler.globals {
+            for global in module_globals {
+                collect_value_refs(global, &mut roots);
+            }
         }
 
         // Entity data refs for alive entities
@@ -851,10 +854,117 @@ mod tests {
     use crate::frame::CallFrame;
     use crate::host::NullHost;
     use crate::task::Task;
+    use writ_module::module::MethodBody;
+    use writ_module::signature::{encode_method_signature, TypeSignature};
+    use writ_module::tables::TypeDefKind;
+    use writ_module::{Instruction, ModuleBuilder};
 
     fn make_runtime() -> Runtime<NullHost> {
         let module = writ_module::Module::new();
         RuntimeBuilder::new(module).build().expect("build runtime")
+    }
+
+    fn method_body(instructions: &[Instruction], reg_count: usize) -> MethodBody {
+        let mut code = Vec::new();
+        for instruction in instructions {
+            instruction.encode(&mut code).unwrap();
+        }
+        MethodBody {
+            register_types: vec![0; reg_count],
+            code,
+            debug_locals: vec![],
+            source_spans: vec![],
+        }
+    }
+
+    #[test]
+    fn library_method_uses_its_own_global_storage() {
+        let int_type = writ_module::signature::encode_type_signature(&TypeSignature::Int)
+            .unwrap();
+        let method_signature = encode_method_signature(&[], &TypeSignature::Int).unwrap();
+
+        let mut library = ModuleBuilder::new("global-library");
+        library.add_global_def("library_value", &int_type, 0, &[]);
+        let counter = library.add_type_def("Counter", "lib", TypeDefKind::Class, 0);
+        library.add_type_method(
+            counter,
+            "set_and_get",
+            &method_signature,
+            0,
+            2,
+            method_body(
+                &[
+                    Instruction::LoadInt {
+                        r_dst: 1,
+                        value: 41,
+                    },
+                    Instruction::StoreGlobal {
+                        global_idx: 0,
+                        r_src: 1,
+                    },
+                    Instruction::LoadGlobal {
+                        r_dst: 1,
+                        global_idx: 0,
+                    },
+                    Instruction::Ret { r_src: 1 },
+                ],
+                2,
+            ),
+        );
+        let library = library.build();
+
+        let mut user = ModuleBuilder::new("global-user");
+        user.add_global_def("user_value", &int_type, 0, &[]);
+        let library_ref = user.add_module_ref("global-library", "1.0.0");
+        let counter_ref = user.add_type_ref(library_ref, "Counter", "lib");
+        let method_ref = user.add_method_ref(counter_ref, "set_and_get", &method_signature);
+        user.add_method(
+            "main",
+            &method_signature,
+            0,
+            4,
+            method_body(
+                &[
+                    Instruction::LoadInt { r_dst: 0, value: 7 },
+                    Instruction::StoreGlobal {
+                        global_idx: 0,
+                        r_src: 0,
+                    },
+                    Instruction::New {
+                        r_dst: 0,
+                        type_idx: counter_ref.0,
+                    },
+                    Instruction::Call {
+                        r_dst: 1,
+                        method_idx: method_ref.0,
+                        r_base: 0,
+                        argc: 1,
+                    },
+                    Instruction::LoadGlobal {
+                        r_dst: 2,
+                        global_idx: 0,
+                    },
+                    Instruction::AddI {
+                        r_dst: 3,
+                        r_a: 1,
+                        r_b: 2,
+                    },
+                    Instruction::Ret { r_src: 3 },
+                ],
+                4,
+            ),
+        );
+
+        let mut runtime = RuntimeBuilder::new(user.build())
+            .with_library(library)
+            .build()
+            .unwrap();
+        let task_id = runtime.spawn_task(0, vec![]).unwrap();
+        runtime.tick(0.0, ExecutionLimit::None);
+
+        assert_eq!(runtime.task_state(task_id), Some(TaskState::Completed));
+        assert_eq!(runtime.return_value(task_id), Some(Value::Int(48)));
+        assert_eq!(runtime.scheduler.globals[runtime.user_module_idx][0], Value::Int(7));
     }
 
     /// Insert a task directly into the scheduler, bypassing method index checks.

@@ -538,7 +538,7 @@ fn try_speaker_dispatch(
     dispatch_table: &super::DispatchTable,
     heap: &mut dyn crate::gc::GcHeap,
     host: &mut dyn crate::host::RuntimeHost,
-    globals: &mut Vec<Value>,
+    globals: &mut Vec<Vec<Value>>,
     next_request_id: &mut u32,
     entity_registry: &mut crate::entity::EntityRegistry,
     pool: &mut crate::frame::RegisterPool,
