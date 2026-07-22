@@ -14,6 +14,10 @@ Delegate {
 }
 ```
 
+The presence of `target` must match the resolved method's receiver ABI. An instance method or capturing closure body
+requires a non-null target; a static method, top-level function, or non-capturing closure body requires a null target.
+The runtime validates this invariant both when `NEW_DELEGATE` executes and when `CALL_INDIRECT` invokes a delegate.
+
 ## 2.12.2 Creation Scenarios
 
 **Plain function reference** (no target):
@@ -60,6 +64,9 @@ The runtime:
 2. Extracts `target` and `method`.
 3. If `target` is non-null, prepends it as the first argument (it becomes `r0` / self / env in the callee).
 4. Calls the resolved method.
+
+A delegate whose target presence does not match the resolved `MethodDef` receiver ABI is malformed and the task
+crashes instead of reinterpreting the target as an explicit argument (or an explicit argument as `self`).
 
 The callee does not know or care whether it was called directly, through a delegate, or through a closure.
 

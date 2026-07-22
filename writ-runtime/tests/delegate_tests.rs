@@ -43,6 +43,31 @@ fn assert_crash(module: Module, main: MetadataToken, expected: &str) {
     );
 }
 
+fn assert_crash_with_libraries(
+    module: Module,
+    libraries: Vec<Module>,
+    main: MetadataToken,
+    expected: &str,
+) {
+    let mut builder = RuntimeBuilder::new(module);
+    for library in libraries {
+        builder = builder.with_library(library);
+    }
+    let mut runtime = builder.build().expect("build runtime");
+    let task = runtime
+        .spawn_task(row_index(main), vec![])
+        .expect("spawn main");
+    runtime.tick(0.0, ExecutionLimit::None);
+
+    assert_eq!(runtime.task_state(task), Some(TaskState::Cancelled));
+    let crash = runtime.crash_info(task).expect("delegate operation must crash");
+    assert!(
+        crash.message.contains(expected),
+        "expected crash containing {expected:?}, got {:?}",
+        crash.message
+    );
+}
+
 #[test]
 fn call_indirect_prepends_captured_target_before_explicit_arguments() {
     let mut builder = ModuleBuilder::new("delegate-capture");
@@ -239,6 +264,218 @@ fn delegate_resolves_cross_module_method_ref_when_created() {
 
     assert_eq!(runtime.task_state(task), Some(TaskState::Completed));
     assert_eq!(runtime.return_value(task), Some(Value::Int(91)));
+}
+
+#[test]
+fn new_delegate_rejects_bound_static_method_ref() {
+    let method_signature = signature(&[TypeSignature::Int], TypeSignature::Void);
+
+    let mut library = ModuleBuilder::new("delegate-static-library");
+    let exports = library.add_type_def("Exports", "lib", TypeDefKind::Struct, 0);
+    library.add_type_method(
+        exports,
+        "consume",
+        &method_signature,
+        METHOD_STATIC,
+        1,
+        body(&[Instruction::RetVoid], 1),
+    );
+
+    let mut user = ModuleBuilder::new("delegate-static-user");
+    let library_ref = user.add_module_ref("delegate-static-library", "1.0.0");
+    let exports_ref = user.add_type_ref(library_ref, "Exports", "lib");
+    let consume_ref =
+        user.add_method_ref_with_flags(exports_ref, "consume", &method_signature, 0);
+    let main = user.add_method(
+        "main",
+        &signature(&[], TypeSignature::Void),
+        0,
+        2,
+        body(
+            &[
+                Instruction::LoadInt {
+                    r_dst: 0,
+                    value: 42,
+                },
+                Instruction::NewDelegate {
+                    r_dst: 1,
+                    method_idx: consume_ref.0,
+                    r_target: 0,
+                },
+                Instruction::RetVoid,
+            ],
+            2,
+        ),
+    );
+
+    assert_crash_with_libraries(
+        user.build(),
+        vec![library.build()],
+        main,
+        "requires a null delegate target",
+    );
+}
+
+#[test]
+fn new_delegate_rejects_unbound_instance_method_ref() {
+    let method_signature = signature(&[], TypeSignature::Void);
+
+    let mut library = ModuleBuilder::new("delegate-instance-library");
+    let receiver = library.add_type_def("Receiver", "lib", TypeDefKind::Class, 0);
+    library.add_type_method(
+        receiver,
+        "invoke",
+        &method_signature,
+        0,
+        1,
+        body(&[Instruction::RetVoid], 1),
+    );
+
+    let mut user = ModuleBuilder::new("delegate-instance-user");
+    let library_ref = user.add_module_ref("delegate-instance-library", "1.0.0");
+    let receiver_ref = user.add_type_ref(library_ref, "Receiver", "lib");
+    let invoke_ref = user.add_method_ref_with_flags(
+        receiver_ref,
+        "invoke",
+        &method_signature,
+        writ_module::tables::METHOD_REF_FLAG_HAS_RECEIVER,
+    );
+    let main = user.add_method(
+        "main",
+        &signature(&[], TypeSignature::Void),
+        0,
+        1,
+        body(
+            &[
+                Instruction::NewDelegate {
+                    r_dst: 0,
+                    method_idx: invoke_ref.0,
+                    r_target: 0,
+                },
+                Instruction::RetVoid,
+            ],
+            1,
+        ),
+    );
+
+    assert_crash_with_libraries(
+        user.build(),
+        vec![library.build()],
+        main,
+        "requires a non-null delegate target",
+    );
+}
+
+#[test]
+fn call_indirect_rejects_bound_static_delegate_allocated_via_heap() {
+    let mut builder = ModuleBuilder::new("delegate-bound-static-heap");
+    let owner = builder.add_type_def("Functions", "test", TypeDefKind::Struct, 0);
+    let invoke = builder.add_type_method(
+        owner,
+        "invoke",
+        &signature(&[TypeSignature::Int], TypeSignature::Void),
+        METHOD_STATIC,
+        1,
+        body(&[Instruction::RetVoid], 1),
+    );
+    let main = builder.add_method(
+        "main",
+        &signature(&[TypeSignature::Int], TypeSignature::Void),
+        0,
+        2,
+        body(
+            &[
+                Instruction::CallIndirect {
+                    r_dst: 1,
+                    r_delegate: 0,
+                    r_base: 1,
+                    argc: 0,
+                },
+                Instruction::RetVoid,
+            ],
+            2,
+        ),
+    );
+
+    let mut runtime = RuntimeBuilder::new(builder.build())
+        .build()
+        .expect("build runtime");
+    let user_module_idx = runtime.user_module_idx();
+    let delegate = runtime
+        .heap_mut()
+        .alloc_delegate(user_module_idx, row_index(invoke), Some(Value::Int(42)));
+    let task = runtime
+        .spawn_task(row_index(main), vec![Value::Ref(delegate)])
+        .expect("spawn main");
+    runtime.tick(0.0, ExecutionLimit::None);
+
+    assert_eq!(runtime.task_state(task), Some(TaskState::Cancelled));
+    let crash = runtime.crash_info(task).expect("delegate call must crash");
+    assert!(
+        crash.message.contains("requires a null delegate target"),
+        "unexpected crash: {}",
+        crash.message
+    );
+}
+
+#[test]
+fn call_indirect_rejects_unbound_instance_delegate_allocated_via_heap() {
+    let mut builder = ModuleBuilder::new("delegate-unbound-instance-heap");
+    let owner = builder.add_type_def("Receiver", "test", TypeDefKind::Class, 0);
+    let invoke = builder.add_type_method(
+        owner,
+        "invoke",
+        &signature(&[], TypeSignature::Void),
+        0,
+        1,
+        body(&[Instruction::RetVoid], 1),
+    );
+    let main = builder.add_method(
+        "main",
+        &signature(
+            &[TypeSignature::Int, TypeSignature::Int],
+            TypeSignature::Void,
+        ),
+        0,
+        2,
+        body(
+            &[
+                Instruction::CallIndirect {
+                    r_dst: 0,
+                    r_delegate: 0,
+                    r_base: 1,
+                    argc: 1,
+                },
+                Instruction::RetVoid,
+            ],
+            2,
+        ),
+    );
+
+    let mut runtime = RuntimeBuilder::new(builder.build())
+        .build()
+        .expect("build runtime");
+    let user_module_idx = runtime.user_module_idx();
+    let delegate = runtime
+        .heap_mut()
+        .alloc_delegate(user_module_idx, row_index(invoke), None);
+    let task = runtime
+        .spawn_task(
+            row_index(main),
+            vec![Value::Ref(delegate), Value::Int(7)],
+        )
+        .expect("spawn main");
+    runtime.tick(0.0, ExecutionLimit::None);
+
+    assert_eq!(runtime.task_state(task), Some(TaskState::Cancelled));
+    let crash = runtime.crash_info(task).expect("delegate call must crash");
+    assert!(
+        crash
+            .message
+            .contains("requires a non-null delegate target"),
+        "unexpected crash: {}",
+        crash.message
+    );
 }
 
 #[test]

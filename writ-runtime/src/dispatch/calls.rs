@@ -407,6 +407,15 @@ pub(super) fn exec_new_delegate(
             Some(frame.registers[r_target])
         }
     };
+    if let Err(message) = validate_delegate_binding(
+        "NEW_DELEGATE",
+        ctx.modules,
+        target_module_idx,
+        method_idx,
+        target.is_some(),
+    ) {
+        return ExecutionResult::Crash(message);
+    }
     let href = ctx
         .heap
         .alloc_delegate(target_module_idx, method_idx, target);
@@ -463,7 +472,16 @@ pub(super) fn exec_call_indirect(
         Ok(reg_count) => reg_count,
         Err(message) => return ExecutionResult::Crash(message),
     };
-    let implicit_argc = usize::from(target.is_some());
+    let implicit_argc = match validate_delegate_binding(
+        "CALL_INDIRECT",
+        ctx.modules,
+        target_module_idx,
+        method_idx,
+        target.is_some(),
+    ) {
+        Ok(implicit_argc) => implicit_argc,
+        Err(message) => return ExecutionResult::Crash(message),
+    };
     let actual_param_count = argc as usize + implicit_argc;
     if let Err(message) =
         validate_method_param_count("CALL_INDIRECT", param_count, actual_param_count)
@@ -651,6 +669,35 @@ pub(super) fn checked_method_register_count(
         ));
     }
     Ok((body_register_count, method_def.param_count as usize))
+}
+
+fn validate_delegate_binding(
+    opcode: &str,
+    modules: &[crate::loader::LoadedModule],
+    module_idx: usize,
+    method_idx: usize,
+    has_target: bool,
+) -> Result<usize, String> {
+    let method = modules
+        .get(module_idx)
+        .and_then(|module| module.module.method_defs.get(method_idx))
+        .ok_or_else(|| {
+            format!(
+                "{opcode}: MethodDef index {method_idx} out of range in module {module_idx}"
+            )
+        })?;
+    let has_receiver = !method.owner.is_null()
+        && method.flags & writ_module::tables::METHOD_FLAG_STATIC == 0;
+
+    match (has_receiver, has_target) {
+        (true, false) => Err(format!(
+            "{opcode}: instance MethodDef {method_idx} in module {module_idx} requires a non-null delegate target"
+        )),
+        (false, true) => Err(format!(
+            "{opcode}: static or top-level MethodDef {method_idx} in module {module_idx} requires a null delegate target"
+        )),
+        _ => Ok(usize::from(has_receiver)),
+    }
 }
 
 #[inline]

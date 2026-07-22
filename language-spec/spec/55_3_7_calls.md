@@ -19,3 +19,7 @@ qualified static method, the qualifier is not packed and `argc` counts only expl
 `TAIL_CALL` is reserved for terminal dialogue `->` transitions. An ordinary return whose value is a call remains a
 `CALL` followed by `RET`, preserving normal return and defer behavior.
 
+For `NEW_DELEGATE` and `CALL_INDIRECT`, target presence must match the resolved `MethodDef` receiver ABI. Instance
+methods require a non-null target that is prepended as `r0`; static methods and top-level functions require a null
+target. A mismatch is invalid IL and crashes the task rather than changing the method's effective argument list.
+
