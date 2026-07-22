@@ -57,7 +57,7 @@ pub(super) fn exec_init_entity(ctx: &mut ExecContext<'_>, r_entity: u16) -> Exec
     // Dispatch on_create lifecycle hook if the entity type defines one.
     let module = &ctx.modules[ctx.current_module_idx];
     if let Ok(type_idx_raw) = ctx.entity_registry.get_type_idx(entity_id) {
-        let type_idx_0based = (type_idx_raw as usize).saturating_sub(1);
+        let type_idx_0based = type_token_row_index(type_idx_raw);
         if let Some(hook_idx) = find_hook_by_name(&module.module, type_idx_0based, "on_create") {
             push_hook_frame(
                 ctx.task,
@@ -108,7 +108,7 @@ pub(super) fn exec_destroy_entity(ctx: &mut ExecContext<'_>, r_entity: u16) -> E
 
     // Dispatch on_destroy lifecycle hook if the entity type defines one.
     let module = &ctx.modules[ctx.current_module_idx];
-    let type_idx_0based = (type_idx_raw as usize).saturating_sub(1);
+    let type_idx_0based = type_token_row_index(type_idx_raw);
     if let Some(hook_idx) = find_hook_by_name(&module.module, type_idx_0based, "on_destroy") {
         push_hook_frame(
             ctx.task,
@@ -120,6 +120,10 @@ pub(super) fn exec_destroy_entity(ctx: &mut ExecContext<'_>, r_entity: u16) -> E
     }
 
     ExecutionResult::Continue
+}
+
+fn type_token_row_index(type_token: u32) -> usize {
+    ((type_token & 0x00ff_ffff) as usize).saturating_sub(1)
 }
 
 pub(super) fn exec_get_component(
