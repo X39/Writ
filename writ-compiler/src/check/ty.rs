@@ -125,6 +125,11 @@ impl TyInterner {
         &self.kinds[ty.0 as usize]
     }
 
+    /// Look up an already-interned type without mutating the interner.
+    pub fn lookup(&self, kind: &TyKind) -> Option<Ty> {
+        self.map.get(kind).copied()
+    }
+
     /// Follow inference-variable bindings retained after type checking.
     ///
     /// Typed expressions keep their original interned handles, so contextual

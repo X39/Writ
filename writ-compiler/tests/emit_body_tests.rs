@@ -2780,6 +2780,61 @@ fn test_lambda_body_emitted_as_separate_body_entry() {
 }
 
 #[test]
+fn test_nullable_lambda_tail_is_lifted_into_some() {
+    let mut interner = make_interner();
+    let ty_int = interner.int();
+    let ty_option_int = interner.option(ty_int);
+    let ty_func = interner.func(vec![], ty_option_int);
+    let (def_map, fn_def_id) = make_def_id();
+
+    let lambda_expr = TypedExpr::Lambda {
+        ty: ty_func,
+        span: dummy_span(),
+        params: vec![],
+        ret_ty: ty_option_int,
+        captures: vec![],
+        body: Box::new(TypedExpr::Literal {
+            ty: ty_int,
+            span: dummy_span(),
+            value: TypedLiteral::Int(42),
+        }),
+    };
+    let ast = TypedAst {
+        decls: vec![TypedDecl::Fn {
+            def_id: fn_def_id,
+            body: lambda_expr,
+            param_name_spans: vec![],
+        }],
+        def_map,
+        struct_field_types: FxHashMap::default(),
+        conditional_fns: FxHashMap::default(),
+        fallback_for_conditional: FxHashMap::default(),
+    };
+
+    let mut builder = ModuleBuilder::new();
+    let lambda_infos = pre_scan_lambdas(&ast, &interner, &mut builder);
+    builder.finalize();
+    let (bodies, diags) = emit_all_bodies(
+        &ast,
+        &interner,
+        &builder,
+        &lambda_infos,
+        &FxHashMap::default(),
+        &[],
+    );
+
+    assert!(diags.is_empty(), "Expected no diagnostics, got {diags:?}");
+    assert!(
+        bodies[1]
+            .instructions
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::WrapSome { .. })),
+        "bare lambda tail must be represented as Some(int): {:?}",
+        bodies[1].instructions
+    );
+}
+
+#[test]
 fn test_string_literal_interning_via_emit_bodies() {
     // emit_bodies should produce a LoadString with a non-zero string_idx for "hello"
     let mut interner = make_interner();
@@ -4015,5 +4070,45 @@ fn emit_typeof_primitive_int() {
         ),
         "expected TypeOf {{ r_dst: {r_dst}, type_idx: {expected_type_idx} }}, got {:?}",
         emitter.instructions[0]
+    );
+}
+
+#[test]
+fn nullable_function_tail_is_lifted_into_some() {
+    let bytes = writ_compiler::compile_source(
+        r#"
+fn maybe_value() -> int? {
+    7
+}
+"#,
+    )
+    .expect("nullable function should compile");
+    let module =
+        writ_module::module::Module::from_bytes(&bytes).expect("module should parse");
+    let method_idx = module
+        .method_defs
+        .iter()
+        .position(|method| {
+            writ_module::heap::read_string(&module.string_heap, method.name)
+                .is_ok_and(|name| name == "maybe_value")
+        })
+        .expect("maybe_value MethodDef should exist");
+    let body = &module.method_bodies[method_idx];
+    let mut cursor = std::io::Cursor::new(body.code.as_slice());
+    let mut instructions = Vec::new();
+    while (cursor.position() as usize) < body.code.len() {
+        instructions
+            .push(Instruction::decode(&mut cursor).expect("method instruction should decode"));
+    }
+
+    assert!(
+        instructions
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::WrapSome { .. })),
+        "bare int tail must be represented as Some(int): {instructions:?}"
+    );
+    assert!(
+        matches!(instructions.last(), Some(Instruction::Ret { .. })),
+        "nullable function should return the wrapped register: {instructions:?}"
     );
 }

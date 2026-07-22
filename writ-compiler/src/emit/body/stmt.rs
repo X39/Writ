@@ -105,10 +105,23 @@ pub fn emit_stmt(emitter: &mut BodyEmitter<'_>, stmt: &TypedStmt) {
                 // Delegate to emit_expr which handles the Return variant including
                 // the tail-call detection pattern.
                 use crate::check::ir::TypedExpr;
-                if let TypedExpr::Call { callee, args, callee_def_id, .. } = v {
+                let needs_option_lift = emitter.returns_option
+                    && !matches!(
+                        emitter.interner.kind(emitter.interner.resolve_infer(v.ty())),
+                        TyKind::Option(_)
+                    );
+                if let TypedExpr::Call {
+                    callee,
+                    args,
+                    callee_def_id,
+                    ..
+                } = v
+                    && !needs_option_lift
+                {
                     let _ = super::expr::emit_tail_call(emitter, callee, args, *callee_def_id);
                 } else {
                     let r_src = emit_expr(emitter, v);
+                    let r_src = coerce_option_return(emitter, v.ty(), r_src);
                     emitter.emit(Instruction::Ret { r_src });
                 }
             } else {
@@ -151,6 +164,38 @@ pub fn emit_stmt(emitter: &mut BodyEmitter<'_>, stmt: &TypedStmt) {
             panic!("TypedStmt::Error reached codegen — pre-pass should have aborted");
         }
     }
+}
+
+/// Lift a bare value into `Some(value)` when the current method declares an
+/// `Option<T>` return type. Values already typed as `Option<T>` (including
+/// `null`/`None` and explicit `Some`) retain their existing representation.
+pub(super) fn coerce_option_return(
+    emitter: &mut super::BodyEmitter<'_>,
+    value_ty: crate::check::ty::Ty,
+    r_value: u16,
+) -> u16 {
+    if !emitter.returns_option {
+        return r_value;
+    }
+
+    let value_ty = emitter.interner.resolve_infer(value_ty);
+    if matches!(emitter.interner.kind(value_ty), TyKind::Option(_)) {
+        return r_value;
+    }
+
+    // Generic impl locals currently use Error as a register-type placeholder;
+    // keep that established debug-only fallback while still emitting the
+    // representation-changing instruction required for runtime correctness.
+    let option_ty = emitter
+        .interner
+        .lookup(&TyKind::Option(value_ty))
+        .unwrap_or(value_ty);
+    let r_option = emitter.alloc_reg(option_ty);
+    emitter.emit(Instruction::WrapSome {
+        r_dst: r_option,
+        r_val: r_value,
+    });
+    r_option
 }
 
 // ─── For loop emission ────────────────────────────────────────────────────────

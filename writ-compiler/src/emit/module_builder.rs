@@ -833,6 +833,41 @@ impl ModuleBuilder {
         None
     }
 
+    /// Whether the method's declared return signature is `Option<T>`.
+    ///
+    /// Return emission uses this to apply the nullable-value lift required by
+    /// expression-bodied functions: a bare `T` tail in a `T?` method is encoded
+    /// as `Some(T)`, while an existing `Option<T>` is returned unchanged.
+    pub fn method_returns_option(&self, method_handle_idx: usize) -> bool {
+        let Some(method) = self.method_defs.get(method_handle_idx) else {
+            return false;
+        };
+        let Ok(signature) =
+            writ_module::heap::read_blob(self.blob_heap.data(), method.row.signature)
+        else {
+            return false;
+        };
+        writ_module::signature::decode_method_signature(signature).is_ok_and(|(_, ret)| {
+            matches!(
+                ret,
+                writ_module::signature::TypeSignature::Generic {
+                    ref namespace,
+                    ref name,
+                    ref args,
+                } if (namespace.is_empty() || namespace == "writ")
+                    && name == "Option"
+                    && args.len() == 1
+            )
+        })
+    }
+
+    /// Find a finalized MethodDef row by its source definition id.
+    pub fn find_method_handle(&self, def_id: DefId) -> Option<usize> {
+        self.method_defs
+            .iter()
+            .position(|method| method.def_id == Some(def_id))
+    }
+
     /// Get the number of TypeDef rows.
     pub fn type_def_count(&self) -> usize {
         self.type_defs.len()

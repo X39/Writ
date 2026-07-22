@@ -20,7 +20,7 @@ use rustc_hash::FxHashMap;
 use writ_module::instruction::Instruction;
 
 use crate::check::ir::{TypedAst, TypedDecl, TypedExpr, TypedLiteral, TypedStmt};
-use crate::check::ty::{Ty, TyInterner};
+use crate::check::ty::{Ty, TyInterner, TyKind};
 use crate::emit::collect::ReflectableInfo;
 use crate::emit::module_builder::ModuleBuilder;
 use crate::resolve::def_map::DefId;
@@ -72,6 +72,8 @@ pub struct BodyEmitter<'a> {
     pub source_spans: Vec<(u32, SimpleSpan)>,
     pub debug_locals: Vec<(u16, String, u32, u32)>,
     pub current_method_def_id: Option<DefId>,
+    /// Whether the current method declares an `Option<T>` return type.
+    pub returns_option: bool,
     /// Stack of (break_label, continue_label) for nested loops.
     pub loop_stack: Vec<(Label, Label)>,
     /// Lambda counter: tracks how many lambdas have been emitted in this body.
@@ -106,6 +108,7 @@ impl<'a> BodyEmitter<'a> {
             source_spans: Vec::new(),
             debug_locals: Vec::new(),
             current_method_def_id: None,
+            returns_option: false,
             loop_stack: Vec::new(),
             lambda_counter: 0,
             pending_strings: Vec::new(),
@@ -404,6 +407,9 @@ pub fn emit_all_bodies(
                 }
                 let mut emitter = BodyEmitter::new(builder, interner, struct_field_types);
                 emitter.current_method_def_id = Some(*def_id);
+                emitter.returns_option = builder
+                    .find_method_handle(*def_id)
+                    .is_some_and(|handle| builder.method_returns_option(handle));
                 // Pre-allocate parameter registers r0..r(n-1) per IL spec section 2.16.2.
                 // Parameters are allocated in declaration order before any body emission,
                 // ensuring all branches of the body find parameters in stable registers.
@@ -420,6 +426,8 @@ pub fn emit_all_bodies(
                 if body.ty() == Ty(4) {
                     emitter.emit(Instruction::RetVoid);
                 } else {
+                    let result_reg =
+                        stmt::coerce_option_return(&mut emitter, body.ty(), result_reg);
                     emitter.emit(Instruction::Ret { r_src: result_reg });
                 }
                 let reg_count = emitter.regs.reg_count();
@@ -459,6 +467,8 @@ pub fn emit_all_bodies(
                     // impl_method_param_map which is indexed by MethodDefHandle for unambiguous
                     // per-method param lookup. Fall back to fn_param_map for non-impl methods.
                     let method_handle_idx = builder.find_impl_method_handle(*impl_def_id, method_idx);
+                    emitter.returns_option = method_handle_idx
+                        .is_some_and(|handle| builder.method_returns_option(handle));
                     let params_opt = method_handle_idx
                         .and_then(|h| builder.get_fn_params_by_handle(h))
                         .or_else(|| builder.get_fn_params(*def_id));
@@ -474,6 +484,8 @@ pub fn emit_all_bodies(
                     if body.ty() == Ty(4) {
                         emitter.emit(Instruction::RetVoid);
                     } else {
+                        let result_reg =
+                            stmt::coerce_option_return(&mut emitter, body.ty(), result_reg);
                         emitter.emit(Instruction::Ret { r_src: result_reg });
                     }
                     let reg_count = emitter.regs.reg_count();
@@ -643,12 +655,21 @@ pub fn emit_all_bodies(
         let info = &lambda_infos[i];
 
         // Extract params and body from the Lambda node itself.
-        let (params, lambda_body) = match lambda_expr {
-            TypedExpr::Lambda { params, body, .. } => (params.as_slice(), body.as_ref()),
+        let (params, ret_ty, lambda_body) = match lambda_expr {
+            TypedExpr::Lambda {
+                params,
+                ret_ty,
+                body,
+                ..
+            } => (params.as_slice(), *ret_ty, body.as_ref()),
             _ => continue,
         };
 
         let mut emitter = BodyEmitter::new(builder, interner, struct_field_types);
+        emitter.returns_option = matches!(
+            interner.kind(interner.resolve_infer(ret_ty)),
+            TyKind::Option(_)
+        );
 
         // If this lambda has captures, register r0 as the capture struct (self/target)
         // and emit GET_FIELD instructions to load each captured variable into a named local.
@@ -680,6 +701,7 @@ pub fn emit_all_bodies(
         if lambda_body.ty() == Ty(4) {
             emitter.emit(Instruction::RetVoid);
         } else {
+            let r = stmt::coerce_option_return(&mut emitter, lambda_body.ty(), r);
             emitter.emit(Instruction::Ret { r_src: r });
         }
 
