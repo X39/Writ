@@ -267,6 +267,231 @@ fn generic_two_params() {
     assert!(has_no_errors(&diags), "errors: {:?}", diags);
 }
 
+#[test]
+fn user_generic_instances_preserve_argument_identity() {
+    let (_typed, diags) = typecheck_src(
+        r#"
+        struct Crate<T> { value: T }
+        fn consume(value: Crate<int>) -> int { 0 }
+        fn invalid(value: Crate<string>) -> int { consume(value) }
+        "#,
+    );
+    assert!(
+        !has_no_errors(&diags),
+        "Crate<string> must not unify with Crate<int>"
+    );
+}
+
+#[test]
+fn user_generic_instance_specializes_construction_and_field_access() {
+    let (_typed, valid_diags) = typecheck_src(
+        r#"
+        struct Crate<T> { value: T }
+        fn read(value: Crate<int>) -> int { return value.value; }
+        fn valid() -> int {
+            let value: Crate<int> = new Crate<int> { value: 7 };
+            read(value)
+        }
+        "#,
+    );
+    assert!(has_no_errors(&valid_diags), "errors: {valid_diags:?}");
+
+    let (_typed, invalid_diags) = typecheck_src(
+        r#"
+        struct Crate<T> { value: T }
+        fn invalid(value: Crate<string>) -> int { return value.value; }
+        "#,
+    );
+    assert!(
+        !has_no_errors(&invalid_diags),
+        "a Crate<string> field must retain type string"
+    );
+}
+
+#[test]
+fn enclosing_generic_is_preserved_in_construction_and_impl_bodies() {
+    let (_typed, diags) = typecheck_src(
+        r#"
+        struct Crate<T> { value: T }
+        impl<T> Crate<T> {
+            fn replace(self, value: T) -> Crate<T> {
+                return new Crate<T> { value: value };
+            }
+        }
+        fn wrap<T>(value: T) -> Crate<T> {
+            return new Crate<T> { value: value };
+        }
+        "#,
+    );
+    assert!(has_no_errors(&diags), "errors: {diags:?}");
+}
+
+#[test]
+fn generic_contract_assignment_and_return_require_exact_arguments() {
+    let (_typed, valid_diags) = typecheck_src(
+        r#"
+        contract Carries<T> { fn get(self) -> T; }
+        class Crate<T> { value: T }
+        impl<T> Carries<T> for Crate<T> {
+            fn get(self) -> T { return self.value; }
+        }
+        fn as_contract(value: Crate<int>) -> Carries<int> { return value; }
+        fn valid() {
+            let value: Carries<int> = new Crate<int> { value: 7 };
+        }
+        "#,
+    );
+    assert!(has_no_errors(&valid_diags), "errors: {valid_diags:?}");
+
+    let (_typed, invalid_diags) = typecheck_src(
+        r#"
+        contract Carries<T> { fn get(self) -> T; }
+        class Crate<T> { value: T }
+        impl<T> Carries<T> for Crate<T> {
+            fn get(self) -> T { return self.value; }
+        }
+        fn wrong_return(value: Crate<int>) -> Carries<string> { return value; }
+        fn wrong_assignment() {
+            let value: Carries<string> = new Crate<int> { value: 7 };
+        }
+        "#,
+    );
+    assert_eq!(
+        count_errors(&invalid_diags, "E0112"),
+        2,
+        "both exact-specialization boundaries must fail: {invalid_diags:?}"
+    );
+}
+
+#[test]
+fn generic_contract_and_enum_methods_specialize_from_receiver() {
+    let (_typed, valid_diags) = typecheck_src(
+        r#"
+        contract Producer<T> { fn produce(self) -> T; }
+        enum Holder<T> { Empty }
+        impl<T> Holder<T> {
+            fn echo(self, value: T) -> T { return value; }
+        }
+        fn from_contract(value: Producer<string>) -> string {
+            return value.produce();
+        }
+        fn from_enum(value: Holder<string>) -> string {
+            return value.echo("ok");
+        }
+        "#,
+    );
+    assert!(has_no_errors(&valid_diags), "errors: {valid_diags:?}");
+
+    let (_typed, invalid_diags) = typecheck_src(
+        r#"
+        contract Producer<T> { fn produce(self) -> T; }
+        enum Holder<T> { Empty }
+        impl<T> Holder<T> {
+            fn echo(self, value: T) -> T { return value; }
+        }
+        fn wrong_contract(value: Producer<string>) -> int {
+            return value.produce();
+        }
+        fn wrong_enum(value: Holder<string>) -> int {
+            return value.echo("no");
+        }
+        "#,
+    );
+    assert_eq!(
+        count_errors(&invalid_diags, "E0100"),
+        2,
+        "receiver arguments must specialize both method families: {invalid_diags:?}"
+    );
+}
+
+#[test]
+fn generic_enum_pattern_fields_specialize_from_scrutinee() {
+    let (_typed, diags) = typecheck_src(
+        r#"
+        enum Envelope<T> { Value(value: T) }
+        fn reject_wrong_binding(value: Envelope<string>) {
+            match value {
+                Envelope::Value(item) => { let wrong: int = item; }
+            }
+        }
+        "#,
+    );
+    assert!(
+        has_error(&diags, "E0100"),
+        "Envelope<string>::Value must bind its payload as string: {diags:?}"
+    );
+}
+
+#[test]
+fn generic_enum_unit_variant_infers_arguments_from_return_context() {
+    let (_typed, diags) = typecheck_src(
+        r#"
+        enum Holder<T> { Empty }
+        fn make() -> Holder<string> { return Holder::Empty; }
+        "#,
+    );
+    assert!(
+        has_no_errors(&diags),
+        "generic enum constructor must retain inferable arguments: {diags:?}"
+    );
+}
+
+#[test]
+fn inferred_generic_result_matches_specialized_contract_impl() {
+    let (_typed, diags) = typecheck_src(
+        r#"
+        contract Carries<T> { fn get(self) -> T; }
+        class Crate<T> { value: T }
+        impl<T> Carries<T> for Crate<T> {
+            fn get(self) -> T { return self.value; }
+        }
+        fn make<T>(value: T) -> Crate<T> {
+            return new Crate<T> { value: value };
+        }
+        fn as_contract() -> Carries<int> { return make(1); }
+        "#,
+    );
+    assert!(
+        has_no_errors(&diags),
+        "resolved nested inference must participate in exact impl matching: {diags:?}"
+    );
+}
+
+#[test]
+fn impl_method_generics_infer_after_impl_generic_prefix() {
+    let (_typed, diags) = typecheck_src(
+        r#"
+        class Crate<T> {}
+        impl<T> Crate<T> {
+            fn choose<U>(self, value: U) -> U { return value; }
+        }
+        fn choose_string(value: Crate<int>) -> string {
+            return value.choose("ok");
+        }
+        "#,
+    );
+    assert!(
+        has_no_errors(&diags),
+        "method generics must instantiate independently of impl generics: {diags:?}"
+    );
+}
+
+#[test]
+fn overlapping_inherent_impl_specializations_are_ambiguous() {
+    let (_typed, diags) = typecheck_src(
+        r#"
+        class Crate<T> {}
+        impl<T> Crate<T> { fn marker(self) -> int { return 1; } }
+        impl Crate<int> { fn marker(self) -> int { return 2; } }
+        fn read(value: Crate<int>) -> int { return value.marker(); }
+        "#,
+    );
+    assert!(
+        has_error(&diags, "E0125"),
+        "overlap has no spec-defined precedence and must be rejected: {diags:?}"
+    );
+}
+
 // =========================================================
 // Binary operator tests
 // =========================================================
@@ -1330,7 +1555,7 @@ fn typeof_type_error_on_arithmetic() {
 /// typeof result is TyKind::ReflectionType — display shows "Type"
 #[test]
 fn typeof_result_is_reflection_type() {
-    use writ_compiler::check::ty::{Ty, TyKind};
+    use writ_compiler::check::ty::TyKind;
 
     let src = "fn test(x: int) { typeof(x); }";
     let (items, _) = writ_parser::parse(src);
@@ -1340,23 +1565,34 @@ fn typeof_result_is_reflection_type() {
     let asts: Vec<(writ_diagnostics::FileId, &writ_compiler::ast::Ast)> = vec![(file_id, &ast)];
     let file_paths: Vec<(writ_diagnostics::FileId, &str)> = vec![(file_id, "src/test.writ")];
     let (resolved, _) = writ_compiler::resolve::resolve(&asts, &file_paths, &[]);
-    let (_typed_ast, interner, _type_env, diags) = writ_compiler::check::typecheck(resolved, &asts, &[]);
+    let (typed_ast, interner, _type_env, diags) = writ_compiler::check::typecheck(resolved, &asts, &[]);
 
     assert!(has_no_errors(&diags), "errors: {:?}", diags);
 
-    // Verify TyKind::ReflectionType exists in the interner and displays as "Type"
-    let mut found_reflection = false;
-    // Interner pre-interns 6 primitives (Int=0, Float=1, Bool=2, String=3, Void=4, Error=5)
-    // ReflectionType(Int) would be at index 6
-    for i in 0u32..20 {
-        let ty = Ty(i);
-        if matches!(interner.kind(ty), TyKind::ReflectionType(_)) {
-            assert_eq!(interner.display(ty), "Type", "ReflectionType should display as 'Type'");
-            found_reflection = true;
-            break;
-        }
-    }
-    assert!(found_reflection, "TyKind::ReflectionType was not interned");
+    // Inspect the typed expression directly. Interner indices are intentionally
+    // opaque and may move as more structural types are preserved.
+    let reflection_ty = typed_ast
+        .decls
+        .iter()
+        .find_map(|decl| match decl {
+            TypedDecl::Fn { body: TypedExpr::Block { stmts, .. }, .. } => {
+                stmts.iter().find_map(|stmt| match stmt {
+                    TypedStmt::Expr { expr, .. } => Some(expr.ty()),
+                    _ => None,
+                })
+            }
+            _ => None,
+        })
+        .expect("typeof expression must be present in typed IR");
+    assert!(matches!(
+        interner.kind(reflection_ty),
+        TyKind::ReflectionType(_)
+    ));
+    assert_eq!(
+        interner.display(reflection_ty),
+        "Type",
+        "ReflectionType should display as 'Type'"
+    );
 }
 
 /// typeof(d) where d is declared as a class variable — typeof uses static type (Animal), not runtime type

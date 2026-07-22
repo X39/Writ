@@ -41,6 +41,7 @@ pub const E0121: &str = "E0121"; // recursive struct has infinite size
 pub const E0122: &str = "E0122"; // contract used as type annotation
 pub const E0123: &str = "E0123"; // incomplete contract implementation
 pub const E0124: &str = "E0124"; // ambiguous overloaded call
+pub const E0125: &str = "E0125"; // ambiguous implementation specialization
 
 // Warning codes
 pub const W0001: &str = "W0001"; // unused import

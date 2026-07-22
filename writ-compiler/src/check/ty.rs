@@ -30,6 +30,14 @@ pub enum TyKind {
     Enum(DefId),
     /// Contract type — a value whose concrete type implements this contract.
     Contract(DefId),
+    /// An instantiated user-defined nominal type such as `Crate<int>`.
+    /// `base` points at its Struct/Class/Entity/Enum/Contract type.
+    GenericInstance {
+        base: Ty,
+        namespace: String,
+        name: String,
+        args: Vec<Ty>,
+    },
     Array(Ty),
     Func { params: Vec<Ty>, ret: Ty },
     Option(Ty),
@@ -120,8 +128,20 @@ impl TyInterner {
         id
     }
 
-    /// Look up the `TyKind` for a `Ty`.
+    /// Look up the runtime/base `TyKind` for a `Ty`.
+    ///
+    /// Instantiated nominal types expose their base category here so existing
+    /// dispatch and layout decisions remain independent of type arguments. Use
+    /// [`Self::full_kind`] when the preserved arguments are significant.
     pub fn kind(&self, ty: Ty) -> &TyKind {
+        match self.full_kind(ty) {
+            TyKind::GenericInstance { base, .. } => self.kind(*base),
+            kind => kind,
+        }
+    }
+
+    /// Look up the complete structural kind, including nominal instantiation.
+    pub fn full_kind(&self, ty: Ty) -> &TyKind {
         &self.kinds[ty.0 as usize]
     }
 
@@ -137,7 +157,7 @@ impl TyInterner {
     /// the unification table is dropped before code generation.
     pub fn resolve_infer(&self, mut ty: Ty) -> Ty {
         let mut remaining = self.kinds.len();
-        while let TyKind::Infer(var) = self.kind(ty) {
+        while let TyKind::Infer(var) = self.full_kind(ty) {
             if remaining == 0 {
                 break;
             }
@@ -197,13 +217,33 @@ impl TyInterner {
     pub fn contract(&mut self, def_id: DefId) -> Ty {
         self.intern(TyKind::Contract(def_id))
     }
+    pub fn generic_instance(
+        &mut self,
+        base: Ty,
+        namespace: String,
+        name: String,
+        args: Vec<Ty>,
+    ) -> Ty {
+        self.intern(TyKind::GenericInstance {
+            base,
+            namespace,
+            name,
+            args,
+        })
+    }
+    pub fn generic_args(&self, ty: Ty) -> Option<&[Ty]> {
+        match self.full_kind(ty) {
+            TyKind::GenericInstance { args, .. } => Some(args),
+            _ => None,
+        }
+    }
     pub fn reflection_type(&mut self, inner: Ty) -> Ty {
         self.intern(TyKind::ReflectionType(inner))
     }
 
     /// Format a type as a human-readable string.
     pub fn display(&self, ty: Ty) -> String {
-        match self.kind(ty) {
+        match self.full_kind(ty) {
             TyKind::Int => "int".to_string(),
             TyKind::Float => "float".to_string(),
             TyKind::Bool => "bool".to_string(),
@@ -215,6 +255,14 @@ impl TyInterner {
             TyKind::AnyEntity => "Entity".to_string(),
             TyKind::Enum(_) => "enum".to_string(),
             TyKind::Contract(_) => "contract".to_string(),
+            TyKind::GenericInstance { name, args, .. } => {
+                let args = args
+                    .iter()
+                    .map(|arg| self.display(*arg))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{name}<{args}>")
+            }
             TyKind::Array(elem) => format!("{}[]", self.display(*elem)),
             TyKind::Func { params, ret } => {
                 let ps: Vec<String> = params.iter().map(|p| self.display(*p)).collect();
@@ -237,13 +285,21 @@ impl TyInterner {
     /// Unlike `display()` which shows "struct"/"entity"/etc., this shows the actual
     /// type name (e.g., "Potion", "Player") by looking up DefEntry::name.
     pub fn display_named(&self, ty: Ty, def_map: &crate::resolve::def_map::DefMap) -> String {
-        match self.kind(ty) {
+        match self.full_kind(ty) {
             TyKind::Struct(def_id)
             | TyKind::Class(def_id)
             | TyKind::Entity(def_id)
             | TyKind::Enum(def_id)
             | TyKind::Contract(def_id) => {
                 def_map.get_entry(*def_id).name.clone()
+            }
+            TyKind::GenericInstance { name, args, .. } => {
+                let args = args
+                    .iter()
+                    .map(|arg| self.display_named(*arg, def_map))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("{name}<{args}>")
             }
             TyKind::Array(elem) => format!("{}[]", self.display_named(*elem, def_map)),
             TyKind::Option(inner) => format!("Option<{}>", self.display_named(*inner, def_map)),

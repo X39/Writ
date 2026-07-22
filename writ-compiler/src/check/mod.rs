@@ -90,6 +90,7 @@ pub fn typecheck(
         current_fn_ret: None,
         current_file: file_id,
         self_type: None,
+        current_generics: FxHashMap::default(),
         current_namespace: String::new(),
     };
 

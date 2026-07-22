@@ -18,14 +18,12 @@ pub(super) fn check_lambda(
     body: &[crate::ast::stmt::AstStmt],
     span: SimpleSpan,
 ) -> TypedExpr {
-    let generic_map = rustc_hash::FxHashMap::default();
-
     // Resolve parameter types
     let mut param_tys = Vec::new();
     let mut param_names = Vec::new();
     for p in params {
         let ty = if let Some(ref annotation) = p.ty {
-            super::super::env::resolve_ast_type_with_file(annotation, ctx.def_map, &mut ctx.interner, &generic_map, ctx.current_file)
+            ctx.resolve_ast_type(annotation)
         } else {
             // No annotation: create an inference variable
             let var = ctx.unify.new_var();
@@ -37,7 +35,7 @@ pub(super) fn check_lambda(
 
     // Resolve return type
     let ret_ty = if let Some(rt) = return_type {
-        super::super::env::resolve_ast_type_with_file(rt, ctx.def_map, &mut ctx.interner, &generic_map, ctx.current_file)
+        ctx.resolve_ast_type(rt)
     } else {
         ctx.interner.void()
     };

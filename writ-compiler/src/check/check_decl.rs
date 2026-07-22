@@ -2,13 +2,12 @@
 
 use crate::ast::decl::{AstDecl, AstFnDecl, AstFnParam, AstImplDecl, AstImplMember, AstConstDecl, AstGlobalDecl};
 use crate::ast::Ast;
-use crate::resolve::def_map::{DefId, DefKind};
+use crate::resolve::def_map::DefId;
 use crate::resolve::ir::ResolvedDecl;
 
 use super::check_expr::{check_block_stmts, check_expr, CheckCtx};
 use super::env::Mutability;
 use super::ir::{TypedDecl, TypedExpr};
-use super::ty::TyKind;
 use writ_diagnostics::{Diagnostic, FileId};
 use writ_diagnostics::code;
 
@@ -63,9 +62,11 @@ fn check_fn_decl(ctx: &mut CheckCtx, def_id: DefId, asts: &[(FileId, &Ast)]) -> 
     let old_ret = ctx.current_fn_ret;
     let old_file = ctx.current_file;
     let old_namespace = ctx.current_namespace.clone();
+    let old_generics = ctx.current_generics.clone();
     ctx.current_fn_ret = Some(ret_ty);
     ctx.current_file = file_id;
     ctx.current_namespace = entry.namespace.clone();
+    ctx.current_generics = super::env_build::build_generic_map(&entry.generics);
 
     ctx.local_env.push_scope();
 
@@ -90,6 +91,7 @@ fn check_fn_decl(ctx: &mut CheckCtx, def_id: DefId, asts: &[(FileId, &Ast)]) -> 
     ctx.current_fn_ret = old_ret;
     ctx.current_file = old_file;
     ctx.current_namespace = old_namespace;
+    ctx.current_generics = old_generics;
 
     // Collect param name spans for LSP hover support
     let param_name_spans: Vec<chumsky::span::SimpleSpan> = fn_decl.params.iter().map(|p| {
@@ -116,25 +118,18 @@ fn check_impl_decl(ctx: &mut CheckCtx, def_id: DefId, asts: &[(FileId, &Ast)]) -
     }
     let impl_decl = impl_decl.unwrap();
 
-    // Resolve self type for methods.
-    // Handle both `impl Foo` (Named) and `impl<T> Foo<T>` (Generic).
-    let target_type_name = match &impl_decl.target {
-        crate::ast::types::AstType::Named { name, .. } => Some(name.as_str()),
-        crate::ast::types::AstType::Generic { name, .. } => Some(name.as_str()),
-        _ => None,
+    // Preserve the impl's generic target rather than erasing it to its DefId.
+    let impl_generics = super::env_build::build_generic_map(&entry.generics);
+    let self_type = {
+        let resolved = super::env::resolve_ast_type_with_file(
+            &impl_decl.target,
+            ctx.def_map,
+            &mut ctx.interner,
+            &impl_generics,
+            file_id,
+        );
+        (!ctx.is_error(resolved)).then_some(resolved)
     };
-    let self_type = target_type_name.and_then(|name| {
-        let target_def_id = ctx.def_map.get(name)?;
-        let target_entry = ctx.def_map.get_entry(target_def_id);
-        match target_entry.kind {
-            DefKind::Struct => Some(ctx.interner.intern(TyKind::Struct(target_def_id))),
-            DefKind::Class => Some(ctx.interner.intern(TyKind::Class(target_def_id))),
-            DefKind::Entity => Some(ctx.interner.intern(TyKind::Entity(target_def_id))),
-            DefKind::Enum => Some(ctx.interner.intern(TyKind::Enum(target_def_id))),
-            DefKind::Contract => Some(ctx.interner.intern(TyKind::Contract(target_def_id))),
-            _ => None,
-        }
-    });
 
     let mut methods = Vec::new();
 
@@ -146,10 +141,19 @@ fn check_impl_decl(ctx: &mut CheckCtx, def_id: DefId, asts: &[(FileId, &Ast)]) -
             let old_file = ctx.current_file;
             let old_self = ctx.self_type;
             let old_namespace = ctx.current_namespace.clone();
+            let old_generics = ctx.current_generics.clone();
 
             ctx.current_file = file_id;
             ctx.self_type = self_type;
             ctx.current_namespace = entry.namespace.clone();
+            ctx.current_generics = impl_generics.clone();
+            let first_method_ordinal = entry.generics.len() as u32;
+            for (index, generic) in fn_decl.generics.iter().enumerate() {
+                ctx.current_generics.insert(
+                    generic.name.clone(),
+                    first_method_ordinal + index as u32,
+                );
+            }
 
             // Find the method signature from impl_index
             let method_ret = find_impl_method_ret(ctx, def_id, &fn_decl.name);
@@ -192,6 +196,7 @@ fn check_impl_decl(ctx: &mut CheckCtx, def_id: DefId, asts: &[(FileId, &Ast)]) -
             ctx.current_file = old_file;
             ctx.self_type = old_self;
             ctx.current_namespace = old_namespace;
+            ctx.current_generics = old_generics;
 
             // Use the impl_def_id as a placeholder for the method DefId
             methods.push((def_id, body));

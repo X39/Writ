@@ -165,6 +165,10 @@ pub(super) fn check_pattern(ctx: &mut CheckCtx, pattern: &AstPattern, scrutinee_
             // Try to find the enum def_id and variant fields
             let mut enum_def_id = None;
             let mut variant_fields = Vec::new();
+            let enum_args = ctx
+                .interner
+                .generic_args(scrutinee_ty)
+                .map(|args| args.to_vec());
 
             // Check if scrutinee is an enum type
             if let TyKind::Enum(def_id) = ctx.interner.kind(scrutinee_ty).clone()
@@ -173,6 +177,15 @@ pub(super) fn check_pattern(ctx: &mut CheckCtx, pattern: &AstPattern, scrutinee_
                         if v.name == variant_name {
                             enum_def_id = Some(def_id);
                             variant_fields = v.fields.clone();
+                            if let Some(args) = &enum_args {
+                                for (_, field_ty) in &mut variant_fields {
+                                    *field_ty = super::super::infer::substitute(
+                                        *field_ty,
+                                        args,
+                                        &mut ctx.interner,
+                                    );
+                                }
+                            }
                             break;
                         }
                     }

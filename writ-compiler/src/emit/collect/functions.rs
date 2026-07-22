@@ -22,7 +22,7 @@ pub(super) fn collect_fn(
     interner: &TyInterner,
     builder: &mut ModuleBuilder,
     methoddef_handles: &mut FxHashMap<DefId, MethodDefHandle>,
-    _diags: &mut Vec<Diagnostic>,
+    diags: &mut Vec<Diagnostic>,
 ) {
     let entry = def_map.get_entry(def_id);
     let is_pub = matches!(entry.vis, DefVis::Pub);
@@ -47,7 +47,19 @@ pub(super) fn collect_fn(
             .iter()
             .filter_map(|p| {
                 if let AstFnParam::Regular(p) = p {
-                    let ty = ast_type_to_ty_simple(&p.ty, &entry.generics, def_map);
+                    let ty = ast_type_to_ty_simple(&p.ty, &entry.generics, def_map, interner)
+                        .unwrap_or_else(|message| {
+                            diags.push(
+                                Diagnostic::error("E2002", message)
+                                    .with_primary(
+                                        entry.file_id,
+                                        p.name_span,
+                                        "failed to recover checked parameter type",
+                                    )
+                                    .build(),
+                            );
+                            crate::check::ty::Ty(5)
+                        });
                     Some((p.name.clone(), ty))
                 } else {
                     None

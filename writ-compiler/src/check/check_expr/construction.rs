@@ -17,8 +17,7 @@ pub(super) fn check_new_construction(
     fields: &[AstNewField],
     span: SimpleSpan,
 ) -> TypedExpr {
-    let generic_map = rustc_hash::FxHashMap::default();
-    let resolved_ty = super::super::env::resolve_ast_type_with_file(ast_ty, ctx.def_map, &mut ctx.interner, &generic_map, ctx.current_file);
+    let resolved_ty = ctx.resolve_ast_type(ast_ty);
 
     if ctx.is_error(resolved_ty) {
         // Can't resolve the type
@@ -59,32 +58,10 @@ pub(super) fn check_new_construction(
         }
     };
 
-    // Named generic types are currently represented by their base DefId in TyKind,
-    // but their fields still contain GenericParam ordinals. Substitute the concrete
-    // constructor arguments so contextual expressions such as `items: []` retain
-    // the actual element category (`List<float>` must not become an int array).
-    if let AstType::Generic { args, .. } = ast_ty {
-        let empty_generic_map = rustc_hash::FxHashMap::default();
-        let type_args: Vec<_> = args
-            .iter()
-            .enumerate()
-            .map(|(ordinal, arg)| {
-                let resolved = super::super::env::resolve_ast_type_with_file(
-                    arg,
-                    ctx.def_map,
-                    &mut ctx.interner,
-                    &empty_generic_map,
-                    ctx.current_file,
-                );
-                if ctx.is_error(resolved) {
-                    // An argument from an enclosing generic scope remains erased here.
-                    // Preserve that fact instead of pretending it has a concrete default.
-                    ctx.interner.intern(TyKind::GenericParam(ordinal as u32))
-                } else {
-                    resolved
-                }
-            })
-            .collect();
+    // Generic fields contain GenericParam ordinals in TypeEnv. Substitute the
+    // arguments preserved by the resolved nominal instance so construction and
+    // later assignment share exactly the same concrete type identity.
+    if let Some(type_args) = ctx.interner.generic_args(resolved_ty).map(|args| args.to_vec()) {
         for (_, field_ty, _) in &mut expected_fields {
             *field_ty = super::super::infer::substitute(*field_ty, &type_args, &mut ctx.interner);
         }
@@ -120,17 +97,13 @@ pub(super) fn check_new_construction(
 
         if let Some((_name, expected_ty, _fspan)) = field_def {
             // Check type compatibility
-            if !ctx.is_error(value_ty) && !ctx.is_error(*expected_ty)
-                && ctx.unify.unify(*expected_ty, value_ty, &mut ctx.interner).is_err() {
-                    ctx.emit_error(TypeError::TypeMismatch {
-                        expected: ctx.display_ty(*expected_ty),
-                        found: ctx.display_ty(value_ty),
-                        expected_span: field.name_span,
-                        found_span: typed_value.span(),
-                        file: ctx.current_file,
-                        help: Some(format!("in field `{}`", field.name)),
-                    });
-                }
+            ctx.check_assignable(
+                *expected_ty,
+                value_ty,
+                field.name_span,
+                typed_value.span(),
+                Some(format!("in field `{}`", field.name)),
+            );
         } else {
             // Unknown field
             ctx.emit_error(TypeError::UnknownField {

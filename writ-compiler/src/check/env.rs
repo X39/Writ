@@ -52,7 +52,14 @@ pub struct EnumVariantSig {
 #[derive(Debug, Clone)]
 pub struct ImplEntry {
     pub impl_def_id: DefId,
+    /// Number of generic parameters declared by the impl itself. Method-level
+    /// generic ordinals begin immediately after this prefix.
+    pub impl_generic_count: u32,
+    /// The declared implementation target, including generic arguments.
+    pub target_ty: Ty,
     pub contract_def_id: Option<DefId>,
+    /// The implemented contract specialization, including generic arguments.
+    pub contract_ty: Option<Ty>,
     pub methods: Vec<(String, FnSig)>,
 }
 

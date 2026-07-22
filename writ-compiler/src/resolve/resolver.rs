@@ -520,6 +520,17 @@ fn resolve_decl_list(
                     for member in &imp.members {
                         match member {
                             AstImplMember::Fn(f) => {
+                                let method_generics: Vec<(String, SimpleSpan)> = f
+                                    .generics
+                                    .iter()
+                                    .map(|generic| {
+                                        (generic.name.clone(), generic.name_span)
+                                    })
+                                    .collect();
+                                if !method_generics.is_empty() {
+                                    check_generic_shadows(&method_generics, scope, diags);
+                                    scope.push_generics(method_generics);
+                                }
                                 for param in &f.params {
                                     match param {
                                         AstFnParam::Regular(p) => { resolve_ast_type(&p.ty, scope, diags); }
@@ -528,6 +539,9 @@ fn resolve_decl_list(
                                 }
                                 if let Some(ret) = &f.return_type {
                                     resolve_ast_type(ret, scope, diags);
+                                }
+                                if !f.generics.is_empty() {
+                                    scope.pop_layer();
                                 }
                             }
                             AstImplMember::Op(op) => {

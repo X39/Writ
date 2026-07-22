@@ -31,7 +31,7 @@ fn type_signature_for_ty(
     token_for_def: &dyn Fn(DefId) -> MetadataToken,
 ) -> TypeSignature {
     let ty = interner.resolve_infer(ty);
-    match interner.kind(ty) {
+    match interner.full_kind(ty) {
         TyKind::Void => TypeSignature::Void,
         TyKind::Int => TypeSignature::Int,
         TyKind::Float => TypeSignature::Float,
@@ -48,6 +48,20 @@ fn type_signature_for_ty(
             let token = token_for_def(*def_id);
             TypeSignature::Named(writ_module::MetadataToken(token.0))
         }
+
+        TyKind::GenericInstance {
+            namespace,
+            name,
+            args,
+            ..
+        } => TypeSignature::Generic {
+            namespace: namespace.clone(),
+            name: name.clone(),
+            args: args
+                .iter()
+                .map(|arg| type_signature_for_ty(*arg, interner, token_for_def))
+                .collect(),
+        },
 
         TyKind::GenericParam(idx) => TypeSignature::GenericParam(*idx as u16),
 

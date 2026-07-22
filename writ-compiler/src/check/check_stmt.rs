@@ -6,7 +6,7 @@ use crate::ast::types::AstType;
 use crate::ast::expr::AstExpr;
 
 use super::check_expr::{check_expr, CheckCtx};
-use super::env::{Mutability, resolve_ast_type_with_file};
+use super::env::Mutability;
 use super::error::TypeError;
 use super::ir::TypedStmt;
 use super::ty::TyKind;
@@ -27,67 +27,15 @@ pub fn check_stmt(ctx: &mut CheckCtx, stmt: &AstStmt) -> TypedStmt {
 
             // If type annotation present, check compatibility
             let (final_ty, ann_span, ann_def_id) = if let Some(annotation) = ty {
-                let generic_map = rustc_hash::FxHashMap::default();
-                let annotated_ty =
-                    resolve_ast_type_with_file(annotation, ctx.def_map, &mut ctx.interner, &generic_map, ctx.current_file);
+                let annotated_ty = ctx.resolve_ast_type(annotation);
 
-                // Contract assignability: if annotation resolves to a contract type,
-                // check that the inferred concrete type implements the contract.
-                // Otherwise perform normal unification.
-                if let TyKind::Contract(contract_def_id) = ctx.interner.kind(annotated_ty).clone() {
-                    // Skip assignability check if inferred type is Error (poison propagation)
-                    if !ctx.is_error(inferred_ty) {
-                        let concrete_def_id = match ctx.interner.kind(inferred_ty).clone() {
-                            TyKind::Struct(did) | TyKind::Class(did) | TyKind::Entity(did) => Some(did),
-                            TyKind::Contract(did) if did == contract_def_id => None, // same contract, already valid
-                            _ => {
-                                // Primitive or other type cannot implement a contract
-                                let contract_entry = ctx.def_map.get_entry(contract_def_id);
-                                ctx.emit_error(TypeError::MissingContractImpl {
-                                    ty_name: ctx.display_ty(inferred_ty),
-                                    contract_name: contract_entry.name.clone(),
-                                    span: *name_span,
-                                    file: ctx.current_file,
-                                    suggestion: format!(
-                                        "add `impl {} for {}`",
-                                        contract_entry.name,
-                                        ctx.display_ty(inferred_ty)
-                                    ),
-                                });
-                                None
-                            }
-                        };
-                        if let Some(concrete_did) = concrete_def_id {
-                            let satisfies = ctx.type_env.impl_index.get(&concrete_did)
-                                .map(|impls| impls.iter().any(|e| e.contract_def_id == Some(contract_def_id)))
-                                .unwrap_or(false);
-                            if !satisfies {
-                                let contract_entry = ctx.def_map.get_entry(contract_def_id);
-                                ctx.emit_error(TypeError::MissingContractImpl {
-                                    ty_name: ctx.display_ty(inferred_ty),
-                                    contract_name: contract_entry.name.clone(),
-                                    span: *name_span,
-                                    file: ctx.current_file,
-                                    suggestion: format!(
-                                        "add `impl {} for {}`",
-                                        contract_entry.name,
-                                        ctx.display_ty(inferred_ty)
-                                    ),
-                                });
-                            }
-                        }
-                    }
-                } else if !ctx.is_error(annotated_ty) && !ctx.is_error(inferred_ty)
-                    && ctx.unify.unify(annotated_ty, inferred_ty, &mut ctx.interner).is_err() {
-                        ctx.emit_error(TypeError::TypeMismatch {
-                            expected: ctx.display_ty(annotated_ty),
-                            found: ctx.display_ty(inferred_ty),
-                            expected_span: *name_span,
-                            found_span: typed_value.span(),
-                            file: ctx.current_file,
-                            help: None,
-                        });
-                    }
+                ctx.check_assignable(
+                    annotated_ty,
+                    inferred_ty,
+                    *name_span,
+                    typed_value.span(),
+                    None,
+                );
 
                 // Capture annotation span and DefId for LSP go-to-def support
                 let span_of_ann = match annotation {
@@ -176,58 +124,13 @@ pub fn check_stmt(ctx: &mut CheckCtx, stmt: &AstStmt) -> TypedStmt {
                     // Contract assignability: if the declared return type is a contract,
                     // check that the concrete value type implements the contract rather
                     // than doing plain unification (which would fail for concrete→contract).
-                    if let TyKind::Contract(contract_def_id) = ctx.interner.kind(ret_ty).clone() {
-                        if !ctx.is_error(val_ty) {
-                            let concrete_def_id = match ctx.interner.kind(val_ty).clone() {
-                                TyKind::Struct(did) | TyKind::Class(did) | TyKind::Entity(did) => Some(did),
-                                TyKind::Contract(did) if did == contract_def_id => None, // same contract, valid
-                                _ => {
-                                    let contract_entry = ctx.def_map.get_entry(contract_def_id);
-                                    ctx.emit_error(TypeError::MissingContractImpl {
-                                        ty_name: ctx.display_ty(val_ty),
-                                        contract_name: contract_entry.name.clone(),
-                                        span: tv.span(),
-                                        file: ctx.current_file,
-                                        suggestion: format!(
-                                            "add `impl {} for {}`",
-                                            contract_entry.name,
-                                            ctx.display_ty(val_ty)
-                                        ),
-                                    });
-                                    None
-                                }
-                            };
-                            if let Some(concrete_did) = concrete_def_id {
-                                let satisfies = ctx.type_env.impl_index.get(&concrete_did)
-                                    .map(|impls| impls.iter().any(|e| e.contract_def_id == Some(contract_def_id)))
-                                    .unwrap_or(false);
-                                if !satisfies {
-                                    let contract_entry = ctx.def_map.get_entry(contract_def_id);
-                                    ctx.emit_error(TypeError::MissingContractImpl {
-                                        ty_name: ctx.display_ty(val_ty),
-                                        contract_name: contract_entry.name.clone(),
-                                        span: tv.span(),
-                                        file: ctx.current_file,
-                                        suggestion: format!(
-                                            "add `impl {} for {}`",
-                                            contract_entry.name,
-                                            ctx.display_ty(val_ty)
-                                        ),
-                                    });
-                                }
-                            }
-                        }
-                    } else if !ctx.is_error(val_ty) && !ctx.is_error(ret_ty)
-                        && ctx.unify.unify(ret_ty, val_ty, &mut ctx.interner).is_err() {
-                            ctx.emit_error(TypeError::TypeMismatch {
-                                expected: ctx.display_ty(ret_ty),
-                                found: ctx.display_ty(val_ty),
-                                expected_span: *span,
-                                found_span: tv.span(),
-                                file: ctx.current_file,
-                                help: Some("return value type must match function return type".to_string()),
-                            });
-                        }
+                    ctx.check_assignable(
+                        ret_ty,
+                        val_ty,
+                        *span,
+                        tv.span(),
+                        Some("return value type must match function return type".to_string()),
+                    );
                 } else {
                     // Return with no value: check function returns void
                     let void_ty = ctx.interner.void();

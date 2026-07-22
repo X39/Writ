@@ -116,7 +116,15 @@ fn type_signature_to_ty(
                 _ => {
                     lookup_constructor(lib_type_name_map, namespace, name)
                         .copied()
-                        .map(|named| nominal_ty(named, interner))
+                        .map(|named| {
+                            let base = nominal_ty(named, interner);
+                            interner.generic_instance(
+                                base,
+                                namespace.clone(),
+                                name.clone(),
+                                decoded_args,
+                            )
+                        })
                         .unwrap_or_else(|| interner.error())
                 }
             }
@@ -595,7 +603,32 @@ pub fn inject_library_sigs(
 
             let impl_entry = ImplEntry {
                 impl_def_id: impl_entry_def_id,
+                impl_generic_count: def_map.get_entry(type_def_id).generics.len() as u32,
+                target_ty: {
+                    let named = library_type_for_def(type_def_id, def_map)
+                        .expect("ImplDef target must name an injected library type");
+                    let base = nominal_ty(named, interner);
+                    let target = def_map.get_entry(type_def_id);
+                    if target.generics.is_empty() {
+                        base
+                    } else {
+                        let args = (0..target.generics.len())
+                            .map(|ordinal| {
+                                interner.intern(TyKind::GenericParam(ordinal as u32))
+                            })
+                            .collect();
+                        interner.generic_instance(
+                            base,
+                            target.namespace.clone(),
+                            target.name.clone(),
+                            args,
+                        )
+                    }
+                },
                 contract_def_id,
+                // ImplDef metadata currently stores only the ContractDef token.
+                // Preserve the nominal identity; source impls retain full arguments.
+                contract_ty: contract_def_id.map(|def_id| interner.contract(def_id)),
                 methods,
             };
 

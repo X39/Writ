@@ -443,6 +443,137 @@ fn xmod_user_generic_constructor_decodes_by_module_qualified_identity() {
         "user generic constructor must resolve nominally: {:?}",
         valid.err()
     );
+
+    let wrong_argument = compile_with_libs(
+        r#"pub fn invalid(value: Crate<string>) -> int { consume_crate(value) }"#,
+        &[&lib_module],
+    );
+    assert!(
+        wrong_argument.is_err(),
+        "user generic argument mismatch must be rejected across modules"
+    );
+
+    let valid_field = compile_with_libs(
+        r#"pub fn read(value: Crate<string>) -> string { return value.value; }"#,
+        &[&lib_module],
+    );
+    assert!(
+        valid_field.is_ok(),
+        "library generic fields must specialize: {:?}",
+        valid_field.err()
+    );
+
+    let wrong_field = compile_with_libs(
+        r#"pub fn invalid(value: Crate<string>) -> int { return value.value; }"#,
+        &[&lib_module],
+    );
+    assert!(
+        wrong_field.is_err(),
+        "library generic field type mismatch must be rejected"
+    );
+}
+
+#[test]
+fn user_generic_instance_register_metadata_retains_arguments() {
+    let bytes = compile(
+        r#"
+        pub struct Crate<T> { pub value: T }
+        pub fn echo(value: Crate<int>) -> Crate<int> { value }
+        pub fn wrap<T>(value: T) -> Crate<T> {
+            let wrapped = new Crate<T> { value: value };
+            return wrapped;
+        }
+        "#,
+    );
+    let module = writ_module::Module::from_bytes(&bytes).unwrap();
+
+    let signatures: Vec<_> = module
+        .method_bodies
+        .iter()
+        .flat_map(|body| body.register_types.iter())
+        .filter_map(|offset| writ_module::heap::read_blob(&module.blob_heap, *offset).ok())
+        .filter_map(|blob| writ_module::signature::decode_type_signature(blob).ok())
+        .collect();
+
+    assert!(signatures.iter().any(|signature| matches!(
+        signature,
+        writ_module::signature::TypeSignature::Generic { name, args, .. }
+            if name == "Crate"
+                && matches!(args.as_slice(), [writ_module::signature::TypeSignature::Int])
+    )), "register signatures: {signatures:?}");
+    assert!(signatures.iter().any(|signature| matches!(
+        signature,
+        writ_module::signature::TypeSignature::Generic { name, args, .. }
+            if name == "Crate"
+                && matches!(args.as_slice(), [writ_module::signature::TypeSignature::GenericParam(0)])
+    )), "generic body register signatures: {signatures:?}");
+    assert!(signatures.iter().all(|signature| !matches!(
+        signature,
+        writ_module::signature::TypeSignature::Generic { name, args, .. }
+            if name == "Crate"
+                && matches!(args.as_slice(), [writ_module::signature::TypeSignature::Void])
+    )), "generic metadata must never silently degrade to Error/Void: {signatures:?}");
+}
+
+#[test]
+fn impl_method_generic_metadata_uses_combined_scope_ordinal() {
+    let bytes = compile(
+        r#"
+        pub class Crate<T> {}
+        impl<T> Crate<T> {
+            fn choose<U>(self, value: U) -> U { return value; }
+        }
+        "#,
+    );
+    let module = writ_module::Module::from_bytes(&bytes).unwrap();
+    let (method_index, method) = module
+        .method_defs
+        .iter()
+        .enumerate()
+        .find(|(_, method)| {
+            writ_module::heap::read_string(&module.string_heap, method.name).ok()
+                == Some("choose")
+        })
+        .expect("choose MethodDef");
+    let signature = writ_module::heap::read_blob(&module.blob_heap, method.signature).unwrap();
+    let (params, ret) = writ_module::signature::decode_method_signature(signature).unwrap();
+    assert!(matches!(
+        params.as_slice(),
+        [writ_module::signature::TypeSignature::GenericParam(1)]
+    ));
+    assert!(matches!(
+        ret,
+        writ_module::signature::TypeSignature::GenericParam(1)
+    ));
+
+    let owner = writ_module::MetadataToken::new(
+        writ_module::tables::TableId::MethodDef.as_u8(),
+        (method_index + 1) as u32,
+    );
+    let generic = module
+        .generic_params
+        .iter()
+        .find(|generic| generic.owner == owner)
+        .expect("choose GenericParam");
+    assert_eq!(generic.ordinal, 1);
+    assert_eq!(
+        writ_module::heap::read_string(&module.string_heap, generic.name).ok(),
+        Some("U")
+    );
+
+    let user = compile_with_libs(
+        r#"
+        pub fn choose_string(value: Crate<int>) -> string {
+            return value.choose("ok");
+        }
+        "#,
+        &[&module],
+    );
+    assert!(
+        user.is_ok(),
+        "library method generic must instantiate after its impl prefix: {:?}",
+        user.err()
+    );
 }
 
 #[test]

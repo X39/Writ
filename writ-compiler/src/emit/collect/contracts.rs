@@ -72,7 +72,7 @@ pub(super) fn collect_impl(
     typedef_handles: &FxHashMap<DefId, TypeDefHandle>,
     contractdef_handles: &FxHashMap<DefId, ContractDefHandle>,
     methoddef_handles: &mut FxHashMap<DefId, MethodDefHandle>,
-    _diags: &mut Vec<Diagnostic>,
+    diags: &mut Vec<Diagnostic>,
 ) {
     let entry = def_map.get_entry(impl_def_id);
 
@@ -113,9 +113,16 @@ pub(super) fn collect_impl(
             };
 
             let is_pub = impl_is_pub;
+            let mut method_scope_generics = impl_entry_generics.clone();
+            method_scope_generics.extend(
+                fn_decl
+                    .generics
+                    .iter()
+                    .map(|generic| generic.name.clone()),
+            );
 
             let (sig_blob, _) =
-                encode_fn_sig(fn_decl, interner, &impl_entry_generics, def_map, builder);
+                encode_fn_sig(fn_decl, interner, &method_scope_generics, def_map, builder);
 
             let has_self = fn_decl.params.iter().any(|p| matches!(p, AstFnParam::SelfParam { .. }));
             let is_mut_self = fn_decl.params.iter().any(|p| {
@@ -149,7 +156,7 @@ pub(super) fn collect_impl(
             emit_fn_params(
                 fn_decl,
                 interner,
-                &impl_entry_generics,
+                &method_scope_generics,
                 def_map,
                 builder,
                 method_handle,
@@ -160,12 +167,46 @@ pub(super) fn collect_impl(
             // appear first so the body emitter pre-allocates r0 for it.
             let mut fn_params: Vec<(String, crate::check::ty::Ty)> = Vec::new();
             if has_self {
-                let self_ty = ast_type_to_ty_simple(&impl_decl.target, &impl_entry_generics, def_map);
+                let self_ty = ast_type_to_ty_simple(
+                    &impl_decl.target,
+                    &impl_entry_generics,
+                    def_map,
+                    interner,
+                )
+                .unwrap_or_else(|message| {
+                    diags.push(
+                        Diagnostic::error("E2002", message)
+                            .with_primary(
+                                entry.file_id,
+                                impl_decl.span,
+                                "failed to recover checked impl target type",
+                            )
+                            .build(),
+                    );
+                    crate::check::ty::Ty(5)
+                });
                 fn_params.push(("self".to_string(), self_ty));
             }
             fn_params.extend(fn_decl.params.iter().filter_map(|p| {
                 if let AstFnParam::Regular(p) = p {
-                    let ty = ast_type_to_ty_simple(&p.ty, &impl_entry_generics, def_map);
+                    let ty = ast_type_to_ty_simple(
+                        &p.ty,
+                        &method_scope_generics,
+                        def_map,
+                        interner,
+                    )
+                    .unwrap_or_else(|message| {
+                        diags.push(
+                            Diagnostic::error("E2002", message)
+                                .with_primary(
+                                    entry.file_id,
+                                    p.name_span,
+                                    "failed to recover checked parameter type",
+                                )
+                                .build(),
+                        );
+                        crate::check::ty::Ty(5)
+                    });
                     Some((p.name.clone(), ty))
                 } else {
                     None
@@ -177,7 +218,21 @@ pub(super) fn collect_impl(
             builder.impl_method_param_map.insert(method_handle.0, fn_params);
 
             // GenericParam for method generics.
-            // (Use impl-level generics as a proxy; per-method generics require DefId resolution)
+            for (ordinal, generic) in fn_decl.generics.iter().enumerate() {
+                let param_index = builder.add_generic_param(
+                    TableId::MethodDef,
+                    method_handle.0,
+                    (impl_entry_generics.len() + ordinal) as u16,
+                    &generic.name,
+                );
+                for bound in &generic.bounds {
+                    if let crate::ast::types::AstType::Named { name, .. } = bound
+                        && let Some(contract_def_id) = def_map.get(name)
+                    {
+                        builder.add_generic_constraint(param_index, contract_def_id);
+                    }
+                }
+            }
         }
 
         // ImplDef row linking type to contract.

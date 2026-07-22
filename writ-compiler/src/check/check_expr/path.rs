@@ -103,7 +103,21 @@ pub(super) fn check_path(ctx: &mut CheckCtx, segments: &[String], span: SimpleSp
             if matches!(entry.kind, DefKind::Enum)
                 && let Some(variants) = ctx.type_env.enum_variants.get(&enum_def_id)
                     && let Some(variant_idx) = variants.iter().position(|v| v.name == *variant_name) {
-                        let enum_ty = ctx.interner.intern(TyKind::Enum(enum_def_id));
+                        let enum_base = ctx.interner.intern(TyKind::Enum(enum_def_id));
+                        let enum_ty = if entry.generics.is_empty() {
+                            enum_base
+                        } else {
+                            let namespace = entry.namespace.clone();
+                            let name = entry.name.clone();
+                            let generic_count = entry.generics.len();
+                            let args = (0..generic_count)
+                                .map(|_| {
+                                    let var = ctx.unify.new_var();
+                                    ctx.interner.intern(TyKind::Infer(var))
+                                })
+                                .collect();
+                            ctx.interner.generic_instance(enum_base, namespace, name, args)
+                        };
                         // Unit variant: emit the tag index as an int literal typed as the enum.
                         return TypedExpr::Literal {
                             ty: enum_ty,

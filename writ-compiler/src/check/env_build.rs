@@ -383,7 +383,16 @@ fn resolve_ast_type_inner(
                 _ => {
                     // Named generic type - try DefMap (public + file-private)
                     if let Some(def_id) = resolve_named_def_id(name, def_map, file_id) {
-                        def_id_to_ty(def_id, def_map, interner)
+                        let entry = def_map.get_entry(def_id);
+                        let namespace = entry.namespace.clone();
+                        let constructor = entry.name.clone();
+                        let base = def_id_to_ty(def_id, def_map, interner);
+                        interner.generic_instance(
+                            base,
+                            namespace,
+                            constructor,
+                            resolved_args,
+                        )
                     } else {
                         interner.error()
                     }
@@ -623,34 +632,53 @@ pub(super) fn build_impl_entry(
     interner: &mut TyInterner,
     env: &mut TypeEnv,
 ) {
-    let generic_map = build_generic_map(&entry.generics);
-
-    // Resolve target type to get target DefId.
-    // Handle both `impl Foo` (Named) and `impl<T> Foo<T>` (Generic).
-    let target_def_id = match &impl_decl.target {
-        AstType::Named { name, .. } => def_map.get(name),
-        AstType::Generic { name, .. } => def_map.get(name),
+    let impl_generic_map = build_generic_map(&entry.generics);
+    let target_ty = resolve_ast_type_with_file(
+        &impl_decl.target,
+        def_map,
+        interner,
+        &impl_generic_map,
+        entry.file_id,
+    );
+    let target_def_id = match interner.kind(target_ty) {
+        TyKind::Struct(def_id)
+        | TyKind::Class(def_id)
+        | TyKind::Entity(def_id)
+        | TyKind::Enum(def_id) => Some(*def_id),
         _ => None,
     };
 
-    // Resolve contract DefId if present
-    let contract_def_id = impl_decl.contract.as_ref().and_then(|c| {
-        if let AstType::Named { name, .. } = c {
-            def_map.get(name)
-        } else {
-            None
-        }
+    let contract_ty = impl_decl.contract.as_ref().map(|contract| {
+        resolve_ast_type_with_file(
+            contract,
+            def_map,
+            interner,
+            &impl_generic_map,
+            entry.file_id,
+        )
+    });
+    let contract_def_id = contract_ty.and_then(|ty| match interner.kind(ty) {
+        TyKind::Contract(def_id) => Some(*def_id),
+        _ => None,
     });
 
     let mut methods = Vec::new();
     for member in &impl_decl.members {
         if let AstImplMember::Fn(fn_decl) = member {
+            let mut method_generic_map = impl_generic_map.clone();
+            let first_method_ordinal = entry.generics.len() as u32;
+            for (index, generic) in fn_decl.generics.iter().enumerate() {
+                method_generic_map.insert(
+                    generic.name.clone(),
+                    first_method_ordinal + index as u32,
+                );
+            }
             let mut params = Vec::new();
             let mut self_param = None;
             for param in &fn_decl.params {
                 match param {
                     AstFnParam::Regular(p) => {
-                        let ty = resolve_ast_type_with_file(&p.ty, def_map, interner, &generic_map, entry.file_id);
+                        let ty = resolve_ast_type_with_file(&p.ty, def_map, interner, &method_generic_map, entry.file_id);
                         params.push((p.name.clone(), ty));
                     }
                     AstFnParam::SelfParam { mutable, .. } => {
@@ -659,7 +687,7 @@ pub(super) fn build_impl_entry(
                 }
             }
             let ret = match &fn_decl.return_type {
-                Some(rt) => resolve_ast_type_with_file(rt, def_map, interner, &generic_map, entry.file_id),
+                Some(rt) => resolve_ast_type_with_file(rt, def_map, interner, &method_generic_map, entry.file_id),
                 None => interner.void(),
             };
             let bounds = build_generic_bounds(&fn_decl.generics, def_map);
@@ -682,7 +710,10 @@ pub(super) fn build_impl_entry(
     if let Some(target_id) = target_def_id {
         let impl_entry = ImplEntry {
             impl_def_id,
+            impl_generic_count: entry.generics.len() as u32,
+            target_ty,
             contract_def_id,
+            contract_ty,
             methods,
         };
         env.impl_index

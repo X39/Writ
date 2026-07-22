@@ -315,46 +315,96 @@ pub(super) fn collect_component_slots(
 // Type signature encoding helpers
 // =============================================================================
 
-/// Convert a primitive or generic-param AstType to a Ty without mutating the interner.
+/// Recover the checker Ty for an AST annotation without mutating the interner.
 ///
-/// Primitive types (int, float, bool, string, void) have fixed pre-interned indices
-/// from TyInterner::new(): Int=0, Float=1, Bool=2, String=3, Void=4.
-///
-/// For non-primitive named types (structs, enums, entities) we fall back to
-/// crate::check::ty::Ty(5) (Error), which is acceptable for register allocation
-/// since the register type table is used only for debug info and the disassembler.
+/// Type checking has already interned every declaration signature before metadata
+/// collection runs, so the emitter can reconstruct the exact structural key and
+/// look it up. A failed lookup is an internal pipeline error that callers surface
+/// as an emission diagnostic; it must never silently degrade metadata to Error.
 pub(super) fn ast_type_to_ty_simple(
     ast_type: &crate::ast::types::AstType,
     generics: &[String],
     def_map: &DefMap,
-) -> crate::check::ty::Ty {
-    use crate::check::ty::Ty;
+    interner: &TyInterner,
+) -> Result<crate::check::ty::Ty, String> {
+    use crate::check::ty::{Ty, TyKind};
+
+    let lookup = |kind: TyKind| {
+        interner
+            .lookup(&kind)
+            .ok_or_else(|| format!("type checker did not intern metadata type `{kind:?}`"))
+    };
     match ast_type {
         crate::ast::types::AstType::Named { name, .. } => {
-            // Check generic param — use GenericParam index
             if let Some(idx) = generics.iter().position(|g| g == name) {
-                // GenericParam types are not pre-interned; use Error as a safe fallback
-                // for the register allocator (only affects debug info, not correctness).
-                let _ = idx;
-                return Ty(5); // Error
+                return lookup(TyKind::GenericParam(idx as u32));
             }
             match name.as_str() {
-                "void" => Ty(4),
-                "int" => Ty(0),
-                "float" => Ty(1),
-                "bool" => Ty(2),
-                "string" => Ty(3),
-                _ => {
-                    // Named user type — look up DefId to construct Struct/Entity/Enum Ty.
-                    // These Ty values may not be pre-interned; use Error as safe fallback.
-                    let _ = def_map;
-                    Ty(5) // Error
-                }
+                "void" => Ok(Ty(4)),
+                "int" => Ok(Ty(0)),
+                "float" => Ok(Ty(1)),
+                "bool" => Ok(Ty(2)),
+                "string" => Ok(Ty(3)),
+                "Entity" => lookup(TyKind::AnyEntity),
+                _ => resolve_named_type_definition(name, def_map)
+                    .map(|(def_id, entry)| nominal_ty_kind(def_id, entry.kind))
+                    .ok_or_else(|| format!("unresolved metadata type `{name}`"))
+                    .and_then(lookup),
             }
         }
-        crate::ast::types::AstType::Void { .. } => Ty(4),
-        // Array, Generic, Func — not pre-interned; fall back to Error
-        _ => Ty(5),
+        crate::ast::types::AstType::Generic { name, args, .. } => {
+            let args: Vec<Ty> = args
+                .iter()
+                .map(|arg| ast_type_to_ty_simple(arg, generics, def_map, interner))
+                .collect::<Result<_, _>>()?;
+            match (name.as_str(), args.as_slice()) {
+                ("Option", [inner]) => lookup(TyKind::Option(*inner)),
+                ("Result", [ok, err]) => lookup(TyKind::Result(*ok, *err)),
+                ("TaskHandle", [inner]) => lookup(TyKind::TaskHandle(*inner)),
+                ("Array", [inner]) => lookup(TyKind::Array(*inner)),
+                _ => resolve_named_type_definition(name, def_map)
+                    .ok_or_else(|| format!("unresolved metadata type `{name}`"))
+                    .and_then(|(def_id, entry)| {
+                        let base = lookup(nominal_ty_kind(def_id, entry.kind))?;
+                        Ok(TyKind::GenericInstance {
+                            base,
+                            namespace: entry.namespace.clone(),
+                            name: entry.name.clone(),
+                            args,
+                        })
+                    })
+                    .and_then(lookup),
+            }
+        }
+        crate::ast::types::AstType::Array { elem, .. } => {
+            let elem = ast_type_to_ty_simple(elem, generics, def_map, interner)?;
+            lookup(TyKind::Array(elem))
+        }
+        crate::ast::types::AstType::Func { params, ret, .. } => {
+            let params = params
+                .iter()
+                .map(|param| ast_type_to_ty_simple(param, generics, def_map, interner))
+                .collect::<Result<_, _>>()?;
+            let ret = ret
+                .as_deref()
+                .map(|ret| ast_type_to_ty_simple(ret, generics, def_map, interner))
+                .transpose()?
+                .unwrap_or(Ty(4));
+            lookup(TyKind::Func { params, ret })
+        }
+        crate::ast::types::AstType::Void { .. } => Ok(Ty(4)),
+    }
+}
+
+fn nominal_ty_kind(def_id: DefId, kind: DefKind) -> crate::check::ty::TyKind {
+    use crate::check::ty::TyKind;
+    match kind {
+        DefKind::Struct | DefKind::Component | DefKind::ExternComponent => TyKind::Struct(def_id),
+        DefKind::Class => TyKind::Class(def_id),
+        DefKind::Entity => TyKind::Entity(def_id),
+        DefKind::Enum => TyKind::Enum(def_id),
+        DefKind::Contract => TyKind::Contract(def_id),
+        _ => TyKind::Error,
     }
 }
 

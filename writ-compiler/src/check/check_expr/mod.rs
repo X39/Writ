@@ -12,6 +12,7 @@
 //! - `construction` — `new` struct/class/entity construction and array literals
 
 use chumsky::span::SimpleSpan;
+use rustc_hash::FxHashMap;
 
 use crate::ast::expr::{AstExpr, PrefixOp, PostfixOp};
 use crate::resolve::def_map::{DefId, DefKind, DefMap};
@@ -54,6 +55,9 @@ pub struct CheckCtx<'def> {
     pub current_fn_ret: Option<Ty>,
     pub current_file: FileId,
     pub self_type: Option<Ty>,
+    /// Generic parameters visible in the declaration currently being checked.
+    /// Impl-level and method-level parameters share one ordinal space here.
+    pub current_generics: FxHashMap<String, u32>,
     /// The namespace of the currently-checked function or method (e.g. `"mymod"`).
     /// Set from `DefEntry::namespace` before checking a function/method body.
     /// Used for namespace-prefixed FQN lookup of type annotations in namespaced projects.
@@ -75,6 +79,141 @@ impl CheckCtx<'_> {
     /// Format a type for display in error messages.
     pub fn display_ty(&self, ty: Ty) -> String {
         self.interner.display(ty)
+    }
+
+    /// Resolve an annotation using the active declaration's generic scope.
+    pub fn resolve_ast_type(&mut self, ty: &crate::ast::types::AstType) -> Ty {
+        let generics = self.current_generics.clone();
+        super::env::resolve_ast_type_with_file(
+            ty,
+            self.def_map,
+            &mut self.interner,
+            &generics,
+            self.current_file,
+        )
+    }
+
+    /// Check the language's directional assignment relation and emit a focused
+    /// diagnostic on failure. Contract destinations accept a concrete value only
+    /// when one structurally matching impl exists for the exact specialization.
+    pub fn check_assignable(
+        &mut self,
+        expected: Ty,
+        found: Ty,
+        expected_span: SimpleSpan,
+        found_span: SimpleSpan,
+        help: Option<String>,
+    ) -> bool {
+        let expected = self.unify.resolve_ty_deep(expected, &mut self.interner);
+        let found = self.unify.resolve_ty_deep(found, &mut self.interner);
+
+        if self.is_error(expected) || self.is_error(found) {
+            return true;
+        }
+
+        let expected_contract = match self.interner.kind(expected) {
+            TyKind::Contract(def_id) => Some(*def_id),
+            _ => None,
+        };
+        let Some(contract_def_id) = expected_contract else {
+            if self
+                .unify
+                .unify(expected, found, &mut self.interner)
+                .is_ok()
+            {
+                return true;
+            }
+            self.emit_error(TypeError::TypeMismatch {
+                expected: self.display_ty(expected),
+                found: self.display_ty(found),
+                expected_span,
+                found_span,
+                file: self.current_file,
+                help,
+            });
+            return false;
+        };
+
+        // Contract values retain their specialization. They are assignable only
+        // to the same exact contract type; concrete-to-contract conversion is
+        // handled by matching ImplEntry patterns below.
+        if matches!(self.interner.kind(found), TyKind::Contract(_)) {
+            if super::infer::types_equal_strict(expected, found, &self.interner) {
+                return true;
+            }
+            self.emit_error(TypeError::TypeMismatch {
+                expected: self.display_ty(expected),
+                found: self.display_ty(found),
+                expected_span,
+                found_span,
+                file: self.current_file,
+                help,
+            });
+            return false;
+        }
+
+        let concrete_def_id = match self.interner.kind(found) {
+            TyKind::Struct(def_id)
+            | TyKind::Class(def_id)
+            | TyKind::Entity(def_id)
+            | TyKind::Enum(def_id) => Some(*def_id),
+            _ => None,
+        };
+
+        let matching_impls = concrete_def_id
+            .and_then(|def_id| self.type_env.impl_index.get(&def_id))
+            .map(|impls| {
+                impls
+                    .iter()
+                    .filter(|implementation| {
+                        if implementation.contract_def_id != Some(contract_def_id) {
+                            return false;
+                        }
+                        let Some(contract_pattern) = implementation.contract_ty else {
+                            return false;
+                        };
+                        let Some(mut bindings) = super::infer::match_type_pattern(
+                            implementation.target_ty,
+                            found,
+                            &self.interner,
+                        ) else {
+                            return false;
+                        };
+                        super::infer::match_type_pattern_with_bindings(
+                            contract_pattern,
+                            expected,
+                            &self.interner,
+                            &mut bindings,
+                        )
+                    })
+                    .count()
+            })
+            .unwrap_or(0);
+
+        if matching_impls == 1 {
+            return true;
+        }
+
+        let contract_name = self.display_ty(expected);
+        let found_name = self.display_ty(found);
+        if matching_impls > 1 {
+            self.emit_error(TypeError::AmbiguousImpl {
+                target_name: found_name,
+                member_name: contract_name,
+                candidate_count: matching_impls,
+                span: found_span,
+                file: self.current_file,
+            });
+        } else {
+            self.emit_error(TypeError::MissingContractImpl {
+                ty_name: found_name.clone(),
+                contract_name: contract_name.clone(),
+                span: found_span,
+                file: self.current_file,
+                suggestion: format!("add `impl {contract_name} for {found_name}`"),
+            });
+        }
+        false
     }
 }
 
@@ -303,17 +442,13 @@ pub fn check_expr(ctx: &mut CheckCtx, expr: &AstExpr) -> TypedExpr {
             let target_ty = typed_target.ty();
             let value_ty = typed_value.ty();
 
-            if !ctx.is_error(target_ty) && !ctx.is_error(value_ty)
-                && ctx.unify.unify(target_ty, value_ty, &mut ctx.interner).is_err() {
-                    ctx.emit_error(TypeError::TypeMismatch {
-                        expected: ctx.display_ty(target_ty),
-                        found: ctx.display_ty(value_ty),
-                        expected_span: typed_target.span(),
-                        found_span: typed_value.span(),
-                        file: ctx.current_file,
-                        help: None,
-                    });
-                }
+            ctx.check_assignable(
+                target_ty,
+                value_ty,
+                typed_target.span(),
+                typed_value.span(),
+                None,
+            );
 
             // Check mutability of the assignment target
             check_assignment_mutability(ctx, &typed_target, *span);

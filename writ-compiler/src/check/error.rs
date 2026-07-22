@@ -140,6 +140,13 @@ pub enum TypeError {
         call_span: SimpleSpan,
         file: FileId,
     },
+    AmbiguousImpl {
+        target_name: String,
+        member_name: String,
+        candidate_count: usize,
+        span: SimpleSpan,
+        file: FileId,
+    },
 }
 
 impl From<TypeError> for Diagnostic {
@@ -448,6 +455,21 @@ impl From<TypeError> for Diagnostic {
             )
             .with_primary(file, call_span, "ambiguous call")
             .with_help("add explicit type annotations to disambiguate")
+            .build(),
+            TypeError::AmbiguousImpl {
+                target_name,
+                member_name,
+                candidate_count,
+                span,
+                file,
+            } => Diagnostic::error(
+                code::E0125,
+                format!(
+                    "ambiguous implementation of `{member_name}` for `{target_name}`: {candidate_count} candidates match"
+                ),
+            )
+            .with_primary(file, span, "overlapping implementations match here")
+            .with_help("remove or narrow one of the overlapping impl blocks")
             .build(),
         }
     }

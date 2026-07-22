@@ -121,6 +121,9 @@ fn array_default_kind(emitter: &BodyEmitter<'_>, array_ty: Ty) -> ArrayDefaultKi
         | TyKind::GenericParam(_)
         | TyKind::Infer(_)
         | TyKind::Error => ArrayDefaultKind::Unavailable,
+        TyKind::GenericInstance { .. } => {
+            unreachable!("TyInterner::kind exposes a generic instance's base kind")
+        }
     }
 }
 

@@ -152,21 +152,19 @@ pub(super) fn check_call(
             // Check each argument type
             for (i, (arg, &param_ty)) in typed_args.iter().zip(params.iter()).enumerate() {
                 let arg_ty = arg.ty();
-                if !ctx.is_error(arg_ty) && !ctx.is_error(param_ty)
-                    && ctx.unify.unify(param_ty, arg_ty, &mut ctx.interner).is_err() {
-                        ctx.emit_error(TypeError::TypeMismatch {
-                            expected: ctx.display_ty(param_ty),
-                            found: ctx.display_ty(arg_ty),
-                            expected_span: span,
-                            found_span: arg.span(),
-                            file: ctx.current_file,
-                            help: Some(format!("in argument {}", i + 1)),
-                        });
-                    }
+                ctx.check_assignable(
+                    param_ty,
+                    arg_ty,
+                    span,
+                    arg.span(),
+                    Some(format!("in argument {}", i + 1)),
+                );
             }
 
+            let resolved_ret = ctx.unify.resolve_ty_deep(ret, &mut ctx.interner);
+
             TypedExpr::Call {
-                ty: ret,
+                ty: resolved_ret,
                 span,
                 callee: Box::new(typed_callee),
                 args: typed_args,
@@ -271,20 +269,16 @@ fn resolve_overloaded_call(
             // Unify argument types for real
             for (i, (arg, &param_ty)) in typed_args.iter().zip(param_tys.iter()).enumerate() {
                 let arg_ty = arg.ty();
-                if !ctx.is_error(arg_ty) && !ctx.is_error(param_ty)
-                    && ctx.unify.unify(param_ty, arg_ty, &mut ctx.interner).is_err() {
-                        ctx.emit_error(TypeError::TypeMismatch {
-                            expected: ctx.display_ty(param_ty),
-                            found: ctx.display_ty(arg_ty),
-                            expected_span: def_span,
-                            found_span: arg.span(),
-                            file: ctx.current_file,
-                            help: Some(format!("in argument {} of `{}`", i + 1, name)),
-                        });
-                    }
+                ctx.check_assignable(
+                    param_ty,
+                    arg_ty,
+                    def_span,
+                    arg.span(),
+                    Some(format!("in argument {} of `{}`", i + 1, name)),
+                );
             }
 
-            let resolved_ret = ctx.unify.resolve_ty(ret_ty, &ctx.interner);
+            let resolved_ret = ctx.unify.resolve_ty_deep(ret_ty, &mut ctx.interner);
 
             if !sig.generics.is_empty() && !sig.bounds.is_empty() {
                 check_contract_bounds(ctx, &sig, &infer_vars, span);
@@ -386,21 +380,17 @@ pub(super) fn check_call_with_sig(
     // Check each argument type
     for (i, (arg, &param_ty)) in typed_args.iter().zip(param_tys.iter()).enumerate() {
         let arg_ty = arg.ty();
-        if !ctx.is_error(arg_ty) && !ctx.is_error(param_ty)
-            && ctx.unify.unify(param_ty, arg_ty, &mut ctx.interner).is_err() {
-                ctx.emit_error(TypeError::TypeMismatch {
-                    expected: ctx.display_ty(param_ty),
-                    found: ctx.display_ty(arg_ty),
-                    expected_span: def_span,
-                    found_span: arg.span(),
-                    file: ctx.current_file,
-                    help: Some(format!("in argument {} of `{}`", i + 1, fn_name)),
-                });
-            }
+        ctx.check_assignable(
+            param_ty,
+            arg_ty,
+            def_span,
+            arg.span(),
+            Some(format!("in argument {} of `{}`", i + 1, fn_name)),
+        );
     }
 
     // Resolve return type (may contain InferVars now resolved)
-    let resolved_ret = ctx.unify.resolve_ty(ret_ty, &ctx.interner);
+    let resolved_ret = ctx.unify.resolve_ty_deep(ret_ty, &mut ctx.interner);
 
     // Check contract bounds on resolved generic parameters
     if !sig.generics.is_empty() && !sig.bounds.is_empty() {
@@ -509,10 +499,7 @@ pub(super) fn check_generic_call(
     {
         let typed_obj = check_expr(ctx, object);
         let src_kind = ctx.interner.kind(typed_obj.ty()).clone();
-        let generic_map = rustc_hash::FxHashMap::default();
-        let target_ty = super::super::env::resolve_ast_type_with_file(
-            &type_args[0], ctx.def_map, &mut ctx.interner, &generic_map, ctx.current_file,
-        );
+        let target_ty = ctx.resolve_ast_type(&type_args[0]);
         let target_kind = ctx.interner.kind(target_ty).clone();
 
         // Build the sentinel field name from (src_kind, target_kind)
@@ -558,10 +545,7 @@ pub(super) fn check_generic_call(
         let typed_obj = check_expr(ctx, object);
         let obj_kind = ctx.interner.kind(typed_obj.ty()).clone();
         if matches!(obj_kind, TyKind::AnyEntity) {
-            let generic_map = rustc_hash::FxHashMap::default();
-            let entity_type = super::super::env::resolve_ast_type_with_file(
-                &type_args[0], ctx.def_map, &mut ctx.interner, &generic_map, ctx.current_file,
-            );
+            let entity_type = ctx.resolve_ast_type(&type_args[0]);
             let fn_ty = ctx.interner.func(vec![], entity_type);
             let callee_typed = TypedExpr::Field {
                 ty: fn_ty,
@@ -584,10 +568,9 @@ pub(super) fn check_generic_call(
         && let Some(def_id) = find_fn_def_id(ctx, name)
             && let Some(sig) = ctx.type_env.fn_sigs.get(&def_id).cloned() {
                 // Resolve explicit type args
-                let generic_map = rustc_hash::FxHashMap::default();
                 let explicit_tys: Vec<_> = type_args
                     .iter()
-                    .map(|ta| super::super::env::resolve_ast_type_with_file(ta, ctx.def_map, &mut ctx.interner, &generic_map, ctx.current_file))
+                    .map(|ta| ctx.resolve_ast_type(ta))
                     .collect();
 
                 // Build substitution from explicit type args
@@ -631,17 +614,13 @@ pub(super) fn check_generic_call(
                 // Check each arg type
                 for (i, (arg, &param_ty)) in typed_args.iter().zip(param_tys.iter()).enumerate() {
                     let arg_ty = arg.ty();
-                    if !ctx.is_error(arg_ty) && !ctx.is_error(param_ty)
-                        && ctx.unify.unify(param_ty, arg_ty, &mut ctx.interner).is_err() {
-                            ctx.emit_error(TypeError::TypeMismatch {
-                                expected: ctx.display_ty(param_ty),
-                                found: ctx.display_ty(arg_ty),
-                                expected_span: span,
-                                found_span: arg.span(),
-                                file: ctx.current_file,
-                                help: Some(format!("in argument {} of `{}`", i + 1, name)),
-                            });
-                        }
+                    ctx.check_assignable(
+                        param_ty,
+                        arg_ty,
+                        span,
+                        arg.span(),
+                        Some(format!("in argument {} of `{}`", i + 1, name)),
+                    );
                 }
 
                 return TypedExpr::Call {
