@@ -1186,6 +1186,73 @@ fn spawn_detached_is_void() {
     assert!(has_no_errors(&diags), "errors: {:?}", diags);
 }
 
+#[test]
+fn spawn_accepts_concrete_instance_methods_for_both_lifetimes() {
+    let (_ast, diags) = typecheck_src(
+        "pub class Worker {}
+         impl Worker { pub fn run(self, value: int) -> int { value } }
+         pub fn test(worker: Worker) {
+             let task = spawn worker.run(1);
+             spawn detached worker.run(2);
+         }",
+    );
+    assert!(has_no_errors(&diags), "errors: {:?}", diags);
+}
+
+#[test]
+fn spawn_rejects_targets_without_concrete_bytecode_bodies() {
+    let cases = [
+        (
+            "non-call",
+            "pub fn test() { spawn 1; }",
+            "operand is not a call",
+        ),
+        (
+            "extern",
+            "pub extern fn host_work() -> int;
+             pub fn test() { spawn detached host_work(); }",
+            "extern functions do not have bytecode bodies",
+        ),
+        (
+            "virtual contract call",
+            "pub contract Worker { fn run(self) -> int; }
+             pub fn test(worker: Worker) { spawn worker.run(); }",
+            "virtual or contract dispatch",
+        ),
+        (
+            "delegate call",
+            "pub fn test() {
+                 let callback = fn() -> int { 1 };
+                 spawn callback();
+             }",
+            "delegate calls do not name a concrete bytecode body",
+        ),
+        (
+            "built-in call",
+            "pub fn test() { spawn Some(1); }",
+            "built-in operations do not have spawnable bytecode bodies",
+        ),
+        (
+            "unresolved call",
+            "pub fn work(value: int) -> int { value }
+             pub fn test() { spawn work(); }",
+            "call target could not be resolved",
+        ),
+    ];
+
+    for (label, source, expected_message) in cases {
+        let (_ast, diags) = typecheck_src(source);
+        let spawn_error = diags
+            .iter()
+            .find(|diag| diag.code == "E0126")
+            .unwrap_or_else(|| panic!("{label}: expected E0126, got {diags:?}"));
+        assert!(
+            spawn_error.message.contains(expected_message),
+            "{label}: unexpected diagnostic: {spawn_error:?}",
+        );
+    }
+}
+
 // =========================================================
 // Lambda / Closure tests (TYPE-12)
 // =========================================================

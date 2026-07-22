@@ -357,6 +357,14 @@ pub fn check_expr(ctx: &mut CheckCtx, expr: &AstExpr) -> TypedExpr {
         },
         AstExpr::Spawn { expr: inner, span } => {
             let typed_inner = check_expr(ctx, inner);
+            if let Some(reason) = unsupported_spawn_reason(ctx, &typed_inner) {
+                let ty = ctx.emit_error(TypeError::UnsupportedSpawnTarget {
+                    reason: reason.to_string(),
+                    span: *span,
+                    file: ctx.current_file,
+                });
+                return TypedExpr::Error { ty, span: *span };
+            }
             let inner_ty = typed_inner.ty();
             let task_ty = ctx.interner.task_handle(inner_ty);
             TypedExpr::Spawn {
@@ -367,6 +375,14 @@ pub fn check_expr(ctx: &mut CheckCtx, expr: &AstExpr) -> TypedExpr {
         },
         AstExpr::SpawnDetached { expr: inner, span } => {
             let typed_inner = check_expr(ctx, inner);
+            if let Some(reason) = unsupported_spawn_reason(ctx, &typed_inner) {
+                let ty = ctx.emit_error(TypeError::UnsupportedSpawnTarget {
+                    reason: reason.to_string(),
+                    span: *span,
+                    file: ctx.current_file,
+                });
+                return TypedExpr::Error { ty, span: *span };
+            }
             TypedExpr::SpawnDetached {
                 ty: ctx.interner.void(),
                 span: *span,
@@ -568,6 +584,69 @@ pub fn check_expr(ctx: &mut CheckCtx, expr: &AstExpr) -> TypedExpr {
             ty: ctx.interner.error(),
             span: *span,
         },
+    }
+}
+
+/// The task opcodes can start only concrete MethodDef/MethodRef bodies. Keep
+/// unsupported dispatch forms out of codegen instead of manufacturing a null
+/// metadata token or a hidden thunk.
+fn unsupported_spawn_reason(ctx: &CheckCtx<'_>, expr: &TypedExpr) -> Option<&'static str> {
+    let TypedExpr::Call {
+        callee,
+        callee_def_id,
+        callee_has_receiver,
+        ..
+    } = expr
+    else {
+        return Some("the operand is not a call");
+    };
+
+    if ctx.is_error(expr.ty()) || ctx.is_error(callee.ty()) {
+        return Some("the call target could not be resolved");
+    }
+
+    match callee.as_ref() {
+        TypedExpr::Field { receiver, .. } => {
+            let receiver_ty = ctx.interner.resolve_infer(receiver.ty());
+            match ctx.interner.kind(receiver_ty) {
+                TyKind::Struct(_) | TyKind::Class(_) | TyKind::Entity(_) | TyKind::Enum(_)
+                    if callee_has_receiver.is_some() =>
+                {
+                    None
+                }
+                TyKind::Struct(_) | TyKind::Class(_) | TyKind::Entity(_) | TyKind::Enum(_) => {
+                    Some("the concrete method did not resolve to a bytecode body")
+                }
+                TyKind::Contract(_) | TyKind::GenericParam(_) => {
+                    Some("virtual or contract dispatch has no single bytecode body")
+                }
+                _ => Some("built-in operations do not have spawnable bytecode bodies"),
+            }
+        }
+        _ => {
+            let Some(def_id) = callee_def_id else {
+                return Some(match callee.as_ref() {
+                    TypedExpr::Var { name, .. }
+                        if matches!(name.as_str(), "Some" | "None" | "Ok" | "Err") =>
+                    {
+                        "built-in operations do not have spawnable bytecode bodies"
+                    }
+                    TypedExpr::Path { segments, .. }
+                        if segments.last().is_some_and(|name| {
+                            matches!(name.as_str(), "Some" | "None" | "Ok" | "Err")
+                        }) =>
+                    {
+                        "built-in operations do not have spawnable bytecode bodies"
+                    }
+                    _ => "delegate calls do not name a concrete bytecode body",
+                });
+            };
+            match ctx.def_map.get_entry(*def_id).kind {
+                DefKind::Fn if *callee_has_receiver == Some(false) => None,
+                DefKind::ExternFn => Some("extern functions do not have bytecode bodies"),
+                _ => Some("the call target did not resolve to a bytecode function"),
+            }
+        }
     }
 }
 

@@ -147,6 +147,11 @@ pub enum TypeError {
         span: SimpleSpan,
         file: FileId,
     },
+    UnsupportedSpawnTarget {
+        reason: String,
+        span: SimpleSpan,
+        file: FileId,
+    },
 }
 
 impl From<TypeError> for Diagnostic {
@@ -470,6 +475,15 @@ impl From<TypeError> for Diagnostic {
             )
             .with_primary(file, span, "overlapping implementations match here")
             .with_help("remove or narrow one of the overlapping impl blocks")
+            .build(),
+            TypeError::UnsupportedSpawnTarget { reason, span, file } => Diagnostic::error(
+                code::E0126,
+                format!("unsupported spawn target: {reason}"),
+            )
+            .with_primary(file, span, "this expression cannot start a task")
+            .with_help(
+                "spawn a direct bytecode function or a method on a concrete struct, class, entity, or enum",
+            )
             .build(),
         }
     }

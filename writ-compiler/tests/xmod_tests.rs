@@ -1116,3 +1116,65 @@ fn xmod_static_methodref_does_not_prepend_qualified_receiver() {
         Some(writ_module::Instruction::Call { argc: 1, .. })
     ));
 }
+
+#[test]
+fn xmod_spawn_variants_use_methodrefs_and_the_declared_receiver_abi() {
+    let library_bytes = compile(r#"
+        pub class Worker {}
+        impl Worker {
+            pub fn choose(self, value: int) -> int { return value; }
+            pub fn choose(self, value: string) -> int { return 2; }
+            pub fn select(value: int) -> int { return value; }
+        }
+    "#);
+    let library = writ_module::Module::from_bytes(&library_bytes).unwrap();
+    let user_bytes = compile_with_libs(r#"
+        pub fn start(worker: Worker) {
+            let instance_task = spawn worker.choose(7);
+            spawn detached worker.choose(8);
+            let static_task = spawn worker.select(9);
+            spawn detached worker.select(10);
+        }
+    "#, &[&library]).expect("cross-module concrete spawn calls should compile");
+    let user = writ_module::Module::from_bytes(&user_bytes).unwrap();
+    let body = &user.method_bodies[user.top_level_method_indices()[0]];
+    let mut cursor = std::io::Cursor::new(&body.code);
+    let mut scoped = Vec::new();
+    let mut detached = Vec::new();
+    while (cursor.position() as usize) < body.code.len() {
+        match writ_module::Instruction::decode(&mut cursor).unwrap() {
+            writ_module::Instruction::SpawnTask { method_idx, argc, .. } => {
+                scoped.push((method_idx, argc));
+            }
+            writ_module::Instruction::SpawnDetached { method_idx, argc, .. } => {
+                detached.push((method_idx, argc));
+            }
+            _ => {}
+        }
+    }
+
+    assert_eq!(scoped.len(), 2);
+    assert_eq!(detached.len(), 2);
+    for (method_idx, _) in scoped.iter().chain(&detached) {
+        let token = writ_module::MetadataToken(*method_idx);
+        assert!(!token.is_null(), "spawn target must not be the null token");
+        assert_eq!(
+            token.table_id(),
+            writ_module::tables::TableId::MethodRef.as_u8(),
+            "cross-module spawn target must be a MethodRef",
+        );
+    }
+
+    let scoped_instance = scoped.iter().find(|(_, argc)| *argc == 2).unwrap();
+    let detached_instance = detached.iter().find(|(_, argc)| *argc == 2).unwrap();
+    assert_eq!(
+        scoped_instance.0, detached_instance.0,
+        "scoped and detached instance spawn must select the same overload",
+    );
+    let scoped_static = scoped.iter().find(|(_, argc)| *argc == 1).unwrap();
+    let detached_static = detached.iter().find(|(_, argc)| *argc == 1).unwrap();
+    assert_eq!(
+        scoped_static.0, detached_static.0,
+        "scoped and detached static spawn must select the same method",
+    );
+}

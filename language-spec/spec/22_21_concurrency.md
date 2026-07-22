@@ -15,8 +15,8 @@ The full task state machine and scheduling semantics are specified in the [IL Ex
 
 | Primitive        | Syntax                | Behavior                                                                                        |
 |------------------|-----------------------|-------------------------------------------------------------------------------------------------|
-| `spawn`          | `spawn expr`          | Starts a background task, returns a handle. Scoped to parent — auto-cancelled when parent ends. |
-| `spawn detached` | `spawn detached expr` | Independent background task. Outlives parent scope.                                             |
+| `spawn`          | `spawn call`          | Starts a background task, returns a handle. Scoped to parent — auto-cancelled when parent ends. |
+| `spawn detached` | `spawn detached call` | Starts an independent background task and discards its handle. The expression has type `void`.  |
 | `join`           | `join handle`         | Wait for a spawned task to complete.                                                            |
 | `cancel`         | `cancel handle`       | Hard-terminate a task. Runs `defer` blocks.                                                     |
 | `defer`          | `defer { ... }`       | Cleanup code that runs on normal return or cancellation.                                        |
@@ -48,8 +48,19 @@ fn moveBoulder(target: vec2) {
 ## 1.21.3 Task Lifetime Rules
 
 Scoped tasks (`spawn`) are automatically cancelled when their parent scope exits (normal return, `->` transition, or
-cancellation). Detached tasks (`spawn detached`) run independently and must be explicitly cancelled or run to
-completion.
+cancellation). Detached tasks (`spawn detached`) run independently until completion or runtime shutdown/cancellation.
+The source expression discards the detached task's handle, so it cannot later be passed to `join` or `cancel`; use
+scoped `spawn` when the script needs a handle.
+
+## 1.21.4 Spawnable Calls
+
+The operand of `spawn` or `spawn detached` must be a call that the compiler resolves statically to a concrete Writ
+bytecode function or method (`MethodDef` or `MethodRef`). A concrete instance method passes `self` first, followed by
+the explicit arguments. A qualified static method passes only its explicit arguments; its qualifier is not a receiver.
+
+The compiler rejects non-call operands, extern/native calls, virtual contract or generic dispatch, delegate calls,
+built-in operations, and unresolved calls. These forms do not identify one bytecode method body that a task can start.
+The compiler does not synthesize wrapper thunks to make them spawnable.
 
 ---
 

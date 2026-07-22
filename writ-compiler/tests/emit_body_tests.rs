@@ -1824,10 +1824,11 @@ fn test_lambda_with_captures_emits_new_set_field_new_delegate() {
 #[test]
 fn test_spawn_task_emits_spawn_task_instruction() {
     // spawn expr -> SpawnTask { r_dst, method_idx, r_base, argc }
-    let builder = ModuleBuilder::new();
     let mut interner = make_interner();
     let ty_int = interner.int();
     let ty_task = interner.intern(TyKind::TaskHandle(ty_int));
+    let (_, fn_def_id) = make_def_id();
+    let builder = make_builder_with_fn(fn_def_id);
     let mut emitter = make_emitter(&builder, &interner);
 
     // spawn(some_call()) -- the inner expr is a Call
@@ -1843,27 +1844,31 @@ fn test_spawn_task_emits_spawn_task_instruction() {
                 name: "some_fn".to_string(),
             }),
             args: vec![],
-            callee_def_id: None,
-            callee_has_receiver: None,
+            callee_def_id: Some(fn_def_id),
+            callee_has_receiver: Some(false),
         }),
     };
 
     let _r = emit_expr(&mut emitter, &spawn_expr);
-    let has_spawn = emitter.instructions.iter().any(|i| matches!(i, Instruction::SpawnTask { .. }));
-    assert!(has_spawn, "spawn expr should emit SpawnTask, got {:?}", emitter.instructions);
+    let expected = builder.token_for_def(fn_def_id).unwrap().0;
+    assert!(matches!(
+        emitter.instructions.as_slice(),
+        [Instruction::SpawnTask { method_idx, argc: 0, .. }] if *method_idx == expected
+    ), "spawn expr should emit a non-null SpawnTask, got {:?}", emitter.instructions);
+    assert_ne!(expected, 0);
+    assert_eq!(MetadataToken(expected).table(), TableId::MethodDef);
 }
 
 #[test]
 fn test_spawn_detached_emits_spawn_detached_instruction() {
-    let builder = ModuleBuilder::new();
     let mut interner = make_interner();
-    let ty_int = interner.int();
     let ty_void = interner.void();
-    let ty_task = interner.intern(TyKind::TaskHandle(ty_void));
+    let (_, fn_def_id) = make_def_id();
+    let builder = make_builder_with_fn(fn_def_id);
     let mut emitter = make_emitter(&builder, &interner);
 
     let spawn_expr = TypedExpr::SpawnDetached {
-        ty: ty_task,
+        ty: ty_void,
         span: dummy_span(),
         expr: Box::new(TypedExpr::Call {
             ty: ty_void,
@@ -1874,14 +1879,241 @@ fn test_spawn_detached_emits_spawn_detached_instruction() {
                 name: "bg_fn".to_string(),
             }),
             args: vec![],
-            callee_def_id: None,
-            callee_has_receiver: None,
+            callee_def_id: Some(fn_def_id),
+            callee_has_receiver: Some(false),
         }),
     };
 
     let _r = emit_expr(&mut emitter, &spawn_expr);
-    let has_spawn_detached = emitter.instructions.iter().any(|i| matches!(i, Instruction::SpawnDetached { .. }));
-    assert!(has_spawn_detached, "spawn_detached should emit SpawnDetached, got {:?}", emitter.instructions);
+    let expected = builder.token_for_def(fn_def_id).unwrap().0;
+    assert!(matches!(
+        emitter.instructions.as_slice(),
+        [Instruction::SpawnDetached { method_idx, argc: 0, .. }] if *method_idx == expected
+    ), "spawn_detached should emit a non-null SpawnDetached, got {:?}", emitter.instructions);
+    assert_ne!(expected, 0);
+    assert_eq!(MetadataToken(expected).table(), TableId::MethodDef);
+}
+
+#[test]
+fn test_cross_module_overloaded_instance_spawn_variants_pack_self_and_resolve_methodref() {
+    use writ_module::signature::{TypeSignature, encode_method_signature};
+
+    let mut interner = make_interner();
+    let ty_int = interner.int();
+    let ty_void = interner.void();
+    let ty_task = interner.intern(TyKind::TaskHandle(ty_int));
+    let (_, remote_type_def_id) = make_def_id();
+    let ty_remote = interner.intern(TyKind::Class(remote_type_def_id));
+    let callee_ty = interner.intern(TyKind::Func {
+        params: vec![ty_int],
+        ret: ty_int,
+    });
+
+    let mut builder = ModuleBuilder::new();
+    let module_ref = builder.add_module_ref("workers", "1.0.0");
+    let type_ref = builder.add_type_ref(module_ref, "RemoteWorker", "");
+    let parent = MetadataToken::new(TableId::TypeRef, (type_ref + 1) as u32);
+    builder.def_token_map.insert(remote_type_def_id, parent);
+    let int_signature = encode_method_signature(&[TypeSignature::Int], &TypeSignature::Int)
+        .expect("valid int overload signature");
+    let string_signature =
+        encode_method_signature(&[TypeSignature::String], &TypeSignature::Int)
+            .expect("valid string overload signature");
+    let expected_row = builder.add_method_ref_with_origin(
+        parent,
+        "choose",
+        &int_signature,
+        true,
+        true,
+    );
+    builder.add_method_ref_with_origin(
+        parent,
+        "choose",
+        &string_signature,
+        true,
+        true,
+    );
+    builder.finalize();
+    let expected_token = MetadataToken::new(TableId::MethodRef, (expected_row + 1) as u32).0;
+
+    let call = TypedExpr::Call {
+        ty: ty_int,
+        span: dummy_span(),
+        callee: Box::new(TypedExpr::Field {
+            ty: callee_ty,
+            span: dummy_span(),
+            receiver: Box::new(TypedExpr::Var {
+                ty: ty_remote,
+                span: dummy_span(),
+                name: "remote".to_string(),
+            }),
+            field: "choose".to_string(),
+        }),
+        args: vec![TypedExpr::Literal {
+            ty: ty_int,
+            span: dummy_span(),
+            value: TypedLiteral::Int(7),
+        }],
+        callee_def_id: None,
+        callee_has_receiver: Some(true),
+    };
+
+    let mut scoped = make_emitter(&builder, &interner);
+    let scoped_self = scoped.alloc_reg(ty_remote);
+    scoped.locals.insert("remote".to_string(), scoped_self);
+    emit_expr(
+        &mut scoped,
+        &TypedExpr::Spawn {
+            ty: ty_task,
+            span: dummy_span(),
+            expr: Box::new(call.clone()),
+        },
+    );
+    let mut detached = make_emitter(&builder, &interner);
+    let detached_self = detached.alloc_reg(ty_remote);
+    detached.locals.insert("remote".to_string(), detached_self);
+    emit_expr(
+        &mut detached,
+        &TypedExpr::SpawnDetached {
+            ty: ty_void,
+            span: dummy_span(),
+            expr: Box::new(call),
+        },
+    );
+
+    let scoped_operands = scoped.instructions.iter().find_map(|instruction| match instruction {
+        Instruction::SpawnTask { method_idx, r_base, argc, .. } => {
+            Some((*method_idx, *r_base, *argc))
+        }
+        _ => None,
+    }).expect("scoped spawn instruction");
+    let detached_operands = detached.instructions.iter().find_map(|instruction| match instruction {
+        Instruction::SpawnDetached { method_idx, r_base, argc, .. } => {
+            Some((*method_idx, *r_base, *argc))
+        }
+        _ => None,
+    }).expect("detached spawn instruction");
+    assert_eq!((scoped_operands.0, scoped_operands.2), (expected_token, 2));
+    assert_eq!((detached_operands.0, detached_operands.2), (expected_token, 2));
+    assert!(
+        scoped_operands.1 == scoped_self
+            || scoped.instructions.iter().any(|instruction| matches!(
+                instruction,
+                Instruction::Mov { r_dst, r_src }
+                    if *r_dst == scoped_operands.1 && *r_src == scoped_self
+            )),
+        "scoped instance spawn argument block must begin with self",
+    );
+    assert!(
+        detached_operands.1 == detached_self
+            || detached.instructions.iter().any(|instruction| matches!(
+                instruction,
+                Instruction::Mov { r_dst, r_src }
+                    if *r_dst == detached_operands.1 && *r_src == detached_self
+            )),
+        "detached instance spawn argument block must begin with self",
+    );
+    assert_ne!(expected_token, 0);
+    assert_eq!(MetadataToken(expected_token).table(), TableId::MethodRef);
+}
+
+#[test]
+fn test_cross_module_static_qualified_spawn_variants_exclude_qualifier() {
+    use writ_module::signature::{TypeSignature, encode_method_signature};
+
+    let mut interner = make_interner();
+    let ty_int = interner.int();
+    let ty_void = interner.void();
+    let ty_task = interner.intern(TyKind::TaskHandle(ty_int));
+    let (_, remote_type_def_id) = make_def_id();
+    let ty_remote = interner.intern(TyKind::Class(remote_type_def_id));
+    let callee_ty = interner.intern(TyKind::Func {
+        params: vec![ty_int],
+        ret: ty_int,
+    });
+
+    let mut builder = ModuleBuilder::new();
+    let module_ref = builder.add_module_ref("workers", "1.0.0");
+    let type_ref = builder.add_type_ref(module_ref, "RemoteWorker", "");
+    let parent = MetadataToken::new(TableId::TypeRef, (type_ref + 1) as u32);
+    builder.def_token_map.insert(remote_type_def_id, parent);
+    let signature = encode_method_signature(&[TypeSignature::Int], &TypeSignature::Int)
+        .expect("valid static method signature");
+    let expected_row = builder.add_method_ref_with_origin(
+        parent,
+        "select",
+        &signature,
+        true,
+        false,
+    );
+    builder.finalize();
+    let expected_token = MetadataToken::new(TableId::MethodRef, (expected_row + 1) as u32).0;
+
+    let call = TypedExpr::Call {
+        ty: ty_int,
+        span: dummy_span(),
+        callee: Box::new(TypedExpr::Field {
+            ty: callee_ty,
+            span: dummy_span(),
+            receiver: Box::new(TypedExpr::Var {
+                ty: ty_remote,
+                span: dummy_span(),
+                name: "remote".to_string(),
+            }),
+            field: "select".to_string(),
+        }),
+        args: vec![TypedExpr::Literal {
+            ty: ty_int,
+            span: dummy_span(),
+            value: TypedLiteral::Int(7),
+        }],
+        callee_def_id: None,
+        callee_has_receiver: Some(false),
+    };
+
+    let mut scoped = make_emitter(&builder, &interner);
+    let scoped_qualifier = scoped.alloc_reg(ty_remote);
+    scoped.locals.insert("remote".to_string(), scoped_qualifier);
+    emit_expr(
+        &mut scoped,
+        &TypedExpr::Spawn {
+            ty: ty_task,
+            span: dummy_span(),
+            expr: Box::new(call.clone()),
+        },
+    );
+    let mut detached = make_emitter(&builder, &interner);
+    let detached_qualifier = detached.alloc_reg(ty_remote);
+    detached.locals.insert("remote".to_string(), detached_qualifier);
+    emit_expr(
+        &mut detached,
+        &TypedExpr::SpawnDetached {
+            ty: ty_void,
+            span: dummy_span(),
+            expr: Box::new(call),
+        },
+    );
+
+    let scoped_operands = scoped.instructions.iter().find_map(|instruction| match instruction {
+        Instruction::SpawnTask { method_idx, r_base, argc, .. } => {
+            Some((*method_idx, *r_base, *argc))
+        }
+        _ => None,
+    }).expect("scoped spawn instruction");
+    let detached_operands = detached.instructions.iter().find_map(|instruction| match instruction {
+        Instruction::SpawnDetached { method_idx, r_base, argc, .. } => {
+            Some((*method_idx, *r_base, *argc))
+        }
+        _ => None,
+    }).expect("detached spawn instruction");
+    assert_eq!(scoped_operands.0, expected_token);
+    assert_eq!(detached_operands.0, expected_token);
+    assert_eq!(scoped_operands.2, 1);
+    assert_eq!(detached_operands.2, 1);
+    assert_ne!(scoped_operands.1, scoped_qualifier);
+    assert_ne!(detached_operands.1, detached_qualifier);
+    assert_ne!(expected_token, 0);
+    assert_eq!(MetadataToken(expected_token).table(), TableId::MethodRef);
 }
 
 #[test]
