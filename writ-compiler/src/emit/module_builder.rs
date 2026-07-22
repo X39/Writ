@@ -240,6 +240,31 @@ impl ModuleBuilder {
         self.type_refs.len() - 1
     }
 
+    /// Add a MethodRef row for a method owned by a local or referenced type.
+    /// Returns the 0-based MethodRef row index.
+    pub fn add_method_ref(
+        &mut self,
+        parent: MetadataToken,
+        name: &str,
+        signature: &[u8],
+    ) -> usize {
+        if let Some(index) = self.method_refs.iter().position(|method_ref| {
+            method_ref.parent == parent
+                && self.string_heap.get_str(method_ref.name) == name
+        }) {
+            return index;
+        }
+
+        let name = self.string_heap.intern(name);
+        let signature = self.blob_heap.intern(signature);
+        self.method_refs.push(MethodRefRow {
+            parent,
+            name,
+            signature,
+        });
+        self.method_refs.len() - 1
+    }
+
     /// Add a TypeDef row. Returns a handle for child relationships.
     pub fn add_typedef(
         &mut self,
@@ -1016,6 +1041,25 @@ impl ModuleBuilder {
                     let row_idx = (i + 1) as u32;
                     return Some(MetadataToken::new(TableId::MethodDef, row_idx).0);
                 }
+            }
+        }
+        None
+    }
+
+    /// Look up a cross-module MethodRef token by its parent type DefId and name.
+    pub fn methodref_token_by_type_and_name(
+        &self,
+        parent_def_id: DefId,
+        method_name: &str,
+    ) -> Option<u32> {
+        let parent = self.def_token_map.get(&parent_def_id)?;
+        for (index, method_ref) in self.method_refs.iter().enumerate() {
+            if method_ref.parent == *parent
+                && self.string_heap.get_str(method_ref.name) == method_name
+            {
+                return Some(
+                    MetadataToken::new(TableId::MethodRef, (index + 1) as u32).0,
+                );
             }
         }
         None

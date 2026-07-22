@@ -328,6 +328,26 @@ impl Domain {
                 return Some(idx);
             }
         }
+
+        let type_token = MetadataToken::new(
+            writ_module::tables::TableId::TypeDef.as_u8(),
+            (type_idx + 1) as u32,
+        );
+        for (impl_idx, impl_def) in module.impl_defs.iter().enumerate() {
+            if impl_def.type_token != type_token {
+                continue;
+            }
+            for idx in module.impl_method_indices(impl_idx) {
+                let md_name = read_string(
+                    &module.string_heap,
+                    module.method_defs[idx].name,
+                )
+                .unwrap_or("");
+                if md_name == method_name {
+                    return Some(idx);
+                }
+            }
+        }
         None
     }
 
@@ -499,7 +519,7 @@ mod tests {
     use crate::dispatch::{DispatchTarget, IntrinsicId};
     use writ_module::module::MethodBody;
     use writ_module::tables::TypeDefKind;
-    use writ_module::ModuleBuilder;
+    use writ_module::{Instruction, ModuleBuilder};
 
     fn empty_body() -> MethodBody {
         MethodBody {
@@ -603,6 +623,78 @@ mod tests {
         let rm = resolved.methods.get(&0).expect("MethodRef 0 should be resolved");
         assert_eq!(rm.module_idx, 0, "should point to mod-a");
         assert_eq!(rm.method_idx, 0, "should point to first MethodDef");
+    }
+
+    #[test]
+    fn call_methodref_executes_impl_method_in_library_module() {
+        fn body(instructions: &[Instruction], reg_count: usize) -> MethodBody {
+            let mut code = Vec::new();
+            for instruction in instructions {
+                instruction.encode(&mut code).unwrap();
+            }
+            MethodBody {
+                register_types: vec![0; reg_count],
+                code,
+                debug_locals: vec![],
+                source_spans: vec![],
+            }
+        }
+
+        let mut library = ModuleBuilder::new("test-library");
+        let counter = library.add_type_def("Counter", "lib", TypeDefKind::Class, 0);
+        let counter_impl = library.add_impl_def(counter, MetadataToken::NULL);
+        library.add_impl_method(
+            counter_impl,
+            "get",
+            &[],
+            0,
+            2,
+            body(
+                &[
+                    Instruction::LoadInt { r_dst: 1, value: 42 },
+                    Instruction::Ret { r_src: 1 },
+                ],
+                2,
+            ),
+        );
+        let library = library.build();
+
+        let mut user = ModuleBuilder::new("test-user");
+        let library_ref = user.add_module_ref("test-library", "1.0.0");
+        let counter_ref = user.add_type_ref(library_ref, "Counter", "lib");
+        let get_ref = user.add_method_ref(counter_ref, "get", &[]);
+        user.add_method(
+            "main",
+            &[],
+            0,
+            2,
+            body(
+                &[
+                    Instruction::New {
+                        r_dst: 0,
+                        type_idx: counter_ref.0,
+                    },
+                    Instruction::Call {
+                        r_dst: 1,
+                        method_idx: get_ref.0,
+                        r_base: 0,
+                        argc: 1,
+                    },
+                    Instruction::Ret { r_src: 1 },
+                ],
+                2,
+            ),
+        );
+
+        let mut runtime = crate::RuntimeBuilder::new(user.build())
+            .with_library(library)
+            .build()
+            .unwrap();
+        let task_id = runtime.spawn_task(0, vec![]).unwrap();
+        runtime.tick(0.0, crate::ExecutionLimit::None);
+
+        assert_eq!(runtime.task_state(task_id), Some(crate::TaskState::Completed));
+        assert_eq!(runtime.return_value(task_id), Some(crate::Value::Int(42)));
     }
 
     #[test]

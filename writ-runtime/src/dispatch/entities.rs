@@ -59,7 +59,13 @@ pub(super) fn exec_init_entity(ctx: &mut ExecContext<'_>, r_entity: u16) -> Exec
     if let Ok(type_idx_raw) = ctx.entity_registry.get_type_idx(entity_id) {
         let type_idx_0based = (type_idx_raw as usize).saturating_sub(1);
         if let Some(hook_idx) = find_hook_by_name(&module.module, type_idx_0based, "on_create") {
-            push_hook_frame(ctx.task, hook_idx, &module.module, Value::Entity(entity_id));
+            push_hook_frame(
+                ctx.task,
+                ctx.current_module_idx,
+                hook_idx,
+                &module.module,
+                Value::Entity(entity_id),
+            );
         }
     }
 
@@ -104,7 +110,13 @@ pub(super) fn exec_destroy_entity(ctx: &mut ExecContext<'_>, r_entity: u16) -> E
     let module = &ctx.modules[ctx.current_module_idx];
     let type_idx_0based = (type_idx_raw as usize).saturating_sub(1);
     if let Some(hook_idx) = find_hook_by_name(&module.module, type_idx_0based, "on_destroy") {
-        push_hook_frame(ctx.task, hook_idx, &module.module, Value::Entity(entity_id));
+        push_hook_frame(
+            ctx.task,
+            ctx.current_module_idx,
+            hook_idx,
+            &module.module,
+            Value::Entity(entity_id),
+        );
     }
 
     ExecutionResult::Continue
@@ -232,6 +244,7 @@ pub(super) const HOOK_RETURN_SINK: u16 = u16::MAX;
 /// Push a lifecycle hook call frame onto the task's call stack.
 pub(super) fn push_hook_frame(
     task: &mut crate::task::Task,
+    module_idx: usize,
     hook_method_idx: usize,
     module: &writ_module::Module,
     entity_handle: Value,
@@ -242,7 +255,12 @@ pub(super) fn push_hook_frame(
         1
     };
     let reg_count = reg_count.max(1);
-    let mut frame = crate::frame::CallFrame::new(hook_method_idx, reg_count, HOOK_RETURN_SINK);
+    let mut frame = crate::frame::CallFrame::new_in_module(
+        module_idx,
+        hook_method_idx,
+        reg_count,
+        HOOK_RETURN_SINK,
+    );
     frame.registers[0] = entity_handle;
     task.call_stack.push(frame);
 }

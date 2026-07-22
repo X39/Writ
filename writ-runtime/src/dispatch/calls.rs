@@ -12,18 +12,31 @@ pub(super) fn exec_call(
     r_base: u16,
     argc: u16,
 ) -> ExecutionResult {
-    let module = &ctx.modules[ctx.current_module_idx];
-    let method_idx = match super::decode_method_token(method_idx) {
-        Some(idx) => idx,
-        None => return ExecutionResult::Crash("call to null method token".into()),
+    let (target_module_idx, method_idx) = match resolve_call_target(
+        method_idx,
+        ctx.modules,
+        ctx.current_module_idx,
+    ) {
+        Ok(target) => target,
+        Err(message) => return ExecutionResult::Crash(message),
     };
+    let module = &ctx.modules[target_module_idx];
     if method_idx >= module.decoded_bodies.len() {
-        return ExecutionResult::Crash(format!("call to invalid method index {}", method_idx));
+        return ExecutionResult::Crash(format!(
+            "call to invalid method index {} in module {}",
+            method_idx, target_module_idx
+        ));
     }
     let reg_count = module.module.method_bodies[method_idx].register_types.len();
 
     // Push callee frame immediately, then use split_at_mut for disjoint caller/callee access
-    ctx.task.call_stack.push(crate::frame::CallFrame::with_pool(ctx.pool, method_idx, reg_count, r_dst));
+    ctx.task.call_stack.push(crate::frame::CallFrame::with_pool_in_module(
+        ctx.pool,
+        target_module_idx,
+        method_idx,
+        reg_count,
+        r_dst,
+    ));
     let stack_len = ctx.task.call_stack.len();
     let (bottom, top) = ctx.task.call_stack.split_at_mut(stack_len - 1);
     let caller = bottom.last().unwrap();
@@ -89,7 +102,13 @@ pub(super) fn exec_call_virt(
             let reg_count = target_module.module.method_bodies[method_idx].register_types.len();
 
             // Push callee frame immediately, then use split_at_mut for disjoint caller/callee access
-            ctx.task.call_stack.push(crate::frame::CallFrame::with_pool(ctx.pool, method_idx, reg_count, r_dst));
+            ctx.task.call_stack.push(crate::frame::CallFrame::with_pool_in_module(
+                ctx.pool,
+                module_idx,
+                method_idx,
+                reg_count,
+                r_dst,
+            ));
             let stack_len = ctx.task.call_stack.len();
             let (bottom, top) = ctx.task.call_stack.split_at_mut(stack_len - 1);
             let caller = bottom.last().unwrap();
@@ -272,7 +291,13 @@ pub(super) fn exec_call_indirect(
     let reg_count = module.module.method_bodies[method_idx].register_types.len();
 
     // Push callee frame immediately, then use split_at_mut for disjoint caller/callee access
-    ctx.task.call_stack.push(crate::frame::CallFrame::with_pool(ctx.pool, method_idx, reg_count, r_dst));
+    ctx.task.call_stack.push(crate::frame::CallFrame::with_pool_in_module(
+        ctx.pool,
+        ctx.current_module_idx,
+        method_idx,
+        reg_count,
+        r_dst,
+    ));
     let stack_len = ctx.task.call_stack.len();
     let (bottom, top) = ctx.task.call_stack.split_at_mut(stack_len - 1);
     let caller = bottom.last().unwrap();
@@ -366,6 +391,29 @@ pub(super) fn exec_tail_call(
 }
 
 // ──── CALL_VIRT Helpers ───────────────────────────────────────────────
+
+fn resolve_call_target(
+    token: u32,
+    modules: &[crate::loader::LoadedModule],
+    current_module_idx: usize,
+) -> Result<(usize, usize), String> {
+    let token = writ_module::MetadataToken(token);
+    let row = token
+        .row_index()
+        .ok_or_else(|| "call to null method token".to_string())?
+        - 1;
+
+    match token.table_id() {
+        7 => Ok((current_module_idx, row as usize)),
+        8 => modules[current_module_idx]
+            .resolved_refs
+            .methods
+            .get(&row)
+            .map(|resolved| (resolved.module_idx, resolved.method_idx))
+            .ok_or_else(|| format!("call to unresolved MethodRef row {}", row)),
+        table => Err(format!("call uses unsupported method token table {}", table)),
+    }
+}
 
 /// Resolve a runtime value to its type_key for dispatch table lookup.
 pub(super) fn resolve_runtime_type_key(
@@ -542,8 +590,9 @@ fn try_speaker_dispatch(
 
     // Push speaker_name call frame with r_dst as return register
     let saved_depth = task.call_stack.len();
-    task.call_stack.push(crate::frame::CallFrame::with_pool(
+    task.call_stack.push(crate::frame::CallFrame::with_pool_in_module(
         pool,
+        target_module_idx,
         method_idx,
         reg_count,
         r_dst,

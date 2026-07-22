@@ -317,7 +317,15 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
                 if let TypedExpr::Field { receiver, field, .. } = callee.as_ref() {
                     let receiver_def_id = extract_type_def_id(emitter, receiver.ty());
                     if let Some(rdid) = receiver_def_id {
-                        if let Some(method_token) = emitter.builder.methoddef_token_by_type_and_name(rdid, field) {
+                        if let Some(method_token) = emitter
+                            .builder
+                            .methoddef_token_by_type_and_name(rdid, field)
+                            .or_else(|| {
+                                emitter
+                                    .builder
+                                    .methodref_token_by_type_and_name(rdid, field)
+                            })
+                        {
                             // Found a MethodDef: emit direct CALL (not CALL_INDIRECT).
                             let r_dst_call = emitter.alloc_reg(*ty);
                             let TypedExpr::Call { args, .. } = expr else { unreachable!() };
@@ -392,7 +400,14 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
                     match emitter.interner.kind(receiver.ty()) {
                         TyKind::Struct(rdid) | TyKind::Class(rdid) | TyKind::Entity(rdid) => {
                             let rdid = *rdid;
-                            emitter.builder.methoddef_token_by_type_and_name(rdid, field)
+                            emitter
+                                .builder
+                                .methoddef_token_by_type_and_name(rdid, field)
+                                .or_else(|| {
+                                    emitter
+                                        .builder
+                                        .methodref_token_by_type_and_name(rdid, field)
+                                })
                                 .unwrap_or_else(|| {
                                     // Fallback: token_for_def (works for non-impl methods)
                                     maybe_def_id

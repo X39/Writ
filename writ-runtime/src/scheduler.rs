@@ -187,9 +187,19 @@ impl Scheduler {
 
                 // ── Concurrency results handled by scheduler ──
                 ExecutionResult::SpawnChild { r_dst, method_idx, args } => {
+                    let spawned_module_idx = self.tasks[&task_id]
+                        .call_stack
+                        .last()
+                        .and_then(|frame| frame.module_idx)
+                        .unwrap_or(current_module_idx);
                     let child_id = self.create_task(
-                        method_idx, args, Some(task_id), &modules[current_module_idx],
+                        method_idx, args, Some(task_id), &modules[spawned_module_idx],
                     );
+                    self.tasks
+                        .get_mut(&child_id)
+                        .and_then(|task| task.call_stack.last_mut())
+                        .expect("new child task must have an initial frame")
+                        .module_idx = Some(spawned_module_idx);
                     // Add child to parent's scoped_children and store result
                     if let Some(parent) = self.tasks.get_mut(&task_id) {
                         parent.scoped_children.push(child_id);
@@ -200,9 +210,19 @@ impl Scheduler {
                     continue;
                 }
                 ExecutionResult::SpawnDetachedTask { r_dst, method_idx, args } => {
+                    let spawned_module_idx = self.tasks[&task_id]
+                        .call_stack
+                        .last()
+                        .and_then(|frame| frame.module_idx)
+                        .unwrap_or(current_module_idx);
                     let child_id = self.create_task(
-                        method_idx, args, None, &modules[current_module_idx],
+                        method_idx, args, None, &modules[spawned_module_idx],
                     );
+                    self.tasks
+                        .get_mut(&child_id)
+                        .and_then(|task| task.call_stack.last_mut())
+                        .expect("new detached task must have an initial frame")
+                        .module_idx = Some(spawned_module_idx);
                     if let Some(parent) = self.tasks.get_mut(&task_id)
                         && let Some(frame) = parent.call_stack.last_mut() {
                             frame.registers[r_dst as usize] = pack_task_id(child_id);

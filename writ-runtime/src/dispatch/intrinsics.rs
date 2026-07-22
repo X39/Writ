@@ -853,7 +853,13 @@ pub(super) fn execute_intrinsic(
 
             // Push a call frame for the target method; return Continue so the scheduler drives it
             let reg_count = ctx.modules[method_module_idx].module.method_bodies[method_idx].register_types.len();
-            ctx.task.call_stack.push(crate::frame::CallFrame::with_pool(ctx.pool, method_idx, reg_count, r_dst));
+            ctx.task.call_stack.push(crate::frame::CallFrame::with_pool_in_module(
+                ctx.pool,
+                method_module_idx,
+                method_idx,
+                reg_count,
+                r_dst,
+            ));
             let stack_len = ctx.task.call_stack.len();
             let callee = &mut ctx.task.call_stack[stack_len - 1];
 

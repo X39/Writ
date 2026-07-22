@@ -82,7 +82,45 @@ fn xmod_smoke_method_call() {
         }
     "#;
     let result = compile_with_libs(user_src, &[&lib_module]);
-    assert!(result.is_ok(), "expected compile success for method call on library type, got: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "expected compile success for method call on library type, got: {:?}",
+        result.as_ref().err()
+    );
+
+    let user_module = writ_module::Module::from_bytes(&result.unwrap()).unwrap();
+    assert!(user_module.method_refs.iter().any(|method_ref| {
+        method_ref.parent.table_id() == writ_module::tables::TableId::TypeRef.as_u8()
+            && writ_module::heap::read_string(&user_module.string_heap, method_ref.name)
+                .unwrap_or("")
+                == "get"
+    }));
+
+    let method_index = user_module
+        .method_defs
+        .iter()
+        .position(|method| {
+            writ_module::heap::read_string(&user_module.string_heap, method.name)
+                .unwrap_or("")
+                == "read_counter"
+        })
+        .unwrap();
+    let body = &user_module.method_bodies[method_index];
+    let mut cursor = std::io::Cursor::new(&body.code);
+    let mut instructions = Vec::new();
+    while (cursor.position() as usize) < body.code.len() {
+        instructions.push(writ_module::Instruction::decode(&mut cursor).unwrap());
+    }
+    assert!(instructions.iter().any(|instruction| matches!(
+        instruction,
+        writ_module::Instruction::Call { method_idx, .. }
+            if writ_module::MetadataToken(*method_idx).table_id()
+                == writ_module::tables::TableId::MethodRef.as_u8()
+    )));
+    assert!(!instructions.iter().any(|instruction| matches!(
+        instruction,
+        writ_module::Instruction::CallIndirect { .. }
+    )));
 }
 
 // =============================================================================

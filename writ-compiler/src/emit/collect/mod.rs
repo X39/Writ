@@ -96,6 +96,7 @@ pub fn collect_defs(
     builder.add_type_ref(runtime_mod_idx, "Iterator", "writ");
 
     register_library_type_refs(library_modules, &library_module_refs, def_map, builder);
+    register_library_method_refs(library_modules, def_map, builder);
     register_provisional_named_tokens(typed_ast, builder);
 
     // Pre-scan: compute the set of DefIds to skip at emit time.
@@ -386,6 +387,69 @@ fn register_library_type_ref(
         if def_map.get_entry(def_id).file_id == lib_file_id {
             let token = MetadataToken::new(TableId::TypeRef, (row + 1) as u32);
             builder.def_token_map.insert(def_id, token);
+        }
+    }
+}
+
+fn register_library_method_refs(
+    library_modules: &[&writ_module::Module],
+    def_map: &DefMap,
+    builder: &mut ModuleBuilder,
+) {
+    for (lib_index, module) in library_modules.iter().enumerate() {
+        let lib_file_id = FileId(u32::MAX - 1 - lib_index as u32);
+
+        for (type_index, type_def) in module.type_defs.iter().enumerate() {
+            let name = writ_module::heap::read_string(&module.string_heap, type_def.name)
+                .unwrap_or("");
+            let namespace = writ_module::heap::read_string(
+                &module.string_heap,
+                type_def.namespace,
+            )
+            .unwrap_or("");
+            let fqn = if namespace.is_empty() {
+                name.to_string()
+            } else {
+                format!("{}::{}", namespace, name)
+            };
+            let Some(def_id) = def_map.get(&fqn) else {
+                continue;
+            };
+            if def_map.get_entry(def_id).file_id != lib_file_id {
+                continue;
+            }
+            let Some(parent) = builder.token_for_def(def_id) else {
+                continue;
+            };
+
+            let type_token = writ_module::MetadataToken::new(
+                writ_module::tables::TableId::TypeDef.as_u8(),
+                (type_index + 1) as u32,
+            );
+            let mut method_indices = module.type_method_indices(type_index);
+            for (impl_index, impl_def) in module.impl_defs.iter().enumerate() {
+                if impl_def.type_token == type_token {
+                    method_indices.extend(module.impl_method_indices(impl_index));
+                }
+            }
+
+            for method_index in method_indices {
+                let method = &module.method_defs[method_index];
+                let method_name = writ_module::heap::read_string(
+                    &module.string_heap,
+                    method.name,
+                )
+                .unwrap_or("");
+                if method_name.is_empty() {
+                    continue;
+                }
+                let signature = writ_module::heap::read_blob(
+                    &module.blob_heap,
+                    method.signature,
+                )
+                .unwrap_or(&[]);
+                builder.add_method_ref(parent, method_name, signature);
+            }
         }
     }
 }

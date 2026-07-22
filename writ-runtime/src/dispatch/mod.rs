@@ -248,6 +248,11 @@ pub(crate) fn execute_one(
     pool: &mut RegisterPool,
     reflection: &mut ReflectionIndex,
 ) -> ExecutionResult {
+    let current_module_idx = task
+        .call_stack
+        .last()
+        .and_then(|frame| frame.module_idx)
+        .unwrap_or(current_module_idx);
     let module = &modules[current_module_idx];
 
     let frame = match task.call_stack.last_mut() {
@@ -755,7 +760,8 @@ pub(crate) fn execute_crash(
             .iter()
             .rev()
             .map(|f| {
-                let loaded = &modules[current_module_idx];
+                let frame_module_idx = f.module_idx.unwrap_or(current_module_idx);
+                let loaded = &modules[frame_module_idx];
 
                 // Resolve method name from string heap
                 let method_name = loaded.module.method_defs
