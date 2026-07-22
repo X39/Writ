@@ -61,7 +61,7 @@ pub fn collect_defs(
     let def_map = &typed_ast.def_map;
 
     // 1. ModuleDef: always exactly 1 row.
-    let module_name = find_module_name(def_map);
+    let module_name = find_module_name(def_map, asts);
     builder.set_module_def(&module_name, "0.1.0", 0);
 
     // 2. ModuleRef: preserve normalized dependency order. Public emit entry
@@ -749,13 +749,15 @@ pub fn collect_post_finalize(
 // Module name
 // =============================================================================
 
-fn find_module_name(def_map: &DefMap) -> String {
-    use writ_diagnostics::FileId;
-    // Use the first non-synthetic namespace found, or "main".
-    // Skip entries with FileId(u32::MAX) — those are synthetic builtins (e.g. log:: levels).
+fn find_module_name(def_map: &DefMap, asts: &[(FileId, &crate::ast::Ast)]) -> String {
+    let source_files: rustc_hash::FxHashSet<FileId> =
+        asts.iter().map(|(file_id, _)| *file_id).collect();
+    // Use the first namespace declared by this compilation unit, or "main".
+    // Dependency entries, including the injected core module, also live in the
+    // DefMap and must never determine the emitted module identity.
     for entry in def_map.arena.iter() {
-        if entry.1.file_id == FileId(u32::MAX) {
-            continue; // skip synthetic entries
+        if !source_files.contains(&entry.1.file_id) {
+            continue;
         }
         if !entry.1.namespace.is_empty() {
             // Return the root namespace segment.

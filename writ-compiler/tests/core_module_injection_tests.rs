@@ -81,6 +81,30 @@ fn compile_source_injects_core_through_codegen() {
 }
 
 #[test]
+fn injected_core_does_not_replace_the_user_module_identity() {
+    let module = compile("pub fn main() {}");
+
+    assert_eq!(string(&module, module.header.module_name), "main");
+    assert_eq!(
+        module
+            .module_defs
+            .first()
+            .map(|row| string(&module, row.name)),
+        Some("main"),
+    );
+    let export_names: Vec<_> = module
+        .export_defs
+        .iter()
+        .map(|row| string(&module, row.name))
+        .collect();
+    assert_eq!(
+        export_names,
+        vec!["main"],
+        "dependency definitions must not be re-exported by the user module",
+    );
+}
+
+#[test]
 fn compile_source_injects_core_field_metadata_into_typecheck() {
     let module = compile(r#"pub fn field_name(value: writ::FieldInfo) -> string { value.name }"#);
 

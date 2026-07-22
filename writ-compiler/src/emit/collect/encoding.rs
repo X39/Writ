@@ -56,6 +56,15 @@ pub(super) fn collect_exports(def_map: &DefMap, builder: &mut ModuleBuilder) {
                 DefKind::Impl => continue, // impls aren't exported directly
                 DefKind::AttributeDef => continue, // attribute decls are not exports
             };
+            let is_local_definition = match item_kind {
+                0 => matches!(token.table(), TableId::MethodDef | TableId::ExternDef),
+                1 => matches!(token.table(), TableId::TypeDef | TableId::ContractDef),
+                2 => matches!(token.table(), TableId::GlobalDef),
+                _ => false,
+            };
+            if !is_local_definition {
+                continue;
+            }
             builder.add_export_def(&entry.name, item_kind, token);
         }
     }
