@@ -26,6 +26,10 @@ fn encode(instrs: &[Instruction]) -> Vec<u8> {
     code
 }
 
+fn typedef_token(index: u32) -> u32 {
+    0x0200_0000 | (index + 1)
+}
+
 // ── Recording Host ───────────────────────────────────────────────
 
 /// A host that records on_gc_complete calls.
@@ -164,7 +168,7 @@ fn gc_preserves_entity_data_ref() {
     // Spawn and init an entity — its data_ref should survive GC.
     let mut runtime = build_gc_runtime(
         &[
-            Instruction::SpawnEntity { r_dst: 0, type_idx: 1 },
+            Instruction::SpawnEntity { r_dst: 0, type_idx: typedef_token(0) },
             Instruction::InitEntity { r_entity: 0 },
             Instruction::RetVoid,
         ],
@@ -187,7 +191,7 @@ fn gc_frees_destroyed_entity_data() {
     // Spawn, init, then destroy entity — data should be collectible
     let mut runtime = build_gc_runtime(
         &[
-            Instruction::SpawnEntity { r_dst: 0, type_idx: 1 },
+            Instruction::SpawnEntity { r_dst: 0, type_idx: typedef_token(0) },
             Instruction::InitEntity { r_entity: 0 },
             Instruction::DestroyEntity { r_entity: 0 },
             Instruction::RetVoid,

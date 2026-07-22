@@ -26,6 +26,10 @@ fn encode(instrs: &[Instruction]) -> Vec<u8> {
     code
 }
 
+fn typedef_token(index: u32) -> u32 {
+    0x0200_0000 | (index + 1)
+}
+
 fn make_body(instrs: &[Instruction], reg_count: usize) -> MethodBody {
     MethodBody {
         register_types: vec![0u32; reg_count],
@@ -231,7 +235,7 @@ fn speaker_override_in_display_args() {
         &[
             Instruction::SpawnEntity {
                 r_dst: 0,
-                type_idx: 1, // 1-based row for TypeDef[0] (Merchant)
+                type_idx: typedef_token(0),
             },
             Instruction::InitEntity { r_entity: 0 },
             Instruction::LoadString {
@@ -270,7 +274,7 @@ fn speaker_override_in_display_args() {
     let patched_main_code = encode(&[
         Instruction::SpawnEntity {
             r_dst: 0,
-            type_idx: 1,
+            type_idx: typedef_token(0),
         },
         Instruction::InitEntity { r_entity: 0 },
         Instruction::LoadString {
@@ -343,7 +347,7 @@ fn entity_without_speaker_uses_type_name() {
         &[
             Instruction::SpawnEntity {
                 r_dst: 0,
-                type_idx: 1, // TypeDef table=2, row=1 (Guard)
+                type_idx: typedef_token(0),
             },
             Instruction::InitEntity { r_entity: 0 },
             Instruction::LoadString {
@@ -369,7 +373,7 @@ fn entity_without_speaker_uses_type_name() {
     let patched_code = encode(&[
         Instruction::SpawnEntity {
             r_dst: 0,
-            type_idx: 1,
+            type_idx: typedef_token(0),
         },
         Instruction::InitEntity { r_entity: 0 },
         Instruction::LoadString {

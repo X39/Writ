@@ -25,6 +25,10 @@ fn encode(instrs: &[Instruction]) -> Vec<u8> {
     code
 }
 
+fn typedef_token(index: u32) -> u32 {
+    0x0200_0000 | (index + 1)
+}
+
 fn make_body(instrs: &[Instruction], reg_count: usize) -> MethodBody {
     MethodBody {
         register_types: vec![0u32; reg_count],
@@ -119,9 +123,8 @@ fn init_entity_dispatches_on_create_hook() {
     builder.add_type_def("_Sentinel", "", TypeDefKind::Entity, 0);
 
     // method[1]: "main" -- SPAWN_ENTITY, INIT_ENTITY, RET_VOID
-    // type_idx: 1 = 1-based row index for TypeDef[0] "EntityA"
     let main_body = make_body(&[
-        Instruction::SpawnEntity { r_dst: 0, type_idx: 1 },
+        Instruction::SpawnEntity { r_dst: 0, type_idx: typedef_token(0) },
         Instruction::InitEntity { r_entity: 0 },
         Instruction::RetVoid,
     ], 2);
@@ -184,9 +187,8 @@ fn destroy_entity_dispatches_on_destroy_hook() {
     builder.add_type_def("_Sentinel", "", TypeDefKind::Entity, 0);
 
     // method[1]: "main" -- SPAWN, INIT, DESTROY, RET_VOID
-    // type_idx: 1 = 1-based row index for TypeDef[0] "EntityB"
     let main_body = make_body(&[
-        Instruction::SpawnEntity { r_dst: 0, type_idx: 1 },
+        Instruction::SpawnEntity { r_dst: 0, type_idx: typedef_token(0) },
         Instruction::InitEntity { r_entity: 0 },
         Instruction::DestroyEntity { r_entity: 0 },
         Instruction::RetVoid,
@@ -237,9 +239,8 @@ fn entity_without_hooks_inits_and_destroys_ok() {
     builder.add_type_def("_Sentinel", "", TypeDefKind::Enum, 0);
 
     // method[0]: "main"
-    // type_idx: 1 = 1-based row index for TypeDef[0] "EntityNoHooks"
     let main_body = make_body(&[
-        Instruction::SpawnEntity { r_dst: 0, type_idx: 1 },
+        Instruction::SpawnEntity { r_dst: 0, type_idx: typedef_token(0) },
         Instruction::InitEntity { r_entity: 0 },
         Instruction::DestroyEntity { r_entity: 0 },
         Instruction::RetVoid,

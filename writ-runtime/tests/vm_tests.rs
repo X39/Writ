@@ -31,6 +31,10 @@ fn method_signature(parameter_count: usize) -> Vec<u8> {
     .expect("encode method signature")
 }
 
+fn typedef_token(index: u32) -> u32 {
+    0x0200_0000 | (index + 1)
+}
+
 /// Build a module with one type and one method containing the given instructions.
 /// `reg_count` specifies how many registers the method body has.
 /// Returns a Runtime ready for spawning tasks.
@@ -1177,13 +1181,13 @@ fn str_len_returns_length() {
 
 #[test]
 fn new_allocates_struct() {
-    // New with type_idx=1 (our TestType, kind=Struct), creates Value::Struct with heap allocation
+    // New with our TestType's TypeDef token creates Value::Struct with heap allocation.
     let (rt, tid) = run_simple(
         &[
             Instruction::New {
                 r_dst: 0,
-                type_idx: 1,
-            }, // type_idx 1 = first TypeDef (1-based)
+                type_idx: typedef_token(0),
+            },
             Instruction::Ret { r_src: 0 },
         ],
         1,
@@ -1192,7 +1196,7 @@ fn new_allocates_struct() {
     // Verify it's a Value::Struct (struct allocates on heap, register holds Copy-semantic HeapRef)
     match rt.return_value(tid) {
         Some(Value::Struct { type_idx, .. }) => {
-            assert_eq!(type_idx, 1);
+            assert_eq!(type_idx, typedef_token(0));
         }
         other => panic!("expected Value::Struct, got {:?}", other),
     }
@@ -1210,7 +1214,7 @@ fn get_set_field_round_trip() {
         code: encode(&[
             Instruction::New {
                 r_dst: 0,
-                type_idx: 1,
+                type_idx: typedef_token(0),
             },
             Instruction::LoadInt {
                 r_dst: 1,
@@ -1420,7 +1424,7 @@ fn new_enum_get_tag_extract_field() {
             },
             Instruction::NewEnum {
                 r_dst: 1,
-                type_idx: 0,
+                type_idx: typedef_token(0),
                 tag: 2,
                 field_count: 1,
                 r_base: 0,
@@ -1714,11 +1718,10 @@ fn spawn_task_with_args() {
 
 #[test]
 fn spawn_entity_creates_pending_and_init_commits() {
-    // SPAWN_ENTITY r0 type=1, INIT_ENTITY r0, RET r0
-    // Type 1 needs to exist. We'll use the default type (idx 1 = 0-based idx 0).
+    // SPAWN_ENTITY r0 with the default type's TypeDef token, INIT_ENTITY r0, RET r0.
     let (rt, tid) = run_simple(
         &[
-            Instruction::SpawnEntity { r_dst: 0, type_idx: 1 },
+            Instruction::SpawnEntity { r_dst: 0, type_idx: typedef_token(0) },
             Instruction::InitEntity { r_entity: 0 },
             Instruction::Ret { r_src: 0 },
         ],
@@ -1739,7 +1742,7 @@ fn spawn_entity_creates_pending_and_init_commits() {
 fn entity_is_alive_returns_true_for_alive() {
     let (rt, tid) = run_simple(
         &[
-            Instruction::SpawnEntity { r_dst: 0, type_idx: 1 },
+            Instruction::SpawnEntity { r_dst: 0, type_idx: typedef_token(0) },
             Instruction::InitEntity { r_entity: 0 },
             Instruction::EntityIsAlive { r_dst: 1, r_entity: 0 },
             Instruction::Ret { r_src: 1 },
@@ -1753,7 +1756,7 @@ fn entity_is_alive_returns_true_for_alive() {
 fn entity_is_alive_returns_false_after_destroy() {
     let (rt, tid) = run_simple(
         &[
-            Instruction::SpawnEntity { r_dst: 0, type_idx: 1 },
+            Instruction::SpawnEntity { r_dst: 0, type_idx: typedef_token(0) },
             Instruction::InitEntity { r_entity: 0 },
             Instruction::DestroyEntity { r_entity: 0 },
             Instruction::EntityIsAlive { r_dst: 1, r_entity: 0 },
@@ -1769,7 +1772,7 @@ fn destroy_stale_entity_crashes() {
     // Spawn, init, destroy, then try to destroy again
     let (rt, tid) = run_simple(
         &[
-            Instruction::SpawnEntity { r_dst: 0, type_idx: 1 },
+            Instruction::SpawnEntity { r_dst: 0, type_idx: typedef_token(0) },
             Instruction::InitEntity { r_entity: 0 },
             Instruction::DestroyEntity { r_entity: 0 },
             Instruction::DestroyEntity { r_entity: 0 }, // second destroy should crash
@@ -1791,8 +1794,8 @@ fn get_or_create_singleton_returns_same_entity() {
     // then check the entity_registry has exactly 1 alive entity for that type.
     let mut runtime = build_runtime(
         &[
-            Instruction::GetOrCreate { r_dst: 0, type_idx: 1 },
-            Instruction::GetOrCreate { r_dst: 1, type_idx: 1 },
+            Instruction::GetOrCreate { r_dst: 0, type_idx: typedef_token(0) },
+            Instruction::GetOrCreate { r_dst: 1, type_idx: typedef_token(0) },
             // Both r0 and r1 should be the same entity
             // Return r0; r1 should be the same value
             Instruction::RetVoid,
@@ -1805,7 +1808,10 @@ fn get_or_create_singleton_returns_same_entity() {
     // The entity registry should have exactly 1 alive entity
     assert_eq!(runtime.entity_registry().alive_count(), 1);
     // The singleton should be registered
-    assert!(runtime.entity_registry().get_singleton(1).is_some());
+    assert!(runtime
+        .entity_registry()
+        .get_singleton(typedef_token(0))
+        .is_some());
 }
 
 #[test]
@@ -1829,9 +1835,9 @@ fn entity_is_alive_on_uninitialized_handle_returns_false() {
 fn spawn_init_two_entities_both_alive() {
     let mut runtime = build_runtime(
         &[
-            Instruction::SpawnEntity { r_dst: 0, type_idx: 1 },
+            Instruction::SpawnEntity { r_dst: 0, type_idx: typedef_token(0) },
             Instruction::InitEntity { r_entity: 0 },
-            Instruction::SpawnEntity { r_dst: 1, type_idx: 1 },
+            Instruction::SpawnEntity { r_dst: 1, type_idx: typedef_token(0) },
             Instruction::InitEntity { r_entity: 1 },
             Instruction::RetVoid,
         ],
@@ -1848,9 +1854,9 @@ fn spawn_init_two_entities_both_alive() {
 fn destroy_one_entity_other_survives() {
     let mut runtime = build_runtime(
         &[
-            Instruction::SpawnEntity { r_dst: 0, type_idx: 1 },
+            Instruction::SpawnEntity { r_dst: 0, type_idx: typedef_token(0) },
             Instruction::InitEntity { r_entity: 0 },
-            Instruction::SpawnEntity { r_dst: 1, type_idx: 1 },
+            Instruction::SpawnEntity { r_dst: 1, type_idx: typedef_token(0) },
             Instruction::InitEntity { r_entity: 1 },
             Instruction::DestroyEntity { r_entity: 0 },
             // Check destroyed entity
@@ -2083,7 +2089,7 @@ fn call_virt_user_defined_contract_dispatch_table_populated() {
 
 /// Helper: build a runtime with a named type of the given kind and N fields.
 /// Adds N field_defs after the type, then adds one "main" method with the
-/// provided instructions. The type will have 1-based type_idx=1 in instructions.
+/// provided instructions. The type has TypeDef token `0x0200_0001`.
 fn build_runtime_with_type(
     type_name: &str,
     kind: TypeDefKind,
@@ -2092,7 +2098,7 @@ fn build_runtime_with_type(
     reg_count: u16,
 ) -> Runtime<NullHost> {
     let mut builder = ModuleBuilder::new("test");
-    let token = builder.add_type_def(type_name, "", kind, 0);
+    builder.add_type_def(type_name, "", kind, 0);
     for i in 0..field_count {
         builder.add_field_def(&format!("f{}", i), &[0x01], 0); // type_sig placeholder
     }
@@ -2115,7 +2121,7 @@ fn test_new_struct_heap_alloc() {
         TypeDefKind::Struct,
         2,
         &[
-            Instruction::New { r_dst: 0, type_idx: 1 },
+            Instruction::New { r_dst: 0, type_idx: typedef_token(0) },
             Instruction::Ret { r_src: 0 },
         ],
         1,
@@ -2132,7 +2138,7 @@ fn test_new_struct_heap_alloc() {
     let ret = rt.return_value(task_id).unwrap();
     match ret {
         Value::Struct { type_idx, .. } => {
-            assert_eq!(type_idx, 1);
+            assert_eq!(type_idx, typedef_token(0));
         }
         other => panic!("expected Value::Struct, got {:?}", other),
     }
@@ -2146,7 +2152,7 @@ fn test_new_class_heap_alloc() {
         TypeDefKind::Class,
         2,
         &[
-            Instruction::New { r_dst: 0, type_idx: 1 },
+            Instruction::New { r_dst: 0, type_idx: typedef_token(0) },
             Instruction::Ret { r_src: 0 },
         ],
         1,
@@ -2174,7 +2180,7 @@ fn test_new_enum_kind_crashes() {
         TypeDefKind::Enum,
         0,
         &[
-            Instruction::New { r_dst: 0, type_idx: 1 },
+            Instruction::New { r_dst: 0, type_idx: typedef_token(0) },
             Instruction::Ret { r_src: 0 },
         ],
         1,
@@ -2200,7 +2206,7 @@ fn test_get_set_field_inline_struct() {
         2,
         &[
             // r0 = new MyStruct (Value::Struct with heap-allocated fields)
-            Instruction::New { r_dst: 0, type_idx: 1 },
+            Instruction::New { r_dst: 0, type_idx: typedef_token(0) },
             // r1 = 42
             Instruction::LoadInt { r_dst: 1, value: 42 },
             // r0.field[0] = r1
@@ -2227,7 +2233,7 @@ fn test_get_set_field_class_ref() {
         2,
         &[
             // r0 = new MyClass (Ref on heap)
-            Instruction::New { r_dst: 0, type_idx: 1 },
+            Instruction::New { r_dst: 0, type_idx: typedef_token(0) },
             // r1 = 99
             Instruction::LoadInt { r_dst: 1, value: 99 },
             // r0.field[1] = r1
@@ -2255,7 +2261,7 @@ fn test_box_unbox_inline_struct() {
         1,
         &[
             // r0 = new MyStruct
-            Instruction::New { r_dst: 0, type_idx: 1 },
+            Instruction::New { r_dst: 0, type_idx: typedef_token(0) },
             // r1 = 77
             Instruction::LoadInt { r_dst: 1, value: 77 },
             // r0.field[0] = 77

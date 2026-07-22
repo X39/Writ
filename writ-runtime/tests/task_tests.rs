@@ -27,6 +27,10 @@ fn encode(instrs: &[Instruction]) -> Vec<u8> {
     code
 }
 
+fn methoddef_token(index: u32) -> u32 {
+    0x0700_0000 | (index + 1)
+}
+
 /// Compute the byte offset of instruction at index `n` in a sequence.
 /// This accounts for variable-length instruction encoding.
 fn byte_offset_of(instrs: &[Instruction], n: usize) -> u32 {
@@ -347,7 +351,7 @@ fn crash_unwinds_all_frames_with_defers() {
 
     let main_instrs_raw = vec![
         Instruction::DeferPush { r_dst: 0, method_idx: 0 }, // placeholder
-        Instruction::Call { r_dst: 0, method_idx: 2, r_base: 0, argc: 0 },
+        Instruction::Call { r_dst: 0, method_idx: methoddef_token(1), r_base: 0, argc: 0 },
         Instruction::RetVoid,
         // handler:
         Instruction::LoadInt { r_dst: 0, value: 100 },
@@ -418,7 +422,7 @@ fn crash_info_has_stack_trace() {
     // Method 0 calls method 1, method 1 crashes.
 
     let main_instrs = vec![
-        Instruction::Call { r_dst: 0, method_idx: 2, r_base: 0, argc: 0 },
+        Instruction::Call { r_dst: 0, method_idx: methoddef_token(1), r_base: 0, argc: 0 },
         Instruction::RetVoid,
     ];
 
@@ -687,7 +691,7 @@ fn spawn_task_creates_child() {
     // Method 1 (child): LoadInt r0 42, Ret r0
 
     let main_instrs = vec![
-        Instruction::SpawnTask { r_dst: 0, method_idx: 2, r_base: 0, argc: 0 },
+        Instruction::SpawnTask { r_dst: 0, method_idx: methoddef_token(1), r_base: 0, argc: 0 },
         Instruction::RetVoid,
     ];
 
@@ -727,7 +731,7 @@ fn spawn_detached_survives_parent_completion() {
     // After parent completes, child should still be ready/running.
 
     let parent_instrs = vec![
-        Instruction::SpawnDetached { r_dst: 0, method_idx: 2, r_base: 0, argc: 0 },
+        Instruction::SpawnDetached { r_dst: 0, method_idx: methoddef_token(1), r_base: 0, argc: 0 },
         Instruction::RetVoid,
     ];
 
@@ -775,7 +779,7 @@ fn join_waits_for_child_completion() {
 
     let main_instrs = vec![
         // r0 = spawn child (method 1)
-        Instruction::SpawnTask { r_dst: 0, method_idx: 2, r_base: 0, argc: 0 },
+        Instruction::SpawnTask { r_dst: 0, method_idx: methoddef_token(1), r_base: 0, argc: 0 },
         // r1 = join(r0) -- waits for child, gets return value
         Instruction::Join { r_dst: 1, r_task: 0 },
         // Store child result in global[0]
@@ -832,7 +836,7 @@ fn cancel_triggers_defer_handlers() {
 
     let main_instrs = vec![
         // r0 = spawn child (method 1)
-        Instruction::SpawnTask { r_dst: 0, method_idx: 2, r_base: 0, argc: 0 },
+        Instruction::SpawnTask { r_dst: 0, method_idx: methoddef_token(1), r_base: 0, argc: 0 },
         // Nops so the child gets a chance to run its DeferPush
         Instruction::Nop,
         Instruction::Nop,
@@ -912,7 +916,7 @@ fn scoped_cancel_recursive_on_parent_crash() {
         // 0: DeferPush -> parent handler
         Instruction::DeferPush { r_dst: 0, method_idx: 0 }, // placeholder
         // 1: SpawnTask child
-        Instruction::SpawnTask { r_dst: 0, method_idx: 2, r_base: 0, argc: 0 },
+        Instruction::SpawnTask { r_dst: 0, method_idx: methoddef_token(1), r_base: 0, argc: 0 },
         // 2-4: Nops to let child run via round-robin
         Instruction::Nop,
         Instruction::Nop,
@@ -1190,7 +1194,7 @@ fn spawn_task_with_arguments() {
         // Load argument value into r1
         Instruction::LoadInt { r_dst: 1, value: 10 },
         // Spawn child, passing r1 as argument (r_base=1, argc=1)
-        Instruction::SpawnTask { r_dst: 0, method_idx: 2, r_base: 1, argc: 1 },
+        Instruction::SpawnTask { r_dst: 0, method_idx: methoddef_token(1), r_base: 1, argc: 1 },
         // Join on child
         Instruction::Join { r_dst: 2, r_task: 0 },
         // Store result
@@ -1241,9 +1245,9 @@ fn multiple_children_all_join() {
 
     let main_instrs = vec![
         // Spawn child A (method 1)
-        Instruction::SpawnTask { r_dst: 0, method_idx: 2, r_base: 0, argc: 0 },
+        Instruction::SpawnTask { r_dst: 0, method_idx: methoddef_token(1), r_base: 0, argc: 0 },
         // Spawn child B (method 2)
-        Instruction::SpawnTask { r_dst: 1, method_idx: 3, r_base: 0, argc: 0 },
+        Instruction::SpawnTask { r_dst: 1, method_idx: methoddef_token(2), r_base: 0, argc: 0 },
         // Join child A -> r2
         Instruction::Join { r_dst: 2, r_task: 0 },
         // Join child B -> r3
@@ -1306,7 +1310,7 @@ fn cancel_already_completed_task_is_noop() {
     // The cancel_task_tree checks for terminal states and returns early.
 
     let main_instrs = vec![
-        Instruction::SpawnTask { r_dst: 0, method_idx: 2, r_base: 0, argc: 0 },
+        Instruction::SpawnTask { r_dst: 0, method_idx: methoddef_token(1), r_base: 0, argc: 0 },
         // We need child to complete first. With the scheduler, child is added to ready
         // queue but hasn't run yet when cancel executes. So cancel runs on a non-terminal child.
         // Let's test a different scenario: use Join first to ensure child completes.
@@ -1350,7 +1354,7 @@ fn defer_on_tail_call() {
 
     let main_raw = vec![
         Instruction::DeferPush { r_dst: 0, method_idx: 0 }, // placeholder
-        Instruction::TailCall { method_idx: 2, r_base: 0, argc: 0 },
+        Instruction::TailCall { method_idx: methoddef_token(1), r_base: 0, argc: 0 },
         // handler:
         Instruction::LoadInt { r_dst: 0, value: 77 },
         Instruction::StoreGlobal { global_idx: 0, r_src: 0 },
