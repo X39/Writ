@@ -294,7 +294,19 @@ fn resolve_named_def_id(
     if let Some(def_id) = def_map.get(name) {
         return Some(def_id);
     }
-    // 2. File-private table (requires file_id context)
+
+    // 2. Prelude types and contracts are injected from writ-runtime under the
+    // `writ` namespace, while source annotations retain their unqualified
+    // spelling. Mirror resolver prelude lookup so TypeEnv materializes the same
+    // nominal type that name resolution accepted.
+    if (crate::resolve::prelude::PRELUDE_TYPE_NAMES.contains(&name)
+        || crate::resolve::prelude::PRELUDE_CONTRACT_NAMES.contains(&name))
+        && let Some(def_id) = def_map.get(&format!("writ::{name}"))
+    {
+        return Some(def_id);
+    }
+
+    // 3. File-private table (requires file_id context)
     if let Some(fid) = file_id
         && let Some(privs) = def_map.file_private.get(&fid)
             && let Some(&def_id) = privs.get(name) {
