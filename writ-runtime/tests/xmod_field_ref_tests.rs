@@ -86,6 +86,133 @@ fn compiled_cross_module_second_field_set_and_get_execute() {
 }
 
 #[test]
+fn compiled_cross_module_entity_field_set_and_get_execute() {
+    let library = compile(
+        r#"
+            pub entity Pair {
+                pub first: int,
+                pub second: int
+            }
+        "#,
+    );
+    let user_bytes = writ_compiler::compile_with_libraries(
+        r#"
+            pub fn main() -> int {
+                let mut pair = new Pair { first: 1, second: 2 };
+                pair.second = 42;
+                return pair.second;
+            }
+        "#,
+        &[&library],
+    )
+    .expect("consumer should compile");
+    let user = Module::from_bytes(&user_bytes).expect("consumer module should decode");
+    let main = main_method(&user);
+
+    let mut runtime = RuntimeBuilder::new(user)
+        .with_library(library)
+        .build()
+        .expect("consumer should link");
+    let task = runtime.spawn_task(main, vec![]).unwrap();
+    runtime.tick(0.0, ExecutionLimit::None);
+    assert_eq!(
+        runtime.task_state(task),
+        Some(TaskState::Completed),
+        "cross-module entity field access crashed: {:?}",
+        runtime.crash_info(task)
+    );
+    assert_eq!(runtime.return_value(task), Some(Value::Int(42)));
+}
+
+#[test]
+fn fieldref_rejects_an_entity_with_the_wrong_owner() {
+    let int_sig = encode_type_signature(&TypeSignature::Int).unwrap();
+    let method_sig = encode_method_signature(&[], &TypeSignature::Void).unwrap();
+
+    let mut library = ModuleBuilder::new("entity-owner-library");
+    library.add_type_def("Expected", "test", TypeDefKind::Entity, 0);
+    library.add_field_def("value", &int_sig, 0);
+    library.add_type_def("Actual", "test", TypeDefKind::Entity, 0);
+    library.add_field_def("value", &int_sig, 0);
+
+    let mut user = ModuleBuilder::new("entity-owner-user");
+    let library_ref = user.add_module_ref("entity-owner-library", "1.0.0");
+    let expected_ref = user.add_type_ref(library_ref, "Expected", "test");
+    let actual_ref = user.add_type_ref(library_ref, "Actual", "test");
+    let value_ref = user.add_field_ref(expected_ref, "value", &int_sig);
+    user.add_method(
+        "main",
+        &method_sig,
+        0,
+        2,
+        body(
+            &[
+                Instruction::SpawnEntity {
+                    r_dst: 0,
+                    type_idx: actual_ref.0,
+                },
+                Instruction::LoadInt {
+                    r_dst: 1,
+                    value: 42,
+                },
+                Instruction::SetField {
+                    r_obj: 0,
+                    field_idx: value_ref.0,
+                    r_val: 1,
+                },
+                Instruction::InitEntity { r_entity: 0 },
+                Instruction::RetVoid,
+            ],
+            2,
+        ),
+    );
+
+    let mut runtime = RuntimeBuilder::new(user.build())
+        .with_library(library.build())
+        .build()
+        .expect("FieldRefs should link");
+    let task = runtime.spawn_task(0, vec![]).unwrap();
+    runtime.tick(0.0, ExecutionLimit::None);
+    let crash = runtime
+        .crash_info(task)
+        .expect("wrong-owner FieldRef must fail closed");
+    assert!(
+        crash.message.contains("FieldRef owner mismatch"),
+        "unexpected crash: {}",
+        crash.message
+    );
+}
+
+#[test]
+fn spawn_entity_rejects_a_non_entity_typedef() {
+    let method_sig = encode_method_signature(&[], &TypeSignature::Void).unwrap();
+    let mut builder = ModuleBuilder::new("non-entity-spawn");
+    let struct_token = builder.add_type_def("Record", "test", TypeDefKind::Struct, 0);
+    builder.add_method(
+        "main",
+        &method_sig,
+        0,
+        1,
+        body(
+            &[
+                Instruction::SpawnEntity {
+                    r_dst: 0,
+                    type_idx: struct_token.0,
+                },
+                Instruction::RetVoid,
+            ],
+            1,
+        ),
+    );
+
+    let mut runtime = RuntimeBuilder::new(builder.build()).build().unwrap();
+    let task = runtime.spawn_task(0, vec![]).unwrap();
+    runtime.tick(0.0, ExecutionLimit::None);
+    let crash = runtime.crash_info(task).expect("SPAWN_ENTITY must reject a struct");
+    assert!(crash.message.contains("is not an entity"), "{}", crash.message);
+}
+
+#[test]
 fn fieldref_row_order_is_independent_from_target_field_layout() {
     let int_sig = encode_type_signature(&TypeSignature::Int).unwrap();
     let method_sig = encode_method_signature(&[], &TypeSignature::Int).unwrap();

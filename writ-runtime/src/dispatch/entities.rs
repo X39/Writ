@@ -1,4 +1,4 @@
-use crate::entity::EntityState;
+use crate::entity::{EntityState, EntityTypeIdentity};
 use crate::host::{HostRequest, HostResponse, LogLevel, RequestId};
 use crate::value::Value;
 use writ_module::instruction::ArrayDefaultKind;
@@ -12,9 +12,11 @@ pub(super) fn exec_spawn_entity(
     r_dst: u16,
     type_idx: u32,
 ) -> ExecutionResult {
-    let module = &ctx.modules[ctx.current_module_idx];
-    let entity_id = ctx.entity_registry.begin_spawn(type_idx);
-    let field_count = helpers::get_type_field_count(&module.module, type_idx);
+    let (type_identity, field_count) = match resolve_entity_type(ctx, type_idx) {
+        Ok(resolved) => resolved,
+        Err(error) => return ExecutionResult::Crash(format!("SpawnEntity: {error}")),
+    };
+    let entity_id = ctx.entity_registry.begin_spawn_resolved(type_idx, type_identity);
     let data_ref = ctx.heap.alloc_struct(u32::MAX, field_count);
     let _ = ctx.entity_registry.set_data_ref(entity_id, data_ref);
     let frame = ctx.task.call_stack.last_mut().unwrap();
@@ -55,13 +57,12 @@ pub(super) fn exec_init_entity(ctx: &mut ExecContext<'_>, r_entity: u16) -> Exec
     }
 
     // Dispatch on_create lifecycle hook if the entity type defines one.
-    let module = &ctx.modules[ctx.current_module_idx];
-    if let Ok(type_idx_raw) = ctx.entity_registry.get_type_idx(entity_id) {
-        let type_idx_0based = type_token_row_index(type_idx_raw);
-        if let Some(hook_idx) = find_hook_by_name(&module.module, type_idx_0based, "on_create") {
+    if let Ok(Some(type_identity)) = ctx.entity_registry.get_type_identity(entity_id) {
+        let module = &ctx.modules[type_identity.module_idx];
+        if let Some(hook_idx) = find_hook_by_name(&module.module, type_identity.type_def_idx, "on_create") {
             push_hook_frame(
                 ctx.task,
-                ctx.current_module_idx,
+                type_identity.module_idx,
                 hook_idx,
                 &module.module,
                 Value::Entity(entity_id),
@@ -97,7 +98,7 @@ pub(super) fn exec_destroy_entity(ctx: &mut ExecContext<'_>, r_entity: u16) -> E
         ));
     }
 
-    let type_idx_raw = ctx.entity_registry.get_type_idx(entity_id).unwrap_or(0);
+    let type_identity = ctx.entity_registry.get_type_identity(entity_id).ok().flatten();
 
     if let Err(e) = ctx.entity_registry.begin_destroy(entity_id) {
         return ExecutionResult::Crash(format!("DestroyEntity: {}", e));
@@ -107,23 +108,39 @@ pub(super) fn exec_destroy_entity(ctx: &mut ExecContext<'_>, r_entity: u16) -> E
     ctx.task.call_stack.last_mut().unwrap().pc -= 1;
 
     // Dispatch on_destroy lifecycle hook if the entity type defines one.
-    let module = &ctx.modules[ctx.current_module_idx];
-    let type_idx_0based = type_token_row_index(type_idx_raw);
-    if let Some(hook_idx) = find_hook_by_name(&module.module, type_idx_0based, "on_destroy") {
-        push_hook_frame(
-            ctx.task,
-            ctx.current_module_idx,
-            hook_idx,
-            &module.module,
-            Value::Entity(entity_id),
-        );
+    if let Some(type_identity) = type_identity {
+        let module = &ctx.modules[type_identity.module_idx];
+        if let Some(hook_idx) = find_hook_by_name(&module.module, type_identity.type_def_idx, "on_destroy") {
+            push_hook_frame(
+                ctx.task,
+                type_identity.module_idx,
+                hook_idx,
+                &module.module,
+                Value::Entity(entity_id),
+            );
+        }
     }
 
     ExecutionResult::Continue
 }
 
-fn type_token_row_index(type_token: u32) -> usize {
-    ((type_token & 0x00ff_ffff) as usize).saturating_sub(1)
+fn resolve_entity_type(ctx: &ExecContext<'_>, type_idx: u32) -> Result<(EntityTypeIdentity, usize), String> {
+    let (module_idx, type_def_idx) = crate::type_specs::resolve_type_location(
+        ctx.current_module_idx,
+        writ_module::MetadataToken(type_idx),
+        ctx.modules,
+    ).ok_or_else(|| format!("type token 0x{type_idx:08x} did not resolve to a TypeDef"))?;
+    let module = &ctx.modules[module_idx].module;
+    let type_def = module.type_defs.get(type_def_idx)
+        .ok_or_else(|| format!("resolved TypeDef row {} is out of range", type_def_idx + 1))?;
+    if writ_module::TypeDefKind::from_u8(type_def.kind) != Some(writ_module::TypeDefKind::Entity) {
+        return Err(format!("resolved TypeDef row {} is not an entity", type_def_idx + 1));
+    }
+    let resolved_token = (2u32 << 24) | (type_def_idx as u32 + 1);
+    Ok((
+        EntityTypeIdentity { module_idx, type_def_idx },
+        helpers::get_type_field_count(module, resolved_token),
+    ))
 }
 
 pub(super) fn exec_get_component(
@@ -171,20 +188,22 @@ pub(super) fn exec_get_or_create(
     r_dst: u16,
     type_idx: u32,
 ) -> ExecutionResult {
+    let (type_identity, field_count) = match resolve_entity_type(ctx, type_idx) {
+        Ok(resolved) => resolved,
+        Err(error) => return ExecutionResult::Crash(format!("GetOrCreate: {error}")),
+    };
     // Check singleton map first
-    if let Some(existing) = ctx.entity_registry.get_singleton(type_idx)
+    if let Some(existing) = ctx.entity_registry.get_resolved_singleton(type_identity)
         && ctx.entity_registry.is_alive(existing) {
             let frame = ctx.task.call_stack.last_mut().unwrap();
             frame.registers[r_dst as usize] = Value::Entity(existing);
             return ExecutionResult::Continue;
         }
     // Create new entity and register as singleton
-    let module = &ctx.modules[ctx.current_module_idx];
-    let entity_id = ctx.entity_registry.allocate(type_idx);
-    let field_count = helpers::get_type_field_count(&module.module, type_idx);
+    let entity_id = ctx.entity_registry.allocate_resolved(type_idx, type_identity);
     let data_ref = ctx.heap.alloc_struct(u32::MAX, field_count);
     let _ = ctx.entity_registry.set_data_ref(entity_id, data_ref);
-    ctx.entity_registry.register_singleton(type_idx, entity_id);
+    ctx.entity_registry.register_resolved_singleton(type_identity, entity_id);
     let frame = ctx.task.call_stack.last_mut().unwrap();
     frame.registers[r_dst as usize] = Value::Entity(entity_id);
     // Notify host

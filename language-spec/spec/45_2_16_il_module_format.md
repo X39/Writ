@@ -72,6 +72,10 @@ offset before heap access. When the receiver carries a runtime owner identity, i
 owner. A missing, malformed, type-mismatched, or unresolved FieldRef is a link or execution error and must never fall
 back to ordinal zero.
 
+Entity allocation resolves its module-relative type operand before creating the instance. The runtime retains the
+resolved `(module, TypeDef)` identity with the entity for its complete lifetime, including the pending-construction
+state, and uses that identity for FieldRef owner checks and lifecycle-hook dispatch.
+
 After load-time resolution, cross-module references are equivalent to direct local references. The resolution cost is
 paid once at load time.
 

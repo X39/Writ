@@ -110,7 +110,7 @@ fn init_entity_dispatches_on_create_hook() {
     let hook_token = builder.add_extern_def("hook_fired", &[], "hook_fired", 0);
 
     // TypeDef "EntityA" (row 0 = token 0x02000001): method_list=1 means methods start at index 0
-    let entity_type = builder.add_type_def("EntityA", "", TypeDefKind::Enum, 0);
+    let entity_type = builder.add_type_def("EntityA", "", TypeDefKind::Entity, 0);
 
     // method[0]: "on_create" -- calls extern hook_fired, then RET_VOID
     let on_create_body = make_body(&[
@@ -174,7 +174,7 @@ fn destroy_entity_dispatches_on_destroy_hook() {
     let hook_token = builder.add_extern_def("destroy_hook_fired", &[], "destroy_hook_fired", 0);
 
     // TypeDef "EntityB": method_list=1 (methods start at index 0)
-    let entity_type = builder.add_type_def("EntityB", "", TypeDefKind::Enum, 0);
+    let entity_type = builder.add_type_def("EntityB", "", TypeDefKind::Entity, 0);
 
     // method[0]: "on_destroy"
     let on_destroy_body = make_body(&[
@@ -234,7 +234,7 @@ fn entity_without_hooks_inits_and_destroys_ok() {
     let mut builder = ModuleBuilder::new("test");
 
     // TypeDef "EntityNoHooks": method_list=1
-    builder.add_type_def("EntityNoHooks", "", TypeDefKind::Enum, 0);
+    builder.add_type_def("EntityNoHooks", "", TypeDefKind::Entity, 0);
     // Sentinel: method_list=1 (same value) -> EntityNoHooks has 0 methods
     builder.add_type_def("_Sentinel", "", TypeDefKind::Enum, 0);
 

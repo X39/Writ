@@ -40,7 +40,7 @@ pub mod reflection;
 pub use value::{Value, HeapRef, GenHandle, TaskId, EntityId};
 pub use heap::BumpHeap;
 pub use gc::{GcHeap, GcStats, GcMode};
-pub use entity::{EntityRegistry, EntitySlot, EntityState, PendingEntity};
+pub use entity::{EntityRegistry, EntitySlot, EntityState, EntityTypeIdentity, PendingEntity};
 pub use frame::{CallFrame, RegisterPool};
 pub use task::{Task, TaskState, SuspendReason};
 pub use host::{RuntimeHost, HostRequest, HostResponse, NullHost, RequestId, LogLevel, DebugAction, ModuleAttributeView, AttributeMatch};

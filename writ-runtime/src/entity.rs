@@ -20,12 +20,20 @@ pub enum EntityState {
     Destroyed,
 }
 
+/// Canonical identity of an entity type in a loaded module domain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EntityTypeIdentity {
+    pub module_idx: usize,
+    pub type_def_idx: usize,
+}
+
 /// A slot in the entity registry.
 #[derive(Debug)]
 pub struct EntitySlot {
     pub generation: u32,
     pub state: EntityState,
     pub type_idx: u32,
+    pub type_identity: Option<EntityTypeIdentity>,
     pub data_ref: Option<HeapRef>,
 }
 
@@ -45,6 +53,7 @@ pub struct EntityRegistry {
     slots: Vec<EntitySlot>,
     free_list: Vec<u32>,
     singletons: FxHashMap<u32, EntityId>,
+    resolved_singletons: FxHashMap<EntityTypeIdentity, EntityId>,
     pending: FxHashMap<u32, PendingEntity>, // keyed by slot index
 }
 
@@ -55,16 +64,26 @@ impl EntityRegistry {
             slots: Vec::new(),
             free_list: Vec::new(),
             singletons: FxHashMap::default(),
+            resolved_singletons: FxHashMap::default(),
             pending: FxHashMap::default(),
         }
     }
 
     /// Allocate a new entity slot in Alive state.
     pub fn allocate(&mut self, type_idx: u32) -> EntityId {
+        self.allocate_with_identity(type_idx, None)
+    }
+
+    pub fn allocate_resolved(&mut self, type_idx: u32, identity: EntityTypeIdentity) -> EntityId {
+        self.allocate_with_identity(type_idx, Some(identity))
+    }
+
+    fn allocate_with_identity(&mut self, type_idx: u32, type_identity: Option<EntityTypeIdentity>) -> EntityId {
         if let Some(idx) = self.free_list.pop() {
             let slot = &mut self.slots[idx as usize];
             slot.state = EntityState::Alive;
             slot.type_idx = type_idx;
+            slot.type_identity = type_identity;
             slot.data_ref = None;
             EntityId::new(idx, slot.generation)
         } else {
@@ -73,6 +92,7 @@ impl EntityRegistry {
                 generation: 0,
                 state: EntityState::Alive,
                 type_idx,
+                type_identity,
                 data_ref: None,
             });
             EntityId::new(idx, 0)
@@ -83,10 +103,19 @@ impl EntityRegistry {
     ///
     /// The entity is not visible to the host until `commit_init` is called.
     pub fn begin_spawn(&mut self, type_idx: u32) -> EntityId {
+        self.begin_spawn_with_identity(type_idx, None)
+    }
+
+    pub fn begin_spawn_resolved(&mut self, type_idx: u32, identity: EntityTypeIdentity) -> EntityId {
+        self.begin_spawn_with_identity(type_idx, Some(identity))
+    }
+
+    fn begin_spawn_with_identity(&mut self, type_idx: u32, type_identity: Option<EntityTypeIdentity>) -> EntityId {
         let entity_id = if let Some(idx) = self.free_list.pop() {
             let slot = &mut self.slots[idx as usize];
             slot.state = EntityState::Pending;
             slot.type_idx = type_idx;
+            slot.type_identity = type_identity;
             slot.data_ref = None;
             EntityId::new(idx, slot.generation)
         } else {
@@ -95,6 +124,7 @@ impl EntityRegistry {
                 generation: 0,
                 state: EntityState::Pending,
                 type_idx,
+                type_identity,
                 data_ref: None,
             });
             EntityId::new(idx, 0)
@@ -222,6 +252,7 @@ impl EntityRegistry {
         }
 
         let type_idx = slot.type_idx;
+        let type_identity = slot.type_identity;
 
         let slot = &mut self.slots[entity_id.index as usize];
         slot.state = EntityState::Destroyed;
@@ -234,8 +265,14 @@ impl EntityRegistry {
             && singleton_id.index == entity_id.index
                 && singleton_id.generation == entity_id.generation
             {
-                self.singletons.remove(&type_idx);
-            }
+            self.singletons.remove(&type_idx);
+        }
+        if let Some(type_identity) = type_identity
+            && self.resolved_singletons.get(&type_identity).is_some_and(|singleton_id| {
+                singleton_id.index == entity_id.index && singleton_id.generation == entity_id.generation
+            }) {
+            self.resolved_singletons.remove(&type_identity);
+        }
 
         Ok(())
     }
@@ -255,6 +292,7 @@ impl EntityRegistry {
         }
 
         let type_idx = slot.type_idx;
+        let type_identity = slot.type_identity;
 
         let slot = &mut self.slots[entity_id.index as usize];
         slot.state = EntityState::Destroyed;
@@ -267,8 +305,14 @@ impl EntityRegistry {
             && singleton_id.index == entity_id.index
                 && singleton_id.generation == entity_id.generation
             {
-                self.singletons.remove(&type_idx);
-            }
+            self.singletons.remove(&type_idx);
+        }
+        if let Some(type_identity) = type_identity
+            && self.resolved_singletons.get(&type_identity).is_some_and(|singleton_id| {
+                singleton_id.index == entity_id.index && singleton_id.generation == entity_id.generation
+            }) {
+            self.resolved_singletons.remove(&type_identity);
+        }
 
         Ok(())
     }
@@ -277,6 +321,12 @@ impl EntityRegistry {
     pub fn get_type_idx(&self, entity_id: EntityId) -> Result<u32, RuntimeError> {
         self.validate_alive(entity_id)?;
         Ok(self.slots[entity_id.index as usize].type_idx)
+    }
+
+    /// Return the domain-wide type identity for an active runtime-created entity.
+    pub fn get_type_identity(&self, entity_id: EntityId) -> Result<Option<EntityTypeIdentity>, RuntimeError> {
+        self.validate_active(entity_id)?;
+        Ok(self.slots[entity_id.index as usize].type_identity)
     }
 
     /// Set the heap data reference for an entity.
@@ -307,6 +357,14 @@ impl EntityRegistry {
     /// Look up a singleton entity by type index.
     pub fn get_singleton(&self, type_idx: u32) -> Option<EntityId> {
         self.singletons.get(&type_idx).copied()
+    }
+
+    pub fn register_resolved_singleton(&mut self, identity: EntityTypeIdentity, entity_id: EntityId) {
+        self.resolved_singletons.insert(identity, entity_id);
+    }
+
+    pub fn get_resolved_singleton(&self, identity: EntityTypeIdentity) -> Option<EntityId> {
+        self.resolved_singletons.get(&identity).copied()
     }
 
     /// Iterate over all alive entity slots (for GC root collection).

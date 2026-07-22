@@ -907,6 +907,15 @@ fn resolve_entity_display_name(
     entity_registry: &crate::entity::EntityRegistry,
     modules: &[crate::loader::LoadedModule],
 ) -> String {
+    if let Ok(Some(identity)) = entity_registry.get_type_identity(entity_id)
+        && let Some(module) = modules.get(identity.module_idx).map(|loaded| &loaded.module)
+        && let Some(type_def) = module.type_defs.get(identity.type_def_idx)
+        && let Ok(name) = writ_module::heap::read_string(&module.string_heap, type_def.name)
+        && !name.is_empty()
+    {
+        return name.to_string();
+    }
+
     // Look up entity's type_idx (may fail for destroyed/stale handles)
     let type_idx = match entity_registry.get_type_idx(entity_id) {
         Ok(idx) => idx,
@@ -963,12 +972,16 @@ fn try_speaker_dispatch(
         Value::Entity(eid) => eid,
         _ => return None,
     };
-    let raw_type_idx = entity_registry.get_type_idx(entity_id).ok()?;
-    // type_idx is a 1-based row in the user module (module 1). Convert to type_key.
-    let row_0based = (raw_type_idx & 0x00FF_FFFF).saturating_sub(1);
-    // User module is the last module loaded (index = modules.len() - 1)
-    let user_mod_idx = modules.len().saturating_sub(1) as u32;
-    let type_key = (user_mod_idx << 16) | row_0based;
+    let type_key = match entity_registry.get_type_identity(entity_id).ok().flatten() {
+        Some(identity) => ((identity.module_idx as u32) << 16) | identity.type_def_idx as u32,
+        None => {
+            // Compatibility fallback for entities created through the public raw registry API.
+            let raw_type_idx = entity_registry.get_type_idx(entity_id).ok()?;
+            let row_0based = (raw_type_idx & 0x00FF_FFFF).saturating_sub(1);
+            let user_mod_idx = modules.len().saturating_sub(1) as u32;
+            (user_mod_idx << 16) | row_0based
+        }
+    };
 
     // Look up Speaker::speaker_name (slot 0) in dispatch table
     let key = super::DispatchKey {

@@ -111,12 +111,16 @@ fn resolve_field_target(
     object: Value,
     field_operand: u32,
 ) -> Result<(crate::value::HeapRef, usize), String> {
-    let href = match object {
-        Value::Struct { href, .. } | Value::Ref(href) => href,
-        Value::Entity(entity) => ctx.entity_registry
-            .get_data_ref(entity)
-            .map_err(|error| format!("invalid entity receiver: {error}"))?
-            .ok_or_else(|| "entity receiver has no script-field storage".to_string())?,
+    let (href, entity_identity) = match object {
+        Value::Struct { href, .. } | Value::Ref(href) => (href, None),
+        Value::Entity(entity) => {
+            let href = ctx.entity_registry.get_data_ref(entity)
+                .map_err(|error| format!("invalid entity receiver: {error}"))?
+                .ok_or_else(|| "entity receiver has no script-field storage".to_string())?;
+            let identity = ctx.entity_registry.get_type_identity(entity)
+                .map_err(|error| format!("invalid entity receiver: {error}"))?;
+            (href, identity)
+        }
         other => return Err(format!(
             "expected struct, class, or entity receiver, got {other:?}"
         )),
@@ -134,6 +138,23 @@ fn resolve_field_target(
         .get(&row)
         .ok_or_else(|| format!("unresolved FieldRef row {row}"))?;
 
+    let expected_identity = crate::entity::EntityTypeIdentity {
+        module_idx: resolved.module_idx,
+        type_def_idx: resolved.owner_type_idx,
+    };
+    if let Some(actual_identity) = entity_identity {
+        if actual_identity != expected_identity {
+            return Err(format!(
+                "FieldRef owner mismatch: entity type {:?}, expected {:?}",
+                actual_identity, expected_identity
+            ));
+        }
+        return Ok((href, resolved.field_offset));
+    }
+    if matches!(object, Value::Entity(_)) {
+        return Err("FieldRef entity receiver has no canonical type identity".into());
+    }
+
     match ctx.heap.get_object(href) {
         Ok(HeapObject::Struct { type_key, .. }) if *type_key != u32::MAX => {
             let expected = ((resolved.module_idx as u32) << 16) | resolved.owner_type_idx as u32;
@@ -143,10 +164,9 @@ fn resolve_field_target(
                 ));
             }
         }
-        Ok(HeapObject::Struct { .. }) => {
-            // Entity data buffers do not retain a domain-wide type key, so
-            // their owner cannot be validated here.
-        }
+        Ok(HeapObject::Struct { .. }) => return Err(
+            "FieldRef receiver has no canonical type identity".into()
+        ),
         Ok(_) => return Err("FieldRef receiver is not a struct or class object".into()),
         Err(error) => return Err(error.to_string()),
     }
