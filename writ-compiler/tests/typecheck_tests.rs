@@ -1253,6 +1253,57 @@ fn spawn_rejects_targets_without_concrete_bytecode_bodies() {
     }
 }
 
+#[test]
+fn dialogue_transition_accepts_only_dialogue_declarations() {
+    let (_ast, valid_diags) = typecheck_src(
+        "dlg destination {}
+         dlg start { -> destination }",
+    );
+    assert!(has_no_errors(&valid_diags), "valid dialogue transition: {valid_diags:?}");
+
+    let cases = [
+        (
+            "ordinary function",
+            "fn destination() {}
+             dlg start { -> destination }",
+            "declared with `fn`, not `dlg`",
+        ),
+        (
+            "extern function",
+            "extern fn destination();
+             dlg start { -> destination }",
+            "extern function `destination` has no dialogue bytecode body",
+        ),
+        (
+            "delegate parameter",
+            "dlg start(destination: fn()) { -> destination }",
+            "function values and delegates are not dialogue declarations",
+        ),
+    ];
+
+    for (label, source, expected_message) in cases {
+        let (_ast, diags) = typecheck_src(source);
+        let transition_error = diags
+            .iter()
+            .find(|diag| diag.code == "E0127")
+            .unwrap_or_else(|| panic!("{label}: expected E0127, got {diags:?}"));
+        assert!(
+            transition_error.message.contains(expected_message),
+            "{label}: unexpected diagnostic: {transition_error:?}",
+        );
+    }
+}
+
+#[test]
+fn unresolved_dialogue_transition_stops_before_codegen() {
+    let error = writ_compiler::compile_source("dlg start { -> missing }")
+        .expect_err("an unresolved transition target must not reach codegen");
+    assert!(
+        error.contains("invalid dialogue transition target"),
+        "unexpected error: {error}"
+    );
+}
+
 // =========================================================
 // Lambda / Closure tests (TYPE-12)
 // =========================================================

@@ -1210,3 +1210,53 @@ fn xmod_spawn_variants_use_methodrefs_and_the_declared_receiver_abi() {
         "scoped and detached static spawn must select the same method",
     );
 }
+
+#[test]
+fn xmod_dialogue_transition_preserves_and_requires_dialogue_identity() {
+    let library_bytes = compile(
+        r#"
+        pub dlg destination {}
+        pub fn helper() {}
+        "#,
+    );
+    let library = writ_module::Module::from_bytes(&library_bytes).unwrap();
+    let destination = library
+        .method_defs
+        .iter()
+        .find(|method| {
+            writ_module::heap::read_string(&library.string_heap, method.name).ok()
+                == Some("destination")
+        })
+        .expect("destination MethodDef");
+    assert_ne!(
+        destination.flags & writ_module::tables::METHOD_FLAG_DIALOGUE,
+        0,
+        "compiled dialogue methods must retain cross-module identity",
+    );
+
+    let user_bytes = compile_with_libs(
+        "pub dlg start { -> destination }",
+        &[&library],
+    )
+    .expect("a transition to a dependency dialogue should compile");
+    let user = writ_module::Module::from_bytes(&user_bytes).unwrap();
+    let body = &user.method_bodies[user.top_level_method_indices()[0]];
+    let mut cursor = std::io::Cursor::new(&body.code);
+    assert!(std::iter::from_fn(|| {
+        ((cursor.position() as usize) < body.code.len())
+            .then(|| writ_module::Instruction::decode(&mut cursor).unwrap())
+    })
+    .any(|instruction| matches!(
+        instruction,
+        writ_module::Instruction::TailCall { method_idx, .. }
+            if writ_module::MetadataToken(method_idx).table_id()
+                == writ_module::tables::TableId::MethodRef.as_u8()
+    )));
+
+    let error = compile_with_libs("pub dlg start { -> helper }", &[&library])
+        .expect_err("a dependency function is not a dialogue target");
+    assert!(
+        error.contains("declared with `fn`, not `dlg`"),
+        "unexpected error: {error}",
+    );
+}

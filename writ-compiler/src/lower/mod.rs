@@ -149,6 +149,7 @@ pub(crate) fn lower_fn(f: FnDecl<'_>, fn_span: SimpleSpan, ctx: &mut LoweringCon
         return_type: f.return_type.map(lower_type),
         body: f.body.into_iter().map(|s| lower_stmt(s, ctx)).collect(),
         span: fn_span,
+        is_dialogue: false,
     }
 }
 

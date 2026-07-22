@@ -273,6 +273,7 @@ pub(crate) fn lower_entity(
                 return_type: None,
                 body,
                 span: hook.span,
+                is_dialogue: false,
             };
 
             AstEntityHook {

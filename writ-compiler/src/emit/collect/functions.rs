@@ -30,7 +30,10 @@ pub(super) fn collect_fn(
     if let Some(fn_decl) = find_fn_decl(asts, entry) {
         let (sig_blob, _param_types) =
             encode_fn_sig(fn_decl, interner, &entry.generics, def_map, builder);
-        let flags = method_flags(is_pub, true, false, HookKind::None);
+        let mut flags = method_flags(is_pub, true, false, HookKind::None);
+        if def_map.dialogue_defs.contains(&def_id) {
+            flags |= writ_module::tables::METHOD_FLAG_DIALOGUE;
+        }
 
         // Free functions have no self, so every source parameter is a regular
         // parameter register.

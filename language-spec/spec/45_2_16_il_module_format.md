@@ -168,9 +168,10 @@ with no fields has an empty range without using `field_list = 0`; zero is not a 
 
 **TypeDef.kind:** `0 = struct (value type)`, `1 = enum`, `2 = entity`, `3 = component`, `4 = class (reference type)`.
 
-**MethodDef.flags** includes: visibility (pub/private), is_static, is_mut_self, hook_kind (0=none, 1=create, 2=destroy,
-3=finalize, 4=serialize, 5=deserialize, 6=interact), and an **intrinsic** flag for `writ-runtime` native
-implementations (§2.16.8).
+**MethodDef.flags** includes: bit 0 = public visibility, bit 1 = static, bit 2 = mutable `self`, bits 3–5 = hook kind
+(0=none, 1=create, 2=destroy, 3=finalize, 4=serialize, 5=deserialize, 6=interact), bit 7 = **intrinsic** for
+`writ-runtime` native implementations (§2.16.8), and bit 8 = **dialogue**, preserving that a top-level MethodDef
+originated from a `dlg` declaration so dependent modules can validate `->` targets.
 
 **MethodRef.flags** is a `u16` bitset: bit 0 = `has_receiver`, meaning the referenced MethodDef consumes an implicit
 instance receiver in its call argument block. A clear bit denotes a static method or top-level function. Remaining bits

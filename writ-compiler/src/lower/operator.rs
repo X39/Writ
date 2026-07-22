@@ -154,6 +154,7 @@ fn op_to_contract_impl(
         return_type,
         body,
         span: op_span,
+        is_dialogue: false,
     };
 
     AstDecl::Impl(AstImplDecl {
@@ -315,6 +316,7 @@ fn generate_derived_operators(
         return_type: Some(bool_type()),
         body,
         span: impl_span,
+        is_dialogue: false,
     };
 
     let make_impl = |contract_name: &str, contract_arg: AstType, fn_decl: AstFnDecl| {

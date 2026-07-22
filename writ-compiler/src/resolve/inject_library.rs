@@ -276,6 +276,9 @@ pub fn inject_module_types(
             };
 
             let id = def_map.arena.alloc(entry);
+            if method_def.flags & writ_module::tables::METHOD_FLAG_DIALOGUE != 0 {
+                def_map.dialogue_defs.insert(id);
+            }
             if let Some(existing_id) = existing_fn {
                 def_map
                     .fn_overloads

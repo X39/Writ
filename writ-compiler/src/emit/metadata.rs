@@ -143,7 +143,7 @@ impl HookKind {
 /// Pack MethodDef flags into a u16.
 ///
 /// Layout: bit 0 = is_pub, bit 1 = is_static, bit 2 = is_mut_self,
-///         bits 3-5 = hook_kind (0-6), bit 6 = intrinsic.
+///         bits 3-5 = hook_kind (0-6), bit 7 = intrinsic, bit 8 = dialogue.
 pub fn method_flags(is_pub: bool, is_static: bool, is_mut_self: bool, hook: HookKind) -> u16 {
     let mut flags: u16 = 0;
     if is_pub {

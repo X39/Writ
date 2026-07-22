@@ -175,6 +175,7 @@ pub(crate) fn lower_dialogue(
         return_type: None,
         body: hoisted_stmts,
         span: dlg_span,
+        is_dialogue: true,
     }
 }
 

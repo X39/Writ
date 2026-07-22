@@ -152,6 +152,11 @@ pub enum TypeError {
         span: SimpleSpan,
         file: FileId,
     },
+    InvalidDialogueTransitionTarget {
+        reason: String,
+        span: SimpleSpan,
+        file: FileId,
+    },
 }
 
 impl From<TypeError> for Diagnostic {
@@ -485,6 +490,15 @@ impl From<TypeError> for Diagnostic {
                 "spawn a direct bytecode function or a method on a concrete struct, class, entity, or enum",
             )
             .build(),
+            TypeError::InvalidDialogueTransitionTarget { reason, span, file } => {
+                Diagnostic::error(
+                    code::E0127,
+                    format!("invalid dialogue transition target: {reason}"),
+                )
+                .with_primary(file, span, "this transition does not target a dialogue")
+                .with_help("use `->` with the name of a `dlg` declaration")
+                .build()
+            }
         }
     }
 }

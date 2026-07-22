@@ -126,6 +126,14 @@ pub fn check_stmt(ctx: &mut CheckCtx, stmt: &AstStmt) -> TypedStmt {
 
         AstStmt::Transition { call, span } => {
             let typed_call = check_expr(ctx, call);
+            if let Some(reason) = invalid_transition_reason(ctx, &typed_call) {
+                ctx.emit_error(TypeError::InvalidDialogueTransitionTarget {
+                    reason,
+                    span: *span,
+                    file: ctx.current_file,
+                });
+                return TypedStmt::Error { span: *span };
+            }
             check_return_value(ctx, Some(&typed_call), *span);
             TypedStmt::Transition {
                 call: typed_call,
@@ -264,6 +272,42 @@ pub fn check_stmt(ctx: &mut CheckCtx, stmt: &AstStmt) -> TypedStmt {
 
         AstStmt::Error { span } => TypedStmt::Error { span: *span },
     }
+}
+
+/// Dialogue syntax lowers to an ordinary call expression, so retain and
+/// consult declaration provenance before codegen assumes a TAIL_CALL target.
+fn invalid_transition_reason(ctx: &CheckCtx<'_>, expr: &TypedExpr) -> Option<String> {
+    let TypedExpr::Call {
+        callee_def_id,
+        callee_has_receiver,
+        ..
+    } = expr
+    else {
+        return Some("the target is not a call".to_string());
+    };
+
+    let Some(def_id) = callee_def_id else {
+        return Some(if ctx.is_error(expr.ty()) {
+            "the target could not be resolved to a dialogue".to_string()
+        } else {
+            "function values and delegates are not dialogue declarations".to_string()
+        });
+    };
+
+    if *callee_has_receiver == Some(false) && ctx.def_map.dialogue_defs.contains(def_id) {
+        return None;
+    }
+
+    let entry = ctx.def_map.get_entry(*def_id);
+    Some(match entry.kind {
+        crate::resolve::def_map::DefKind::ExternFn => {
+            format!("extern function `{}` has no dialogue bytecode body", entry.name)
+        }
+        crate::resolve::def_map::DefKind::Fn => {
+            format!("function `{}` was declared with `fn`, not `dlg`", entry.name)
+        }
+        _ => format!("`{}` is not a dialogue declaration", entry.name),
+    })
 }
 
 fn check_return_value(

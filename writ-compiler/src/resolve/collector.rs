@@ -97,7 +97,7 @@ fn collect_items(
             AstDecl::Fn(f) => {
                 let vis = ast_vis_to_def_vis(f.vis.as_ref());
                 let generics = f.generics.iter().map(|g| g.name.clone()).collect();
-                try_insert(
+                let def_id = try_insert(
                     &f.name,
                     f.name_span,
                     f.span,
@@ -108,6 +108,9 @@ fn collect_items(
                     def_map,
                     diags,
                 );
+                if f.is_dialogue && let Some(def_id) = def_id {
+                    def_map.dialogue_defs.insert(def_id);
+                }
             }
 
             AstDecl::Struct(s) => {
@@ -338,7 +341,7 @@ fn try_insert(
     ctx: &CollectorContext<'_>,
     def_map: &mut DefMap,
     diags: &mut Vec<Diagnostic>,
-) {
+) -> Option<crate::resolve::def_map::DefId> {
     // Check prelude shadow
     if is_prelude_name(name) {
         diags.push(
@@ -349,7 +352,7 @@ fn try_insert(
             }
             .into(),
         );
-        return;
+        return None;
     }
 
     let fqn = if ctx.namespace.is_empty() {
@@ -370,7 +373,7 @@ fn try_insert(
         span: decl_span,
     };
 
-    def_map.insert(fqn, entry, diags);
+    Some(def_map.insert(fqn, entry, diags))
 }
 
 /// Convert AST visibility to DefVis.

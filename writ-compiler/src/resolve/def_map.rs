@@ -5,7 +5,7 @@
 
 use chumsky::span::SimpleSpan;
 use id_arena::Arena;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use writ_diagnostics::{Diagnostic, FileId};
 
 use crate::resolve::error::ResolutionError;
@@ -29,6 +29,9 @@ pub struct DefMap {
     pub impl_blocks: Vec<DefId>,
     /// Function overload sets indexed by FQN. Present only when a name has 2+ overloads.
     pub fn_overloads: FxHashMap<String, Vec<DefId>>,
+    /// Functions originating from `dlg` declarations, including injected
+    /// dependency methods carrying the dialogue metadata flag.
+    pub dialogue_defs: FxHashSet<DefId>,
 }
 
 impl DefMap {
@@ -41,6 +44,7 @@ impl DefMap {
             namespace_members: FxHashMap::default(),
             impl_blocks: Vec::new(),
             fn_overloads: FxHashMap::default(),
+            dialogue_defs: FxHashSet::default(),
         }
     }
 

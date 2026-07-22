@@ -43,6 +43,7 @@ pub const E0123: &str = "E0123"; // incomplete contract implementation
 pub const E0124: &str = "E0124"; // ambiguous overloaded call
 pub const E0125: &str = "E0125"; // ambiguous implementation specialization
 pub const E0126: &str = "E0126"; // unsupported spawn target
+pub const E0127: &str = "E0127"; // invalid dialogue transition target
 
 // Warning codes
 pub const W0001: &str = "W0001"; // unused import
