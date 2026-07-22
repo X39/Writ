@@ -207,6 +207,77 @@ fn contract_method_slots_assigned() {
     assert_eq!(builder.contract_method_slot(1), 1, "second method slot should be 1");
 }
 
+#[test]
+fn compiler_builder_finalizes_contract_child_ranges_with_next_indices() {
+    let mut builder = ModuleBuilder::new();
+
+    // Keep a non-contract GenericParam ahead of the contract-owned rows to
+    // verify that generic_param_list stores an absolute table row index.
+    let generic_type = builder.add_typedef("Box", "", TypeDefKind::Class, 0, None);
+    builder.add_generic_param(TableId::TypeDef, generic_type.0, 0, "T");
+
+    let first = builder.add_contract_def("First", "", None);
+    let _middle_empty = builder.add_contract_def("MiddleEmpty", "", None);
+    let third = builder.add_contract_def("Third", "", None);
+    let _trailing_empty = builder.add_contract_def("TrailingEmpty", "", None);
+
+    // Deliberately collect children out of parent order; finalize must group
+    // them while retaining correct starts for the intervening empty contracts.
+    builder.add_contract_method(third, "third", 0, 17);
+    builder.add_contract_method(first, "first_a", 0, 17);
+    builder.add_contract_method(first, "first_b", 0, 17);
+    builder.add_generic_param(TableId::ContractDef, third.0, 0, "U");
+    builder.add_generic_param(TableId::ContractDef, first.0, 0, "T");
+    builder.add_generic_param(TableId::ContractDef, first.0, 1, "E");
+
+    writ_compiler::emit::slots::assign_vtable_slots(&mut builder);
+    builder.finalize();
+
+    let contract_defs = builder.finalized_contract_defs();
+    let method_starts: Vec<u32> = contract_defs.iter().map(|row| row.method_list).collect();
+    let generic_starts: Vec<u32> = contract_defs
+        .iter()
+        .map(|row| row.generic_param_list)
+        .collect();
+
+    assert_eq!(method_starts, vec![1, 3, 3, 4]);
+    assert_eq!(generic_starts, vec![2, 4, 4, 5]);
+    assert!(method_starts.iter().all(|start| *start > 0));
+    assert!(generic_starts.iter().all(|start| *start > 0));
+
+    let method_counts: Vec<u32> = method_starts
+        .iter()
+        .enumerate()
+        .map(|(idx, start)| {
+            let end = method_starts
+                .get(idx + 1)
+                .copied()
+                .unwrap_or(builder.contract_method_count() as u32 + 1);
+            end - start
+        })
+        .collect();
+    let generic_counts: Vec<u32> = generic_starts
+        .iter()
+        .enumerate()
+        .map(|(idx, start)| {
+            let end = generic_starts
+                .get(idx + 1)
+                .copied()
+                .unwrap_or(builder.generic_param_count() as u32 + 1);
+            end - start
+        })
+        .collect();
+
+    assert_eq!(method_counts, vec![2, 0, 1, 0]);
+    assert_eq!(generic_counts, vec![2, 0, 1, 0]);
+    assert_eq!(
+        (0..builder.contract_method_count())
+            .map(|idx| builder.contract_method_slot(idx))
+            .collect::<Vec<_>>(),
+        vec![0, 1, 0]
+    );
+}
+
 // =========================================================
 // ImplDef tests
 // =========================================================

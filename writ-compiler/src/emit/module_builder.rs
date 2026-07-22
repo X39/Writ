@@ -653,15 +653,26 @@ impl ModuleBuilder {
         // 6. ContractMethod: group by parent ContractDef.
         self.contract_methods.sort_by_key(|cm| cm.parent.0);
         self.final_contract_method_count = self.contract_methods.len() as u32;
+
+        // Set every ContractDef.method_list to its first child row (1-based),
+        // using the metadata-table "next index" convention. Empty contracts
+        // repeat the next contract's start, and a trailing empty contract stores
+        // ContractMethod.len() + 1. Zero is not a valid finalized list index.
         {
-            let mut current_parent = None;
-            for (i, entry) in self.contract_methods.iter().enumerate() {
-                let row_idx = (i + 1) as u32;
-                if current_parent != Some(entry.parent.0) {
-                    current_parent = Some(entry.parent.0);
-                    self.contract_defs[entry.parent.0].method_list = row_idx;
+            let mut method_idx = 0usize;
+            for (contract_idx, contract_def) in self.contract_defs.iter_mut().enumerate() {
+                contract_def.method_list = (method_idx + 1) as u32;
+                while method_idx < self.contract_methods.len()
+                    && self.contract_methods[method_idx].parent.0 == contract_idx
+                {
+                    method_idx += 1;
                 }
             }
+            debug_assert_eq!(
+                method_idx,
+                self.contract_methods.len(),
+                "every ContractMethod must have a ContractDef parent"
+            );
         }
 
         // 7. ImplDef: assign row indices.
@@ -695,18 +706,34 @@ impl ModuleBuilder {
             };
         }
 
-        // Set ContractDef.generic_param_list
+        // Set every ContractDef.generic_param_list to the first row owned by
+        // that contract. GenericParam rows belonging to earlier owner tables
+        // remain part of the absolute row index. Empty contracts repeat the
+        // next contract's start, including the row after the table for a
+        // trailing empty contract.
         {
-            let mut current_owner = None;
-            for (i, entry) in self.generic_params.iter().enumerate() {
-                if entry.owner_table == TableId::ContractDef {
-                    let row_idx = (i + 1) as u32;
-                    if current_owner != Some(entry.owner_index) {
-                        current_owner = Some(entry.owner_index);
-                        self.contract_defs[entry.owner_index].generic_param_list = row_idx;
-                    }
+            let contract_table_id = TableId::ContractDef as u8;
+            let mut generic_idx = self
+                .generic_params
+                .iter()
+                .position(|entry| entry.owner_table as u8 >= contract_table_id)
+                .unwrap_or(self.generic_params.len());
+
+            for (contract_idx, contract_def) in self.contract_defs.iter_mut().enumerate() {
+                contract_def.generic_param_list = (generic_idx + 1) as u32;
+                while generic_idx < self.generic_params.len()
+                    && self.generic_params[generic_idx].owner_table == TableId::ContractDef
+                    && self.generic_params[generic_idx].owner_index == contract_idx
+                {
+                    generic_idx += 1;
                 }
             }
+
+            debug_assert!(
+                generic_idx == self.generic_params.len()
+                    || self.generic_params[generic_idx].owner_table as u8 > contract_table_id,
+                "every contract-owned GenericParam must have a ContractDef parent"
+            );
         }
 
         // 9. GenericConstraint: resolve param_row to 1-based and constraint to MetadataToken.
