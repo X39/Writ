@@ -76,9 +76,14 @@ pub struct BodyEmitter<'a> {
     pub returns_option: bool,
     /// Stack of (break_label, continue_label) for nested loops.
     pub loop_stack: Vec<(Label, Label)>,
-    /// Lambda counter: tracks how many lambdas have been emitted in this body.
-    /// Used by closure::emit_lambda to find the right synthetic TypeDef/MethodDef.
+    /// Fallback counter for standalone expression-emission tests that do not
+    /// provide the module-wide lambda ordinal map.
     pub lambda_counter: usize,
+    /// Stable TypedExpr identity -> module-wide pre-scan ordinal.
+    ///
+    /// Production body emission populates this map so lambdas in later methods
+    /// and nested lambda bodies resolve their own synthetic metadata rows.
+    pub lambda_ordinals: Option<&'a FxHashMap<usize, usize>>,
     /// Pending string literals awaiting interning.
     ///
     /// Collects (instruction_index, string_value) pairs for each LoadString emitted.
@@ -111,6 +116,7 @@ impl<'a> BodyEmitter<'a> {
             returns_option: false,
             loop_stack: Vec::new(),
             lambda_counter: 0,
+            lambda_ordinals: None,
             pending_strings: Vec::new(),
             struct_field_types,
         }
@@ -133,6 +139,23 @@ impl<'a> BodyEmitter<'a> {
     pub fn alloc_void_reg(&mut self) -> u16 {
         let void_ty = Ty(4);
         self.regs.alloc(void_ty)
+    }
+
+    /// Resolve a lambda's module-wide pre-scan ordinal.
+    ///
+    /// Direct BodyEmitter unit tests have no AST-wide map, so they retain the
+    /// old sequential fallback beginning at zero.
+    pub fn lambda_ordinal(&mut self, expr: &TypedExpr) -> usize {
+        if let Some(ordinals) = self.lambda_ordinals {
+            let identity = expr as *const TypedExpr as usize;
+            return *ordinals
+                .get(&identity)
+                .expect("lambda expression missing from pre-scan ordinal map");
+        }
+
+        let ordinal = self.lambda_counter;
+        self.lambda_counter += 1;
+        ordinal
     }
 
     /// Create a new label.
@@ -386,6 +409,18 @@ pub fn emit_all_bodies(
 ) -> (Vec<EmittedBody>, Vec<writ_diagnostics::Diagnostic>) {
     let mut diags = Vec::new();
     let mut bodies = Vec::new();
+    let mut lambda_exprs: Vec<&TypedExpr> = Vec::new();
+    collect_lambda_exprs_from_ast(typed_ast, &mut lambda_exprs);
+    assert_eq!(
+        lambda_exprs.len(),
+        lambda_infos.len(),
+        "lambda pre-scan and body traversal must discover the same expressions"
+    );
+    let lambda_ordinals: FxHashMap<usize, usize> = lambda_exprs
+        .iter()
+        .enumerate()
+        .map(|(ordinal, expr)| (*expr as *const TypedExpr as usize, ordinal))
+        .collect();
 
     for decl in &typed_ast.decls {
         match decl {
@@ -406,6 +441,7 @@ pub fn emit_all_bodies(
                     continue;
                 }
                 let mut emitter = BodyEmitter::new(builder, interner, struct_field_types);
+                emitter.lambda_ordinals = Some(&lambda_ordinals);
                 emitter.current_method_def_id = Some(*def_id);
                 emitter.returns_option = builder
                     .find_method_handle(*def_id)
@@ -459,6 +495,7 @@ pub fn emit_all_bodies(
                         continue;
                     }
                     let mut emitter = BodyEmitter::new(builder, interner, struct_field_types);
+                    emitter.lambda_ordinals = Some(&lambda_ordinals);
                     emitter.current_method_def_id = Some(*def_id);
                     // Pre-allocate parameter registers r0..r(n-1) per IL spec section 2.16.2.
                     //
@@ -517,6 +554,7 @@ pub fn emit_all_bodies(
                     continue;
                 }
                 let mut emitter = BodyEmitter::new(builder, interner, struct_field_types);
+                emitter.lambda_ordinals = Some(&lambda_ordinals);
                 emitter.current_method_def_id = Some(*def_id);
 
                 // Try constant folding first — emit a single load instruction.
@@ -583,6 +621,7 @@ pub fn emit_all_bodies(
                 }
                 // Global initializers: emit without const folding (may be non-constant).
                 let mut emitter = BodyEmitter::new(builder, interner, struct_field_types);
+                emitter.lambda_ordinals = Some(&lambda_ordinals);
                 emitter.current_method_def_id = Some(*def_id);
                 let r = expr::emit_expr(&mut emitter, value);
                 emitter.emit(Instruction::Ret { r_src: r });
@@ -644,14 +683,10 @@ pub fn emit_all_bodies(
 
     // Emit lambda bodies as separate EmittedBody entries.
     // lambda_infos[i] corresponds to the i-th Lambda node discovered by pre_scan_lambdas.
-    // Walk the TypedAst in the same order as pre_scan_lambdas to collect lambda nodes.
-    let mut lambda_exprs: Vec<&TypedExpr> = Vec::new();
-    collect_lambda_exprs_from_ast(typed_ast, &mut lambda_exprs);
+    // `lambda_exprs` was collected before named-body emission so every emitter
+    // could use the same stable module-wide ordinal map.
 
     for (i, lambda_expr) in lambda_exprs.iter().enumerate() {
-        if i >= lambda_infos.len() {
-            break;
-        }
         let info = &lambda_infos[i];
 
         // Extract params and body from the Lambda node itself.
@@ -666,6 +701,7 @@ pub fn emit_all_bodies(
         };
 
         let mut emitter = BodyEmitter::new(builder, interner, struct_field_types);
+        emitter.lambda_ordinals = Some(&lambda_ordinals);
         emitter.returns_option = matches!(
             interner.kind(interner.resolve_infer(ret_ty)),
             TyKind::Option(_)

@@ -503,10 +503,8 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
 
         // ── Lambda — closure/delegate lowering (EMIT-14) ─────────────────────
         TypedExpr::Lambda { ty, captures, .. } => {
-            let mut counter = emitter.lambda_counter;
-            let r = super::closure::emit_lambda(emitter, captures, &mut counter, *ty);
-            emitter.lambda_counter = counter;
-            r
+            let closure_idx = emitter.lambda_ordinal(expr);
+            super::closure::emit_lambda(emitter, captures, closure_idx, *ty)
         }
 
         // ── Object construction (EMIT-10, EMIT-11) ────────────────────────────

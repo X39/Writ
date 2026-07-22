@@ -312,19 +312,13 @@ fn scan_stmt_for_lambdas(
 ///
 /// The lambda body is registered as a separate EmittedBody (via closure.rs pre_scan).
 ///
-/// `lambda_counter` tracks which capture struct/method TypeDef in the builder corresponds
-/// to this lambda (discovery order from pre_scan_lambdas).
+/// `closure_idx` is the module-wide discovery ordinal from `pre_scan_lambdas`.
 pub fn emit_lambda(
     emitter: &mut BodyEmitter<'_>,
     captures: &[Capture],
-    lambda_counter: &mut usize,
+    closure_idx: usize,
     ty: Ty,
 ) -> u16 {
-    // Find the capture struct TypeDef by name pattern "__closure_N"
-    // where N = lambda_counter. The builder's string heap has the name.
-    let closure_idx = *lambda_counter;
-    *lambda_counter += 1;
-
     let closure_name = format!("__closure_{}", closure_idx);
     let invoke_name = format!("__invoke_{}", closure_idx);
 

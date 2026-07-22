@@ -3102,6 +3102,155 @@ fn test_zero_capture_lambda_body_starts_params_at_r0() {
 }
 
 #[test]
+fn test_lambdas_in_separate_functions_use_module_wide_method_tokens() {
+    let mut interner = make_interner();
+    let ty_int = interner.int();
+    let ty_func = interner.func(vec![], ty_int);
+    let (mut def_map, first_fn_id) = make_def_id();
+    let second_fn_id = def_map.arena.alloc(DefEntry {
+        id: None,
+        kind: DefKind::Fn,
+        vis: DefVis::Pub,
+        file_id: FileId(0),
+        namespace: String::new(),
+        name: "second".to_string(),
+        name_span: dummy_span(),
+        generics: vec![],
+        span: dummy_span(),
+    });
+    let make_lambda = |value| TypedExpr::Lambda {
+        ty: ty_func,
+        span: dummy_span(),
+        params: vec![],
+        ret_ty: ty_int,
+        captures: vec![],
+        body: Box::new(TypedExpr::Literal {
+            ty: ty_int,
+            span: dummy_span(),
+            value: TypedLiteral::Int(value),
+        }),
+    };
+    let ast = TypedAst {
+        decls: vec![
+            TypedDecl::Fn {
+                def_id: first_fn_id,
+                body: make_lambda(1),
+                param_name_spans: vec![],
+            },
+            TypedDecl::Fn {
+                def_id: second_fn_id,
+                body: make_lambda(2),
+                param_name_spans: vec![],
+            },
+        ],
+        def_map,
+        struct_field_types: FxHashMap::default(),
+        conditional_fns: FxHashMap::default(),
+        fallback_for_conditional: FxHashMap::default(),
+    };
+
+    let mut builder = ModuleBuilder::new();
+    let infos = pre_scan_lambdas(&ast, &interner, &mut builder);
+    builder.finalize();
+    let (bodies, diags) = emit_all_bodies(
+        &ast,
+        &interner,
+        &builder,
+        &infos,
+        &FxHashMap::default(),
+        &[],
+    );
+
+    assert!(diags.is_empty(), "Expected no diagnostics, got {diags:?}");
+    assert_eq!(bodies.len(), 4);
+    let delegate_token = |body_index: usize| {
+        bodies[body_index]
+            .instructions
+            .iter()
+            .find_map(|instruction| match instruction {
+                Instruction::NewDelegate { method_idx, .. } => Some(*method_idx),
+                _ => None,
+            })
+            .unwrap()
+    };
+    let first_token = builder.methoddef_token_by_name("__invoke_0").unwrap();
+    let second_token = builder.methoddef_token_by_name("__invoke_1").unwrap();
+    assert_ne!(first_token, second_token);
+    assert_eq!(delegate_token(0), first_token);
+    assert_eq!(delegate_token(1), second_token);
+}
+
+#[test]
+fn test_nested_lambda_body_uses_inner_method_token() {
+    let mut interner = make_interner();
+    let ty_int = interner.int();
+    let inner_func_ty = interner.func(vec![], ty_int);
+    let outer_func_ty = interner.func(vec![], inner_func_ty);
+    let (def_map, fn_def_id) = make_def_id();
+
+    let inner_lambda = TypedExpr::Lambda {
+        ty: inner_func_ty,
+        span: dummy_span(),
+        params: vec![],
+        ret_ty: ty_int,
+        captures: vec![],
+        body: Box::new(TypedExpr::Literal {
+            ty: ty_int,
+            span: dummy_span(),
+            value: TypedLiteral::Int(42),
+        }),
+    };
+    let outer_lambda = TypedExpr::Lambda {
+        ty: outer_func_ty,
+        span: dummy_span(),
+        params: vec![],
+        ret_ty: inner_func_ty,
+        captures: vec![],
+        body: Box::new(inner_lambda),
+    };
+    let ast = TypedAst {
+        decls: vec![TypedDecl::Fn {
+            def_id: fn_def_id,
+            body: outer_lambda,
+            param_name_spans: vec![],
+        }],
+        def_map,
+        struct_field_types: FxHashMap::default(),
+        conditional_fns: FxHashMap::default(),
+        fallback_for_conditional: FxHashMap::default(),
+    };
+
+    let mut builder = ModuleBuilder::new();
+    let infos = pre_scan_lambdas(&ast, &interner, &mut builder);
+    builder.finalize();
+    let (bodies, diags) = emit_all_bodies(
+        &ast,
+        &interner,
+        &builder,
+        &infos,
+        &FxHashMap::default(),
+        &[],
+    );
+
+    assert!(diags.is_empty(), "Expected no diagnostics, got {diags:?}");
+    assert_eq!(bodies.len(), 3);
+    let delegate_token = |body_index: usize| {
+        bodies[body_index]
+            .instructions
+            .iter()
+            .find_map(|instruction| match instruction {
+                Instruction::NewDelegate { method_idx, .. } => Some(*method_idx),
+                _ => None,
+            })
+            .unwrap()
+    };
+    let outer_token = builder.methoddef_token_by_name("__invoke_0").unwrap();
+    let inner_token = builder.methoddef_token_by_name("__invoke_1").unwrap();
+    assert_eq!(delegate_token(0), outer_token);
+    assert_eq!(delegate_token(1), inner_token);
+}
+
+#[test]
 fn test_nullable_lambda_tail_is_lifted_into_some() {
     let mut interner = make_interner();
     let ty_int = interner.int();
