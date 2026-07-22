@@ -108,7 +108,7 @@ pub fn assemble_module(ast: AsmModule) -> Result<Module, Vec<AssembleError>> {
             ));
             MetadataToken::NULL
         });
-        builder.add_impl_def(type_tok, contract_tok);
+        let impl_tok = builder.add_impl_def(type_tok, contract_tok);
 
         // Pre-register impl methods with placeholder bodies
         for method in &imp.methods {
@@ -120,7 +120,14 @@ pub fn assemble_module(ast: AsmModule) -> Result<Module, Vec<AssembleError>> {
                 source_spans: Vec::new(),
             };
             let reg_count = method.registers.len() as u16;
-            let tok = builder.add_method(&method.name, &sig, method.flags, reg_count, placeholder_body);
+            let tok = builder.add_impl_method(
+                impl_tok,
+                &method.name,
+                &sig,
+                method.flags,
+                reg_count,
+                placeholder_body,
+            );
             let key = format!("{}::{}", imp.type_name, method.name);
             ctx.method_map.insert(key, tok);
         }

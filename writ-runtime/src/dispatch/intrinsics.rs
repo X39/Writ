@@ -453,11 +453,11 @@ pub(super) fn execute_intrinsic(
                 Some(id) => id,
                 None => return ExecutionResult::Crash("TypeMethods: not a Type object".into()),
             };
-            let (method_start, method_end) = crate::reflection::ReflectionIndex::typedef_method_range_pub(
+            let method_indices = crate::reflection::ReflectionIndex::typedef_method_indices_pub(
                 ctx.modules, module_idx, typedef_idx
             );
             let arr_href = ctx.heap.alloc_array(0);
-            for method_idx in method_start..method_end {
+            for method_idx in method_indices {
                 let mi = ctx.reflection.get_or_alloc_method_info(
                     module_idx, method_idx, ctx.heap, ctx.modules
                 );

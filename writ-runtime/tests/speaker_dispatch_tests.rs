@@ -157,14 +157,14 @@ fn speaker_impl_populates_dispatch_table() {
     let speaker_ref = builder.add_type_ref(mod_ref, "Speaker", "writ");
 
     // Implement Speaker for Merchant
-    builder.add_impl_def(merchant_type, speaker_ref);
+    let speaker_impl = builder.add_impl_def(merchant_type, speaker_ref);
 
     // speaker_name method (placeholder: returns void since we just check dispatch table)
     let speaker_body = make_body(
         &[Instruction::RetVoid],
         2,
     );
-    builder.add_method("speaker_name", &[], 0, 2, speaker_body);
+    builder.add_impl_method(speaker_impl, "speaker_name", &[], 0, 2, speaker_body);
 
     // Sentinel type to bound Merchant's method list
     builder.add_type_def("_Sentinel", "", TypeDefKind::Struct, 0);
@@ -207,7 +207,7 @@ fn speaker_override_in_display_args() {
     let speaker_ref = builder.add_type_ref(mod_ref, "Speaker", "writ");
 
     // Implement Speaker for Merchant
-    builder.add_impl_def(merchant_type, speaker_ref);
+    let speaker_impl = builder.add_impl_def(merchant_type, speaker_ref);
 
     // method[0]: speaker_name — loads a string and returns it
     // The string offset will be patched after build; use placeholder 0 for now
@@ -221,7 +221,7 @@ fn speaker_override_in_display_args() {
         ],
         2,
     );
-    builder.add_method("speaker_name", &[], 0, 2, speaker_body);
+    builder.add_impl_method(speaker_impl, "speaker_name", &[], 0, 2, speaker_body);
 
     // We need a string "The Merchant" in the heap. Adding a dummy type with that name.
     builder.add_type_def("The Merchant", "", TypeDefKind::Struct, 0);

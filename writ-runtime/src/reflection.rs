@@ -244,28 +244,20 @@ impl ReflectionIndex {
         (start, end)
     }
 
-    /// Get the range of method indices for a TypeDef (0-based start inclusive, exclusive end).
-    ///
-    /// Returns `(method_start, method_end)` where `method_start..method_end` indexes into
-    /// `modules[module_idx].module.method_defs`.
-    pub fn typedef_method_range_pub(modules: &[LoadedModule], module_idx: usize, typedef_idx: usize)
-        -> (usize, usize)
-    {
+    /// Get the MethodDef indices explicitly owned by a TypeDef.
+    pub fn typedef_method_indices_pub(
+        modules: &[LoadedModule],
+        module_idx: usize,
+        typedef_idx: usize,
+    ) -> Vec<usize> {
         if module_idx >= modules.len() {
-            return (0, 0);
+            return Vec::new();
         }
         let module = &modules[module_idx].module;
         if typedef_idx >= module.type_defs.len() {
-            return (0, 0);
+            return Vec::new();
         }
-        let td = &module.type_defs[typedef_idx];
-        let start = td.method_list.saturating_sub(1) as usize;
-        let end = if typedef_idx + 1 < module.type_defs.len() {
-            module.type_defs[typedef_idx + 1].method_list.saturating_sub(1) as usize
-        } else {
-            module.method_defs.len()
-        };
-        (start, end)
+        module.type_method_indices(typedef_idx)
     }
 
     /// Get or allocate a FieldInfo heap object for the given field.

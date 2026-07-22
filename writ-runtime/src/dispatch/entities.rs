@@ -202,7 +202,7 @@ pub(super) fn exec_entity_is_alive(
 
 // ──── Lifecycle Hook Helpers ──────────────────────────────────────────
 
-/// Scan a TypeDef's method range for a method with the given name.
+/// Scan a TypeDef's explicitly owned methods for a method with the given name.
 ///
 /// `type_idx` is a 0-based index into `module.type_defs`.
 pub(super) fn find_hook_by_name(
@@ -213,14 +213,7 @@ pub(super) fn find_hook_by_name(
     if type_idx >= module.type_defs.len() {
         return None;
     }
-    let td = &module.type_defs[type_idx];
-    let method_start = td.method_list.saturating_sub(1) as usize;
-    let method_end = if type_idx + 1 < module.type_defs.len() {
-        module.type_defs[type_idx + 1].method_list.saturating_sub(1) as usize
-    } else {
-        module.method_defs.len()
-    };
-    for idx in method_start..method_end {
+    for idx in module.type_method_indices(type_idx) {
         let md_name = writ_module::heap::read_string(&module.string_heap, module.method_defs[idx].name)
             .unwrap_or("");
         if md_name == name {

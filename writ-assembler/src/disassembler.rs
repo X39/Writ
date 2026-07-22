@@ -4,7 +4,6 @@
 //! symmetric with `assembler::assemble_module`. The output is round-trippable: feeding
 //! it back to `assemble()` produces a module with the same table structure.
 
-use std::collections::HashSet;
 use std::fmt::Write;
 use std::io::Cursor;
 
@@ -69,9 +68,6 @@ fn disassemble_inner(module: &Module, verbose: bool) -> String {
     }
 
     // ── 2. Type defs with their fields ──
-    // Compute method ownership sets before emitting types (needed for top-level method detection)
-    let (type_owned_methods, impl_owned_methods) = compute_method_ownership(module);
-
     for (ti, td) in module.type_defs.iter().enumerate() {
         let kind_str = match TypeDefKind::from_u8(td.kind) {
             Some(TypeDefKind::Struct) => "struct",
@@ -146,22 +142,8 @@ fn disassemble_inner(module: &Module, verbose: bool) -> String {
 
         writeln!(out, "    .impl {} : {} {{", type_name, contract_name).unwrap();
 
-        // Methods owned by this impl.
-        // method_list is 1-based; 0 means "unset" (user impl blocks compiled with method_list=0).
-        // When method_list=0, saturating_sub(1)=0; for method_list=1, result=0 (first method).
-        let method_start = id.method_list.saturating_sub(1) as usize;
-        let method_end_raw = module.impl_defs.get(ii + 1)
-            .map(|next| next.method_list.saturating_sub(1) as usize)
-            .unwrap_or_else(|| {
-                // Find the end: next impl or end of impl-owned methods
-                find_last_impl_method_end(module, &impl_owned_methods)
-            });
-        // Clamp to avoid invalid range when next impl's method_list < this impl's method_list
-        // (happens when user impl blocks have method_list=0 after a Reflectable impl with non-zero).
-        let method_end = method_end_raw.max(method_start);
-
-        for (mi, md) in module.method_defs[method_start..method_end].iter().enumerate() {
-            let real_idx = method_start + mi;
+        for real_idx in module.impl_method_indices(ii) {
+            let md = &module.method_defs[real_idx];
             let param_names = get_param_names(real_idx);
             let (params, ret) = decode_method_sig(&module.blob_heap, md.signature, module, &param_names);
             let method_flags_str = flags_to_str(md.flags);
@@ -208,11 +190,9 @@ fn disassemble_inner(module: &Module, verbose: bool) -> String {
         ).unwrap();
     }
 
-    // ── 7. Top-level methods (not owned by any type or impl) ──
-    for (mi, md) in module.method_defs.iter().enumerate() {
-        if type_owned_methods.contains(&mi) || impl_owned_methods.contains(&mi) {
-            continue;
-        }
+    // ── 7. Top-level methods (explicitly owned by the module) ──
+    for mi in module.top_level_method_indices() {
+        let md = &module.method_defs[mi];
         let param_names = get_param_names(mi);
         let (params, ret) = decode_method_sig(&module.blob_heap, md.signature, module, &param_names);
         let method_flags_str = flags_to_str(md.flags);
@@ -261,58 +241,6 @@ fn disassemble_inner(module: &Module, verbose: bool) -> String {
 
     writeln!(out, "}}").unwrap();
     out
-}
-
-/// Compute which method indices are owned by types (method_list ranges in type_defs)
-/// and which are owned by impls (method_list ranges in impl_defs).
-///
-/// Returns (type_owned, impl_owned).
-fn compute_method_ownership(module: &Module) -> (HashSet<usize>, HashSet<usize>) {
-    let mut type_owned = HashSet::new();
-    let mut impl_owned = HashSet::new();
-
-    // Type-owned methods (methods declared directly on type structs - not used in current assembler)
-    // TypeDefRow.method_list is typically 1 (pointing to beginning) with 0-length ranges for types
-    // that have no directly-owned methods (all methods go through impls in current spec).
-    // However, we compute it properly for future use.
-    for (ti, td) in module.type_defs.iter().enumerate() {
-        let start = td.method_list.saturating_sub(1) as usize;
-        let end = module.type_defs.get(ti + 1)
-            .map(|next| next.method_list.saturating_sub(1) as usize)
-            .unwrap_or(start); // Default: empty range (types don't directly own methods in current spec)
-        for mi in start..end {
-            type_owned.insert(mi);
-        }
-    }
-
-    // Impl-owned methods
-    for (ii, id) in module.impl_defs.iter().enumerate() {
-        let start = id.method_list.saturating_sub(1) as usize;
-        let end_raw = module.impl_defs.get(ii + 1)
-            .map(|next| next.method_list.saturating_sub(1) as usize)
-            .unwrap_or_else(|| {
-                // Last impl owns methods up to the first top-level method
-                // We use a heuristic: the end of all impl-related methods
-                // is determined by what's left after all impls
-                module.method_defs.len()
-            });
-        // Clamp to avoid invalid ranges when method_list=0 follows a non-zero method_list.
-        let end = end_raw.max(start);
-        for mi in start..end {
-            impl_owned.insert(mi);
-        }
-    }
-
-    (type_owned, impl_owned)
-}
-
-/// Find the end of the last impl's method range.
-fn find_last_impl_method_end(module: &Module, impl_owned: &HashSet<usize>) -> usize {
-    if impl_owned.is_empty() {
-        return module.method_defs.len();
-    }
-    let max = impl_owned.iter().copied().max().unwrap_or(0);
-    max + 1
 }
 
 /// Collect generic parameter names for a given owner (identified by ordinal in type or contract table).

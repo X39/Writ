@@ -226,11 +226,10 @@ fn reflectable_auto_impl_three_types() {
 }
 
 #[test]
-fn method_list_invariant_holds() {
-    // After Phase 105, each user TypeDef's Reflectable ImplDef.method_list must be
-    // non-zero (pointing to the get_type() MethodDef row in the finalized table).
-    // Verified at the metadata level: impl_def_count() == type_def_count() == 2,
-    // method_defs have get_type() before any user impl methods.
+fn method_owner_invariant_holds() {
+    // Reflectable methods belong to their ImplDef, not directly to the user TypeDef.
+    // Version 6 records that relationship on each MethodDef row, so method_list is
+    // only a derived first-row index on the actual owner.
     let (builder, diags) = emit_src(
         r#"
         struct Foo { x: int }
@@ -240,11 +239,20 @@ fn method_list_invariant_holds() {
     assert!(diags.is_empty(), "unexpected emit diags: {:?}", diags);
     assert_eq!(builder.impl_def_count(), 2, "2 Reflectable auto-impls");
     assert_eq!(builder.type_def_count(), 2, "2 TypeDefs");
-    // method_list values are non-zero (tested indirectly: golden tests verify correct
-    // TYPEOF emission in disassembled output; domain_dispatch.rs uses method_list).
-    // Structural check: each TypeDef has a method_list pointing into the MethodDef table.
-    assert!(builder.typedef_method_list(0) > 0, "Foo.method_list must be non-zero after finalize");
-    assert!(builder.typedef_method_list(1) > 0, "Bar.method_list must be non-zero after finalize");
+    assert_eq!(builder.typedef_method_list(0), 0, "Foo has no direct methods");
+    assert_eq!(builder.typedef_method_list(1), 0, "Bar has no direct methods");
+
+    let impls = builder.finalized_impl_defs();
+    assert!(impls.iter().all(|row| row.method_list > 0));
+
+    let owners: Vec<_> = builder
+        .finalized_method_defs()
+        .map(|row| row.owner)
+        .collect();
+    assert_eq!(owners.len(), 2);
+    assert!(owners.iter().all(|owner| owner.table() == TableId::ImplDef));
+    assert_eq!(owners[0].row(), 1);
+    assert_eq!(owners[1].row(), 2);
 }
 
 // =========================================================

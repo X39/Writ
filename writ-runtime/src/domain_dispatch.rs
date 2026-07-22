@@ -40,28 +40,20 @@ impl Domain {
                 // Full generic dispatch requires a future phase.
                 let contract_key = self.resolve_contract_key_for_impl(mod_idx, impl_def.contract);
 
-                // Find the method range for this ImplDef.
-                // Use the contract's method count to bound the range, rather than
-                // extending to the next ImplDef's method_list (which may include
-                // unrelated methods from other types).
-                let method_start = impl_def.method_list.saturating_sub(1) as usize;
-                let contract_method_count = Self::get_contract_method_count(module, impl_def.contract);
-                let method_end_from_next = if impl_idx + 1 < module.impl_defs.len() {
-                    module.impl_defs[impl_idx + 1].method_list.saturating_sub(1) as usize
-                } else {
-                    module.method_defs.len()
-                };
-                // Use the smaller of: contract method count, or next ImplDef boundary
-                let method_end = if contract_method_count > 0 {
-                    (method_start + contract_method_count).min(method_end_from_next)
-                } else {
-                    method_end_from_next
-                };
+                // Find the methods explicitly owned by this ImplDef. Ownership is
+                // encoded on each MethodDef, so unrelated type or top-level methods
+                // cannot leak into this implementation's dispatch slots.
+                let mut method_indices = module.impl_method_indices(impl_idx);
+                let contract_method_count =
+                    Self::get_contract_method_count(module, impl_def.contract);
+                if contract_method_count > 0 {
+                    method_indices.truncate(contract_method_count);
+                }
 
-                // For each method in this impl, slot = sequential offset from start
-                for method_idx in method_start..method_end {
+                // For each method in this impl, slot = sequential ownership order.
+                for (slot, method_idx) in method_indices.into_iter().enumerate() {
                     let method_def = &module.method_defs[method_idx];
-                    let slot = (method_idx - method_start) as u16;
+                    let slot = slot as u16;
 
                     let target = if method_def.flags & 0x80 != 0 {
                         // Intrinsic method -- resolve to IntrinsicId

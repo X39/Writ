@@ -4,6 +4,9 @@ use crate::heap;
 // the domain vocabulary for module access and querying — all are used in this file.
 use crate::tables::*;
 
+/// Current binary module format version.
+pub const FORMAT_VERSION: u16 = 6;
+
 /// The 200-byte header of a binary module file.
 #[derive(Debug, Clone)]
 pub struct ModuleHeader {
@@ -87,11 +90,11 @@ pub struct Module {
 }
 
 impl Module {
-    /// Create a new empty module with initialized heaps and format_version = 5.
+    /// Create a new empty module with initialized heaps and the current format version.
     pub fn new() -> Self {
         Module {
             header: ModuleHeader {
-                format_version: 5,
+                format_version: FORMAT_VERSION,
                 flags: 0,
                 module_name: 0,
                 module_version: 0,
@@ -136,6 +139,41 @@ impl Module {
     /// Serialize this module to spec-compliant bytes.
     pub fn to_bytes(&self) -> Result<Vec<u8>, EncodeError> {
         crate::writer::to_bytes(self)
+    }
+
+    /// Return the indices of MethodDef rows explicitly owned by `owner`.
+    ///
+    /// Method ownership is authoritative in format version 6. The legacy
+    /// `method_list` fields are intentionally not consulted here.
+    pub fn method_indices_owned_by(&self, owner: crate::token::MetadataToken) -> Vec<usize> {
+        self.method_defs
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, method)| (method.owner == owner).then_some(idx))
+            .collect()
+    }
+
+    /// Return MethodDef indices owned directly by the 0-based TypeDef row.
+    pub fn type_method_indices(&self, type_idx: usize) -> Vec<usize> {
+        let owner = crate::token::MetadataToken::new(
+            TableId::TypeDef.as_u8(),
+            type_idx.saturating_add(1) as u32,
+        );
+        self.method_indices_owned_by(owner)
+    }
+
+    /// Return MethodDef indices owned by the 0-based ImplDef row.
+    pub fn impl_method_indices(&self, impl_idx: usize) -> Vec<usize> {
+        let owner = crate::token::MetadataToken::new(
+            TableId::ImplDef.as_u8(),
+            impl_idx.saturating_add(1) as u32,
+        );
+        self.method_indices_owned_by(owner)
+    }
+
+    /// Return MethodDef indices for top-level functions.
+    pub fn top_level_method_indices(&self) -> Vec<usize> {
+        self.method_indices_owned_by(crate::token::MetadataToken::NULL)
     }
 }
 

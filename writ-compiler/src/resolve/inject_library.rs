@@ -189,79 +189,9 @@ pub fn inject_module_types(
                 .push(id);
         }
 
-        // --- Inject top-level functions (methods not owned by any TypeDef or ImplDef) ---
-        // A method is top-level if its 0-based index is NOT in any TypeDef's method range
-        // AND NOT in any ImplDef's method range.
-
-        // Build the set of method indices owned by TypeDefs
-        let type_method_ranges: Vec<(usize, usize)> = {
-            let mut ranges = Vec::new();
-            for (i, type_def) in module.type_defs.iter().enumerate() {
-                if type_def.method_list == 0 {
-                    continue;
-                }
-                let start = (type_def.method_list - 1) as usize; // convert 1-based to 0-based
-                // end = next type_def's method_list or total method count
-                let end = if i + 1 < module.type_defs.len() {
-                    let next_start = module.type_defs[i + 1].method_list;
-                    if next_start == 0 {
-                        module.method_defs.len()
-                    } else {
-                        (next_start - 1) as usize
-                    }
-                } else {
-                    module.method_defs.len()
-                };
-                if start < end {
-                    ranges.push((start, end));
-                }
-            }
-            ranges
-        };
-
-        // Build the set of method indices owned by ImplDefs
-        let impl_method_ranges: Vec<(usize, usize)> = {
-            let mut ranges = Vec::new();
-            for (i, impl_def) in module.impl_defs.iter().enumerate() {
-                if impl_def.method_list == 0 {
-                    continue;
-                }
-                let start = (impl_def.method_list - 1) as usize;
-                let end = if i + 1 < module.impl_defs.len() {
-                    let next_start = module.impl_defs[i + 1].method_list;
-                    if next_start == 0 {
-                        module.method_defs.len()
-                    } else {
-                        (next_start - 1) as usize
-                    }
-                } else {
-                    module.method_defs.len()
-                };
-                if start < end {
-                    ranges.push((start, end));
-                }
-            }
-            ranges
-        };
-
-        let is_owned = |method_idx: usize| -> bool {
-            for &(start, end) in &type_method_ranges {
-                if method_idx >= start && method_idx < end {
-                    return true;
-                }
-            }
-            for &(start, end) in &impl_method_ranges {
-                if method_idx >= start && method_idx < end {
-                    return true;
-                }
-            }
-            false
-        };
-
-        for (method_idx, method_def) in module.method_defs.iter().enumerate() {
-            if is_owned(method_idx) {
-                continue;
-            }
+        // --- Inject top-level functions using authoritative MethodDef.owner tokens. ---
+        for method_idx in module.top_level_method_indices() {
+            let method_def = &module.method_defs[method_idx];
 
             let name = writ_module::heap::read_string(&module.string_heap, method_def.name)
                 .unwrap_or("")

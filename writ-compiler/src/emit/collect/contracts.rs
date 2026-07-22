@@ -108,6 +108,7 @@ pub(super) fn collect_impl(
 
         let impl_entry_generics = def_map.get_entry(impl_def_id).generics.clone();
         let impl_is_pub = matches!(def_map.get_entry(impl_def_id).vis, DefVis::Pub);
+        let mut owned_method_handles = Vec::new();
 
         for (method_idx, (_method_def_id, _body)) in methods.iter().enumerate() {
             let fn_decl = match ast_fn_decls.get(method_idx) {
@@ -144,6 +145,7 @@ pub(super) fn collect_impl(
                 Some(*_method_def_id),
                 param_count,
             );
+            owned_method_handles.push(method_handle);
             methoddef_handles.insert(*_method_def_id, method_handle);
 
             // ParamDef
@@ -203,8 +205,12 @@ pub(super) fn collect_impl(
             })
             .unwrap_or(MetadataToken::NULL);
 
-        // method_list will be set during finalize to point to the impl's methods.
-        builder.add_impl_def(type_token, contract_token, 0, Some(impl_def_id));
+        // The explicit MethodDef owner is authoritative in format version 6;
+        // finalize derives method_list from these links for compatibility tooling.
+        let impl_handle = builder.add_impl_def(type_token, contract_token, 0, Some(impl_def_id));
+        for method_handle in owned_method_handles {
+            builder.set_method_impl_owner(method_handle, impl_handle);
+        }
     }
 }
 
@@ -242,12 +248,10 @@ pub(super) const REFLECTABLE_CONTRACT_TOKEN: MetadataToken =
 /// Emit a synthetic Reflectable ImplDef + get_type() MethodDef for a user-defined type.
 ///
 /// Called immediately after each collect_struct/class/entity/enum to satisfy COMP-03.
-/// The MethodDef is parented to the TypeDef so finalize() groups it correctly.
+/// The MethodDef records the synthetic ImplDef as its authoritative owner.
 /// The body (TYPEOF + RET) is emitted separately in emit_all_bodies.
 ///
-/// Returns `(MethodDefHandle, ImplDefHandle)` so the caller can:
-/// 1. Track the MethodDefHandle for body emission.
-/// 2. Fix up the ImplDefHandle's method_list after finalize().
+/// Returns provisional handles for metadata tests and diagnostics.
 pub(super) fn emit_reflectable_auto_impl(
     typedef_handle: TypeDefHandle,
     def_id: DefId,
@@ -272,19 +276,20 @@ pub(super) fn emit_reflectable_auto_impl(
     // method. Self has no ParamDef row (it is implicit), so 0 regular params = 0 ParamDef rows.
     let flags = method_flags(true, false, false, HookKind::None);
     let method_handle = builder.add_methoddef(
-        Some(typedef_handle), // parent = the TypeDef (critical for finalize sort)
+        Some(typedef_handle), // retained for type/name lookup during emission
         "get_type",
         sig_blob,
         flags,
-        None,  // no DefId — synthetic method
-        0,     // param_count = 0 ParamDef rows (self is implicit, no regular params)
+        None, // no DefId — synthetic method
+        0,    // param_count = 0 ParamDef rows (self is implicit, no regular params)
     );
 
     // TypeDef token for the ImplDef.type_token field.
     let type_token = MetadataToken::new(TableId::TypeDef, (typedef_handle.0 + 1) as u32);
 
-    // ImplDef: method_list=0 initially; will be fixed up after finalize() in emit_bodies.
+    // ImplDef: method_list is derived from the explicit MethodDef owner in finalize().
     let impl_handle = builder.add_impl_def(type_token, REFLECTABLE_CONTRACT_TOKEN, 0, None);
+    builder.set_method_impl_owner(method_handle, impl_handle);
 
     // Store def_id for body emission (needed to look up the finalized TypeDef token for TYPEOF).
     // We piggyback the def_id by storing in the fn_param_map with an empty params list

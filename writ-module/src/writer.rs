@@ -305,6 +305,7 @@ fn write_method_def_with_offset(out: &mut Vec<u8>, row: &MethodDefRow, body_offs
     out.write_u16::<LittleEndian>(row.reg_count)?;
     out.write_u16::<LittleEndian>(row.param_count)?;
     out.write_u16::<LittleEndian>(0)?; // 2-byte alignment pad
+    out.write_u32::<LittleEndian>(row.owner.0)?;
     Ok(())
 }
 

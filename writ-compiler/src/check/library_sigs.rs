@@ -419,22 +419,10 @@ pub fn inject_library_sigs(
             let contract_def_id = impl_def.contract.row_index()
                 .and_then(|row| lib_contract_def_id_map.get(&row).copied());
 
-            // Compute method range
-            let method_start = if impl_def.method_list == 0 {
+            let owned_methods = module.impl_method_indices(impl_idx);
+            if owned_methods.is_empty() {
                 continue;
-            } else {
-                (impl_def.method_list - 1) as usize
-            };
-            let method_end = if impl_idx + 1 < module.impl_defs.len() {
-                let next_ml = module.impl_defs[impl_idx + 1].method_list;
-                if next_ml == 0 {
-                    module.method_defs.len()
-                } else {
-                    (next_ml - 1) as usize
-                }
-            } else {
-                module.method_defs.len()
-            };
+            }
 
             // Create a synthetic DefId for this impl block by allocating a DefEntry
             let impl_entry_def_id = {
@@ -453,7 +441,7 @@ pub fn inject_library_sigs(
             };
 
             let mut methods: Vec<(String, FnSig)> = Vec::new();
-            for method_idx in method_start..method_end.min(module.method_defs.len()) {
+            for method_idx in owned_methods {
                 let method = &module.method_defs[method_idx];
                 let method_name = writ_module::heap::read_string(&module.string_heap, method.name)
                     .unwrap_or("_")
@@ -500,44 +488,8 @@ pub fn inject_library_sigs(
         // Top-level functions were injected into DefMap by inject_module_types as DefKind::Fn.
         // Inject their FnSig into type_env.fn_sigs so call expressions type-check.
         //
-        // A method is top-level if its 0-based index is NOT owned by any TypeDef or ImplDef.
-        // We reuse the same ownership detection logic as inject_module_types.
-
-        // Build type method ranges (same logic as inject_module_types)
-        let type_method_ranges: Vec<(usize, usize)> = {
-            let mut ranges = Vec::new();
-            for (i, type_def) in module.type_defs.iter().enumerate() {
-                if type_def.method_list == 0 { continue; }
-                let start = (type_def.method_list - 1) as usize;
-                let end = if i + 1 < module.type_defs.len() {
-                    let next = module.type_defs[i + 1].method_list;
-                    if next == 0 { module.method_defs.len() } else { (next - 1) as usize }
-                } else { module.method_defs.len() };
-                if start < end { ranges.push((start, end)); }
-            }
-            ranges
-        };
-        let impl_method_ranges: Vec<(usize, usize)> = {
-            let mut ranges = Vec::new();
-            for (i, impl_def) in module.impl_defs.iter().enumerate() {
-                if impl_def.method_list == 0 { continue; }
-                let start = (impl_def.method_list - 1) as usize;
-                let end = if i + 1 < module.impl_defs.len() {
-                    let next = module.impl_defs[i + 1].method_list;
-                    if next == 0 { module.method_defs.len() } else { (next - 1) as usize }
-                } else { module.method_defs.len() };
-                if start < end { ranges.push((start, end)); }
-            }
-            ranges
-        };
-        let is_owned = |method_idx: usize| -> bool {
-            for &(s, e) in &type_method_ranges { if method_idx >= s && method_idx < e { return true; } }
-            for &(s, e) in &impl_method_ranges { if method_idx >= s && method_idx < e { return true; } }
-            false
-        };
-
-        for (method_idx, method) in module.method_defs.iter().enumerate() {
-            if is_owned(method_idx) { continue; }
+        for method_idx in module.top_level_method_indices() {
+            let method = &module.method_defs[method_idx];
 
             let method_name = writ_module::heap::read_string(&module.string_heap, method.name)
                 .unwrap_or("")

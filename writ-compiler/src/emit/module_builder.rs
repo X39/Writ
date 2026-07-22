@@ -48,7 +48,10 @@ struct FieldDefEntry {
 
 #[derive(Debug, Clone)]
 struct MethodDefEntry {
+    /// Type used for name-based method lookup during body emission.
     parent: Option<TypeDefHandle>,
+    /// Explicit ImplDef owner. When set, this is authoritative over `parent`.
+    impl_owner: Option<ImplDefHandle>,
     row: MethodDefRow,
     def_id: Option<DefId>,
 }
@@ -293,6 +296,7 @@ impl ModuleBuilder {
         let name_offset = self.string_heap.intern(name);
         self.method_defs.push(MethodDefEntry {
             parent,
+            impl_owner: None,
             row: MethodDefRow {
                 name: name_offset,
                 signature,
@@ -301,6 +305,7 @@ impl ModuleBuilder {
                 body_size: 0,
                 reg_count: 0,
                 param_count,
+                owner: MetadataToken::NULL,
             },
             def_id,
         });
@@ -430,6 +435,16 @@ impl ModuleBuilder {
     /// 1-based MethodDef row index for each synthetic get_type() method.
     pub fn set_impl_def_method_list(&mut self, handle: ImplDefHandle, method_list: u32) {
         self.impl_defs[handle.0].method_list = method_list;
+    }
+
+    /// Mark a MethodDef as owned by an ImplDef while retaining its target type
+    /// for name-based lookup during emission.
+    pub fn set_method_impl_owner(
+        &mut self,
+        method: MethodDefHandle,
+        owner: ImplDefHandle,
+    ) {
+        self.method_defs[method.0].impl_owner = Some(owner);
     }
 
     /// Get the method_list value for a TypeDef (after finalize).
@@ -583,23 +598,28 @@ impl ModuleBuilder {
             }
         }
 
-        // 3. MethodDef: group by parent, assign contiguous rows.
-        // Methods without parents (top-level fns) get parent index usize::MAX.
-        self.method_defs.sort_by_key(|m| {
-            m.parent.map(|p| p.0).unwrap_or(usize::MAX)
-        });
+        // 3. MethodDef: preserve collection order so provisional handles remain stable.
+        // Version 6 records an explicit owner on every row, so list contiguity is no
+        // longer needed to distinguish type, impl, and top-level methods.
         self.final_method_def_count = self.method_defs.len() as u32;
 
-        // Set TypeDef.method_list to first child row (1-based).
+        // Resolve explicit owners and retain method_list as a derived first-row index.
         {
-            let mut current_parent: Option<usize> = None;
-            for (i, entry) in self.method_defs.iter().enumerate() {
+            for (i, entry) in self.method_defs.iter_mut().enumerate() {
                 let row_idx = (i + 1) as u32;
-                if let Some(parent) = entry.parent
-                    && current_parent != Some(parent.0) {
-                        current_parent = Some(parent.0);
+                entry.row.owner = if let Some(owner) = entry.impl_owner {
+                    if self.impl_defs[owner.0].method_list == 0 {
+                        self.impl_defs[owner.0].method_list = row_idx;
+                    }
+                    MetadataToken::new(TableId::ImplDef, (owner.0 + 1) as u32)
+                } else if let Some(parent) = entry.parent {
+                    if self.type_defs[parent.0].method_list == 0 {
                         self.type_defs[parent.0].method_list = row_idx;
                     }
+                    MetadataToken::new(TableId::TypeDef, (parent.0 + 1) as u32)
+                } else {
+                    MetadataToken::NULL
+                };
                 // Map DefId -> token
                 let token = MetadataToken::new(TableId::MethodDef, row_idx);
                 if let Some(id) = entry.def_id {
@@ -655,12 +675,8 @@ impl ModuleBuilder {
                     MetadataToken::new(TableId::TypeDef, (entry.owner_index + 1) as u32)
                 }
                 TableId::MethodDef => {
-                    // MethodDef row indices were assigned above but method_defs were sorted.
-                    // We need the final row index for the method at original index owner_index.
-                    // Since method_defs were sorted, we need to find the method's final position.
-                    // For simplicity, use the original index + 1. This works if methods are
-                    // added in a consistent order relative to their GenericParams.
-                    // TODO: more robust mapping if method ordering changes during sort
+                    // MethodDef collection order is preserved, so handles map directly
+                    // to final 1-based rows.
                     MetadataToken::new(TableId::MethodDef, (entry.owner_index + 1) as u32)
                 }
                 TableId::ContractDef => {

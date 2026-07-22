@@ -106,6 +106,7 @@ fn test_module_with_method_body_round_trip() {
         body_size: 1,    // non-zero to indicate body exists
         reg_count: 3,
         param_count: 0,
+        owner: MetadataToken::NULL,
     });
 
     module.method_bodies.push(MethodBody {
@@ -165,6 +166,7 @@ fn test_module_with_multiple_tables_round_trip() {
         body_size: 0,
         reg_count: 0,
         param_count: 0,
+        owner: MetadataToken::new(TableId::ImplDef.as_u8(), 1),
     });
 
     // ContractDef
@@ -256,26 +258,26 @@ fn test_class_typedef_round_trip() {
 
 #[test]
 fn test_format_version_rejection() {
-    // Build a valid v4 module, then patch the format_version bytes to 3 (should now be rejected)
+    // Build a valid v6 module, then patch the format_version bytes to v5.
     let module = Module::new();
     let mut bytes = module.to_bytes().expect("to_bytes should succeed");
 
     // format_version is at bytes 4-5 (little-endian u16)
-    bytes[4] = 0x03;
+    bytes[4] = 0x05;
     bytes[5] = 0x00;
 
     let result = Module::from_bytes(&bytes);
     assert!(result.is_err());
     match result.unwrap_err() {
         DecodeError::UnsupportedVersion(v) => {
-            assert_eq!(v, 3, "Expected UnsupportedVersion(3)");
+            assert_eq!(v, 5, "Expected UnsupportedVersion(5)");
         }
         other => panic!("Expected UnsupportedVersion, got {other:?}"),
     }
 }
 
 #[test]
-fn test_debug_local_v4_roundtrip() {
+fn test_debug_local_v6_roundtrip() {
     let mut module = Module::new();
     module.header.flags = 1; // enable debug info
 
@@ -297,6 +299,7 @@ fn test_debug_local_v4_roundtrip() {
         body_size: 1,
         reg_count: 1,
         param_count: 0,
+        owner: MetadataToken::NULL,
     });
 
     module.method_bodies.push(MethodBody {

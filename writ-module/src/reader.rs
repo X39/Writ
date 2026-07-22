@@ -2,7 +2,7 @@ use byteorder::{LittleEndian, ReadBytesExt};
 use std::io::Cursor;
 
 use crate::error::DecodeError;
-use crate::module::{DebugLocal, MethodBody, Module, ModuleHeader, SourceSpan};
+use crate::module::{DebugLocal, FORMAT_VERSION, MethodBody, Module, ModuleHeader, SourceSpan};
 // Intentional wildcard: tables module exports 23 row-struct types that form
 // the domain vocabulary for binary decoding — all are used in this file.
 use crate::tables::*;
@@ -20,7 +20,7 @@ const ROW_SIZES: [usize; 21] = [
     4,  // 4  TypeSpec: u32 = 4
     12, // 5  FieldDef: u32+u32+u16 = 10 -> pad to 12
     12, // 6  FieldRef: u32+u32+u32 = 12
-    24, // 7  MethodDef: u32+u32+u16+u32+u32+u16+u16 = 22 -> pad to 24
+    28, // 7  MethodDef: v5 prefix (24 bytes) + owner token (u32) = 28
     12, // 8  MethodRef: u32+u32+u32 = 12
     12, // 9  ParamDef: u32+u32+u16 = 10 -> pad to 12
     16, // 10 ContractDef: u32+u32+u32+u32 = 16
@@ -56,7 +56,7 @@ pub fn from_bytes(bytes: &[u8]) -> Result<Module, DecodeError> {
 
     // Version and flags
     let format_version = cur.read_u16::<LittleEndian>()?;
-    if format_version != 5 {
+    if format_version != FORMAT_VERSION {
         return Err(DecodeError::UnsupportedVersion(format_version));
     }
     let flags = cur.read_u16::<LittleEndian>()?;
@@ -313,7 +313,8 @@ fn read_method_def(c: &mut Cursor<&[u8]>) -> Result<MethodDefRow, DecodeError> {
     let reg_count = c.read_u16::<LittleEndian>()?;
     let param_count = c.read_u16::<LittleEndian>()?;
     let _ = c.read_u16::<LittleEndian>()?; // 2-byte alignment pad
-    Ok(MethodDefRow { name, signature, flags, body_offset, body_size, reg_count, param_count })
+    let owner = MetadataToken(c.read_u32::<LittleEndian>()?);
+    Ok(MethodDefRow { name, signature, flags, body_offset, body_size, reg_count, param_count, owner })
 }
 
 fn read_method_ref(c: &mut Cursor<&[u8]>) -> Result<MethodRefRow, DecodeError> {

@@ -1,5 +1,5 @@
 use crate::heap;
-use crate::module::{MethodBody, Module, ModuleHeader};
+use crate::module::{FORMAT_VERSION, MethodBody, Module, ModuleHeader};
 // Intentional wildcard: tables module exports 23 row-struct types that form
 // the domain vocabulary for module building — all are used in this file.
 use crate::tables::*;
@@ -63,6 +63,7 @@ struct MethodDefBuilder {
     signature: Vec<u8>,
     flags: u16,
     reg_count: u16,
+    owner: MetadataToken,
 }
 
 struct ParamDefBuilder {
@@ -214,14 +215,70 @@ impl ModuleBuilder {
         MetadataToken::new(TableId::FieldDef.as_u8(), idx)
     }
 
-    /// Add a method with a body. Returns the method's token.
-    pub fn add_method(&mut self, name: &str, signature: &[u8], flags: u16, reg_count: u16, body: MethodBody) -> MetadataToken {
+    /// Add a top-level method/function with a body. Returns the method's token.
+    pub fn add_method(
+        &mut self,
+        name: &str,
+        signature: &[u8],
+        flags: u16,
+        reg_count: u16,
+        body: MethodBody,
+    ) -> MetadataToken {
+        self.add_method_with_owner(MetadataToken::NULL, name, signature, flags, reg_count, body)
+    }
+
+    /// Add a method owned directly by a TypeDef.
+    pub fn add_type_method(
+        &mut self,
+        owner: MetadataToken,
+        name: &str,
+        signature: &[u8],
+        flags: u16,
+        reg_count: u16,
+        body: MethodBody,
+    ) -> MetadataToken {
+        assert_eq!(
+            owner.table_id(),
+            TableId::TypeDef.as_u8(),
+            "type method owner must be a TypeDef token"
+        );
+        self.add_method_with_owner(owner, name, signature, flags, reg_count, body)
+    }
+
+    /// Add a method owned by an ImplDef.
+    pub fn add_impl_method(
+        &mut self,
+        owner: MetadataToken,
+        name: &str,
+        signature: &[u8],
+        flags: u16,
+        reg_count: u16,
+        body: MethodBody,
+    ) -> MetadataToken {
+        assert_eq!(
+            owner.table_id(),
+            TableId::ImplDef.as_u8(),
+            "impl method owner must be an ImplDef token"
+        );
+        self.add_method_with_owner(owner, name, signature, flags, reg_count, body)
+    }
+
+    fn add_method_with_owner(
+        &mut self,
+        owner: MetadataToken,
+        name: &str,
+        signature: &[u8],
+        flags: u16,
+        reg_count: u16,
+        body: MethodBody,
+    ) -> MetadataToken {
         let idx = self.method_defs.len() as u32 + 1;
         self.method_defs.push(MethodDefBuilder {
             name: name.to_string(),
             signature: signature.to_vec(),
             flags,
             reg_count,
+            owner,
         });
         self.method_bodies.push(body);
         MetadataToken::new(TableId::MethodDef.as_u8(), idx)
@@ -495,6 +552,7 @@ impl ModuleBuilder {
                 body_size: 1,   // non-zero to indicate body exists
                 reg_count: b.reg_count,
                 param_count: 0, // builder API does not yet track param_count
+                owner: b.owner,
             }
         }).collect();
 
@@ -595,7 +653,7 @@ impl ModuleBuilder {
 
         Module {
             header: ModuleHeader {
-                format_version: 5,
+                format_version: FORMAT_VERSION,
                 flags: 0,
                 module_name: name_off,
                 module_version: version_off,

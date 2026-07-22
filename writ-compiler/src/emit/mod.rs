@@ -41,23 +41,13 @@ pub fn emit(
     // Pass 1: collect all definitions into provisional rows.
     // The `emit` function is used for metadata-only (no conditions needed here).
     let empty_conditions = std::collections::HashSet::new();
-    let reflectable_infos = collect::collect_defs(typed_ast, asts, interner, &mut builder, &mut diags, &empty_conditions);
+    let _reflectable_infos = collect::collect_defs(typed_ast, asts, interner, &mut builder, &mut diags, &empty_conditions);
 
     // Assign CALL_VIRT slot indices from contract declaration order.
     slots::assign_vtable_slots(&mut builder);
 
     // Pass 2: finalize — assign contiguous row indices, populate def_token_map.
     builder.finalize();
-
-    // Post-finalize: fix up Reflectable auto-impl ImplDef.method_list values.
-    // After finalize(), TypeDef.method_list points to the first MethodDef row for each type.
-    // The Reflectable get_type() MethodDef is the first method added to each TypeDef
-    // (added immediately after collect_struct/class/entity/enum, before any user impl methods),
-    // so TypeDef.method_list equals the get_type() MethodDef's row index.
-    for info in &reflectable_infos {
-        let method_list = builder.typedef_method_list_by_handle(info.typedef_handle);
-        builder.set_impl_def_method_list(info.impl_handle, method_list);
-    }
 
     // Post-finalize: collect exports and attributes that depend on resolved tokens.
     collect::collect_post_finalize(typed_ast, asts, &mut builder);
@@ -111,15 +101,6 @@ pub fn emit_bodies(
 
     // Finalize: assign contiguous row indices, populate def_token_map.
     builder.finalize();
-
-    // Post-finalize: fix up Reflectable auto-impl ImplDef.method_list values.
-    // After finalize(), TypeDef.method_list points to the first MethodDef row for each type.
-    // Reflectable get_type() MethodDef is added first (before any user impl methods),
-    // so TypeDef.method_list == get_type() row index for each type.
-    for info in &reflectable_infos {
-        let method_list = builder.typedef_method_list_by_handle(info.typedef_handle);
-        builder.set_impl_def_method_list(info.impl_handle, method_list);
-    }
 
     // Post-finalize: collect exports and attributes that depend on resolved tokens.
     // This populates ExportDef rows for all pub-visible items.

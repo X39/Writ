@@ -154,6 +154,7 @@ pub fn translate(
             body_size: 0,
             reg_count: body_idx.map(|i| bodies[i].reg_count).unwrap_or(0),
             param_count: md.param_count,
+            owner: WmToken(md.owner.0),
         });
     }
 
@@ -416,7 +417,7 @@ pub fn translate(
     module.string_heap = builder.string_heap.data().to_vec();
 
     // Format version 5: array opcode overhaul (Phase 120 — ArrayResize/Copy/NewArraySized/NewArrayFilled)
-    module.header.format_version = 5;
+    module.header.format_version = writ_module::FORMAT_VERSION;
     module.header.flags = if emit_debug_info { 1 } else { 0 };
 
     module

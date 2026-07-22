@@ -48,6 +48,7 @@ fn make_module_with_spans(spans: &[(u32, u32, u16)]) -> Module {
         body_size: 0,
         reg_count: 0,
         param_count: 0,
+        owner: writ_module::MetadataToken::NULL,
     });
     module
 }
@@ -70,6 +71,7 @@ fn make_module_with_named_method(name: &str) -> Module {
         body_size: 0,
         reg_count: 0,
         param_count: 0,
+        owner: writ_module::MetadataToken::NULL,
     });
     module.method_bodies.push(MethodBody {
         register_types: vec![],

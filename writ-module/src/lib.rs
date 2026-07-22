@@ -27,6 +27,6 @@ pub use attr::AttrValue;
 pub use builder::ModuleBuilder;
 pub use error::{DecodeError, EncodeError, ModuleError};
 pub use instruction::Instruction;
-pub use module::Module;
+pub use module::{FORMAT_VERSION, Module};
 pub use tables::TypeDefKind;
 pub use token::MetadataToken;

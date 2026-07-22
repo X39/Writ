@@ -2,11 +2,12 @@ use writ_module::heap;
 use writ_module::instruction::Instruction;
 use writ_module::module::{MethodBody, Module};
 use writ_module::tables::TypeDefKind;
-use writ_module::ModuleBuilder;
+use writ_module::{FORMAT_VERSION, MetadataToken, ModuleBuilder};
 
 #[test]
 fn test_empty_builder() {
     let module = ModuleBuilder::new("test").build();
+    assert_eq!(module.header.format_version, FORMAT_VERSION);
     assert_eq!(module.module_defs.len(), 1);
     let name = heap::read_string(&module.string_heap, module.module_defs[0].name).unwrap();
     assert_eq!(name, "test");
@@ -161,4 +162,37 @@ fn test_builder_class_type() {
 
     let type_name = heap::read_string(&module.string_heap, module.type_defs[0].name).unwrap();
     assert_eq!(type_name, "MyClass");
+}
+
+#[test]
+fn test_explicit_method_ownership_queries_round_trip() {
+    fn empty_body() -> MethodBody {
+        MethodBody {
+            register_types: Vec::new(),
+            code: Vec::new(),
+            debug_locals: Vec::new(),
+            source_spans: Vec::new(),
+        }
+    }
+
+    let mut builder = ModuleBuilder::new("owners");
+    let type_owner = builder.add_type_def("Thing", "", TypeDefKind::Struct, 0);
+    let impl_owner = builder.add_impl_def(type_owner, MetadataToken::NULL);
+
+    builder.add_type_method(type_owner, "hook", &[0x00], 0, 0, empty_body());
+    builder.add_impl_method(impl_owner, "method", &[0x00], 0, 0, empty_body());
+    builder.add_method("factory", &[0x00], 0, 0, empty_body());
+
+    let module = builder.build();
+    assert_eq!(module.type_method_indices(0), vec![0]);
+    assert_eq!(module.impl_method_indices(0), vec![1]);
+    assert_eq!(module.top_level_method_indices(), vec![2]);
+    assert_eq!(module.method_indices_owned_by(type_owner), vec![0]);
+    assert_eq!(module.method_indices_owned_by(impl_owner), vec![1]);
+
+    let bytes = module.to_bytes().unwrap();
+    let decoded = Module::from_bytes(&bytes).unwrap();
+    assert_eq!(decoded.type_method_indices(0), vec![0]);
+    assert_eq!(decoded.impl_method_indices(0), vec![1]);
+    assert_eq!(decoded.top_level_method_indices(), vec![2]);
 }

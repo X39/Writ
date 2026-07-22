@@ -32,12 +32,24 @@ fn empty_body() -> MethodBody {
     }
 }
 
-/// Add an intrinsic implementation method to the builder.
-///
-/// Returns the method's metadata token. The method has an empty body
-/// and the intrinsic flag set (0x80).
-fn add_intrinsic_method(builder: &mut ModuleBuilder, name: &str) -> MetadataToken {
-    builder.add_method(name, &[], INTRINSIC_FLAG, 0, empty_body())
+/// Add an intrinsic implementation and its explicitly owned method.
+fn add_intrinsic_impl(
+    builder: &mut ModuleBuilder,
+    type_token: MetadataToken,
+    contract: MetadataToken,
+    name: &str,
+) -> MetadataToken {
+    let impl_token = builder.add_impl_def(type_token, contract);
+    builder.add_impl_method(impl_token, name, &[], INTRINSIC_FLAG, 0, empty_body())
+}
+
+/// Add an intrinsic method owned directly by a type.
+fn add_intrinsic_type_method(
+    builder: &mut ModuleBuilder,
+    owner: MetadataToken,
+    name: &str,
+) -> MetadataToken {
+    builder.add_type_method(owner, name, &[], INTRINSIC_FLAG, 0, empty_body())
 }
 
 /// Build the complete `writ-runtime` virtual module.
@@ -223,134 +235,93 @@ pub fn build_writ_runtime_module() -> Module {
     // ────────────────────────────────────────────────────────────────
     // Section 4: Primitive contract implementations (spec section 2.18.5)
     // ────────────────────────────────────────────────────────────────
-    // Each ImplDef links a type to a contract, and needs an intrinsic
-    // method added immediately after (so the method_list ownership works).
+    // Each intrinsic method records its ImplDef owner explicitly.
 
     // --- Int implementations (13) ---
-    builder.add_impl_def(int_type, add_contract);
-    add_intrinsic_method(&mut builder, "int_add");
+    add_intrinsic_impl(&mut builder, int_type, add_contract, "int_add");
 
-    builder.add_impl_def(int_type, sub_contract);
-    add_intrinsic_method(&mut builder, "int_sub");
+    add_intrinsic_impl(&mut builder, int_type, sub_contract, "int_sub");
 
-    builder.add_impl_def(int_type, mul_contract);
-    add_intrinsic_method(&mut builder, "int_mul");
+    add_intrinsic_impl(&mut builder, int_type, mul_contract, "int_mul");
 
-    builder.add_impl_def(int_type, div_contract);
-    add_intrinsic_method(&mut builder, "int_div");
+    add_intrinsic_impl(&mut builder, int_type, div_contract, "int_div");
 
-    builder.add_impl_def(int_type, mod_contract);
-    add_intrinsic_method(&mut builder, "int_mod");
+    add_intrinsic_impl(&mut builder, int_type, mod_contract, "int_mod");
 
-    builder.add_impl_def(int_type, neg_contract);
-    add_intrinsic_method(&mut builder, "int_neg");
+    add_intrinsic_impl(&mut builder, int_type, neg_contract, "int_neg");
 
-    builder.add_impl_def(int_type, not_contract);
-    add_intrinsic_method(&mut builder, "int_not");
+    add_intrinsic_impl(&mut builder, int_type, not_contract, "int_not");
 
-    builder.add_impl_def(int_type, eq_contract);
-    add_intrinsic_method(&mut builder, "int_eq");
+    add_intrinsic_impl(&mut builder, int_type, eq_contract, "int_eq");
 
-    builder.add_impl_def(int_type, ord_contract);
-    add_intrinsic_method(&mut builder, "int_ord");
+    add_intrinsic_impl(&mut builder, int_type, ord_contract, "int_ord");
 
-    builder.add_impl_def(int_type, bitand_contract);
-    add_intrinsic_method(&mut builder, "int_bitand");
+    add_intrinsic_impl(&mut builder, int_type, bitand_contract, "int_bitand");
 
-    builder.add_impl_def(int_type, bitor_contract);
-    add_intrinsic_method(&mut builder, "int_bitor");
+    add_intrinsic_impl(&mut builder, int_type, bitor_contract, "int_bitor");
 
-    builder.add_impl_def(int_type, into_float_spec);   // Int:Into<Float>
-    add_intrinsic_method(&mut builder, "int_into_float");
+    add_intrinsic_impl(&mut builder, int_type, into_float_spec, "int_into_float"); // Int:Into<Float>
 
-    builder.add_impl_def(int_type, into_string_spec);  // Int:Into<String>
-    add_intrinsic_method(&mut builder, "int_into_string");
+    add_intrinsic_impl(&mut builder, int_type, into_string_spec, "int_into_string"); // Int:Into<String>
 
     // --- Float implementations (10) ---
-    builder.add_impl_def(float_type, add_contract);
-    add_intrinsic_method(&mut builder, "float_add");
+    add_intrinsic_impl(&mut builder, float_type, add_contract, "float_add");
 
-    builder.add_impl_def(float_type, sub_contract);
-    add_intrinsic_method(&mut builder, "float_sub");
+    add_intrinsic_impl(&mut builder, float_type, sub_contract, "float_sub");
 
-    builder.add_impl_def(float_type, mul_contract);
-    add_intrinsic_method(&mut builder, "float_mul");
+    add_intrinsic_impl(&mut builder, float_type, mul_contract, "float_mul");
 
-    builder.add_impl_def(float_type, div_contract);
-    add_intrinsic_method(&mut builder, "float_div");
+    add_intrinsic_impl(&mut builder, float_type, div_contract, "float_div");
 
-    builder.add_impl_def(float_type, mod_contract);
-    add_intrinsic_method(&mut builder, "float_mod");
+    add_intrinsic_impl(&mut builder, float_type, mod_contract, "float_mod");
 
-    builder.add_impl_def(float_type, neg_contract);
-    add_intrinsic_method(&mut builder, "float_neg");
+    add_intrinsic_impl(&mut builder, float_type, neg_contract, "float_neg");
 
-    builder.add_impl_def(float_type, eq_contract);
-    add_intrinsic_method(&mut builder, "float_eq");
+    add_intrinsic_impl(&mut builder, float_type, eq_contract, "float_eq");
 
-    builder.add_impl_def(float_type, ord_contract);
-    add_intrinsic_method(&mut builder, "float_ord");
+    add_intrinsic_impl(&mut builder, float_type, ord_contract, "float_ord");
 
-    builder.add_impl_def(float_type, into_int_spec);    // Float:Into<Int>
-    add_intrinsic_method(&mut builder, "float_into_int");
+    add_intrinsic_impl(&mut builder, float_type, into_int_spec, "float_into_int"); // Float:Into<Int>
 
-    builder.add_impl_def(float_type, into_string_spec); // Float:Into<String>
-    add_intrinsic_method(&mut builder, "float_into_string");
+    add_intrinsic_impl(&mut builder, float_type, into_string_spec, "float_into_string"); // Float:Into<String>
 
     // --- Bool implementations (3) ---
-    builder.add_impl_def(bool_type, eq_contract);
-    add_intrinsic_method(&mut builder, "bool_eq");
+    add_intrinsic_impl(&mut builder, bool_type, eq_contract, "bool_eq");
 
-    builder.add_impl_def(bool_type, not_contract);
-    add_intrinsic_method(&mut builder, "bool_not");
+    add_intrinsic_impl(&mut builder, bool_type, not_contract, "bool_not");
 
-    builder.add_impl_def(bool_type, into_string_spec);  // Bool:Into<String>
-    add_intrinsic_method(&mut builder, "bool_into_string");
+    add_intrinsic_impl(&mut builder, bool_type, into_string_spec, "bool_into_string"); // Bool:Into<String>
 
     // --- String implementations (6) ---
-    builder.add_impl_def(string_type, add_contract);
-    add_intrinsic_method(&mut builder, "string_add");
+    add_intrinsic_impl(&mut builder, string_type, add_contract, "string_add");
 
-    builder.add_impl_def(string_type, eq_contract);
-    add_intrinsic_method(&mut builder, "string_eq");
+    add_intrinsic_impl(&mut builder, string_type, eq_contract, "string_eq");
 
-    builder.add_impl_def(string_type, ord_contract);
-    add_intrinsic_method(&mut builder, "string_ord");
+    add_intrinsic_impl(&mut builder, string_type, ord_contract, "string_ord");
 
-    builder.add_impl_def(string_type, index_int_spec);   // String:Index<Int>
-    add_intrinsic_method(&mut builder, "string_index_int");
+    add_intrinsic_impl(&mut builder, string_type, index_int_spec, "string_index_int"); // String:Index<Int>
 
-    builder.add_impl_def(string_type, index_range_spec); // String:Index<Range>
-    add_intrinsic_method(&mut builder, "string_index_range");
+    add_intrinsic_impl(&mut builder, string_type, index_range_spec, "string_index_range"); // String:Index<Range>
 
-    builder.add_impl_def(string_type, into_string_spec); // String:Into<String>
-    add_intrinsic_method(&mut builder, "string_into_string");
+    add_intrinsic_impl(&mut builder, string_type, into_string_spec, "string_into_string"); // String:Into<String>
 
     // --- Primitive Reflectable implementations (4) ---
-    builder.add_impl_def(int_type, reflectable_contract);
-    add_intrinsic_method(&mut builder, "int_get_type");
+    add_intrinsic_impl(&mut builder, int_type, reflectable_contract, "int_get_type");
 
-    builder.add_impl_def(float_type, reflectable_contract);
-    add_intrinsic_method(&mut builder, "float_get_type");
+    add_intrinsic_impl(&mut builder, float_type, reflectable_contract, "float_get_type");
 
-    builder.add_impl_def(bool_type, reflectable_contract);
-    add_intrinsic_method(&mut builder, "bool_get_type");
+    add_intrinsic_impl(&mut builder, bool_type, reflectable_contract, "bool_get_type");
 
-    builder.add_impl_def(string_type, reflectable_contract);
-    add_intrinsic_method(&mut builder, "string_get_type");
+    add_intrinsic_impl(&mut builder, string_type, reflectable_contract, "string_get_type");
 
     // --- Primitive Hashable implementations (4) — Phase 116 ---
-    builder.add_impl_def(int_type, hashable_contract);
-    add_intrinsic_method(&mut builder, "int_hash");
+    add_intrinsic_impl(&mut builder, int_type, hashable_contract, "int_hash");
 
-    builder.add_impl_def(float_type, hashable_contract);
-    add_intrinsic_method(&mut builder, "float_hash");
+    add_intrinsic_impl(&mut builder, float_type, hashable_contract, "float_hash");
 
-    builder.add_impl_def(bool_type, hashable_contract);
-    add_intrinsic_method(&mut builder, "bool_hash");
+    add_intrinsic_impl(&mut builder, bool_type, hashable_contract, "bool_hash");
 
-    builder.add_impl_def(string_type, hashable_contract);
-    add_intrinsic_method(&mut builder, "string_hash");
+    add_intrinsic_impl(&mut builder, string_type, hashable_contract, "string_hash");
 
     // ────────────────────────────────────────────────────────────────
     // Section 5: Array<T> TypeDef and methods (spec section 2.18.6)
@@ -361,37 +332,33 @@ pub fn build_writ_runtime_module() -> Module {
     builder.add_generic_param(array_type, 0, 0, "T");
 
     // Array intrinsic instance methods
-    add_intrinsic_method(&mut builder, "array_add");
-    add_intrinsic_method(&mut builder, "array_remove_at");
-    add_intrinsic_method(&mut builder, "array_insert");
-    add_intrinsic_method(&mut builder, "array_contains");
-    add_intrinsic_method(&mut builder, "array_slice");
-    add_intrinsic_method(&mut builder, "array_iterator");
+    add_intrinsic_type_method(&mut builder, array_type, "array_add");
+    add_intrinsic_type_method(&mut builder, array_type, "array_remove_at");
+    add_intrinsic_type_method(&mut builder, array_type, "array_insert");
+    add_intrinsic_type_method(&mut builder, array_type, "array_contains");
+    add_intrinsic_type_method(&mut builder, array_type, "array_slice");
+    add_intrinsic_type_method(&mut builder, array_type, "array_iterator");
 
     // Array contract implementations (4 ImplDef entries)
-    builder.add_impl_def(array_type, index_int_spec);       // Array:Index<Int>
-    add_intrinsic_method(&mut builder, "array_index");
+    add_intrinsic_impl(&mut builder, array_type, index_int_spec, "array_index"); // Array:Index<Int>
 
-    builder.add_impl_def(array_type, indexset_contract);    // IndexSet<int, T>
-    add_intrinsic_method(&mut builder, "array_index_set");
+    add_intrinsic_impl(&mut builder, array_type, indexset_contract, "array_index_set"); // IndexSet<int, T>
 
-    builder.add_impl_def(array_type, index_range_spec);     // Array:Index<Range>
-    add_intrinsic_method(&mut builder, "array_index_range");
+    add_intrinsic_impl(&mut builder, array_type, index_range_spec, "array_index_range"); // Array:Index<Range>
 
-    builder.add_impl_def(array_type, iterable_contract);    // Iterable<T>
-    add_intrinsic_method(&mut builder, "array_iterable");
+    add_intrinsic_impl(&mut builder, array_type, iterable_contract, "array_iterable"); // Iterable<T>
 
     // ────────────────────────────────────────────────────────────────
     // Section 6: Entity base TypeDef (spec section 2.18.7)
     // ────────────────────────────────────────────────────────────────
 
-    let _entity_type = builder.add_type_def("Entity", "writ", TypeDefKind::Entity, 0);
+    let entity_type = builder.add_type_def("Entity", "writ", TypeDefKind::Entity, 0);
 
     // Entity intrinsic static methods
-    add_intrinsic_method(&mut builder, "entity_destroy");
-    add_intrinsic_method(&mut builder, "entity_is_alive");
-    add_intrinsic_method(&mut builder, "entity_get_or_create");
-    add_intrinsic_method(&mut builder, "entity_find_all");
+    add_intrinsic_type_method(&mut builder, entity_type, "entity_destroy");
+    add_intrinsic_type_method(&mut builder, entity_type, "entity_is_alive");
+    add_intrinsic_type_method(&mut builder, entity_type, "entity_get_or_create");
+    add_intrinsic_type_method(&mut builder, entity_type, "entity_find_all");
 
     // ────────────────────────────────────────────────────────────────
     // Section 7: Builtin Attribute Declarations (UATTR-03)
@@ -591,96 +558,68 @@ pub fn build_writ_runtime_module() -> Module {
     // ────────────────────────────────────────────────────────────────
     //
     // Link each reflection TypeDef to its synthetic method contracts.
-    // Each ImplDef is followed immediately by its intrinsic method.
 
     // --- Type implementations (9) ---
-    builder.add_impl_def(type_type, type_fields_contract);
-    add_intrinsic_method(&mut builder, "type_fields");
+    add_intrinsic_impl(&mut builder, type_type, type_fields_contract, "type_fields");
 
-    builder.add_impl_def(type_type, type_methods_contract);
-    add_intrinsic_method(&mut builder, "type_methods");
+    add_intrinsic_impl(&mut builder, type_type, type_methods_contract, "type_methods");
 
-    builder.add_impl_def(type_type, type_attrs_contract);
-    add_intrinsic_method(&mut builder, "type_attributes");
+    add_intrinsic_impl(&mut builder, type_type, type_attrs_contract, "type_attributes");
 
-    builder.add_impl_def(type_type, type_contracts_contract);
-    add_intrinsic_method(&mut builder, "type_contracts");
+    add_intrinsic_impl(&mut builder, type_type, type_contracts_contract, "type_contracts");
 
-    builder.add_impl_def(type_type, type_impl_contract);
-    add_intrinsic_method(&mut builder, "type_implements");
+    add_intrinsic_impl(&mut builder, type_type, type_impl_contract, "type_implements");
 
-    builder.add_impl_def(type_type, type_get_name_contract);
-    add_intrinsic_method(&mut builder, "type_get_name");
+    add_intrinsic_impl(&mut builder, type_type, type_get_name_contract, "type_get_name");
 
-    builder.add_impl_def(type_type, type_get_ns_contract);
-    add_intrinsic_method(&mut builder, "type_get_namespace");
+    add_intrinsic_impl(&mut builder, type_type, type_get_ns_contract, "type_get_namespace");
 
-    builder.add_impl_def(type_type, type_get_kind_contract);
-    add_intrinsic_method(&mut builder, "type_get_kind");
+    add_intrinsic_impl(&mut builder, type_type, type_get_kind_contract, "type_get_kind");
 
-    builder.add_impl_def(type_type, type_get_is_generic_contract);
-    add_intrinsic_method(&mut builder, "type_get_is_generic");
+    add_intrinsic_impl(&mut builder, type_type, type_get_is_generic_contract, "type_get_is_generic");
 
     // --- ParameterInfo implementations (2) ---
-    builder.add_impl_def(param_info_type, paraminfo_get_name_contract);
-    add_intrinsic_method(&mut builder, "paraminfo_get_name");
+    add_intrinsic_impl(&mut builder, param_info_type, paraminfo_get_name_contract, "paraminfo_get_name");
 
-    builder.add_impl_def(param_info_type, paraminfo_get_type_contract);
-    add_intrinsic_method(&mut builder, "paraminfo_get_type");
+    add_intrinsic_impl(&mut builder, param_info_type, paraminfo_get_type_contract, "paraminfo_get_type");
 
     // --- AttributeInfo implementations (2) ---
-    builder.add_impl_def(attr_info_type, attrinfo_get_name_contract);
-    add_intrinsic_method(&mut builder, "attrinfo_get_name");
+    add_intrinsic_impl(&mut builder, attr_info_type, attrinfo_get_name_contract, "attrinfo_get_name");
 
-    builder.add_impl_def(attr_info_type, attrinfo_get_args_contract);
-    add_intrinsic_method(&mut builder, "attrinfo_get_args");
+    add_intrinsic_impl(&mut builder, attr_info_type, attrinfo_get_args_contract, "attrinfo_get_args");
 
     // --- ContractInfo implementations (2) ---
-    builder.add_impl_def(contract_info_type, contractinfo_get_name_contract);
-    add_intrinsic_method(&mut builder, "contractinfo_get_name");
+    add_intrinsic_impl(&mut builder, contract_info_type, contractinfo_get_name_contract, "contractinfo_get_name");
 
-    builder.add_impl_def(contract_info_type, contractinfo_get_type_contract);
-    add_intrinsic_method(&mut builder, "contractinfo_get_type");
+    add_intrinsic_impl(&mut builder, contract_info_type, contractinfo_get_type_contract, "contractinfo_get_type");
 
     // --- FieldInfo implementations (4) ---
-    builder.add_impl_def(field_info_type, fieldinfo_get_contract);
-    add_intrinsic_method(&mut builder, "fieldinfo_get");
+    add_intrinsic_impl(&mut builder, field_info_type, fieldinfo_get_contract, "fieldinfo_get");
 
-    builder.add_impl_def(field_info_type, fieldinfo_get_name_contract);
-    add_intrinsic_method(&mut builder, "fieldinfo_get_name");
+    add_intrinsic_impl(&mut builder, field_info_type, fieldinfo_get_name_contract, "fieldinfo_get_name");
 
-    builder.add_impl_def(field_info_type, fieldinfo_get_type_contract);
-    add_intrinsic_method(&mut builder, "fieldinfo_get_declared_type");
+    add_intrinsic_impl(&mut builder, field_info_type, fieldinfo_get_type_contract, "fieldinfo_get_declared_type");
 
-    builder.add_impl_def(field_info_type, fieldinfo_get_mut_contract);
-    add_intrinsic_method(&mut builder, "fieldinfo_get_is_mutable");
+    add_intrinsic_impl(&mut builder, field_info_type, fieldinfo_get_mut_contract, "fieldinfo_get_is_mutable");
 
     // --- MethodInfo implementations (3) ---
-    builder.add_impl_def(method_info_type, methodinfo_get_name_contract);
-    add_intrinsic_method(&mut builder, "methodinfo_get_name");
+    add_intrinsic_impl(&mut builder, method_info_type, methodinfo_get_name_contract, "methodinfo_get_name");
 
-    builder.add_impl_def(method_info_type, methodinfo_get_ret_contract);
-    add_intrinsic_method(&mut builder, "methodinfo_get_return_type");
+    add_intrinsic_impl(&mut builder, method_info_type, methodinfo_get_ret_contract, "methodinfo_get_return_type");
 
-    builder.add_impl_def(method_info_type, methodinfo_get_params_contract);
-    add_intrinsic_method(&mut builder, "methodinfo_get_parameters");
+    add_intrinsic_impl(&mut builder, method_info_type, methodinfo_get_params_contract, "methodinfo_get_parameters");
 
     // --- Phase 107: Dynamic invocation implementations (2) ---
-    builder.add_impl_def(field_info_type, fieldinfo_set_contract);
-    add_intrinsic_method(&mut builder, "fieldinfo_set");
+    add_intrinsic_impl(&mut builder, field_info_type, fieldinfo_set_contract, "fieldinfo_set");
 
-    builder.add_impl_def(method_info_type, methodinfo_invoke_contract);
-    add_intrinsic_method(&mut builder, "methodinfo_invoke");
+    add_intrinsic_impl(&mut builder, method_info_type, methodinfo_invoke_contract, "methodinfo_invoke");
 
     // --- Phase 108: Generic reflection + per-member attributes (3) ---
-    builder.add_impl_def(type_type, type_type_args_contract);
-    add_intrinsic_method(&mut builder, "type_type_args");
+    add_intrinsic_impl(&mut builder, type_type, type_type_args_contract, "type_type_args");
 
-    builder.add_impl_def(method_info_type, methodinfo_attrs_contract);
-    add_intrinsic_method(&mut builder, "methodinfo_attributes");
+    add_intrinsic_impl(&mut builder, method_info_type, methodinfo_attrs_contract, "methodinfo_attributes");
 
-    builder.add_impl_def(field_info_type, fieldinfo_attrs_contract);
-    add_intrinsic_method(&mut builder, "fieldinfo_attributes");
+    add_intrinsic_impl(&mut builder, field_info_type, fieldinfo_attrs_contract, "fieldinfo_attributes");
 
     // ────────────────────────────────────────────────────────────────
     // Section 11: Build and return
@@ -960,21 +899,11 @@ mod tests {
         let array_idx = module.type_defs.iter()
             .position(|t| str_from_heap(&module, t.name) == "Array")
             .expect("Array type exists");
-        let array = &module.type_defs[array_idx];
-
-        // Methods owned by Array: from method_list to the next type's method_list
-        let method_start = array.method_list as usize - 1;
-        let method_end = if array_idx + 1 < module.type_defs.len() {
-            module.type_defs[array_idx + 1].method_list as usize - 1
-        } else {
-            module.method_defs.len()
-        };
-        let method_count = method_end - method_start;
-        // 6 instance methods + 4 impl methods = 10 methods total on Array
-        assert!(
-            method_count >= 6,
-            "Array should have at least 6 methods, got {}",
-            method_count
+        let method_indices = module.type_method_indices(array_idx);
+        assert_eq!(
+            method_indices.len(),
+            6,
+            "Array should have exactly 6 directly owned methods"
         );
     }
 
@@ -993,16 +922,10 @@ mod tests {
         let entity_idx = module.type_defs.iter()
             .position(|t| str_from_heap(&module, t.name) == "Entity")
             .expect("Entity type exists");
-        let entity = &module.type_defs[entity_idx];
-
-        let method_start = entity.method_list as usize - 1;
-        let method_end = if entity_idx + 1 < module.type_defs.len() {
-            module.type_defs[entity_idx + 1].method_list as usize - 1
-        } else {
-            module.method_defs.len()
-        };
-        let method_names: Vec<&str> = module.method_defs[method_start..method_end].iter()
-            .map(|m| str_from_heap(&module, m.name))
+        let method_names: Vec<&str> = module
+            .type_method_indices(entity_idx)
+            .into_iter()
+            .map(|idx| str_from_heap(&module, module.method_defs[idx].name))
             .collect();
         assert_eq!(method_names.len(), 4, "Entity should have 4 static methods");
         assert!(method_names.contains(&"entity_destroy"));

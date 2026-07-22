@@ -2028,7 +2028,7 @@ fn call_virt_user_defined_contract_dispatch_table_populated() {
     builder.add_contract_method("compute", &[], 0);
 
     // Implement MyContract on MyType with a method that returns 42
-    builder.add_impl_def(my_type, my_contract);
+    let impl_token = builder.add_impl_def(my_type, my_contract);
     let impl_body = MethodBody {
         register_types: vec![0; 2],
         code: encode(&[
@@ -2038,7 +2038,7 @@ fn call_virt_user_defined_contract_dispatch_table_populated() {
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_method("compute", &[], 0, 2, impl_body);
+    builder.add_impl_method(impl_token, "compute", &[], 0, 2, impl_body);
 
     // Main method (not used, just needed to construct Runtime)
     let main_body = MethodBody {

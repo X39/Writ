@@ -99,6 +99,16 @@ fn round_trip_complex_module() {
     assert_eq!(m1.contract_methods.len(), m2.contract_methods.len(), "contract_methods count must match");
     assert_eq!(m1.impl_defs.len(), m2.impl_defs.len(), "impl_defs count must match");
     assert_eq!(m1.method_defs.len(), m2.method_defs.len(), "method_defs count must match");
+    assert_eq!(
+        m1.impl_method_indices(0),
+        m2.impl_method_indices(0),
+        "impl method ownership must match"
+    );
+    assert_eq!(
+        m1.top_level_method_indices(),
+        m2.top_level_method_indices(),
+        "top-level method ownership must match"
+    );
 }
 
 #[test]

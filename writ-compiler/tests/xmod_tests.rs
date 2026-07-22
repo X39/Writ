@@ -213,3 +213,93 @@ fn xmod_class_method_call() {
     let result = compile_with_libs(user_src, &[&lib_module]);
     assert!(result.is_ok(), "expected compile success for class method call on library type, got: {:?}", result.err());
 }
+
+/// A top-level factory after a type and impl must not be absorbed into either
+/// owner's legacy method-list range.
+#[test]
+fn xmod_mixed_module_factory_is_top_level() {
+    let lib_bytes = compile(
+        r#"
+        pub class Widget { pub value: int }
+        impl Widget {
+            pub fn get(self) -> int { self.value }
+        }
+        pub fn make_widget(value: int) -> Widget {
+            new Widget { value: value }
+        }
+    "#,
+    );
+    let lib_module = writ_module::Module::from_bytes(&lib_bytes).unwrap();
+
+    let top_level_names: Vec<&str> = lib_module
+        .top_level_method_indices()
+        .into_iter()
+        .map(|idx| {
+            writ_module::heap::read_string(
+                &lib_module.string_heap,
+                lib_module.method_defs[idx].name,
+            )
+            .unwrap()
+        })
+        .collect();
+    assert!(top_level_names.contains(&"make_widget"));
+    assert!(!top_level_names.contains(&"get"));
+
+    let result = compile_with_libs(
+        r#"
+        pub fn use_factory() -> int {
+            let widget: Widget = make_widget(7);
+            widget.get()
+        }
+    "#,
+        &[&lib_module],
+    );
+    assert!(result.is_ok(), "factory must remain callable: {:?}", result.err());
+}
+
+/// Each impl owns exactly its declared methods, even when several impl blocks
+/// target the same type.
+#[test]
+fn xmod_multiple_impl_blocks_are_disjoint() {
+    let lib_bytes = compile(
+        r#"
+        pub class Counter { pub value: int }
+        impl Counter {
+            pub fn get(self) -> int { self.value }
+        }
+        impl Counter {
+            pub fn set(mut self, value: int) { self.value = value; }
+        }
+    "#,
+    );
+    let lib_module = writ_module::Module::from_bytes(&lib_bytes).unwrap();
+
+    let impl_method_names: Vec<Vec<&str>> = (0..lib_module.impl_defs.len())
+        .map(|impl_idx| {
+            lib_module
+                .impl_method_indices(impl_idx)
+                .into_iter()
+                .map(|method_idx| {
+                    writ_module::heap::read_string(
+                        &lib_module.string_heap,
+                        lib_module.method_defs[method_idx].name,
+                    )
+                    .unwrap()
+                })
+                .collect()
+        })
+        .collect();
+    assert!(impl_method_names.iter().any(|names| names == &["get"]));
+    assert!(impl_method_names.iter().any(|names| names == &["set"]));
+
+    let result = compile_with_libs(
+        r#"
+        pub fn use_both(counter: Counter) -> int {
+            counter.set(9);
+            counter.get()
+        }
+    "#,
+        &[&lib_module],
+    );
+    assert!(result.is_ok(), "both impls must remain visible: {:?}", result.err());
+}

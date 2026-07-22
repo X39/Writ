@@ -320,16 +320,9 @@ impl Domain {
         None
     }
 
-    /// Find a MethodDef by name within a type's method range.
+    /// Find a MethodDef by name among a type's explicitly owned methods.
     fn find_method_in_type(module: &writ_module::Module, type_idx: usize, method_name: &str) -> Option<usize> {
-        let td = &module.type_defs[type_idx];
-        let method_start = td.method_list.saturating_sub(1) as usize;
-        let method_end = if type_idx + 1 < module.type_defs.len() {
-            module.type_defs[type_idx + 1].method_list.saturating_sub(1) as usize
-        } else {
-            module.method_defs.len()
-        };
-        for idx in method_start..method_end {
+        for idx in module.type_method_indices(type_idx) {
             let md_name = read_string(&module.string_heap, module.method_defs[idx].name).unwrap_or("");
             if md_name == method_name {
                 return Some(idx);
@@ -592,8 +585,8 @@ mod tests {
 
         // Module A: has TypeDef "Foo" with method "bar"
         let mut builder_a = ModuleBuilder::new("mod-a");
-        builder_a.add_type_def("Foo", "ns", TypeDefKind::Struct, 0);
-        builder_a.add_method("bar", &[], 0, 0, empty_body());
+        let foo = builder_a.add_type_def("Foo", "ns", TypeDefKind::Struct, 0);
+        builder_a.add_type_method(foo, "bar", &[], 0, 0, empty_body());
         domain.add_module(builder_a.build()).unwrap();
 
         // Module B: references "bar" on Foo from mod-a
@@ -737,7 +730,7 @@ mod tests {
         // Single module with a TypeDef and a MethodRef pointing to a local method
         let mut builder = ModuleBuilder::new("self-contained");
         let type_token = builder.add_type_def("MyType", "app", TypeDefKind::Struct, 0);
-        builder.add_method("do_thing", &[], 0, 0, empty_body());
+        builder.add_type_method(type_token, "do_thing", &[], 0, 0, empty_body());
         // MethodRef with parent pointing to local TypeDef
         builder.add_method_ref(type_token, "do_thing", &[]);
         domain.add_module(builder.build()).unwrap();
@@ -886,9 +879,9 @@ mod tests {
         let my_contract = builder.add_contract_def("MyContract", "app");
         builder.add_contract_method("do_it", &[], 0);
 
-        builder.add_impl_def(my_type, my_contract);
+        let impl_token = builder.add_impl_def(my_type, my_contract);
         // Non-intrinsic method (flags=0)
-        builder.add_method("do_it", &[], 0, 0, empty_body());
+        builder.add_impl_method(impl_token, "do_it", &[], 0, 0, empty_body());
 
         domain.add_module(builder.build()).unwrap();
         domain.resolve_refs().unwrap();
@@ -995,12 +988,12 @@ mod tests {
         builder.add_contract_method("into", &[], 0);
 
         // ImplDef 1: MyType implements Into<Float> (distinct contract token)
-        builder.add_impl_def(my_type, into_float);
-        builder.add_method("into_float_impl", &[], 0, 0, empty_body());
+        let into_float_impl = builder.add_impl_def(my_type, into_float);
+        builder.add_impl_method(into_float_impl, "into_float_impl", &[], 0, 0, empty_body());
 
         // ImplDef 2: MyType implements Into<String> (distinct contract token)
-        builder.add_impl_def(my_type, into_string);
-        builder.add_method("into_string_impl", &[], 0, 0, empty_body());
+        let into_string_impl = builder.add_impl_def(my_type, into_string);
+        builder.add_impl_method(into_string_impl, "into_string_impl", &[], 0, 0, empty_body());
 
         // The base into_contract is unused in impls above but exists for reference
         let _ = into_contract;
@@ -1029,8 +1022,8 @@ mod tests {
         let my_contract = builder.add_contract_def("Eq", "app");
         builder.add_contract_method("eq", &[], 0);
 
-        builder.add_impl_def(my_type, my_contract);
-        builder.add_method("eq_impl", &[], 0, 0, empty_body());
+        let impl_token = builder.add_impl_def(my_type, my_contract);
+        builder.add_impl_method(impl_token, "eq_impl", &[], 0, 0, empty_body());
 
         domain.add_module(builder.build()).unwrap();
         domain.resolve_refs().unwrap();

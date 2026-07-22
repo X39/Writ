@@ -42,16 +42,10 @@ pub use builtins::{inject_log_extern_defs, inject_dialogue_extern_defs};
 /// fallback produce diagnostic E0010.
 /// Info about a Reflectable auto-impl emitted during collect_defs.
 ///
-/// Used to:
-/// 1. Emit synthetic get_type() bodies in emit_all_bodies.
-/// 2. Fix up ImplDef.method_list after finalize().
+/// Used to emit synthetic get_type() bodies in emit_all_bodies.
 pub struct ReflectableInfo {
     /// The TypeDef's DefId — used to resolve the type_idx token for TYPEOF.
     pub def_id: DefId,
-    /// Handle to the TypeDef — used to look up TypeDef.method_list after finalize.
-    pub typedef_handle: TypeDefHandle,
-    /// Handle to the synthetic ImplDef — used to update method_list after finalize.
-    pub impl_handle: super::module_builder::ImplDefHandle,
 }
 
 pub fn collect_defs(
@@ -146,45 +140,29 @@ pub fn collect_defs(
             TypedDecl::Struct { def_id } => {
                 collect_struct(*def_id, def_map, asts, interner, builder, &mut typedef_handles, diags);
                 if let Some(&handle) = typedef_handles.get(def_id) {
-                    let (_mh, impl_handle) = emit_reflectable_auto_impl(handle, *def_id, builder);
-                    reflectable_infos.push(ReflectableInfo {
-                        def_id: *def_id,
-                        typedef_handle: handle,
-                        impl_handle,
-                    });
+                    emit_reflectable_auto_impl(handle, *def_id, builder);
+                    reflectable_infos.push(ReflectableInfo { def_id: *def_id });
                 }
             }
             TypedDecl::Class { def_id } => {
                 collect_class(*def_id, def_map, asts, interner, builder, &mut typedef_handles, diags);
                 if let Some(&handle) = typedef_handles.get(def_id) {
-                    let (_mh, impl_handle) = emit_reflectable_auto_impl(handle, *def_id, builder);
-                    reflectable_infos.push(ReflectableInfo {
-                        def_id: *def_id,
-                        typedef_handle: handle,
-                        impl_handle,
-                    });
+                    emit_reflectable_auto_impl(handle, *def_id, builder);
+                    reflectable_infos.push(ReflectableInfo { def_id: *def_id });
                 }
             }
             TypedDecl::Entity { def_id } => {
                 collect_entity(*def_id, def_map, asts, interner, builder, &mut typedef_handles, diags);
                 if let Some(&handle) = typedef_handles.get(def_id) {
-                    let (_mh, impl_handle) = emit_reflectable_auto_impl(handle, *def_id, builder);
-                    reflectable_infos.push(ReflectableInfo {
-                        def_id: *def_id,
-                        typedef_handle: handle,
-                        impl_handle,
-                    });
+                    emit_reflectable_auto_impl(handle, *def_id, builder);
+                    reflectable_infos.push(ReflectableInfo { def_id: *def_id });
                 }
             }
             TypedDecl::Enum { def_id } => {
                 collect_enum(*def_id, def_map, asts, interner, builder, &mut typedef_handles, diags);
                 if let Some(&handle) = typedef_handles.get(def_id) {
-                    let (_mh, impl_handle) = emit_reflectable_auto_impl(handle, *def_id, builder);
-                    reflectable_infos.push(ReflectableInfo {
-                        def_id: *def_id,
-                        typedef_handle: handle,
-                        impl_handle,
-                    });
+                    emit_reflectable_auto_impl(handle, *def_id, builder);
+                    reflectable_infos.push(ReflectableInfo { def_id: *def_id });
                 }
             }
             TypedDecl::Fn { def_id, .. } => {

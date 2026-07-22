@@ -79,6 +79,7 @@ fn build_module_with_locals(locals: &[(u16, &str, &[u8], u32, u32)]) -> Module {
         body_size: body.code.len() as u32,
         reg_count: locals.len().max(1) as u16,
         param_count: 0,
+        owner: writ_module::MetadataToken::NULL,
     });
 
     module.method_bodies.push(body);
@@ -226,6 +227,7 @@ fn disasm_locals_section_excludes_unnamed_temporaries() {
         body_size: body.code.len() as u32,
         reg_count: 2,
         param_count: 0,
+        owner: writ_module::MetadataToken::NULL,
     });
     module.method_bodies.push(body);
 
@@ -279,6 +281,7 @@ fn disasm_no_locals_section_when_all_registers_are_unnamed() {
         body_size: body.code.len() as u32,
         reg_count: 1,
         param_count: 0,
+        owner: writ_module::MetadataToken::NULL,
     });
     module.method_bodies.push(body);
 

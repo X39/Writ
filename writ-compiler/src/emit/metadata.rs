@@ -257,6 +257,7 @@ pub struct MethodDefRow {
     pub body_size: u32,
     pub reg_count: u16,
     pub param_count: u16, // count of parameter registers r0..r(param_count-1)
+    pub owner: MetadataToken, // NULL=top-level, TypeDef=direct method, ImplDef=impl method
 }
 
 /// Table 8: MethodRef — Methods in other modules.

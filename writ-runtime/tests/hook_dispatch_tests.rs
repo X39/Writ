@@ -90,8 +90,8 @@ impl RuntimeHost for TrackingHost {
 /// the runtime must call that hook.
 ///
 /// Module layout:
-///   TypeDef[0] "EntityA" -- method_list=1 (owns methods at index 0..)
-///   TypeDef[1] "_Sentinel" -- method_list=2 (bounds EntityA's range to [0..1))
+///   TypeDef[0] "EntityA" -- explicitly owns method 0
+///   TypeDef[1] "_Sentinel" -- owns no methods
 ///   method[0] "on_create" -- calls extern "hook_fired", then RET_VOID
 ///   method[1] "main"      -- SPAWN_ENTITY(type_token=EntityA), INIT_ENTITY, RET_VOID
 ///   ExternDef[0] "hook_fired" (token 0x10_000001)
@@ -106,14 +106,14 @@ fn init_entity_dispatches_on_create_hook() {
     let hook_token = builder.add_extern_def("hook_fired", &[], "hook_fired", 0);
 
     // TypeDef "EntityA" (row 0 = token 0x02000001): method_list=1 means methods start at index 0
-    builder.add_type_def("EntityA", "", TypeDefKind::Enum, 0);
+    let entity_type = builder.add_type_def("EntityA", "", TypeDefKind::Enum, 0);
 
     // method[0]: "on_create" -- calls extern hook_fired, then RET_VOID
     let on_create_body = make_body(&[
         Instruction::CallExtern { r_dst: 1, extern_idx: hook_token.0, r_base: 0, argc: 0 },
         Instruction::RetVoid,
     ], 2);
-    builder.add_method("on_create", &[0, 0], 0, 2, on_create_body);
+    builder.add_type_method(entity_type, "on_create", &[0, 0], 0, 2, on_create_body);
 
     // TypeDef "_Sentinel" (row 1): method_list=2 bounds EntityA's methods to [0..1)
     builder.add_type_def("_Sentinel", "", TypeDefKind::Entity, 0);
@@ -171,14 +171,14 @@ fn destroy_entity_dispatches_on_destroy_hook() {
     let hook_token = builder.add_extern_def("destroy_hook_fired", &[], "destroy_hook_fired", 0);
 
     // TypeDef "EntityB": method_list=1 (methods start at index 0)
-    builder.add_type_def("EntityB", "", TypeDefKind::Enum, 0);
+    let entity_type = builder.add_type_def("EntityB", "", TypeDefKind::Enum, 0);
 
     // method[0]: "on_destroy"
     let on_destroy_body = make_body(&[
         Instruction::CallExtern { r_dst: 1, extern_idx: hook_token.0, r_base: 0, argc: 0 },
         Instruction::RetVoid,
     ], 2);
-    builder.add_method("on_destroy", &[0, 0], 0, 2, on_destroy_body);
+    builder.add_type_method(entity_type, "on_destroy", &[0, 0], 0, 2, on_destroy_body);
 
     // Sentinel type: method_list=2 bounds on_destroy to [0..1)
     builder.add_type_def("_Sentinel", "", TypeDefKind::Entity, 0);

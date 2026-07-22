@@ -51,6 +51,16 @@ fn round_trip_preserves_structure() {
     assert_eq!(reloaded.contract_methods.len(), 1, "1 ContractMethod preserved");
     assert_eq!(reloaded.impl_defs.len(), 1, "1 ImplDef preserved");
     assert_eq!(reloaded.method_defs.len(), 2, "2 MethodDefs preserved");
+    assert_eq!(
+        reloaded.impl_method_indices(0),
+        vec![0],
+        "impl method ownership preserved"
+    );
+    assert_eq!(
+        reloaded.top_level_method_indices(),
+        vec![1],
+        "top-level method ownership preserved"
+    );
 }
 
 #[test]

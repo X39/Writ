@@ -14,7 +14,7 @@ Bytes 4–5:   u16 format_version    (starts at 1, bumps on incompatible layout 
 Bytes 6–7:   u16 flags             (bit 0 = debug info present, rest reserved)
 ```
 
-**Format version history:** Version 1 — initial format (MethodDef row: 20 bytes). Version 2 — added `param_count(u16)` to MethodDef (row: 24 bytes, padded from 22). Version 3 — TypeDef.kind=4 (class) added; kind=0 (struct) now means value type. Version 4 — TYPEOF opcode added (reflection; section 3.10, section 4.2 0x0A30); format_version=3 modules are rejected at load time with UnsupportedVersion.
+**Format version history:** Version 1 — initial format (MethodDef row: 20 bytes). Version 2 — added `param_count(u16)` to MethodDef (row: 24 bytes, padded from 22). Version 3 — TypeDef.kind=4 (class) added; kind=0 (struct) now means value type. Version 4 — TYPEOF opcode added (reflection; section 3.10, section 4.2 0x0A30). Version 5 — array opcode overhaul (`ARRAY_RESIZE`, `ARRAY_COPY`, sized and filled array construction). Version 6 — appended `owner(token)` to MethodDef (row: 28 bytes), making method ownership explicit. Readers reject modules from older format versions with `UnsupportedVersion`.
 
 **Module header** (fixed layout, immediately after the magic):
 
@@ -112,8 +112,10 @@ storage/interchange format — the runtime's internal representation is implemen
 ## 2.16.5 Metadata Tables
 
 All tables have **fixed-size rows**. References to heaps are u32 offsets. References to other tables are metadata tokens
-(§2.16.4). Tables use the **list ownership** pattern: a parent's `xxx_list` field gives the index of the first child
-row, and the range extends to the next parent's `xxx_list` value (or end of table).
+(§2.16.4). Tables generally use the **list ownership** pattern: a parent's `xxx_list` field gives the index of the first
+child row, and the range extends to the next parent's `xxx_list` value (or end of table). MethodDef is the format-version
+6 exception: its explicit `owner` token is authoritative, because top-level functions share the same table and cannot be
+represented unambiguously by adjacent parent ranges.
 
 | #  | Table                 | Key Fields                                                                               | Purpose                                               |
 |----|-----------------------|------------------------------------------------------------------------------------------|-------------------------------------------------------|
@@ -124,7 +126,7 @@ row, and the range extends to the next parent's `xxx_list` value (or end of tabl
 | 4  | **TypeSpec**          | signature(blob)                                                                          | Instantiated generic types (TypeDef + type arguments) |
 | 5  | **FieldDef**          | name(str), type_sig(blob), flags(u16)                                                    | Fields on types defined here                          |
 | 6  | **FieldRef**          | parent(token), name(str), type_sig(blob)                                                 | Fields in other modules (resolved at load time)       |
-| 7  | **MethodDef**         | name(str), signature(blob), flags(u16), body_offset(u32), body_size(u32), reg_count(u16), param_count(u16) | Methods/functions defined here                        |
+| 7  | **MethodDef**         | name(str), signature(blob), flags(u16), body_offset(u32), body_size(u32), reg_count(u16), param_count(u16), owner(token) | Methods/functions defined here                        |
 | 8  | **MethodRef**         | parent(token), name(str), signature(blob)                                                | Methods in other modules (resolved at load time)      |
 | 9  | **ParamDef**          | name(str), type_sig(blob), sequence(u16)                                                 | Method parameters                                     |
 | 10 | **ContractDef**       | name(str), namespace(str), method_list, generic_param_list                               | Contract declarations                                 |
@@ -148,6 +150,8 @@ implementations (§2.16.8).
 **FieldDef.flags** includes: visibility (pub/private), has_default, is_component_field.
 
 **MethodDef.param_count:** The number of parameter registers at method entry — registers `r0` through `r(param_count-1)` hold argument values as described in §2.16.6. For methods with an explicit `self`, `r0` is `self` and counts toward `param_count`. For free functions, `r0` is the first regular parameter. This field allows tooling to determine the register layout without parsing the method body or counting entries in the ParamDef table.
+
+**MethodDef.owner:** The authoritative owner of the method. A null token denotes a top-level function, a TypeDef token denotes a method declared directly on that type (including lifecycle hooks), and an ImplDef token denotes a method supplied by that implementation. The `method_list` fields retained on TypeDef and ImplDef are legacy display/index hints only; ownership and top-level classification must use `MethodDef.owner`.
 
 ## 2.16.6 Method Body Layout
 
@@ -264,19 +268,19 @@ instructions depend on. Unlike normal modules, `writ-runtime` is not compiled fr
 it as part of its implementation. The spec mandates what types this module must contain and what layouts they must have.
 The runtime is free to implement them however it chooses internally.
 
+
 Methods on `writ-runtime` types may carry an **intrinsic** flag on their MethodDef entries, indicating that the runtime
 provides a native implementation rather than IL bytecode. This allows core operations (such as contract implementations
 on primitive types) to execute as optimized native code while appearing as normal methods in the metadata for generic
 dispatch, reflection, and cross-module referencing.
-
 A separate **`writ-std`** module (a standard library written in Writ) may provide utility types like `List<T>`,
 `Map<K, V>`, and common helper functions. Unlike `writ-runtime`, `writ-std` is ordinary Writ code compiled to a normal
 module. It imports from `writ-runtime` via standard ModuleRef resolution. `writ-std` is not required for the language to
 function — it is a convenience library that can be implemented incrementally.
 
 From the module format's perspective, `writ-runtime` is an ordinary module — its specialness is that the runtime
+
 provides it and the spec mandates its contents.
 
 **Contents of `writ-runtime`:** See §2.18 for the complete manifest of types, contracts, and intrinsic methods that
 this module must provide.
-

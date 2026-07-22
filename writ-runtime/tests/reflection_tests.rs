@@ -414,7 +414,7 @@ fn test_type_methods_returns_array() {
     let mut builder = ModuleBuilder::new("test");
 
     // Struct "Greeter" with one method "greet"
-    builder.add_type_def("Greeter", "", TypeDefKind::Struct, 0);
+    let greeter_type = builder.add_type_def("Greeter", "", TypeDefKind::Struct, 0);
 
     // Add TypeRef to writ-runtime "Type.methods" contract
     let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
@@ -427,9 +427,7 @@ fn test_type_methods_returns_array() {
         debug_locals: vec![],
         source_spans: vec![],
     };
-    // method_def at index 0 = "main" (added below); greet must come first so typedef_method_range finds it.
-    // We need greet to belong to Greeter's method range.  Add it before "main".
-    builder.add_method("greet", &[0], 0, 1, greet_body);
+    builder.add_type_method(greeter_type, "greet", &[0], 0, 1, greet_body);
 
     // Main body: TypeOf Greeter → CallVirt Type.methods() → Ret array
     let body = MethodBody {
@@ -498,7 +496,7 @@ fn test_type_contracts_returns_array() {
     let mut builder = ModuleBuilder::new("test");
 
     // Struct "Printable"
-    builder.add_type_def("Widget", "", TypeDefKind::Struct, 0);
+    let widget_type = builder.add_type_def("Widget", "", TypeDefKind::Struct, 0);
 
     // Define a local contract "Drawable" in this module (table_id=10)
     let drawable_contract = builder.add_contract_def("Drawable", "writ");
@@ -509,8 +507,8 @@ fn test_type_contracts_returns_array() {
     let type_contracts_ref = builder.add_type_ref(mod_ref, "Type.contracts", "writ");
 
     // Register Widget as implementing Drawable via ImplDef
-    let widget_token = MetadataToken::new(2, 1); // TypeDef table=2, row=1 (1-based)
-    builder.add_impl_def(widget_token, drawable_contract);
+    let widget_token = widget_type;
+    let drawable_impl = builder.add_impl_def(widget_token, drawable_contract);
     // Intrinsic flag not needed for user contracts; this method body is never called in tests
     let impl_body = MethodBody {
         register_types: vec![0; 1],
@@ -518,7 +516,7 @@ fn test_type_contracts_returns_array() {
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_method("drawable_draw", &[0], 0, 1, impl_body);
+    builder.add_impl_method(drawable_impl, "drawable_draw", &[0], 0, 1, impl_body);
 
     // Main body: TypeOf Widget → contracts() → Ret array
     let main_body = MethodBody {
@@ -588,7 +586,7 @@ fn test_type_implements_returns_bool() {
     let mut builder = ModuleBuilder::new("test");
 
     // TypeDef 0: "Widget" — the struct being queried
-    builder.add_type_def("Widget", "", TypeDefKind::Struct, 0);
+    let widget_type = builder.add_type_def("Widget", "", TypeDefKind::Struct, 0);
     // TypeDef 1: "Drawable" — used only to produce a Type heap object with name="Drawable"
     // (TypeImplements matches the contract by its name string read from the Type object)
     builder.add_type_def("Drawable", "", TypeDefKind::Struct, 0);
@@ -602,15 +600,15 @@ fn test_type_implements_returns_bool() {
     let type_implements_ref = builder.add_type_ref(mod_ref, "Type.implements", "writ");
 
     // Register Widget as implementing Drawable
-    let widget_token = MetadataToken::new(2, 1); // TypeDef table=2, row=1 (Widget)
-    builder.add_impl_def(widget_token, drawable_contract);
+    let widget_token = widget_type;
+    let drawable_impl = builder.add_impl_def(widget_token, drawable_contract);
     let impl_body = MethodBody {
         register_types: vec![0; 1],
         code: encode(&[Instruction::RetVoid]),
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_method("drawable_draw_impl", &[0], 0, 1, impl_body);
+    builder.add_impl_method(drawable_impl, "drawable_draw_impl", &[0], 0, 1, impl_body);
 
     // Main body:
     //   r0 = TypeOf Widget      (typedef_idx=0)
@@ -1140,7 +1138,7 @@ fn test_method_info_attributes() {
     let mut builder = ModuleBuilder::new("test");
 
     // TypeDef "Widget" with one method "update"
-    builder.add_type_def("Widget", "", TypeDefKind::Struct, 0);
+    let widget_type = builder.add_type_def("Widget", "", TypeDefKind::Struct, 0);
 
     // "update" is method 0 in this module; add it before "main" so it belongs to Widget.
     let update_body = MethodBody {
@@ -1149,7 +1147,7 @@ fn test_method_info_attributes() {
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_method("update", &[0], 0, 1, update_body);
+    builder.add_type_method(widget_type, "update", &[0], 0, 1, update_body);
 
     // Add an AttributeDef with owner pointing to method "update" (MethodDef table_id=7, row=1).
     // owner_kind=1 (not ATTR_OWNER_KIND_DECL=3, so the intrinsic will include it).
@@ -1326,7 +1324,7 @@ fn test_method_info_attributes_empty_when_none() {
     let mut builder = ModuleBuilder::new("test");
 
     // TypeDef "Pure" with one method "run" — no attributes added
-    builder.add_type_def("Pure", "", TypeDefKind::Struct, 0);
+    let pure_type = builder.add_type_def("Pure", "", TypeDefKind::Struct, 0);
 
     let run_body = MethodBody {
         register_types: vec![0; 1],
@@ -1334,7 +1332,7 @@ fn test_method_info_attributes_empty_when_none() {
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_method("run", &[0], 0, 1, run_body);
+    builder.add_type_method(pure_type, "run", &[0], 0, 1, run_body);
 
     let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
     let type_methods_ref     = builder.add_type_ref(mod_ref, "Type.methods",         "writ");
@@ -1653,7 +1651,7 @@ fn test_method_info_invoke_executes_method() {
     let mut builder = ModuleBuilder::new("test");
 
     // Struct with one mutable int field
-    builder.add_type_def("Widget", "", TypeDefKind::Struct, 0);
+    let widget_type = builder.add_type_def("Widget", "", TypeDefKind::Struct, 0);
     builder.add_field_def("data", &[0x01], 0); // int, mutable
 
     let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
@@ -1674,7 +1672,7 @@ fn test_method_info_invoke_executes_method() {
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_method("set_data", &[0], 0, 2, target_body);
+    builder.add_type_method(widget_type, "set_data", &[0], 0, 2, target_body);
 
     // Main method (method index 1):
     //   r0=instance, r1=tmp, r2=type_obj, r3=methods_arr, r4=idx_0, r5=mi0,
@@ -1758,7 +1756,7 @@ fn test_method_info_invoke_executes_method() {
 fn test_method_info_invoke_wrong_argc_crashes() {
     let mut builder = ModuleBuilder::new("test");
 
-    builder.add_type_def("Stub", "", TypeDefKind::Struct, 0);
+    let stub_type = builder.add_type_def("Stub", "", TypeDefKind::Struct, 0);
 
     let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
     let type_methods_ref    = builder.add_type_ref(mod_ref, "Type.methods",     "writ");
@@ -1771,7 +1769,7 @@ fn test_method_info_invoke_wrong_argc_crashes() {
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_method("noop", &[0], 0, 1, noop_body);
+    builder.add_type_method(stub_type, "noop", &[0], 0, 1, noop_body);
 
     // Main method (index 1): pass args array with 1 element to method expecting 0
     // r0=instance, r1=type_obj, r2=methods_arr, r3=idx, r4=mi0,
@@ -1857,7 +1855,7 @@ fn test_method_info_invoke_wrong_argc_crashes() {
 fn test_method_info_invoke_cooperative_scheduling() {
     let mut builder = ModuleBuilder::new("test");
 
-    builder.add_type_def("Box", "", TypeDefKind::Struct, 0);
+    let box_type = builder.add_type_def("Box", "", TypeDefKind::Struct, 0);
     builder.add_field_def("n", &[0x01], 0); // int, mutable
 
     let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
@@ -1876,7 +1874,7 @@ fn test_method_info_invoke_cooperative_scheduling() {
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_method("write_n", &[0], 0, 2, target_body);
+    builder.add_type_method(box_type, "write_n", &[0], 0, 2, target_body);
 
     // Main method (index 1): allocate, TypeOf, methods(), extract, build args, invoke, GetField, Ret
     // Total instructions before invoke completes: many — a tight limit causes mid-execution pause

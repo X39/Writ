@@ -152,6 +152,7 @@ mod tests {
                 body_size: 0,
                 reg_count: 0,
                 param_count: 0,
+                owner: writ_module::MetadataToken::NULL,
             });
             module.method_bodies.push(MethodBody {
                 register_types: vec![],
@@ -248,6 +249,7 @@ mod tests {
         module.method_defs = vec![MethodDefRow {
             name: 0, signature: 0, flags: 0,
             body_offset: 0, body_size: 0, reg_count: 0, param_count: 0,
+            owner: writ_module::MetadataToken::NULL,
         }];
         module
     }
