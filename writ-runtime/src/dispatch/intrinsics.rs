@@ -429,12 +429,12 @@ pub(super) fn execute_intrinsic(
                 Some(id) => id,
                 None => return ExecutionResult::Crash("TypeFields: not a Type object".into()),
             };
-            // Iterate field range for this typedef and allocate FieldInfo objects.
-            let (field_start, field_end) = crate::reflection::ReflectionIndex::typedef_field_range_pub(
+            // Keep physical offsets so private fields do not shift reflected access.
+            let field_offsets = crate::reflection::ReflectionIndex::typedef_public_field_offsets(
                 ctx.modules, module_idx, typedef_idx
             );
             let arr_href = ctx.heap.alloc_array(ArrayDefaultKind::NullReference.operand());
-            for offset in 0..(field_end.saturating_sub(field_start)) {
+            for offset in field_offsets {
                 let fi = ctx.reflection.get_or_alloc_field_info(
                     module_idx, typedef_idx, offset, ctx.heap, ctx.modules
                 );

@@ -15,7 +15,9 @@
 //! - REFL-09: GC survival after full reflection op chain (TypeOf → fields() → FieldInfo.get)
 
 use writ_module::module::MethodBody;
-use writ_module::tables::{FIELD_FLAG_PUBLIC, FIELD_FLAG_READONLY, TypeDefKind};
+use writ_module::tables::{
+    FIELD_FLAG_PUBLIC, FIELD_FLAG_READONLY, METHOD_FLAG_PUBLIC, TypeDefKind,
+};
 use writ_module::token::MetadataToken;
 use writ_module::Instruction;
 use writ_module::ModuleBuilder;
@@ -175,9 +177,11 @@ fn test_type_object_survives_gc() {
 fn test_type_fields_returns_array() {
     let mut builder = ModuleBuilder::new("test");
 
-    // Struct with 2 public fields: `x` is writable and `y` is metadata-read-only.
+    // A private physical field between public fields must be omitted without
+    // shifting the second public field's FieldInfo metadata/layout offset.
     builder.add_type_def("Vec2", "", TypeDefKind::Struct, 0);
     builder.add_field_def("x", &[0x01], FIELD_FLAG_PUBLIC);
+    builder.add_field_def("hidden", &[0x01], 0);
     builder.add_field_def(
         "y",
         &[0x01],
@@ -223,7 +227,7 @@ fn test_type_fields_returns_array() {
         other => panic!("expected Array (Value::Ref) from Type.fields(), got {:?}", other),
     };
 
-    // Check the array has 2 elements
+    // Only public x/y are visible; private `hidden` is excluded.
     let arr_obj = runtime.heap().get_object(arr_href).expect("array object exists");
     let elements = match arr_obj {
         HeapObject::Array { elements, .. } => elements.clone(),
@@ -336,8 +340,8 @@ fn test_field_info_get() {
 
     // Struct with 2 fields
     builder.add_type_def("Point", "", TypeDefKind::Struct, 0);
-    builder.add_field_def("x", &[0x01], 0); // int
-    builder.add_field_def("y", &[0x01], 0); // int
+    builder.add_field_def("x", &[0x01], FIELD_FLAG_PUBLIC); // int
+    builder.add_field_def("y", &[0x01], FIELD_FLAG_PUBLIC); // int
 
     // Add TypeRefs for Type.fields and FieldInfo.get contracts
     let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
@@ -424,14 +428,30 @@ fn test_type_methods_returns_array() {
     let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
     let type_methods_ref = builder.add_type_ref(mod_ref, "Type.methods", "writ");
 
-    // Add "greet" as a method on Greeter (registers r0=void, RetVoid body)
+    // Private methods must be omitted from Type.methods().
+    let private_body = MethodBody {
+        register_types: vec![0; 1],
+        code: encode(&[Instruction::RetVoid]),
+        debug_locals: vec![],
+        source_spans: vec![],
+    };
+    builder.add_type_method(greeter_type, "whisper", &[0], 0, 1, private_body);
+
+    // Add public "greet" as a method on Greeter.
     let greet_body = MethodBody {
         register_types: vec![0; 1],
         code: encode(&[Instruction::RetVoid]),
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_type_method(greeter_type, "greet", &[0], 0, 1, greet_body);
+    builder.add_type_method(
+        greeter_type,
+        "greet",
+        &[0],
+        METHOD_FLAG_PUBLIC,
+        1,
+        greet_body,
+    );
 
     // Main body: TypeOf Greeter → CallVirt Type.methods() → Ret array
     let body = MethodBody {
@@ -457,8 +477,8 @@ fn test_type_methods_returns_array() {
     let module = builder.build();
 
     let mut runtime = RuntimeBuilder::new(module).with_gc().build().unwrap();
-    // spawn_task(method_idx=1, ...) because "greet" is method 0, "main" is method 1
-    let tid = runtime.spawn_task(1, vec![]).unwrap();
+    // whisper=0, greet=1, main=2.
+    let tid = runtime.spawn_task(2, vec![]).unwrap();
     runtime.tick(0.0, ExecutionLimit::None);
 
     assert_eq!(runtime.task_state(tid), Some(TaskState::Completed));
@@ -469,13 +489,13 @@ fn test_type_methods_returns_array() {
         other => panic!("expected Array (Value::Ref) from Type.methods(), got {:?}", other),
     };
 
-    // Check array has at least 1 element (the "greet" method)
+    // Only the public "greet" method is reflected.
     let arr_obj = runtime.heap().get_object(arr_href).expect("array object exists");
     let elements = match arr_obj {
         HeapObject::Array { elements, .. } => elements.clone(),
         other => panic!("expected Array heap object, got {:?}", other),
     };
-    assert!(!elements.is_empty(), "Greeter.methods() should contain at least one method (greet)");
+    assert_eq!(elements.len(), 1, "private method must be excluded");
 
     // Verify first MethodInfo has name "greet" (field 0 = name string)
     let mi_href = match elements[0] {
@@ -789,7 +809,7 @@ fn test_gc_survival_after_reflection_ops() {
 
     // Struct with 1 field
     builder.add_type_def("Sample", "", TypeDefKind::Struct, 0);
-    builder.add_field_def("a", &[0x01], 0); // int, mutable
+    builder.add_field_def("a", &[0x01], FIELD_FLAG_PUBLIC); // int, mutable
 
     // TypeRefs for Type.fields and FieldInfo.get
     let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
@@ -1151,7 +1171,14 @@ fn test_method_info_attributes() {
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_type_method(widget_type, "update", &[0], 0, 1, update_body);
+    builder.add_type_method(
+        widget_type,
+        "update",
+        &[0],
+        METHOD_FLAG_PUBLIC,
+        1,
+        update_body,
+    );
 
     // Add an AttributeDef with owner pointing to method "update" (MethodDef table_id=7, row=1).
     // owner_kind=1 (not ATTR_OWNER_KIND_DECL=3, so the intrinsic will include it).
@@ -1242,7 +1269,7 @@ fn test_field_info_attributes() {
 
     // TypeDef "Item" with one field "price"
     builder.add_type_def("Item", "", TypeDefKind::Struct, 0);
-    builder.add_field_def("price", &[0x01], 0); // int, mutable
+    builder.add_field_def("price", &[0x01], FIELD_FLAG_PUBLIC); // int, mutable
 
     // Add an AttributeDef with owner pointing to field "price" (FieldDef table_id=5, row=1).
     // owner_kind=1 (not ATTR_OWNER_KIND_DECL=3).
@@ -1336,7 +1363,14 @@ fn test_method_info_attributes_empty_when_none() {
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_type_method(pure_type, "run", &[0], 0, 1, run_body);
+    builder.add_type_method(
+        pure_type,
+        "run",
+        &[0],
+        METHOD_FLAG_PUBLIC,
+        1,
+        run_body,
+    );
 
     let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
     let type_methods_ref     = builder.add_type_ref(mod_ref, "Type.methods",         "writ");
@@ -1581,7 +1615,7 @@ fn test_field_info_set_wrong_instance_type_crashes() {
     // Struct with one mutable field — we'll get a FieldInfo for this field
     // but then try to call set() with an int as the instance
     builder.add_type_def("Target", "", TypeDefKind::Struct, 0);
-    builder.add_field_def("x", &[0x01], 0); // int, mutable
+    builder.add_field_def("x", &[0x01], FIELD_FLAG_PUBLIC); // int, mutable
 
     let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
     let type_fields_ref   = builder.add_type_ref(mod_ref, "Type.fields",  "writ");
@@ -1679,7 +1713,7 @@ fn test_method_info_invoke_executes_method() {
         widget_type,
         "set_data",
         &[1, 0, 0x01, 0x00], // (int) -> void; param_count = self + value = 2
-        0,
+        METHOD_FLAG_PUBLIC,
         2,
         target_body,
     );
@@ -1779,7 +1813,7 @@ fn static_method_info_invoke_module() -> writ_module::module::Module {
         stub_type,
         "identity",
         &[1, 0, 0x01, 0x01], // (int) -> int
-        1 << 1,              // is_static
+        METHOD_FLAG_PUBLIC | (1 << 1), // public, is_static
         1,
         target_body,
     );
@@ -1888,7 +1922,14 @@ fn test_method_info_invoke_wrong_argc_crashes() {
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_type_method(stub_type, "noop", &[0, 0, 0], 0, 1, noop_body);
+    builder.add_type_method(
+        stub_type,
+        "noop",
+        &[0, 0, 0],
+        METHOD_FLAG_PUBLIC,
+        1,
+        noop_body,
+    );
 
     // Main method (index 1): pass args array with 1 element to method expecting 0
     // r0=instance, r1=type_obj, r2=methods_arr, r3=idx, r4=mi0,
@@ -1993,7 +2034,14 @@ fn test_method_info_invoke_cooperative_scheduling() {
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_type_method(box_type, "write_n", &[0, 0, 0], 0, 2, target_body);
+    builder.add_type_method(
+        box_type,
+        "write_n",
+        &[0, 0, 0],
+        METHOD_FLAG_PUBLIC,
+        2,
+        target_body,
+    );
 
     // Main method (index 1): allocate, TypeOf, methods(), extract, build args, invoke, GetField, Ret
     // Total instructions before invoke completes: many — a tight limit causes mid-execution pause

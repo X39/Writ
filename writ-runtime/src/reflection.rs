@@ -8,7 +8,7 @@
 use rustc_hash::FxHashMap;
 use writ_module::heap::read_string;
 use writ_module::instruction::ArrayDefaultKind;
-use writ_module::tables::FIELD_FLAG_READONLY;
+use writ_module::tables::{FIELD_FLAG_PUBLIC, FIELD_FLAG_READONLY, METHOD_FLAG_PUBLIC};
 
 use crate::gc::GcHeap;
 use crate::heap::HeapObject;
@@ -246,6 +246,33 @@ impl ReflectionIndex {
         (start, end)
     }
 
+    /// Get public field offsets within a TypeDef's physical field layout.
+    ///
+    /// Offsets are not compacted: a public field after a private field retains
+    /// its original heap-object slot for FieldInfo.get/set.
+    pub fn typedef_public_field_offsets(
+        modules: &[LoadedModule],
+        module_idx: usize,
+        typedef_idx: usize,
+    ) -> Vec<usize> {
+        if module_idx >= modules.len() {
+            return Vec::new();
+        }
+        let module = &modules[module_idx].module;
+        let (start, end) = Self::typedef_field_range_pub(modules, module_idx, typedef_idx);
+        let end = end.min(module.field_defs.len());
+        if start >= end {
+            return Vec::new();
+        }
+        module.field_defs[start..end]
+            .iter()
+            .enumerate()
+            .filter_map(|(offset, field)| {
+                (field.flags & FIELD_FLAG_PUBLIC != 0).then_some(offset)
+            })
+            .collect()
+    }
+
     /// Get the MethodDef indices explicitly owned by a TypeDef.
     pub fn typedef_method_indices_pub(
         modules: &[LoadedModule],
@@ -259,7 +286,13 @@ impl ReflectionIndex {
         if typedef_idx >= module.type_defs.len() {
             return Vec::new();
         }
-        module.type_method_indices(typedef_idx)
+        module
+            .type_method_indices(typedef_idx)
+            .into_iter()
+            .filter(|method_idx| {
+                module.method_defs[*method_idx].flags & METHOD_FLAG_PUBLIC != 0
+            })
+            .collect()
     }
 
     /// Get or allocate a FieldInfo heap object for the given field.
