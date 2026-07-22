@@ -184,6 +184,18 @@ fn basic_string_with_escaped_quote() {
 }
 
 #[test]
+fn basic_string_with_line_continuation() {
+    let src = "\"this is a long \\\n                        string on one line\"";
+    let tokens = lex(src);
+    let non_ws: Vec<_> = tokens
+        .iter()
+        .filter(|(t, _)| !matches!(t, Token::Whitespace))
+        .collect();
+    assert_eq!(non_ws.len(), 1);
+    assert!(matches!(non_ws[0].0, Token::StringLit(_)));
+}
+
+#[test]
 fn empty_string() {
     let tokens = lex(r#""""#);
     let non_ws: Vec<_> = tokens
@@ -843,6 +855,45 @@ fn escapes_basic_escapes() {
     assert_eq!(process_escapes("a\\0b").unwrap(), "a\0b");
     assert_eq!(process_escapes("a\\\\b").unwrap(), "a\\b");
     assert_eq!(process_escapes("a\\\"b").unwrap(), "a\"b");
+}
+
+#[test]
+fn escapes_line_continuation() {
+    for (before_continuation, description) in [
+        ("", "zero spaces"),
+        (" ", "one space"),
+        ("   ", "multiple spaces"),
+        ("\t", "tab"),
+    ] {
+        let input = format!("left{before_continuation}\\\n    right");
+        assert_eq!(
+            process_escapes(&input).unwrap(),
+            "left right",
+            "LF continuation with {description} before the boundary"
+        );
+    }
+}
+
+#[test]
+fn escapes_line_continuation_crlf() {
+    for (before_continuation, description) in [
+        ("", "zero spaces"),
+        (" ", "one space"),
+        ("   ", "multiple spaces"),
+        ("\t", "tab"),
+    ] {
+        let input = format!("left{before_continuation}\\\r\n\t\tright");
+        assert_eq!(
+            process_escapes(&input).unwrap(),
+            "left right",
+            "CRLF continuation with {description} before the boundary"
+        );
+    }
+}
+
+#[test]
+fn escapes_line_continuation_preserves_escaped_whitespace_before_boundary() {
+    assert_eq!(process_escapes("left\\t\\\nright").unwrap(), "left\t right");
 }
 
 #[test]

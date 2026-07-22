@@ -205,6 +205,34 @@ pub fn process_escapes(content: &str) -> Result<String, EscapeError> {
                     result.push('"');
                     i += 1;
                 }
+                b'\n' => {
+                    let mut boundary = i - 1;
+                    while boundary > 0
+                        && (bytes[boundary - 1] == b' ' || bytes[boundary - 1] == b'\t')
+                    {
+                        result.pop();
+                        boundary -= 1;
+                    }
+                    result.push(' ');
+                    i += 1;
+                    while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t') {
+                        i += 1;
+                    }
+                }
+                b'\r' if i + 1 < bytes.len() && bytes[i + 1] == b'\n' => {
+                    let mut boundary = i - 1;
+                    while boundary > 0
+                        && (bytes[boundary - 1] == b' ' || bytes[boundary - 1] == b'\t')
+                    {
+                        result.pop();
+                        boundary -= 1;
+                    }
+                    result.push(' ');
+                    i += 2;
+                    while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t') {
+                        i += 1;
+                    }
+                }
                 b'u' => {
                     i += 1; // skip 'u'
 

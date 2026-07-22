@@ -367,8 +367,11 @@ pub enum Token<'src> {
     #[token("$\"", formattable_string)]
     FormattableStringLit,
 
-    /// Basic string: "..." with escape sequences
-    #[regex(r#""([^"\\]|\\.)*""#)]
+    /// Basic string: "..." with escape sequences.
+    ///
+    /// A backslash at end-of-line is a line continuation, so it is allowed
+    /// inside the token even though bare newlines are not.
+    #[regex(r#""([^"\\\r\n]|\\([^\r\n]|\r?\n))*""#)]
     StringLit(&'src str),
 
     // =========================================================
