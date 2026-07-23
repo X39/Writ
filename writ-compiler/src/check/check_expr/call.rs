@@ -949,6 +949,18 @@ pub(super) fn check_generic_call(
         let obj_kind = ctx.interner.kind(typed_obj.ty()).clone();
         if matches!(obj_kind, TyKind::AnyEntity) {
             let entity_type = ctx.resolve_ast_type(&type_args[0]);
+            if let TyKind::Entity(def_id) = ctx.interner.kind(entity_type).clone()
+                && let Some(fields) = ctx.type_env.entity_fields.get(&def_id)
+                && !fields.is_empty()
+            {
+                let type_name = ctx.def_map.get_entry(def_id).name.clone();
+                ctx.emit_error(TypeError::GetOrCreateEntityHasFields {
+                    type_name,
+                    field_count: fields.len(),
+                    span,
+                    file: ctx.current_file,
+                });
+            }
             let fn_ty = ctx.interner.func(vec![], entity_type);
             let callee_typed = TypedExpr::Field {
                 ty: fn_ty,

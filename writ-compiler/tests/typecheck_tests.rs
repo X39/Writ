@@ -1438,6 +1438,43 @@ fn array_literal_empty() {
 }
 
 // =========================================================
+// Entity singleton creation tests
+// =========================================================
+
+#[test]
+fn entity_get_or_create_accepts_zero_script_fields() {
+    let (_ast, diags) = typecheck_src(
+        "[Singleton]
+         entity Narrator {}
+         pub fn test() {
+             let narrator = Entity.getOrCreate<Narrator>();
+         }",
+    );
+    assert!(has_no_errors(&diags), "errors: {diags:?}");
+}
+
+#[test]
+fn entity_get_or_create_rejects_defaulted_script_fields() {
+    let (_ast, diags) = typecheck_src(
+        "[Singleton]
+         entity Guard { health: int = 100, }
+         pub fn test() {
+             let guard = Entity.getOrCreate<Guard>();
+         }",
+    );
+    let error = diags
+        .iter()
+        .find(|diag| diag.code == "E0130")
+        .unwrap_or_else(|| panic!("expected E0130, got {diags:?}"));
+    assert!(
+        error
+            .message
+            .contains("requires a zero-script-field entity"),
+        "unexpected diagnostic: {error:?}"
+    );
+}
+
+// =========================================================
 // Spawn / Join / Cancel tests (TYPE-14)
 // =========================================================
 

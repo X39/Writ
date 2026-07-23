@@ -46,6 +46,7 @@ pub const E0126: &str = "E0126"; // unsupported spawn target
 pub const E0127: &str = "E0127"; // invalid dialogue transition target
 pub const E0128: &str = "E0128"; // duplicate field initializer
 pub const E0129: &str = "E0129"; // imported field default is unavailable
+pub const E0130: &str = "E0130"; // getOrCreate target has script fields
 
 // Warning codes
 pub const W0001: &str = "W0001"; // unused import

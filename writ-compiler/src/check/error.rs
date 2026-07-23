@@ -134,6 +134,12 @@ pub enum TypeError {
         span: SimpleSpan,
         file: FileId,
     },
+    GetOrCreateEntityHasFields {
+        type_name: String,
+        field_count: usize,
+        span: SimpleSpan,
+        file: FileId,
+    },
     NotIterable {
         ty_name: String,
         span: SimpleSpan,
@@ -488,6 +494,22 @@ impl From<TypeError> for Diagnostic {
                 "the current dependency format records that a default exists, but not its expression"
                     .to_string(),
             )
+            .build(),
+            TypeError::GetOrCreateEntityHasFields {
+                type_name,
+                field_count,
+                span,
+                file,
+            } => Diagnostic::error(
+                code::E0130,
+                format!(
+                    "`Entity.getOrCreate<{type_name}>()` requires a zero-script-field entity, but `{type_name}` declares {field_count} script field(s)"
+                ),
+            )
+            .with_primary(file, span, "these fields cannot be initialized by getOrCreate")
+            .with_help(format!(
+                "construct `{type_name}` with `new` and field initializers, or remove its script fields"
+            ))
             .build(),
             TypeError::NotIterable {
                 ty_name,
