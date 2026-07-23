@@ -429,10 +429,10 @@ fn gc_class_containing_array_field_survives() {
                 field_count: 1,
                 r_base: 0,
             },
-            // r1 = new int[] (empty array, elem_type=0x01 for int)
+            // r1 = new int[] (empty array, default_kind=0 for Int)
             Instruction::NewArray {
                 r_dst: 1,
-                elem_type: 0x01,
+                default_kind: 0,
             },
             // resize to 1 so we can store an element
             Instruction::LoadInt { r_dst: 2, value: 1 },

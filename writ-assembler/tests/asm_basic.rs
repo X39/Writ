@@ -74,6 +74,39 @@ fn assemble_method_with_registers() {
 }
 
 #[test]
+fn assemble_array_default_kinds_as_discriminants() {
+    for value in ["0", "1", "2", "3", "4", "0xFFFFFFFF"] {
+        let src = format!(
+            r#"
+.module "test" "1.0.0" {{
+    .method "main" () -> void {{
+        .reg r0 array<int>
+        NEW_ARRAY r0, {value}
+        RET_VOID
+    }}
+}}
+"#
+        );
+        writ_assembler::assemble(&src)
+            .unwrap_or_else(|errors| panic!("default kind {value} should assemble: {errors:?}"));
+    }
+
+    let src = r#"
+.module "test" "1.0.0" {
+    .method "main" () -> void {
+        .reg r0 array<int>
+        .reg r1 int
+        ARRAY_INIT r0, 0, 1, r1
+        NEW_ARRAY_SIZED r0, 0, r1
+        NEW_ARRAY_FILLED r0, 0, r1, r1
+        RET_VOID
+    }
+}
+"#;
+    writ_assembler::assemble(src).expect("all array constructors should accept a default kind");
+}
+
+#[test]
 fn assemble_impl_block() {
     let src = r#"
 .module "test" "1.0.0" {

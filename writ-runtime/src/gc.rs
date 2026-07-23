@@ -35,7 +35,7 @@ pub trait GcHeap: Send + Sync {
         type_spec: Option<(usize, u32)>,
         fields: Vec<Value>,
     ) -> HeapRef;
-    fn alloc_array(&mut self, elem_type: u32) -> HeapRef;
+    fn alloc_array(&mut self, default_kind: u32) -> HeapRef;
     fn alloc_delegate(
         &mut self,
         module_idx: usize,
@@ -209,9 +209,9 @@ impl GcHeap for MarkSweepHeap {
         })
     }
 
-    fn alloc_array(&mut self, elem_type: u32) -> HeapRef {
+    fn alloc_array(&mut self, default_kind: u32) -> HeapRef {
         self.alloc_slot(HeapObject::Array {
-            elem_type,
+            default_kind,
             elements: Vec::new(),
         })
     }

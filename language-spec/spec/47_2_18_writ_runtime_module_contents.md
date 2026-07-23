@@ -229,18 +229,17 @@ is sugar for `Array<T>`. In the type encoding, arrays use kind `0x20` (§2.15.3)
 
 **Methods (intrinsic):**
 
-| Method     | Signature                                  | Intrinsic IL   |
-|------------|--------------------------------------------|----------------|
-| `add`      | `fn add(mut self, item: T)`                | `ARRAY_ADD`    |
-| `removeAt` | `fn removeAt(mut self, index: int)`        | `ARRAY_REMOVE` |
-| `insert`   | `fn insert(mut self, index: int, item: T)` | `ARRAY_INSERT` |
-| `contains` | `fn contains(self, item: T) -> bool`       | Intrinsic      |
-| `slice`    | `fn slice(self, range: Range<int>) -> T[]` | `ARRAY_SLICE`  |
-| `iterator` | `fn iterator(self) -> Iterator<T>`         | Intrinsic      |
+| Method      | Signature                                                                         | Intrinsic IL   |
+|-------------|-----------------------------------------------------------------------------------|----------------|
+| `len`       | `fn len(self) -> int`                                                             | `ARRAY_LEN`    |
+| `slice`     | `fn slice(self, start: int, end: int) -> T[]`                                     | `ARRAY_SLICE`  |
+| `resize`    | `fn resize(mut self, length: int)`                                                | `ARRAY_RESIZE` |
+| `copy_from` | `fn copy_from(mut self, src: T[], src_index: int, dst_index: int, length: int)`    | `ARRAY_COPY`   |
 
-The `contains` method requires `T: Eq` at the call site. This constraint is enforced by the compiler — it is not
-encoded on the `Array<T>` TypeDef's generic parameter, which would incorrectly restrict all array usage to
-Eq-implementing types.
+These four MethodDef rows mirror the compiler-known array surface. The compiler lowers each call directly to the
+listed opcode; they are not aliases for append/remove operations. Arrays have explicit size changes through `resize`
+and do not provide `add`, `removeAt`, or `insert`. Iteration remains the `Iterable<T>` contract implementation below,
+not an additional directly owned `Array<T>` method.
 
 **Contract implementations:**
 

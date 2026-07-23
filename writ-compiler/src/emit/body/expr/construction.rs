@@ -72,14 +72,18 @@ pub(super) fn emit_range(
 /// Emit an array literal. Non-empty arrays use ARRAY_INIT; empty arrays use NEW_ARRAY.
 pub(super) fn emit_array_lit(emitter: &mut BodyEmitter<'_>, ty: Ty, elements: &[TypedExpr]) -> u16 {
     let r_dst = emitter.alloc_reg(ty);
-    let elem_type = array_default_kind(emitter, ty).operand();
+    let default_kind = array_default_kind(emitter, ty).operand();
 
     if elements.is_empty() {
-        emitter.emit(Instruction::NewArray { r_dst, elem_type });
+        emitter.emit(Instruction::NewArray {
+            r_dst,
+            default_kind,
+        });
         return r_dst;
     }
 
-    // Non-empty: emit each element, then ARRAY_INIT { r_dst, elem_type, count, r_base }
+    // Non-empty: emit each element, then
+    // ARRAY_INIT { r_dst, default_kind, count, r_base }.
     let count = elements.len() as u16;
     let elem_regs: Vec<u16> = elements.iter().map(|e| emit_expr(emitter, e)).collect();
 
@@ -88,7 +92,7 @@ pub(super) fn emit_array_lit(emitter: &mut BodyEmitter<'_>, ty: Ty, elements: &[
 
     emitter.emit(Instruction::ArrayInit {
         r_dst,
-        elem_type,
+        default_kind,
         count,
         r_base,
     });
@@ -150,7 +154,11 @@ pub(super) fn emit_new(
         .collect();
     let field_count =
         u16::try_from(field_regs.len()).expect("object construction has more than u16::MAX fields");
-    let r_base = pack_args_consecutive(emitter, &field_regs);
+    let r_base = if field_regs.is_empty() {
+        0
+    } else {
+        pack_args_consecutive(emitter, &field_regs)
+    };
 
     match emitter.interner.kind(resolved_ty) {
         TyKind::Entity(_) => {

@@ -145,20 +145,24 @@ fn intrinsic_method_metadata(name: &str) -> (Vec<TypeSignature>, TypeSignature, 
         }
         "int_hash" | "float_hash" | "bool_hash" | "string_hash" => (vec![], TypeSignature::Int, 0),
 
-        "add" => (vec![generic_param()], TypeSignature::Void, MUT_SELF_FLAG),
-        "removeAt" => (vec![TypeSignature::Int], TypeSignature::Void, MUT_SELF_FLAG),
-        "insert" => (
-            vec![TypeSignature::Int, generic_param()],
-            TypeSignature::Void,
-            MUT_SELF_FLAG,
-        ),
-        "contains" => (vec![generic_param()], TypeSignature::Bool, 0),
+        "len" => (vec![], TypeSignature::Int, 0),
         "slice" => (
-            vec![range_of(TypeSignature::Int)],
+            vec![TypeSignature::Int, TypeSignature::Int],
             array_of(generic_param()),
             0,
         ),
-        "iterator" | "array_iterable" => (vec![], iterator_of(generic_param()), 0),
+        "resize" => (vec![TypeSignature::Int], TypeSignature::Void, MUT_SELF_FLAG),
+        "copy_from" => (
+            vec![
+                array_of(generic_param()),
+                TypeSignature::Int,
+                TypeSignature::Int,
+                TypeSignature::Int,
+            ],
+            TypeSignature::Void,
+            MUT_SELF_FLAG,
+        ),
+        "array_iterable" => (vec![], iterator_of(generic_param()), 0),
         "array_index" => (vec![TypeSignature::Int], generic_param(), 0),
         "array_index_set" => (
             vec![TypeSignature::Int, generic_param()],
@@ -828,12 +832,10 @@ pub fn build_writ_runtime_module() -> Module {
     builder.add_generic_param(array_type, TYPE_GENERIC_OWNER_KIND, 0, "T");
 
     // Array intrinsic instance methods
-    add_intrinsic_type_method(&mut builder, array_type, "add");
-    add_intrinsic_type_method(&mut builder, array_type, "removeAt");
-    add_intrinsic_type_method(&mut builder, array_type, "insert");
-    add_intrinsic_type_method(&mut builder, array_type, "contains");
+    add_intrinsic_type_method(&mut builder, array_type, "len");
     add_intrinsic_type_method(&mut builder, array_type, "slice");
-    add_intrinsic_type_method(&mut builder, array_type, "iterator");
+    add_intrinsic_type_method(&mut builder, array_type, "resize");
+    add_intrinsic_type_method(&mut builder, array_type, "copy_from");
 
     // Array contract implementations (4 ImplDef entries)
     add_intrinsic_generic_impl(
@@ -1624,9 +1626,10 @@ mod tests {
         }
 
         let exact = [
-            ("Array", "add", 2),
-            ("Array", "insert", 3),
-            ("Array", "iterator", 1),
+            ("Array", "len", 1),
+            ("Array", "slice", 3),
+            ("Array", "resize", 2),
+            ("Array", "copy_from", 5),
             ("Entity", "destroy", 1),
             ("Entity", "isAlive", 1),
             ("Entity", "getOrCreate", 0),
@@ -2022,7 +2025,7 @@ mod tests {
     }
 
     #[test]
-    fn array_has_six_instance_methods() {
+    fn array_has_compiler_known_instance_methods() {
         let module = build_writ_runtime_module();
         let array_idx = module
             .type_defs
@@ -2032,8 +2035,8 @@ mod tests {
         let method_indices = module.type_method_indices(array_idx);
         assert_eq!(
             method_indices.len(),
-            6,
-            "Array should have exactly 6 directly owned methods"
+            4,
+            "Array should have exactly 4 directly owned methods"
         );
         let methods: Vec<_> = method_indices
             .into_iter()
@@ -2043,10 +2046,7 @@ mod tests {
             .iter()
             .map(|row| str_from_heap(&module, row.name))
             .collect();
-        assert_eq!(
-            names,
-            ["add", "removeAt", "insert", "contains", "slice", "iterator"]
-        );
+        assert_eq!(names, ["len", "slice", "resize", "copy_from"]);
         for method in methods {
             let name = str_from_heap(&module, method.name);
             assert_ne!(method.flags & PUBLIC_FLAG, 0, "Array.{name} must be public");
@@ -2055,7 +2055,7 @@ mod tests {
                 0,
                 "Array.{name} must be intrinsic"
             );
-            let expected_mut = matches!(name, "add" | "removeAt" | "insert");
+            let expected_mut = matches!(name, "resize" | "copy_from");
             assert_eq!(
                 method.flags & MUT_SELF_FLAG != 0,
                 expected_mut,
@@ -2119,20 +2119,23 @@ mod tests {
         let gp0 = TypeSignature::GenericParam(0);
 
         let array_cases = [
-            ("add", vec![gp0.clone()], TypeSignature::Void),
-            ("removeAt", vec![TypeSignature::Int], TypeSignature::Void),
-            (
-                "insert",
-                vec![TypeSignature::Int, gp0.clone()],
-                TypeSignature::Void,
-            ),
-            ("contains", vec![gp0.clone()], TypeSignature::Bool),
+            ("len", vec![], TypeSignature::Int),
             (
                 "slice",
-                vec![range_of(TypeSignature::Int)],
+                vec![TypeSignature::Int, TypeSignature::Int],
                 array_of(gp0.clone()),
             ),
-            ("iterator", vec![], iterator_of(gp0.clone())),
+            ("resize", vec![TypeSignature::Int], TypeSignature::Void),
+            (
+                "copy_from",
+                vec![
+                    array_of(gp0.clone()),
+                    TypeSignature::Int,
+                    TypeSignature::Int,
+                    TypeSignature::Int,
+                ],
+                TypeSignature::Void,
+            ),
         ];
         for (name, params, ret) in array_cases {
             assert_eq!(

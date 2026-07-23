@@ -85,6 +85,59 @@ fn atomic_constructors_require_initializer_operands_and_u16_counts() {
 }
 
 #[test]
+fn array_constructors_reject_non_discriminant_default_kinds() {
+    for instruction in [
+        "NEW_ARRAY r0, -1",
+        "NEW_ARRAY r0, 5",
+        "NEW_ARRAY r0, 0xFFFFFFFE",
+        "NEW_ARRAY r0, token(0)",
+        "ARRAY_INIT r0, 5, 0, r0",
+        "NEW_ARRAY_SIZED r0, 5, r0",
+        "NEW_ARRAY_FILLED r0, 5, r0, r0",
+    ] {
+        let src = format!(
+            r#"
+.module "test" "1.0.0" {{
+    .method "main" () -> void {{
+        .reg r0 array<int>
+        {instruction}
+        RET_VOID
+    }}
+}}
+"#
+        );
+        let errors =
+            writ_assembler::assemble(&src).expect_err("invalid default kind should be rejected");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("array default kind")),
+            "{instruction} should report a default-kind error: {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn array_init_count_must_fit_u16() {
+    let src = r#"
+.module "test" "1.0.0" {
+    .method "main" () -> void {
+        .reg r0 array<int>
+        ARRAY_INIT r0, 0, 65536, r0
+        RET_VOID
+    }
+}
+"#;
+    let errors = writ_assembler::assemble(src).expect_err("oversized count should be rejected");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("u16 range")),
+        "{errors:?}"
+    );
+}
+
+#[test]
 fn multiple_errors_collected() {
     let src = r#"
 .module "test" "1.0.0" {

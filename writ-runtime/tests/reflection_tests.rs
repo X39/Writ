@@ -1800,7 +1800,7 @@ fn test_field_info_set_mut_field() {
 
 // ── Test: FieldInfo.set() on a readonly field crashes (DYN-01) ────────
 
-/// Test that FieldInfo.set(instance, value) crashes with "immutable field" message
+/// Test that FieldInfo.set(instance, value) crashes with a clear "read-only field" message
 /// when the field has the FieldDef read-only metadata bit.
 /// Verifies DYN-01: FieldInfo.set() on a read-only field crashes descriptively.
 #[test]
@@ -1862,7 +1862,7 @@ fn test_field_info_set_readonly_crashes() {
                 r_dst: 7,
                 value: 99,
             },
-            // FieldInfo.set(instance, 99) — this MUST crash with "immutable field"
+            // FieldInfo.set(instance, 99) — this MUST crash with "read-only field".
             Instruction::CallVirt {
                 r_dst: 8,
                 r_obj: 5,
@@ -1892,8 +1892,8 @@ fn test_field_info_set_readonly_crashes() {
     assert!(
         crash
             .message
-            .contains("Reflection write to immutable field"),
-        "crash message should contain 'Reflection write to immutable field', got: {}",
+            .contains("Reflection write to read-only field"),
+        "crash message should contain 'Reflection write to read-only field', got: {}",
         crash.message
     );
 }
@@ -2074,7 +2074,7 @@ fn test_method_info_invoke_executes_method() {
             // r7 = args array [100]
             Instruction::NewArray {
                 r_dst: 7,
-                elem_type: 0,
+                default_kind: 0,
             },
             Instruction::LoadInt { r_dst: 1, value: 1 },
             Instruction::ArrayResize {
@@ -2181,7 +2181,7 @@ fn static_method_info_invoke_module() -> writ_module::module::Module {
             Instruction::LoadNull { r_dst: 4 },
             Instruction::NewArray {
                 r_dst: 5,
-                elem_type: 0,
+                default_kind: 0,
             },
             Instruction::LoadInt { r_dst: 6, value: 1 },
             Instruction::ArrayResize {
@@ -2325,7 +2325,7 @@ fn test_method_info_invoke_wrong_argc_crashes() {
             // r6 = args array with 1 element (wrong count — method expects 0)
             Instruction::NewArray {
                 r_dst: 6,
-                elem_type: 0,
+                default_kind: 0,
             },
             Instruction::LoadInt { r_dst: 7, value: 1 },
             Instruction::ArrayResize {
@@ -2465,7 +2465,7 @@ fn test_method_info_invoke_cooperative_scheduling() {
             },
             Instruction::NewArray {
                 r_dst: 7,
-                elem_type: 0,
+                default_kind: 0,
             },
             Instruction::Mov { r_dst: 6, r_src: 0 },
             Instruction::CallVirt {

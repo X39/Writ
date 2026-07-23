@@ -672,15 +672,16 @@ pub(crate) fn execute_one(
         }
 
         // ── Arrays ────────────────────────────────────────────
-        Instruction::NewArray { r_dst, elem_type } => {
-            objects::exec_new_array(&mut ctx, *r_dst, *elem_type)
-        }
+        Instruction::NewArray {
+            r_dst,
+            default_kind,
+        } => objects::exec_new_array(&mut ctx, *r_dst, *default_kind),
         Instruction::ArrayInit {
             r_dst,
-            elem_type,
+            default_kind,
             count,
             r_base,
-        } => objects::exec_array_init(&mut ctx, *r_dst, *elem_type, *count, *r_base),
+        } => objects::exec_array_init(&mut ctx, *r_dst, *default_kind, *count, *r_base),
         Instruction::ArrayLoad {
             r_dst,
             r_arr,
@@ -712,15 +713,15 @@ pub(crate) fn execute_one(
         } => objects::exec_array_slice(&mut ctx, *r_dst, *r_arr, *r_start, *r_end),
         Instruction::NewArraySized {
             r_dst,
-            elem_type,
+            default_kind,
             r_len,
-        } => objects::exec_new_array_sized(&mut ctx, *r_dst, *elem_type, *r_len),
+        } => objects::exec_new_array_sized(&mut ctx, *r_dst, *default_kind, *r_len),
         Instruction::NewArrayFilled {
             r_dst,
-            elem_type,
+            default_kind,
             r_len,
             r_fill,
-        } => objects::exec_new_array_filled(&mut ctx, *r_dst, *elem_type, *r_len, *r_fill),
+        } => objects::exec_new_array_filled(&mut ctx, *r_dst, *default_kind, *r_len, *r_fill),
 
         // ── Type Operations — Option ──────────────────────────
         Instruction::WrapSome { r_dst, r_val } => objects::exec_wrap_some(&mut ctx, *r_dst, *r_val),

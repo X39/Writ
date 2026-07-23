@@ -541,13 +541,13 @@ pub(super) fn execute_intrinsic(
             ) as usize;
             match ctx.heap.get_object(arr_ref) {
                 Ok(HeapObject::Array {
-                    elem_type,
+                    default_kind,
                     elements,
                 }) => {
-                    let et = *elem_type;
+                    let default_kind = *default_kind;
                     if start <= end && end <= elements.len() {
                         let slice = elements[start..end].to_vec();
-                        let new_href = ctx.heap.alloc_array(et);
+                        let new_href = ctx.heap.alloc_array(default_kind);
                         if let Ok(HeapObject::Array {
                             elements: elems, ..
                         }) = ctx.heap.get_object_mut(new_href)
@@ -992,7 +992,7 @@ pub(super) fn execute_intrinsic(
                 .unwrap_or("unknown")
                 .to_owned();
                 return ExecutionResult::Crash(format!(
-                    "Reflection write to immutable field '{}'",
+                    "Reflection write to read-only field '{}'",
                     field_name
                 ));
             }

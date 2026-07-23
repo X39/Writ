@@ -1487,7 +1487,7 @@ fn array_resize_load_store_len() {
             // NewArray (zero-length)
             Instruction::NewArray {
                 r_dst: 0,
-                elem_type: 0,
+                default_kind: 0,
             },
             // Resize to 2 (fills with default 0)
             Instruction::LoadInt { r_dst: 1, value: 2 },
@@ -1554,11 +1554,11 @@ fn array_store_overwrites_element() {
     // Use NewArraySized to create a 2-element array, then overwrite index 0 with 99.
     let (rt, tid) = run_simple(
         &[
-            // NewArraySized: r_dst=0, elem_type=0 (int), r_len=1 (register holds 2)
+            // NewArraySized: r_dst=0, default_kind=0 (Int), r_len=1 (register holds 2)
             Instruction::LoadInt { r_dst: 1, value: 2 },
             Instruction::NewArraySized {
                 r_dst: 0,
-                elem_type: 0,
+                default_kind: 0,
                 r_len: 1,
             },
             // Store 99 at index 0

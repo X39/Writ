@@ -20,7 +20,7 @@ pub enum HeapObject {
         fields: Vec<Value>,
     },
     Array {
-        elem_type: u32,
+        default_kind: u32,
         elements: Vec<Value>,
     },
     Delegate {
@@ -89,11 +89,11 @@ impl BumpHeap {
         HeapRef(idx)
     }
 
-    /// Allocate an empty array with the given element type.
-    pub fn alloc_array(&mut self, elem_type: u32) -> HeapRef {
+    /// Allocate an empty array with the given growth-default kind.
+    pub fn alloc_array(&mut self, default_kind: u32) -> HeapRef {
         let idx = self.objects.len() as u32;
         self.objects.push(HeapObject::Array {
-            elem_type,
+            default_kind,
             elements: Vec::new(),
         });
         HeapRef(idx)
@@ -241,8 +241,8 @@ impl GcHeap for BumpHeap {
         BumpHeap::alloc_struct_initialized(self, type_key, type_spec, fields)
     }
 
-    fn alloc_array(&mut self, elem_type: u32) -> HeapRef {
-        BumpHeap::alloc_array(self, elem_type)
+    fn alloc_array(&mut self, default_kind: u32) -> HeapRef {
+        BumpHeap::alloc_array(self, default_kind)
     }
 
     fn alloc_delegate(

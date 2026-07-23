@@ -180,7 +180,7 @@ fn test_array_store_round_trip() {
 fn test_new_array_sized_round_trip() {
     round_trip(&Instruction::NewArraySized {
         r_dst: 0,
-        elem_type: ArrayDefaultKind::Float.operand(),
+        default_kind: ArrayDefaultKind::Float.operand(),
         r_len: 5,
     });
 }
@@ -189,7 +189,7 @@ fn test_new_array_sized_round_trip() {
 fn test_new_array_filled_round_trip() {
     round_trip(&Instruction::NewArrayFilled {
         r_dst: 0,
-        elem_type: ArrayDefaultKind::String.operand(),
+        default_kind: ArrayDefaultKind::String.operand(),
         r_len: 5,
         r_fill: 3,
     });
@@ -208,7 +208,7 @@ fn test_array_default_kind_operands_round_trip() {
     for kind in kinds {
         round_trip(&Instruction::NewArray {
             r_dst: 7,
-            elem_type: kind.operand(),
+            default_kind: kind.operand(),
         });
         assert_eq!(ArrayDefaultKind::from_operand(kind.operand()), Some(kind));
     }
@@ -482,7 +482,7 @@ fn test_get_component_round_trip() {
 fn test_array_init_round_trip() {
     round_trip(&Instruction::ArrayInit {
         r_dst: 0,
-        elem_type: ArrayDefaultKind::Bool.operand(),
+        default_kind: ArrayDefaultKind::Bool.operand(),
         count: 5,
         r_base: 1,
     });
@@ -774,11 +774,11 @@ fn test_all_opcodes_round_trip() {
         // 0x09 Arrays (10)
         Instruction::NewArray {
             r_dst: 0,
-            elem_type: ArrayDefaultKind::Int.operand(),
+            default_kind: ArrayDefaultKind::Int.operand(),
         },
         Instruction::ArrayInit {
             r_dst: 0,
-            elem_type: ArrayDefaultKind::Unavailable.operand(),
+            default_kind: ArrayDefaultKind::Unavailable.operand(),
             count: 5,
             r_base: 1,
         },
@@ -812,12 +812,12 @@ fn test_all_opcodes_round_trip() {
         },
         Instruction::NewArraySized {
             r_dst: 0,
-            elem_type: ArrayDefaultKind::Float.operand(),
+            default_kind: ArrayDefaultKind::Float.operand(),
             r_len: 5,
         },
         Instruction::NewArrayFilled {
             r_dst: 0,
-            elem_type: ArrayDefaultKind::String.operand(),
+            default_kind: ArrayDefaultKind::String.operand(),
             r_len: 5,
             r_fill: 3,
         },

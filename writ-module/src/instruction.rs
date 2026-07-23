@@ -3,13 +3,13 @@ use std::io::{Read, Write};
 
 use crate::error::{DecodeError, EncodeError};
 
-/// Runtime default category carried by array-construction instructions.
+/// Growth-default category carried by array-construction instructions.
 ///
 /// The encoded `u32` operand is intentionally a compact value category rather
-/// than a metadata token: array growth only needs to know which runtime value
-/// represents the element type's default. `Unavailable` is used for erased or
-/// unsupported element types and must never be replaced with an arbitrary
-/// default by the VM.
+/// than a metadata token: array growth only needs a recipe for synthesizing a
+/// new slot. It does not identify or validate the array's element type.
+/// `Unavailable` is used when no such recipe exists and must never be replaced
+/// with an arbitrary default by the VM.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum ArrayDefaultKind {
@@ -223,13 +223,13 @@ pub enum Instruction {
     EntityIsAlive { r_dst: u16, r_entity: u16 },
 
     // ── 0x09 Arrays ────────────────────────────────────────────
-    /// 0x0900 — Shape RI32 (8B); `elem_type` is an [`ArrayDefaultKind`] operand.
-    NewArray { r_dst: u16, elem_type: u32 },
-    /// 0x0901 — var (12B): u16(op) u16(r_dst) u32(elem_type) u16(count) u16(r_base).
-    /// `elem_type` is an [`ArrayDefaultKind`] operand.
+    /// 0x0900 — Shape RI32 (8B); `default_kind` is an [`ArrayDefaultKind`] operand.
+    NewArray { r_dst: u16, default_kind: u32 },
+    /// 0x0901 — var (12B): u16(op) u16(r_dst) u32(default_kind) u16(count) u16(r_base).
+    /// `default_kind` is an [`ArrayDefaultKind`] operand.
     ArrayInit {
         r_dst: u16,
-        elem_type: u32,
+        default_kind: u32,
         count: u16,
         r_base: u16,
     },
@@ -256,18 +256,18 @@ pub enum Instruction {
         r_start: u16,
         r_end: u16,
     },
-    /// 0x0908 — var (10B): u16(op) u16(r_dst) u32(elem_type) u16(r_len).
-    /// `elem_type` is an [`ArrayDefaultKind`] operand.
+    /// 0x0908 — var (10B): u16(op) u16(r_dst) u32(default_kind) u16(r_len).
+    /// `default_kind` is an [`ArrayDefaultKind`] operand.
     NewArraySized {
         r_dst: u16,
-        elem_type: u32,
+        default_kind: u32,
         r_len: u16,
     },
-    /// 0x0909 — var (12B): u16(op) u16(r_dst) u32(elem_type) u16(r_len) u16(r_fill).
-    /// `elem_type` is an [`ArrayDefaultKind`] operand.
+    /// 0x0909 — var (12B): u16(op) u16(r_dst) u32(default_kind) u16(r_len) u16(r_fill).
+    /// `default_kind` is an [`ArrayDefaultKind`] operand.
     NewArrayFilled {
         r_dst: u16,
-        elem_type: u32,
+        default_kind: u32,
         r_len: u16,
         r_fill: u16,
     },
@@ -780,9 +780,12 @@ impl Instruction {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u32::<LittleEndian>(*type_idx)?;
             }
-            Instruction::NewArray { r_dst, elem_type } => {
+            Instruction::NewArray {
+                r_dst,
+                default_kind,
+            } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
-                w.write_u32::<LittleEndian>(*elem_type)?;
+                w.write_u32::<LittleEndian>(*default_kind)?;
             }
             Instruction::DeferPush { r_dst, method_idx } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
@@ -955,12 +958,12 @@ impl Instruction {
             }
             Instruction::ArrayInit {
                 r_dst,
-                elem_type,
+                default_kind,
                 count,
                 r_base,
             } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
-                w.write_u32::<LittleEndian>(*elem_type)?;
+                w.write_u32::<LittleEndian>(*default_kind)?;
                 w.write_u16::<LittleEndian>(*count)?;
                 w.write_u16::<LittleEndian>(*r_base)?;
             }
@@ -990,21 +993,21 @@ impl Instruction {
             }
             Instruction::NewArraySized {
                 r_dst,
-                elem_type,
+                default_kind,
                 r_len,
             } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
-                w.write_u32::<LittleEndian>(*elem_type)?;
+                w.write_u32::<LittleEndian>(*default_kind)?;
                 w.write_u16::<LittleEndian>(*r_len)?;
             }
             Instruction::NewArrayFilled {
                 r_dst,
-                elem_type,
+                default_kind,
                 r_len,
                 r_fill,
             } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
-                w.write_u32::<LittleEndian>(*elem_type)?;
+                w.write_u32::<LittleEndian>(*default_kind)?;
                 w.write_u16::<LittleEndian>(*r_len)?;
                 w.write_u16::<LittleEndian>(*r_fill)?;
             }
@@ -1389,17 +1392,20 @@ impl Instruction {
             // ── 0x09 Arrays ────────────────────────────────────
             0x0900 => {
                 let r_dst = r.read_u16::<LittleEndian>()?;
-                let elem_type = r.read_u32::<LittleEndian>()?;
-                Ok(Instruction::NewArray { r_dst, elem_type })
+                let default_kind = r.read_u32::<LittleEndian>()?;
+                Ok(Instruction::NewArray {
+                    r_dst,
+                    default_kind,
+                })
             }
             0x0901 => {
                 let r_dst = r.read_u16::<LittleEndian>()?;
-                let elem_type = r.read_u32::<LittleEndian>()?;
+                let default_kind = r.read_u32::<LittleEndian>()?;
                 let count = r.read_u16::<LittleEndian>()?;
                 let r_base = r.read_u16::<LittleEndian>()?;
                 Ok(Instruction::ArrayInit {
                     r_dst,
-                    elem_type,
+                    default_kind,
                     count,
                     r_base,
                 })
@@ -1447,22 +1453,22 @@ impl Instruction {
             }
             0x0908 => {
                 let r_dst = r.read_u16::<LittleEndian>()?;
-                let elem_type = r.read_u32::<LittleEndian>()?;
+                let default_kind = r.read_u32::<LittleEndian>()?;
                 let r_len = r.read_u16::<LittleEndian>()?;
                 Ok(Instruction::NewArraySized {
                     r_dst,
-                    elem_type,
+                    default_kind,
                     r_len,
                 })
             }
             0x0909 => {
                 let r_dst = r.read_u16::<LittleEndian>()?;
-                let elem_type = r.read_u32::<LittleEndian>()?;
+                let default_kind = r.read_u32::<LittleEndian>()?;
                 let r_len = r.read_u16::<LittleEndian>()?;
                 let r_fill = r.read_u16::<LittleEndian>()?;
                 Ok(Instruction::NewArrayFilled {
                     r_dst,
-                    elem_type,
+                    default_kind,
                     r_len,
                     r_fill,
                 })

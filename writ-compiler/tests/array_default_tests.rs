@@ -12,11 +12,11 @@ fn array_construction_operands(source: &'static str) -> Vec<(u16, u32)> {
             let instruction = Instruction::decode(&mut cursor).expect("instruction should decode");
             let opcode = instruction.opcode();
             match instruction {
-                Instruction::NewArray { elem_type, .. }
-                | Instruction::ArrayInit { elem_type, .. }
-                | Instruction::NewArraySized { elem_type, .. }
-                | Instruction::NewArrayFilled { elem_type, .. } => {
-                    operands.push((opcode, elem_type));
+                Instruction::NewArray { default_kind, .. }
+                | Instruction::ArrayInit { default_kind, .. }
+                | Instruction::NewArraySized { default_kind, .. }
+                | Instruction::NewArrayFilled { default_kind, .. } => {
+                    operands.push((opcode, default_kind));
                 }
                 _ => {}
             }

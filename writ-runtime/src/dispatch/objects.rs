@@ -409,12 +409,14 @@ pub(super) fn exec_set_field(
 pub(super) fn exec_new_array(
     ctx: &mut ExecContext<'_>,
     r_dst: u16,
-    elem_type: u32,
+    default_kind: u32,
 ) -> ExecutionResult {
-    if ArrayDefaultKind::from_operand(elem_type).is_none() {
-        return ExecutionResult::Crash(format!("NewArray: invalid array default kind {elem_type}"));
+    if ArrayDefaultKind::from_operand(default_kind).is_none() {
+        return ExecutionResult::Crash(format!(
+            "NewArray: invalid array default kind {default_kind}"
+        ));
     }
-    let href = ctx.heap.alloc_array(elem_type);
+    let href = ctx.heap.alloc_array(default_kind);
     let frame = ctx.task.call_stack.last_mut().unwrap();
     frame.registers[r_dst as usize] = Value::Ref(href);
     ExecutionResult::Continue
@@ -423,7 +425,7 @@ pub(super) fn exec_new_array(
 pub(super) fn exec_array_init(
     ctx: &mut ExecContext<'_>,
     r_dst: u16,
-    elem_type: u32,
+    default_kind: u32,
     count: u16,
     r_base: u16,
 ) -> ExecutionResult {
@@ -434,11 +436,11 @@ pub(super) fn exec_array_init(
             elements.push(frame.registers[r_base as usize + i]);
         }
     }
-    let elem_type = match resolved_array_kind(elem_type, elements.first(), &*ctx.heap) {
+    let default_kind = match resolved_array_kind(default_kind, elements.first(), &*ctx.heap) {
         Ok(kind) => kind.operand(),
         Err(message) => return ExecutionResult::Crash(format!("ArrayInit: {message}")),
     };
-    let idx = ctx.heap.alloc_array(elem_type);
+    let idx = ctx.heap.alloc_array(default_kind);
     if let Ok(HeapObject::Array {
         elements: elems, ..
     }) = ctx.heap.get_object_mut(idx)
@@ -530,16 +532,16 @@ pub(super) fn exec_array_resize(
     if new_len < 0 {
         return ExecutionResult::Crash("ArrayResize: negative length".into());
     }
-    let (old_len, elem_type) = match ctx.heap.get_object(arr_ref) {
+    let (old_len, default_kind) = match ctx.heap.get_object(arr_ref) {
         Ok(HeapObject::Array {
             elements,
-            elem_type,
-        }) => (elements.len(), *elem_type),
+            default_kind,
+        }) => (elements.len(), *default_kind),
         _ => return ExecutionResult::Crash("ArrayResize: not an array".into()),
     };
     let new_len = new_len as usize;
     let default = if new_len > old_len {
-        match default_value_for(elem_type, &mut *ctx.heap) {
+        match default_value_for(default_kind, &mut *ctx.heap) {
             Ok(value) => Some(value),
             Err(message) => return ExecutionResult::Crash(format!("ArrayResize: {message}")),
         }
@@ -560,12 +562,12 @@ pub(super) fn exec_array_resize(
 }
 
 fn resolved_array_kind(
-    operand: u32,
+    default_kind: u32,
     prototype: Option<&Value>,
     heap: &dyn crate::gc::GcHeap,
 ) -> Result<ArrayDefaultKind, String> {
-    let kind = ArrayDefaultKind::from_operand(operand)
-        .ok_or_else(|| format!("invalid array default kind {operand}"))?;
+    let kind = ArrayDefaultKind::from_operand(default_kind)
+        .ok_or_else(|| format!("invalid array default kind {default_kind}"))?;
     if kind == ArrayDefaultKind::Unavailable {
         Ok(prototype
             .map(|value| infer_array_kind(value, heap))
@@ -589,17 +591,18 @@ fn infer_array_kind(value: &Value, heap: &dyn crate::gc::GcHeap) -> ArrayDefault
     }
 }
 
-fn default_value_for(operand: u32, heap: &mut dyn crate::gc::GcHeap) -> Result<Value, String> {
-    match ArrayDefaultKind::from_operand(operand) {
+fn default_value_for(default_kind: u32, heap: &mut dyn crate::gc::GcHeap) -> Result<Value, String> {
+    match ArrayDefaultKind::from_operand(default_kind) {
         Some(ArrayDefaultKind::Int) => Ok(Value::Int(0)),
         Some(ArrayDefaultKind::Float) => Ok(Value::Float(0.0)),
         Some(ArrayDefaultKind::Bool) => Ok(Value::Bool(false)),
         Some(ArrayDefaultKind::String) => Ok(Value::Ref(heap.alloc_string(""))),
         Some(ArrayDefaultKind::NullReference) => Ok(Value::Void),
-        Some(ArrayDefaultKind::Unavailable) => {
-            Err("element type has no runtime default; create it from a concrete value first".into())
-        }
-        None => Err(format!("invalid array default kind {operand}")),
+        Some(ArrayDefaultKind::Unavailable) => Err(
+            "array has no synthesizable growth default; initialize it from a concrete value first"
+                .into(),
+        ),
+        None => Err(format!("invalid array default kind {default_kind}")),
     }
 }
 
@@ -659,7 +662,7 @@ pub(super) fn exec_array_copy(
 pub(super) fn exec_new_array_sized(
     ctx: &mut ExecContext<'_>,
     r_dst: u16,
-    elem_type: u32,
+    default_kind: u32,
     r_len: u16,
 ) -> ExecutionResult {
     let frame = ctx.task.call_stack.last().unwrap();
@@ -668,21 +671,21 @@ pub(super) fn exec_new_array_sized(
         return ExecutionResult::Crash("NewArraySized: negative length".into());
     }
     let len = len as usize;
-    if ArrayDefaultKind::from_operand(elem_type).is_none() {
+    if ArrayDefaultKind::from_operand(default_kind).is_none() {
         return ExecutionResult::Crash(format!(
-            "NewArraySized: invalid array default kind {elem_type}"
+            "NewArraySized: invalid array default kind {default_kind}"
         ));
     }
     let default = if len == 0 {
         None
     } else {
-        match default_value_for(elem_type, &mut *ctx.heap) {
+        match default_value_for(default_kind, &mut *ctx.heap) {
             Ok(value) => Some(value),
             Err(message) => return ExecutionResult::Crash(format!("NewArraySized: {message}")),
         }
     };
     let elements = default.map(|value| vec![value; len]).unwrap_or_default();
-    let href = ctx.heap.alloc_array(elem_type);
+    let href = ctx.heap.alloc_array(default_kind);
     if let Ok(HeapObject::Array {
         elements: elems, ..
     }) = ctx.heap.get_object_mut(href)
@@ -697,7 +700,7 @@ pub(super) fn exec_new_array_sized(
 pub(super) fn exec_new_array_filled(
     ctx: &mut ExecContext<'_>,
     r_dst: u16,
-    elem_type: u32,
+    default_kind: u32,
     r_len: u16,
     r_fill: u16,
 ) -> ExecutionResult {
@@ -708,12 +711,12 @@ pub(super) fn exec_new_array_filled(
     }
     let len = len as usize;
     let fill_val = frame.registers[r_fill as usize];
-    let elem_type = match resolved_array_kind(elem_type, Some(&fill_val), &*ctx.heap) {
+    let default_kind = match resolved_array_kind(default_kind, Some(&fill_val), &*ctx.heap) {
         Ok(kind) => kind.operand(),
         Err(message) => return ExecutionResult::Crash(format!("NewArrayFilled: {message}")),
     };
     let elements = vec![fill_val; len];
-    let href = ctx.heap.alloc_array(elem_type);
+    let href = ctx.heap.alloc_array(default_kind);
     if let Ok(HeapObject::Array {
         elements: elems, ..
     }) = ctx.heap.get_object_mut(href)
@@ -738,13 +741,13 @@ pub(super) fn exec_array_slice(
     let end = helpers::extract_int(&frame.registers[r_end as usize]) as usize;
     match ctx.heap.get_object(arr_ref) {
         Ok(HeapObject::Array {
-            elem_type,
+            default_kind,
             elements,
         }) => {
-            let et = *elem_type;
+            let default_kind = *default_kind;
             if start <= end && end <= elements.len() {
                 let slice = elements[start..end].to_vec();
-                let new_href = ctx.heap.alloc_array(et);
+                let new_href = ctx.heap.alloc_array(default_kind);
                 if let Ok(HeapObject::Array {
                     elements: elems, ..
                 }) = ctx.heap.get_object_mut(new_href)

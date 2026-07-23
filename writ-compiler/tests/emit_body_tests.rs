@@ -1167,6 +1167,36 @@ fn test_object_model_struct_construction() {
 }
 
 #[test]
+fn zero_field_construction_uses_canonical_zero_base() {
+    let mut interner = make_interner();
+    let ty_int = interner.int();
+    let (_, struct_def_id) = make_def_id();
+    let ty_struct = interner.intern(TyKind::Struct(struct_def_id));
+    let builder = make_builder_with_struct_fields(struct_def_id, &[]);
+    let mut emitter = make_emitter(&builder, &interner);
+
+    // Occupy a register so using the allocator cursor for an empty initializer
+    // block would produce a noncanonical operand.
+    emitter.alloc_reg(ty_int);
+    let expression = TypedExpr::New {
+        ty: ty_struct,
+        span: dummy_span(),
+        target_def_id: struct_def_id,
+        fields: vec![],
+    };
+    emit_expr(&mut emitter, &expression);
+
+    assert!(matches!(
+        emitter.instructions.as_slice(),
+        [Instruction::New {
+            field_count: 0,
+            r_base: 0,
+            ..
+        }]
+    ));
+}
+
+#[test]
 fn test_object_model_entity_construction_sequence() {
     // Normalized entity fields are initialized atomically before INIT_ENTITY.
     let mut interner = make_interner();
@@ -1591,7 +1621,8 @@ fn test_entity_is_alive_emits_instruction() {
 
 #[test]
 fn test_array_literal_emits_array_init() {
-    // [1, 2, 3] -> elements loaded, then ARRAY_INIT { r_dst, elem_type, count:3, r_base }
+    // [1, 2, 3] -> elements loaded, then
+    // ARRAY_INIT { r_dst, default_kind, count:3, r_base }
     let builder = ModuleBuilder::new();
     let mut interner = make_interner();
     let ty_int = interner.int();
@@ -1636,7 +1667,7 @@ fn test_array_literal_emits_array_init() {
 
 #[test]
 fn test_empty_array_literal_emits_new_array() {
-    // [] -> NewArray { r_dst, elem_type: 0 }
+    // [] -> NewArray { r_dst, default_kind: 0 }
     let builder = ModuleBuilder::new();
     let mut interner = make_interner();
     let ty_int = interner.int();

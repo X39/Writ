@@ -966,17 +966,26 @@ fn instr_to_text(instr: &Instruction) -> (String, Vec<String>) {
         }
 
         // ── 0x09 Arrays ──
-        Instruction::NewArray { r_dst, elem_type } => {
-            ("NEW_ARRAY".into(), vec![r(*r_dst), tok(*elem_type)])
-        }
+        Instruction::NewArray {
+            r_dst,
+            default_kind,
+        } => (
+            "NEW_ARRAY".into(),
+            vec![r(*r_dst), format!("{default_kind}")],
+        ),
         Instruction::ArrayInit {
             r_dst,
-            elem_type,
+            default_kind,
             count,
             r_base,
         } => (
             "ARRAY_INIT".into(),
-            vec![r(*r_dst), tok(*elem_type), format!("{}", count), r(*r_base)],
+            vec![
+                r(*r_dst),
+                format!("{default_kind}"),
+                format!("{}", count),
+                r(*r_base),
+            ],
         ),
         Instruction::ArrayLoad {
             r_dst,
@@ -1019,20 +1028,20 @@ fn instr_to_text(instr: &Instruction) -> (String, Vec<String>) {
         ),
         Instruction::NewArraySized {
             r_dst,
-            elem_type,
+            default_kind,
             r_len,
         } => (
             "NEW_ARRAY_SIZED".into(),
-            vec![r(*r_dst), tok(*elem_type), r(*r_len)],
+            vec![r(*r_dst), format!("{default_kind}"), r(*r_len)],
         ),
         Instruction::NewArrayFilled {
             r_dst,
-            elem_type,
+            default_kind,
             r_len,
             r_fill,
         } => (
             "NEW_ARRAY_FILLED".into(),
-            vec![r(*r_dst), tok(*elem_type), r(*r_len), r(*r_fill)],
+            vec![r(*r_dst), format!("{default_kind}"), r(*r_len), r(*r_fill)],
         ),
 
         // ── 0x0A Type Operations — Option ──

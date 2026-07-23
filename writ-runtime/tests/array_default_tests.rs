@@ -38,7 +38,7 @@ fn grow_and_load(kind: ArrayDefaultKind) -> Value {
         &[
             Instruction::NewArray {
                 r_dst: 0,
-                elem_type: kind.operand(),
+                default_kind: kind.operand(),
             },
             Instruction::LoadInt { r_dst: 1, value: 1 },
             Instruction::ArrayResize {
@@ -73,7 +73,7 @@ fn resize_uses_empty_string_default() {
         &[
             Instruction::NewArray {
                 r_dst: 0,
-                elem_type: ArrayDefaultKind::String.operand(),
+                default_kind: ArrayDefaultKind::String.operand(),
             },
             Instruction::LoadInt { r_dst: 1, value: 1 },
             Instruction::ArrayResize {
@@ -104,7 +104,7 @@ fn empty_slice_preserves_inferred_default_kind() {
             },
             Instruction::ArrayInit {
                 r_dst: 1,
-                elem_type: ArrayDefaultKind::Unavailable.operand(),
+                default_kind: ArrayDefaultKind::Unavailable.operand(),
                 count: 1,
                 r_base: 0,
             },
@@ -143,7 +143,7 @@ fn filled_array_refines_erased_default_kind() {
             Instruction::LoadInt { r_dst: 1, value: 1 },
             Instruction::NewArrayFilled {
                 r_dst: 2,
-                elem_type: ArrayDefaultKind::Unavailable.operand(),
+                default_kind: ArrayDefaultKind::Unavailable.operand(),
                 r_len: 1,
                 r_fill: 0,
             },
@@ -171,7 +171,7 @@ fn unavailable_default_crashes_instead_of_inventing_a_value() {
         &[
             Instruction::NewArray {
                 r_dst: 0,
-                elem_type: ArrayDefaultKind::Unavailable.operand(),
+                default_kind: ArrayDefaultKind::Unavailable.operand(),
             },
             Instruction::LoadInt { r_dst: 1, value: 1 },
             Instruction::ArrayResize {
@@ -188,7 +188,7 @@ fn unavailable_default_crashes_instead_of_inventing_a_value() {
             .crash_info(task_id)
             .unwrap()
             .message
-            .contains("element type has no runtime default")
+            .contains("no synthesizable growth default")
     );
 }
 

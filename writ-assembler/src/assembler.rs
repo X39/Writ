@@ -605,6 +605,27 @@ fn map_instruction(
         }
     };
 
+    let array_default_kind = |idx: usize| -> Result<u32, AssembleError> {
+        let value = match operands.get(idx) {
+            Some(AsmOperand::IntLit(value)) => u32::try_from(*value).ok(),
+            _ => None,
+        };
+        match value.filter(|value| {
+            writ_module::instruction::ArrayDefaultKind::from_operand(*value).is_some()
+        }) {
+            Some(value) => Ok(value),
+            None => Err(AssembleError::new(
+                format!(
+                    "{}: array default kind at operand {} must be 0..4 or 0xFFFFFFFF",
+                    upper,
+                    idx + 1
+                ),
+                line,
+                col,
+            )),
+        }
+    };
+
     let float_lit = |idx: usize| -> Result<f64, AssembleError> {
         match operands.get(idx) {
             Some(AsmOperand::FloatLit(v)) => Ok(*v),
@@ -1000,12 +1021,12 @@ fn map_instruction(
         // ── 0x09 Arrays ──
         "NEW_ARRAY" => Ok(Instruction::NewArray {
             r_dst: reg(0)?,
-            elem_type: token_val(1)?,
+            default_kind: array_default_kind(1)?,
         }),
         "ARRAY_INIT" => Ok(Instruction::ArrayInit {
             r_dst: reg(0)?,
-            elem_type: token_val(1)?,
-            count: int_lit(2)? as u16,
+            default_kind: array_default_kind(1)?,
+            count: u16_lit(2)?,
             r_base: reg(3)?,
         }),
         "ARRAY_LOAD" => Ok(Instruction::ArrayLoad {
@@ -1041,12 +1062,12 @@ fn map_instruction(
         }),
         "NEW_ARRAY_SIZED" => Ok(Instruction::NewArraySized {
             r_dst: reg(0)?,
-            elem_type: token_val(1)?,
+            default_kind: array_default_kind(1)?,
             r_len: reg(2)?,
         }),
         "NEW_ARRAY_FILLED" => Ok(Instruction::NewArrayFilled {
             r_dst: reg(0)?,
-            elem_type: token_val(1)?,
+            default_kind: array_default_kind(1)?,
             r_len: reg(2)?,
             r_fill: reg(3)?,
         }),
