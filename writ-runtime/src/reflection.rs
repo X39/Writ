@@ -328,8 +328,9 @@ impl ReflectionIndex {
             // Field 1 (declared_type): Value::Void placeholder (full type resolution in Phase 106)
             let _ = heap.set_field(href, 1, Value::Void);
 
-            // Source fields are writable by default. Programmatic modules can
-            // opt out with the distinct read-only metadata bit.
+            // Source fields without `mut` set READONLY; source `mut` fields
+            // clear it. Runtime and programmatic modules control the same
+            // policy directly through FieldDef flags.
             let is_mutable = (fd.flags & FIELD_FLAG_READONLY) == 0;
             let _ = heap.set_field(href, 2, Value::Bool(is_mutable));
         }
