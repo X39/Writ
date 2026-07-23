@@ -14,6 +14,13 @@ use writ_diagnostics::{Diagnostic, FileId, Severity};
 
 /// Parse, lower, resolve, and typecheck a single source string.
 fn typecheck_src(src: &'static str) -> (TypedAst, Vec<Diagnostic>) {
+    typecheck_src_with_libraries(src, &[])
+}
+
+fn typecheck_src_with_libraries(
+    src: &'static str,
+    libraries: &[&writ_module::Module],
+) -> (TypedAst, Vec<Diagnostic>) {
     let (items, parse_errors) = writ_parser::parse(src);
     let items = items.expect("parse returned None");
     let error_msgs: Vec<String> = parse_errors.iter().map(|e| format!("{e:?}")).collect();
@@ -28,7 +35,7 @@ fn typecheck_src(src: &'static str) -> (TypedAst, Vec<Diagnostic>) {
     let file_id = FileId(0);
     let asts: Vec<(FileId, &Ast)> = vec![(file_id, &ast)];
     let file_paths: Vec<(FileId, &str)> = vec![(file_id, "src/test.writ")];
-    let (resolved, resolve_diags) = resolve::resolve(&asts, &file_paths, &[]);
+    let (resolved, resolve_diags) = resolve::resolve(&asts, &file_paths, libraries);
 
     let resolve_errors: Vec<&Diagnostic> = resolve_diags
         .iter()
@@ -40,7 +47,7 @@ fn typecheck_src(src: &'static str) -> (TypedAst, Vec<Diagnostic>) {
         resolve_errors
     );
 
-    let (typed_ast, _interner, _type_env, type_diags) = typecheck(resolved, &asts, &[]);
+    let (typed_ast, _interner, _type_env, type_diags) = typecheck(resolved, &asts, libraries);
     (typed_ast, type_diags)
 }
 
@@ -978,10 +985,13 @@ fn mutable_reassignment_ok() {
 }
 
 #[test]
-fn immutable_field_mutation_error() {
+fn read_only_field_mutation_error_even_through_mutable_binding() {
     let (_ast, diags) = typecheck_src(
         "pub struct S { pub x: int }
-         pub fn test(s: S) { s.x = 42; }",
+         pub fn test() {
+             let mut s = new S { x: 0 };
+             s.x = 42;
+         }",
     );
     assert!(
         has_error(&diags, "E0107"),
@@ -991,17 +1001,200 @@ fn immutable_field_mutation_error() {
 }
 
 #[test]
-fn mutable_field_mutation_ok() {
+fn mutable_field_still_requires_a_mutable_receiver_path() {
     let (_ast, diags) = typecheck_src(
-        "pub struct S { pub x: int }
-         pub fn get_s() -> S { let _x = 1; }
-         pub fn test() { let mut s: S = get_s(); s.x = 42; }",
+        "pub struct S { pub mut x: int }
+         pub fn test(s: S) { s.x = 42; }",
     );
-    // Parameters are always immutable in Writ. To test mutable field mutation,
-    // we use `let mut s: S = get_s()` which creates a mutable local binding.
-    // Note: get_s doesn't actually return S correctly (returns void), but the
-    // annotated type `S` on the let binding ensures `s` is typed as `S`.
-    // The mutation check on `s.x = 42` should not error because s is mutable.
+    assert!(
+        has_error(&diags, "E0107"),
+        "expected E0107 for mutation through immutable receiver, got: {:?}",
+        diags
+    );
+}
+
+#[test]
+fn mutable_field_mutation_ok_through_mutable_binding() {
+    let (_ast, diags) = typecheck_src(
+        "pub struct S { pub mut x: int }
+         pub fn test() {
+             let mut s = new S { x: 0 };
+             s.x = 42;
+         }",
+    );
+    assert!(has_no_errors(&diags), "errors: {diags:?}");
+}
+
+#[test]
+fn nested_read_only_field_blocks_mutation() {
+    let (_ast, diags) = typecheck_src(
+        "pub struct Inner { pub mut value: int }
+         pub struct Outer { pub inner: Inner }
+         pub fn test() {
+             let mut outer = new Outer { inner: new Inner { value: 0 } };
+             outer.inner.value = 42;
+         }",
+    );
+    assert!(
+        has_error(&diags, "E0107"),
+        "expected E0107 for mutation through read-only intermediate field: {diags:?}"
+    );
+}
+
+#[test]
+fn array_mutation_requires_a_mutable_binding() {
+    let (_ast, immutable_diags) = typecheck_src("pub fn test(values: int[]) { values[0] = 1; }");
+    assert!(
+        has_error(&immutable_diags, "E0107"),
+        "expected immutable array receiver error: {immutable_diags:?}"
+    );
+
+    let (_ast, mutable_diags) =
+        typecheck_src("pub fn test() { let mut values = [0]; values[0] = 1; }");
+    assert!(
+        has_no_errors(&mutable_diags),
+        "mutable array binding should permit index assignment: {mutable_diags:?}"
+    );
+}
+
+#[test]
+fn mut_self_calls_require_mutable_places() {
+    let (_ast, immutable_diags) = typecheck_src(
+        "pub class Counter { pub mut value: int }
+         impl Counter {
+             pub fn bump(mut self) { self.value = self.value + 1; }
+         }
+         pub fn test(counter: Counter) { counter.bump(); }",
+    );
+    assert!(
+        has_error(&immutable_diags, "E0107"),
+        "immutable parameter must reject mut-self call: {immutable_diags:?}"
+    );
+
+    let (_ast, mutable_diags) = typecheck_src(
+        "pub class Counter { pub mut value: int }
+         impl Counter {
+             pub fn bump(mut self) { self.value = self.value + 1; }
+         }
+         pub fn test() {
+             let mut counter = new Counter { value: 0 };
+             counter.bump();
+         }",
+    );
+    assert!(
+        has_no_errors(&mutable_diags),
+        "mutable local should permit mut-self call: {mutable_diags:?}"
+    );
+}
+
+#[test]
+fn mut_self_calls_reject_ordinary_self_bound_methods_and_temporaries() {
+    let (_ast, self_diags) = typecheck_src(
+        "pub class Counter { pub mut value: int }
+         impl Counter {
+             pub fn bump(mut self) { self.value = self.value + 1; }
+             pub fn relay(self) { self.bump(); }
+         }",
+    );
+    assert!(
+        has_error(&self_diags, "E0107"),
+        "ordinary self must reject mut-self call: {self_diags:?}"
+    );
+
+    let (_ast, bound_diags) = typecheck_src(
+        "pub class Counter { pub mut value: int }
+         impl Counter { pub fn bump(mut self) { self.value = self.value + 1; } }
+         pub fn bind(counter: Counter) { let callback = counter.bump; }",
+    );
+    assert!(
+        has_error(&bound_diags, "E0107"),
+        "binding a mut-self method must validate the receiver: {bound_diags:?}"
+    );
+
+    let (_ast, temporary_diags) = typecheck_src(
+        "pub class Counter { pub mut value: int }
+         impl Counter { pub fn bump(mut self) { self.value = self.value + 1; } }
+         pub fn test() { new Counter { value: 0 }.bump(); }",
+    );
+    assert!(
+        has_error(&temporary_diags, "E0107"),
+        "temporary receiver must reject mut-self call: {temporary_diags:?}"
+    );
+}
+
+#[test]
+fn contract_mut_self_calls_require_mutable_places() {
+    let (_ast, immutable_diags) = typecheck_src(
+        "pub contract Increment { fn bump(mut self); }
+         pub class Counter {}
+         impl Increment for Counter { fn bump(mut self) {} }
+         pub fn test(counter: Increment) { counter.bump(); }",
+    );
+    assert!(
+        has_error(&immutable_diags, "E0107"),
+        "contract mut-self call must reject immutable receiver: {immutable_diags:?}"
+    );
+
+    let (_ast, mutable_diags) = typecheck_src(
+        "pub contract Increment { fn bump(mut self); }
+         pub class Counter {}
+         impl Increment for Counter { fn bump(mut self) {} }
+         pub fn test() {
+             let mut counter: Increment = new Counter {};
+             counter.bump();
+         }",
+    );
+    assert!(
+        has_no_errors(&mutable_diags),
+        "contract mut-self call should accept mutable local: {mutable_diags:?}"
+    );
+}
+
+#[test]
+fn imported_mut_self_calls_require_mutable_places() {
+    let library_bytes = writ_compiler::compile_source(
+        "pub class Counter {}
+         impl Counter { pub fn bump(mut self) {} }",
+    )
+    .expect("compile library");
+    let library = writ_module::Module::from_bytes(&library_bytes).expect("decode library");
+
+    let (_ast, immutable_diags) = typecheck_src_with_libraries(
+        "pub fn test(counter: Counter) { counter.bump(); }",
+        &[&library],
+    );
+    assert!(
+        has_error(&immutable_diags, "E0107"),
+        "imported mut-self call must reject immutable receiver: {immutable_diags:?}"
+    );
+
+    let (_ast, mutable_diags) = typecheck_src_with_libraries(
+        "pub fn test() {
+             let mut counter = new Counter {};
+             counter.bump();
+         }",
+        &[&library],
+    );
+    assert!(
+        has_no_errors(&mutable_diags),
+        "imported mut-self call should accept mutable local: {mutable_diags:?}"
+    );
+}
+
+#[test]
+fn mutating_array_methods_require_mutable_places() {
+    let (_ast, immutable_diags) = typecheck_src("pub fn test(values: int[]) { values.resize(4); }");
+    assert!(
+        has_error(&immutable_diags, "E0107"),
+        "array resize must reject immutable receiver: {immutable_diags:?}"
+    );
+
+    let (_ast, mutable_diags) =
+        typecheck_src("pub fn test() { let mut values = [1]; values.resize(4); }");
+    assert!(
+        has_no_errors(&mutable_diags),
+        "array resize should accept mutable receiver: {mutable_diags:?}"
+    );
 }
 
 // =========================================================
@@ -1101,6 +1294,120 @@ fn new_struct_unknown_field() {
         has_error(&diags, "E0106"),
         "expected E0106 unknown field in new, got: {:?}",
         diags
+    );
+}
+
+#[test]
+fn new_struct_defaults_are_complete_ordered_and_explicit_values_win() {
+    let (typed, diags) = typecheck_src(
+        "pub struct Config { pub first: int = 1, pub second: int = 2 }
+         pub fn test() {
+             let config = new Config { second: 20, first: 10 };
+         }",
+    );
+    assert!(has_no_errors(&diags), "errors: {diags:?}");
+
+    let body = typed
+        .decls
+        .iter()
+        .find_map(|decl| match decl {
+            TypedDecl::Fn { body, .. } => Some(body),
+            _ => None,
+        })
+        .expect("test function");
+    let TypedExpr::Block { stmts, .. } = body else {
+        panic!("expected function block");
+    };
+    let TypedStmt::Let { value, .. } = &stmts[0] else {
+        panic!("expected let statement");
+    };
+    let TypedExpr::New { fields, .. } = value else {
+        panic!("expected construction");
+    };
+    assert_eq!(
+        fields
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["first", "second"]
+    );
+    assert!(matches!(
+        fields[0].1,
+        TypedExpr::Literal {
+            value: writ_compiler::check::ir::TypedLiteral::Int(10),
+            ..
+        }
+    ));
+    assert!(matches!(
+        fields[1].1,
+        TypedExpr::Literal {
+            value: writ_compiler::check::ir::TypedLiteral::Int(20),
+            ..
+        }
+    ));
+}
+
+#[test]
+fn new_struct_omitted_default_is_materialized() {
+    let (typed, diags) = typecheck_src(
+        "pub struct Config { pub first: int = 1, pub second: int }
+         pub fn test() { let config = new Config { second: 2 }; }",
+    );
+    assert!(has_no_errors(&diags), "errors: {diags:?}");
+
+    let fields = typed
+        .decls
+        .iter()
+        .find_map(|decl| match decl {
+            TypedDecl::Fn {
+                body: TypedExpr::Block { stmts, .. },
+                ..
+            } => match &stmts[0] {
+                TypedStmt::Let {
+                    value: TypedExpr::New { fields, .. },
+                    ..
+                } => Some(fields),
+                _ => None,
+            },
+            _ => None,
+        })
+        .expect("normalized construction");
+    assert_eq!(fields.len(), 2);
+    assert_eq!(fields[0].0, "first");
+    assert!(matches!(
+        fields[0].1,
+        TypedExpr::Literal {
+            value: writ_compiler::check::ir::TypedLiteral::Int(1),
+            ..
+        }
+    ));
+}
+
+#[test]
+fn new_struct_duplicate_field_is_rejected() {
+    let (_typed, diags) = typecheck_src(
+        "pub struct Config { pub value: int }
+         pub fn test() { let config = new Config { value: 1, value: 2 }; }",
+    );
+    assert!(
+        has_error(&diags, "E0128"),
+        "expected duplicate initializer diagnostic: {diags:?}"
+    );
+}
+
+#[test]
+fn field_default_does_not_capture_construction_site_locals() {
+    let (_typed, diags) = typecheck_src(
+        "pub global mut seed: int = 7;
+         pub struct Config { pub value: int = seed }
+         pub fn test() {
+             let seed = \"caller local\";
+             let config = new Config {};
+         }",
+    );
+    assert!(
+        has_no_errors(&diags),
+        "default should resolve the declaration-scope global: {diags:?}"
     );
 }
 

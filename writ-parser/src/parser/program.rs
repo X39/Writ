@@ -2026,18 +2026,20 @@ where
                 });
 
             // --- struct_decl parser ---
-            // [vis] struct Name [<generics>] { [vis] field: type [= default], ... }
+            // [vis] struct Name [<generics>] { [vis] [mut] field: type [= default], ... }
             let struct_field = visibility
                 .clone()
                 .or_not()
+                .then(just(Token::KwMut).or_not())
                 .then(select! { Token::Ident(name) => name }.map_with(|n, e| (n, e.span())))
                 .then_ignore(just(Token::Colon))
                 .then(type_expr())
                 .then(just(Token::Eq).ignore_then(expr.clone()).or_not())
-                .map_with(|(((vis, name), ty), default), e| {
+                .map_with(|((((vis, mut_token), name), ty), default), e| {
                     (
                         cst::StructField {
                             vis,
+                            is_mutable: mut_token.is_some(),
                             name,
                             ty,
                             default,
@@ -2378,19 +2380,21 @@ where
                         (cst::EntityMember::Fn((fd, e.span())), e.span())
                     });
 
-            // [vis] name: type [= default], -- property (catch-all, must be LAST)
+            // [vis] [mut] name: type [= default], -- property (catch-all, must be LAST)
             let entity_property = visibility
                 .clone()
                 .or_not()
+                .then(just(Token::KwMut).or_not())
                 .then(select! { Token::Ident(name) => name }.map_with(|n, e| (n, e.span())))
                 .then_ignore(just(Token::Colon))
                 .then(type_expr())
                 .then(just(Token::Eq).ignore_then(expr.clone()).or_not())
                 .then_ignore(just(Token::Comma).or_not())
-                .map_with(|(((vis, name), ty), default), e| {
+                .map_with(|((((vis, mut_token), name), ty), default), e| {
                     (
                         cst::EntityMember::Property {
                             vis,
+                            is_mutable: mut_token.is_some(),
                             name,
                             ty,
                             default,

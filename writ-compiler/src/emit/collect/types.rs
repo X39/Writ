@@ -46,7 +46,7 @@ pub(super) fn collect_struct(
                 AstStructMember::Field(f) => {
                     let is_field_pub = matches!(f.vis, Some(AstVisibility::Pub));
                     let has_default = f.default.is_some();
-                    let flags = field_flags(is_field_pub, has_default, false);
+                    let flags = field_flags(is_field_pub, has_default, false, f.is_mutable);
                     // Encode type signature as blob.
                     let type_blob =
                         encode_type_from_ast(&f.ty, interner, &entry.generics, def_map, builder);
@@ -105,7 +105,7 @@ pub(super) fn collect_entity(
         for prop in &entity_decl.properties {
             let is_field_pub = matches!(prop.vis, Some(AstVisibility::Pub));
             let has_default = prop.default.is_some();
-            let flags = field_flags(is_field_pub, has_default, false);
+            let flags = field_flags(is_field_pub, has_default, false, prop.is_mutable);
             let type_blob =
                 encode_type_from_ast(&prop.ty, interner, &entry.generics, def_map, builder);
             builder.add_fielddef(handle, &prop.name, type_blob, flags);
@@ -163,7 +163,7 @@ pub(super) fn collect_enum(
                         builder,
                     );
                     // Enum fields are implicitly pub (accessed by pattern matching).
-                    let flags = field_flags(true, false, false);
+                    let flags = field_flags(true, false, false, false);
                     builder.add_fielddef(handle, &field.name, type_blob, flags);
                 }
             }
@@ -201,7 +201,7 @@ pub(super) fn collect_class(
                 AstStructMember::Field(f) => {
                     let is_field_pub = matches!(f.vis, Some(AstVisibility::Pub));
                     let has_default = f.default.is_some();
-                    let flags = field_flags(is_field_pub, has_default, false);
+                    let flags = field_flags(is_field_pub, has_default, false, f.is_mutable);
                     let type_blob =
                         encode_type_from_ast(&f.ty, interner, &entry.generics, def_map, builder);
                     builder.add_fielddef(handle, &f.name, type_blob, flags);

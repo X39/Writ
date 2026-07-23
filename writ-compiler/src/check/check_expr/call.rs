@@ -6,6 +6,7 @@ use super::super::env::FnSig;
 use super::super::error::TypeError;
 use super::super::infer::instantiate_generic_fn;
 use super::super::ir::TypedExpr;
+use super::super::mutability;
 use super::super::ty::{InferVar, TyKind};
 use super::CheckCtx;
 use super::check_expr;
@@ -259,8 +260,9 @@ fn resolve_overloaded_method_call(
         .type_env
         .struct_fields
         .get(&receiver_def_id)
+        .or_else(|| ctx.type_env.component_fields.get(&receiver_def_id))
         .or_else(|| ctx.type_env.entity_fields.get(&receiver_def_id))
-        .is_some_and(|fields| fields.iter().any(|(name, _, _)| name == method_name));
+        .is_some_and(|fields| fields.iter().any(|field| field.name == method_name));
     if has_field {
         return None;
     }
@@ -484,6 +486,10 @@ fn resolve_overloaded_method_call(
     let declaration_ret =
         super::super::infer::substitute_bindings(signature.ret, &impl_bindings, &mut ctx.interner);
     let callee_ty = ctx.interner.func(declaration_params, declaration_ret);
+
+    if signature.self_param == Some(true) {
+        mutability::check_mutable_receiver(ctx, &typed_receiver, method_name, member_span);
+    }
 
     Some(TypedExpr::Call {
         ty: resolved_ret,

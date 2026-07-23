@@ -11,6 +11,7 @@ use chumsky::span::SimpleSpan;
 use rustc_hash::FxHashMap;
 
 use crate::ast::Ast;
+use crate::ast::expr::AstExpr;
 use crate::resolve::def_map::{DefId, DefKind, DefMap};
 use crate::resolve::ir::NameResolvedAst;
 
@@ -63,19 +64,39 @@ pub struct ImplEntry {
     pub methods: Vec<(String, FnSig)>,
 }
 
+/// A source or metadata field signature.
+#[derive(Debug, Clone)]
+pub struct FieldSig {
+    pub name: String,
+    pub ty: Ty,
+    pub span: SimpleSpan,
+    /// Whether writes are permitted after construction.
+    pub is_mutable: bool,
+    /// Whether construction may omit this field.
+    pub has_default: bool,
+    /// Source default expression. Library metadata currently records only
+    /// `has_default`, so imported fields have no expression here.
+    pub default: Option<AstExpr>,
+    /// Declaration context used when checking a source default. Defaults are
+    /// not permitted to capture locals from a construction site.
+    pub decl_file: FileId,
+    pub decl_namespace: String,
+    pub decl_generics: FxHashMap<String, u32>,
+}
+
 /// The materialized type environment.
 #[derive(Debug)]
 pub struct TypeEnv {
     pub fn_sigs: FxHashMap<DefId, FnSig>,
-    pub struct_fields: FxHashMap<DefId, Vec<(String, Ty, SimpleSpan)>>,
-    pub entity_fields: FxHashMap<DefId, Vec<(String, Ty, SimpleSpan)>>,
+    pub struct_fields: FxHashMap<DefId, Vec<FieldSig>>,
+    pub entity_fields: FxHashMap<DefId, Vec<FieldSig>>,
     pub entity_components: FxHashMap<DefId, Vec<String>>,
     pub enum_variants: FxHashMap<DefId, Vec<EnumVariantSig>>,
     pub contract_methods: FxHashMap<DefId, Vec<FnSig>>,
     pub impl_index: FxHashMap<DefId, Vec<ImplEntry>>,
     pub const_types: FxHashMap<DefId, Ty>,
     pub global_types: FxHashMap<DefId, (Ty, bool)>,
-    pub component_fields: FxHashMap<DefId, Vec<(String, Ty, SimpleSpan)>>,
+    pub component_fields: FxHashMap<DefId, Vec<FieldSig>>,
     /// Deprecated item messages, keyed by DefId. Value is the user's message string,
     /// or empty string for bare `[Deprecated]` (no message). Only items with the
     /// `[Deprecated]` attribute have entries here.

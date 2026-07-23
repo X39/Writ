@@ -23,6 +23,7 @@ use writ_parser::cst::{
 
 struct EntityProperty<'src> {
     vis: Option<Visibility>,
+    is_mutable: bool,
     name: Spanned<&'src str>,
     ty: Spanned<writ_parser::cst::TypeExpr<'src>>,
     default: Option<Spanned<writ_parser::cst::Expr<'src>>>,
@@ -78,6 +79,7 @@ fn partition_entity_members<'src>(
         match member {
             EntityMember::Property {
                 vis,
+                is_mutable,
                 name,
                 ty,
                 default,
@@ -107,6 +109,7 @@ fn partition_entity_members<'src>(
                 seen_props.push(prop_name);
                 properties.push(EntityProperty {
                     vis,
+                    is_mutable,
                     name,
                     ty,
                     default,
@@ -223,6 +226,7 @@ pub(crate) fn lower_entity(
             let lowered_default = prop.default.clone().map(|d| lower_expr(d, ctx));
             AstStructField {
                 vis: lower_vis(prop.vis.clone()),
+                is_mutable: prop.is_mutable,
                 name: prop.name.0.to_string(),
                 name_span: prop.name.1,
                 ty: lowered_ty,

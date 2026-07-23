@@ -162,7 +162,7 @@ pub(super) fn collect_component(
             if let AstComponentMember::Field(f) = member {
                 let is_field_pub = matches!(f.vis, Some(AstVisibility::Pub));
                 let has_default = f.default.is_some();
-                let flags = field_flags(is_field_pub, has_default, true);
+                let flags = field_flags(is_field_pub, has_default, true, f.is_mutable);
                 let type_blob =
                     encode_type_from_ast(&f.ty, interner, &entry.generics, def_map, builder);
                 builder.add_fielddef(handle, &f.name, type_blob, flags);

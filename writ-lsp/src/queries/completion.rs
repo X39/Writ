@@ -199,12 +199,12 @@ pub fn build_dot_completions(
         TyKind::Struct(def_id) | TyKind::Class(def_id) => {
             // Fields
             if let Some(fields) = type_env.struct_fields.get(def_id) {
-                for (name, ty, _) in fields {
+                for field in fields {
                     items.push(CompletionItem {
-                        label: name.clone(),
+                        label: field.name.clone(),
                         kind: Some(CompletionItemKind::FIELD),
-                        detail: Some(interner.display_named(*ty, def_map)),
-                        sort_text: Some(format!("0_{}", name)),
+                        detail: Some(interner.display_named(field.ty, def_map)),
+                        sort_text: Some(format!("0_{}", field.name)),
                         ..Default::default()
                     });
                 }
@@ -227,12 +227,12 @@ pub fn build_dot_completions(
         TyKind::Entity(def_id) => {
             // Entity properties
             if let Some(fields) = type_env.entity_fields.get(def_id) {
-                for (name, ty, _) in fields {
+                for field in fields {
                     items.push(CompletionItem {
-                        label: name.clone(),
+                        label: field.name.clone(),
                         kind: Some(CompletionItemKind::FIELD),
-                        detail: Some(interner.display_named(*ty, def_map)),
-                        sort_text: Some(format!("0_{}", name)),
+                        detail: Some(interner.display_named(field.ty, def_map)),
+                        sort_text: Some(format!("0_{}", field.name)),
                         ..Default::default()
                     });
                 }
@@ -620,8 +620,12 @@ fn build_type_detail(
             if let Some(fields) = type_env.struct_fields.get(&def_id) {
                 let field_strs: Vec<String> = fields
                     .iter()
-                    .map(|(name, ty, _)| {
-                        format!("{}: {}", name, interner.display_named(*ty, def_map))
+                    .map(|field| {
+                        format!(
+                            "{}: {}",
+                            field.name,
+                            interner.display_named(field.ty, def_map)
+                        )
                     })
                     .collect();
                 Some(format!("struct {{ {} }}", field_strs.join(", ")))
@@ -633,8 +637,12 @@ fn build_type_detail(
             if let Some(fields) = type_env.entity_fields.get(&def_id) {
                 let field_strs: Vec<String> = fields
                     .iter()
-                    .map(|(name, ty, _)| {
-                        format!("{}: {}", name, interner.display_named(*ty, def_map))
+                    .map(|field| {
+                        format!(
+                            "{}: {}",
+                            field.name,
+                            interner.display_named(field.ty, def_map)
+                        )
                     })
                     .collect();
                 Some(format!("entity {{ {} }}", field_strs.join(", ")))

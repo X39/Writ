@@ -122,7 +122,7 @@ pub fn typecheck(
                     *def_id,
                     fields
                         .iter()
-                        .map(|(name, field_ty, _span)| (name.clone(), *field_ty))
+                        .map(|field| (field.name.clone(), field.ty))
                         .collect(),
                 )
             })
@@ -230,12 +230,12 @@ fn dfs_struct(
 
     // Walk each field of this struct.
     if let Some(fields) = type_env.struct_fields.get(&def_id) {
-        for (field_name, field_ty, _span) in fields {
+        for field in fields {
             // Only value-type struct fields can create infinite-size cycles.
             // TyKind::Class, TyKind::Entity, TyKind::Enum, primitives, Array, Option,
             // Result, Func, TaskHandle, GenericParam, Infer, Error — all safe.
-            if let TyKind::Struct(field_def_id) = interner.kind(*field_ty) {
-                path.push((def_id, field_name.clone()));
+            if let TyKind::Struct(field_def_id) = interner.kind(field.ty) {
+                path.push((def_id, field.name.clone()));
                 dfs_struct(
                     *field_def_id,
                     path,

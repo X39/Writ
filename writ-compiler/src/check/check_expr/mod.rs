@@ -476,7 +476,7 @@ pub fn check_expr(ctx: &mut CheckCtx, expr: &AstExpr) -> TypedExpr {
             );
 
             // Check mutability of the assignment target
-            check_assignment_mutability(ctx, &typed_target, *span);
+            super::mutability::check_assignment(ctx, &typed_target, *span);
 
             TypedExpr::Assign {
                 ty: ctx.interner.void(),
@@ -707,83 +707,6 @@ pub fn check_block_stmts(
         span,
         stmts: typed_stmts,
         tail: None,
-    }
-}
-
-/// Check whether an assignment target is mutable. If not, emit an error.
-pub fn check_assignment_mutability(
-    ctx: &mut CheckCtx,
-    target: &TypedExpr,
-    assignment_span: SimpleSpan,
-) {
-    if let Some((name, mutability, binding_span)) = find_root_binding(target, &ctx.local_env)
-        && mutability == super::env::Mutability::Immutable
-    {
-        // Determine if this is a simple reassignment or a field mutation
-        match target {
-            TypedExpr::Var { .. } => {
-                ctx.diags.push(
-                    TypeError::ImmutableReassignment {
-                        binding_name: name,
-                        binding_span,
-                        assignment_span,
-                        file: ctx.current_file,
-                    }
-                    .into(),
-                );
-            }
-            TypedExpr::Index { receiver, .. } => {
-                // Arrays are reference types: index-assignment mutates the heap object,
-                // not the binding. Allow arr[i] = v even when arr is an immutable binding,
-                // provided the receiver is an array type.
-                let recv_kind = ctx.interner.kind(receiver.ty()).clone();
-                if matches!(recv_kind, TyKind::Array(_)) {
-                    // Allowed — index-assigning into an array reference is always legal.
-                } else {
-                    ctx.diags.push(
-                        TypeError::ImmutableMutation {
-                            binding_name: name,
-                            binding_span,
-                            mutation_span: assignment_span,
-                            mutation_kind: "field assignment".to_string(),
-                            file: ctx.current_file,
-                        }
-                        .into(),
-                    );
-                }
-            }
-            TypedExpr::Field { .. } => {
-                ctx.diags.push(
-                    TypeError::ImmutableMutation {
-                        binding_name: name,
-                        binding_span,
-                        mutation_span: assignment_span,
-                        mutation_kind: "field assignment".to_string(),
-                        file: ctx.current_file,
-                    }
-                    .into(),
-                );
-            }
-            _ => {}
-        }
-    }
-}
-
-/// Walk a TypedExpr to find its root variable binding.
-fn find_root_binding(
-    expr: &TypedExpr,
-    local_env: &LocalEnv,
-) -> Option<(String, super::env::Mutability, SimpleSpan)> {
-    match expr {
-        TypedExpr::Var { name, .. } => local_env
-            .lookup(name)
-            .map(|(_, m, sp)| (name.clone(), m, sp)),
-        TypedExpr::SelfRef { .. } => local_env
-            .lookup("self")
-            .map(|(_, m, sp)| ("self".to_string(), m, sp)),
-        TypedExpr::Field { receiver, .. } => find_root_binding(receiver, local_env),
-        TypedExpr::Index { receiver, .. } => find_root_binding(receiver, local_env),
-        _ => None,
     }
 }
 

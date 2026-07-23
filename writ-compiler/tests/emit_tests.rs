@@ -104,7 +104,7 @@ fn struct_fields_emit_fielddefs() {
 
 #[test]
 fn source_field_flags_keep_visibility_distinct_from_readonly() {
-    let (builder, diags) = emit_src("struct Point { pub x: int, y: int }");
+    let (builder, diags) = emit_src("struct Point { pub mut x: int, y: int }");
     assert!(diags.is_empty());
 
     let flags: Vec<u16> = builder
@@ -122,9 +122,15 @@ fn source_field_flags_keep_visibility_distinct_from_readonly() {
         0,
         "private field must not carry visibility bit"
     );
-    assert!(
-        flags.iter().all(|flags| flags & FIELD_FLAG_READONLY == 0),
-        "source grammar has no read-only field modifier"
+    assert_eq!(
+        flags[0] & FIELD_FLAG_READONLY,
+        0,
+        "`mut` source field must remain writable after construction"
+    );
+    assert_ne!(
+        flags[1] & FIELD_FLAG_READONLY,
+        0,
+        "unqualified source field must be read-only after construction"
     );
 }
 

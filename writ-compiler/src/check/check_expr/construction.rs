@@ -2,6 +2,7 @@
 
 use chumsky::span::SimpleSpan;
 
+use super::super::env::{FieldSig, LocalEnv};
 use super::super::error::TypeError;
 use super::super::ir::TypedExpr;
 use super::super::ty::TyKind;
@@ -81,8 +82,8 @@ pub(super) fn check_new_construction(
         .generic_args(resolved_ty)
         .map(|args| args.to_vec())
     {
-        for (_, field_ty, _) in &mut expected_fields {
-            *field_ty = super::super::infer::substitute(*field_ty, &type_args, &mut ctx.interner);
+        for field in &mut expected_fields {
+            field.ty = super::super::infer::substitute(field.ty, &type_args, &mut ctx.interner);
         }
     }
 
@@ -104,9 +105,9 @@ pub(super) fn check_new_construction(
         }
     }
 
-    // Check each provided field
-    let mut typed_fields = Vec::new();
-    let mut provided_names = Vec::new();
+    // Check explicit initializers once, retaining only the first initializer
+    // for each known field. The final TypedExpr::New is normalized below.
+    let mut explicit_fields: Vec<(String, SimpleSpan, TypedExpr)> = Vec::new();
     for field in fields {
         let typed_value = check_expr(ctx, &field.value);
         let value_ty = typed_value.ty();
@@ -114,17 +115,34 @@ pub(super) fn check_new_construction(
         // Find this field in the expected fields
         let field_def = expected_fields
             .iter()
-            .find(|(name, _, _)| name == &field.name);
+            .find(|field_sig| field_sig.name == field.name);
 
-        if let Some((_name, expected_ty, _fspan)) = field_def {
+        if let Some(field_sig) = field_def {
+            if let Some((_, first_span, _)) = explicit_fields
+                .iter()
+                .find(|(name, _, _)| name == &field.name)
+            {
+                ctx.diags.push(
+                    TypeError::DuplicateConstructionField {
+                        field_name: field.name.clone(),
+                        first_span: *first_span,
+                        duplicate_span: field.name_span,
+                        file: ctx.current_file,
+                    }
+                    .into(),
+                );
+                continue;
+            }
+
             // Check type compatibility
             ctx.check_assignable(
-                *expected_ty,
+                field_sig.ty,
                 value_ty,
                 field.name_span,
                 typed_value.span(),
                 Some(format!("in field `{}`", field.name)),
             );
+            explicit_fields.push((field.name.clone(), field.name_span, typed_value));
         } else {
             // Unknown field
             ctx.emit_error(TypeError::UnknownField {
@@ -134,18 +152,47 @@ pub(super) fn check_new_construction(
                 file: ctx.current_file,
             });
         }
-
-        provided_names.push(field.name.clone());
-        typed_fields.push((field.name.clone(), typed_value));
     }
 
-    // Check for missing required fields
-    for (fname, _, _) in &expected_fields {
-        if !provided_names.iter().any(|n| n == fname) {
+    // Produce one initializer per declaration field, in declaration order.
+    // Explicit values win over defaults. A construction with a missing value
+    // always carries a diagnostic, so successful New nodes are complete.
+    let mut typed_fields = Vec::with_capacity(expected_fields.len());
+    for field in &expected_fields {
+        if let Some(index) = explicit_fields
+            .iter()
+            .position(|(name, _, _)| name == &field.name)
+        {
+            let (_, _, value) = explicit_fields.remove(index);
+            typed_fields.push((field.name.clone(), value));
+            continue;
+        }
+
+        if let Some(default) = &field.default {
+            let typed_default = check_default_in_declaration_scope(ctx, field, default);
+            ctx.check_assignable(
+                field.ty,
+                typed_default.ty(),
+                field.span,
+                typed_default.span(),
+                Some(format!("in default for field `{}`", field.name)),
+            );
+            typed_fields.push((field.name.clone(), typed_default));
+        } else if field.has_default {
+            ctx.diags.push(
+                TypeError::UnavailableImportedFieldDefault {
+                    type_name: ctx.display_ty(resolved_ty),
+                    field_name: field.name.clone(),
+                    span,
+                    file: ctx.current_file,
+                }
+                .into(),
+            );
+        } else {
             ctx.diags.push(
                 TypeError::MissingConstructionField {
                     type_name: ctx.display_ty(resolved_ty),
-                    field_name: fname.clone(),
+                    field_name: field.name.clone(),
                     span,
                     file: ctx.current_file,
                 }
@@ -160,6 +207,30 @@ pub(super) fn check_new_construction(
         target_def_id: def_id,
         fields: typed_fields,
     }
+}
+
+fn check_default_in_declaration_scope(
+    ctx: &mut CheckCtx<'_>,
+    field: &FieldSig,
+    default: &AstExpr,
+) -> TypedExpr {
+    let caller_local_env = std::mem::replace(&mut ctx.local_env, LocalEnv::new());
+    let caller_self_type = ctx.self_type.take();
+    let caller_fn_ret = ctx.current_fn_ret.take();
+    let caller_file = std::mem::replace(&mut ctx.current_file, field.decl_file);
+    let caller_namespace =
+        std::mem::replace(&mut ctx.current_namespace, field.decl_namespace.clone());
+    let caller_generics = std::mem::replace(&mut ctx.current_generics, field.decl_generics.clone());
+
+    let typed = check_expr(ctx, default);
+
+    ctx.local_env = caller_local_env;
+    ctx.self_type = caller_self_type;
+    ctx.current_fn_ret = caller_fn_ret;
+    ctx.current_file = caller_file;
+    ctx.current_namespace = caller_namespace;
+    ctx.current_generics = caller_generics;
+    typed
 }
 
 pub(super) fn check_array_lit(

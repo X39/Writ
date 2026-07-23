@@ -228,10 +228,11 @@ pub struct AstStructDecl {
     pub span: SimpleSpan,
 }
 
-/// A struct field: `[vis] name: type [= default]`
+/// A struct field: `[vis] [mut] name: type [= default]`
 #[derive(Debug, Clone, PartialEq)]
 pub struct AstStructField {
     pub vis: Option<AstVisibility>,
+    pub is_mutable: bool,
     pub name: String,
     pub name_span: SimpleSpan,
     pub ty: AstType,

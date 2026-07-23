@@ -19,7 +19,7 @@ use crate::ast::types::AstType;
 use crate::resolve::def_map::{DefEntry, DefId, DefKind, DefMap};
 use writ_diagnostics::FileId;
 
-use super::env::{EnumVariantSig, FnSig, ImplEntry, TypeEnv};
+use super::env::{EnumVariantSig, FieldSig, FnSig, ImplEntry, TypeEnv};
 use super::ty::{Ty, TyInterner, TyKind};
 
 // =============================================================================
@@ -574,14 +574,24 @@ pub(super) fn build_struct_fields(
     entry: &DefEntry,
     def_map: &DefMap,
     interner: &mut TyInterner,
-) -> Vec<(String, Ty, SimpleSpan)> {
+) -> Vec<FieldSig> {
     let generic_map = build_generic_map(&entry.generics);
     let mut fields = Vec::new();
     for member in members {
         if let AstStructMember::Field(f) = member {
             let ty =
                 resolve_ast_type_with_file(&f.ty, def_map, interner, &generic_map, entry.file_id);
-            fields.push((f.name.clone(), ty, f.name_span));
+            fields.push(FieldSig {
+                name: f.name.clone(),
+                ty,
+                span: f.name_span,
+                is_mutable: f.is_mutable,
+                has_default: f.default.is_some(),
+                default: f.default.clone(),
+                decl_file: entry.file_id,
+                decl_namespace: entry.namespace.clone(),
+                decl_generics: generic_map.clone(),
+            });
         }
     }
     fields
@@ -592,14 +602,24 @@ pub(super) fn build_entity_fields(
     entry: &DefEntry,
     def_map: &DefMap,
     interner: &mut TyInterner,
-) -> Vec<(String, Ty, SimpleSpan)> {
+) -> Vec<FieldSig> {
     let generic_map = build_generic_map(&entry.generics);
     properties
         .iter()
         .map(|f| {
             let ty =
                 resolve_ast_type_with_file(&f.ty, def_map, interner, &generic_map, entry.file_id);
-            (f.name.clone(), ty, f.name_span)
+            FieldSig {
+                name: f.name.clone(),
+                ty,
+                span: f.name_span,
+                is_mutable: f.is_mutable,
+                has_default: f.default.is_some(),
+                default: f.default.clone(),
+                decl_file: entry.file_id,
+                decl_namespace: entry.namespace.clone(),
+                decl_generics: generic_map.clone(),
+            }
         })
         .collect()
 }
@@ -803,14 +823,24 @@ pub(super) fn build_component_fields(
     entry: &DefEntry,
     def_map: &DefMap,
     interner: &mut TyInterner,
-) -> Vec<(String, Ty, SimpleSpan)> {
+) -> Vec<FieldSig> {
     let generic_map = build_generic_map(&entry.generics);
     let mut fields = Vec::new();
     for member in members {
         if let AstComponentMember::Field(f) = member {
             let ty =
                 resolve_ast_type_with_file(&f.ty, def_map, interner, &generic_map, entry.file_id);
-            fields.push((f.name.clone(), ty, f.name_span));
+            fields.push(FieldSig {
+                name: f.name.clone(),
+                ty,
+                span: f.name_span,
+                is_mutable: f.is_mutable,
+                has_default: f.default.is_some(),
+                default: f.default.clone(),
+                decl_file: entry.file_id,
+                decl_namespace: entry.namespace.clone(),
+                decl_generics: generic_map.clone(),
+            });
         }
     }
     fields

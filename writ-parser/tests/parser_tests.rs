@@ -2913,11 +2913,13 @@ fn test_entity_basic() {
             match &ed.members[0].0 {
                 EntityMember::Property {
                     vis,
+                    is_mutable,
                     name,
                     ty,
                     default,
                 } => {
                     assert!(matches!(vis, Some(Visibility::Pub)));
+                    assert!(!is_mutable);
                     assert_eq!(name.0, "name");
                     assert!(matches!(ty.0, TypeExpr::Named("string")));
                     assert!(default.is_some());
@@ -2927,6 +2929,50 @@ fn test_entity_basic() {
         }
         other => panic!("Expected Item::Entity, got {:?}", other),
     }
+}
+
+#[test]
+fn field_mutability_modifier_parses_for_all_field_declarations() {
+    let items = parse_ok_items(
+        "struct Record { pub mut value: int, label: string }
+         class Box { mut item: int }
+         entity Actor { pub mut health: int, name: string, }
+         extern component Position { mut x: float, y: float, }",
+    );
+
+    let Item::Struct((record, _)) = &items[0].0 else {
+        panic!("expected struct");
+    };
+    assert!(unwrap_struct_field(&record.members[0]).is_mutable);
+    assert!(!unwrap_struct_field(&record.members[1]).is_mutable);
+
+    let Item::Class((boxed, _)) = &items[1].0 else {
+        panic!("expected class");
+    };
+    let ClassMember::Field(field) = &boxed.members[0].0 else {
+        panic!("expected class field");
+    };
+    assert!(field.is_mutable);
+
+    let Item::Entity((actor, _)) = &items[2].0 else {
+        panic!("expected entity");
+    };
+    let EntityMember::Property { is_mutable, .. } = &actor.members[0].0 else {
+        panic!("expected entity property");
+    };
+    assert!(*is_mutable);
+    let EntityMember::Property { is_mutable, .. } = &actor.members[1].0 else {
+        panic!("expected entity property");
+    };
+    assert!(!is_mutable);
+
+    let Item::Extern((ExternDecl::Component(_, (position, _)), _)) = &items[3].0 else {
+        panic!("expected extern component");
+    };
+    let ComponentMember::Field((field, _)) = &position.members[0].0 else {
+        panic!("expected component field");
+    };
+    assert!(field.is_mutable);
 }
 
 #[test]

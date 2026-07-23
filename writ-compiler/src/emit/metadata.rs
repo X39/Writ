@@ -101,7 +101,9 @@ impl MetadataToken {
 // TypeDef kind and hook kind enums
 // =============================================================================
 
-use writ_module::tables::{FIELD_FLAG_COMPONENT, FIELD_FLAG_HAS_DEFAULT, FIELD_FLAG_PUBLIC};
+use writ_module::tables::{
+    FIELD_FLAG_COMPONENT, FIELD_FLAG_HAS_DEFAULT, FIELD_FLAG_PUBLIC, FIELD_FLAG_READONLY,
+};
 
 /// TypeDef kind discriminant — re-exported from writ_module for a single source of truth.
 pub use writ_module::TypeDefKind;
@@ -174,10 +176,14 @@ pub fn extract_hook_kind(flags: u16) -> HookKind {
 
 /// Pack FieldDef flags into a u16.
 ///
-/// Layout: bit 0 = is_pub, bit 1 = has_default, bit 2 = is_component_field.
-/// Bit 3 is the module-level read-only flag; source fields are writable, so the
-/// compiler intentionally leaves it clear.
-pub fn field_flags(is_pub: bool, has_default: bool, is_component_field: bool) -> u16 {
+/// Layout: bit 0 = is_pub, bit 1 = has_default, bit 2 = is_component_field,
+/// bit 3 = read-only. Source fields are read-only unless declared with `mut`.
+pub fn field_flags(
+    is_pub: bool,
+    has_default: bool,
+    is_component_field: bool,
+    is_mutable: bool,
+) -> u16 {
     let mut flags: u16 = 0;
     if is_pub {
         flags |= FIELD_FLAG_PUBLIC;
@@ -187,6 +193,9 @@ pub fn field_flags(is_pub: bool, has_default: bool, is_component_field: bool) ->
     }
     if is_component_field {
         flags |= FIELD_FLAG_COMPONENT;
+    }
+    if !is_mutable {
+        flags |= FIELD_FLAG_READONLY;
     }
     flags
 }

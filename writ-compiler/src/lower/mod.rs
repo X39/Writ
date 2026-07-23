@@ -312,6 +312,7 @@ pub(crate) fn lower_struct_field(
 ) -> AstStructField {
     AstStructField {
         vis: lower_vis(field.vis),
+        is_mutable: field.is_mutable,
         name: field.name.0.to_string(),
         name_span: field.name.1,
         ty: lower_type(field.ty),

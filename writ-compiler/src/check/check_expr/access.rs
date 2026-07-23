@@ -4,6 +4,7 @@ use chumsky::span::SimpleSpan;
 
 use super::super::error::TypeError;
 use super::super::ir::TypedExpr;
+use super::super::mutability;
 use super::super::ty::TyKind;
 use super::CheckCtx;
 use super::check_expr;
@@ -46,18 +47,21 @@ pub(super) fn check_typed_member_access(
         TyKind::Struct(def_id) | TyKind::Class(def_id) | TyKind::Entity(def_id) => {
             // Look up in struct_fields or entity_fields
             let fields = if matches!(kind, TyKind::Struct(_) | TyKind::Class(_)) {
-                ctx.type_env.struct_fields.get(&def_id)
+                ctx.type_env
+                    .struct_fields
+                    .get(&def_id)
+                    .or_else(|| ctx.type_env.component_fields.get(&def_id))
             } else {
                 ctx.type_env.entity_fields.get(&def_id)
             };
 
             if let Some(field_list) = fields {
-                for (fname, fty, _fspan) in field_list {
-                    if fname == field {
+                for field_sig in field_list {
+                    if field_sig.name == field {
                         let field_ty = if let Some(args) = &instance_args {
-                            super::super::infer::substitute(*fty, args, &mut ctx.interner)
+                            super::super::infer::substitute(field_sig.ty, args, &mut ctx.interner)
                         } else {
-                            *fty
+                            field_sig.ty
                         };
                         return TypedExpr::Field {
                             ty: field_ty,
@@ -70,7 +74,12 @@ pub(super) fn check_typed_member_access(
             }
 
             // Check impl_index for methods
-            if let Some(fn_ty) = matching_impl_method_type(ctx, def_id, obj_ty, field, field_span) {
+            if let Some((fn_ty, requires_mutable_receiver)) =
+                matching_impl_method_type(ctx, def_id, obj_ty, field, field_span)
+            {
+                if requires_mutable_receiver {
+                    mutability::check_mutable_receiver(ctx, &typed_obj, field, field_span);
+                }
                 return TypedExpr::Field {
                     ty: fn_ty,
                     span,
@@ -96,32 +105,34 @@ pub(super) fn check_typed_member_access(
         }
         TyKind::Contract(contract_def_id) => {
             // Contract types have no fields — only methods from the contract definition.
-            if let Some(methods) = ctx.type_env.contract_methods.get(&contract_def_id) {
-                for method_sig in methods {
-                    if method_sig.name == field {
-                        // Build Func type from the method signature (excluding self param).
-                        let mut param_tys: Vec<_> =
-                            method_sig.params.iter().map(|(_, t)| *t).collect();
-                        let mut ret_ty = method_sig.ret;
-                        if let Some(args) = &instance_args {
-                            param_tys = param_tys
-                                .into_iter()
-                                .map(|ty| {
-                                    super::super::infer::substitute(ty, args, &mut ctx.interner)
-                                })
-                                .collect();
-                            ret_ty =
-                                super::super::infer::substitute(ret_ty, args, &mut ctx.interner);
-                        }
-                        let fn_ty = ctx.interner.func(param_tys, ret_ty);
-                        return TypedExpr::Field {
-                            ty: fn_ty,
-                            span,
-                            receiver: Box::new(typed_obj),
-                            field: field.to_string(),
-                        };
-                    }
+            if let Some(method_sig) = ctx
+                .type_env
+                .contract_methods
+                .get(&contract_def_id)
+                .and_then(|methods| methods.iter().find(|method| method.name == field))
+                .cloned()
+            {
+                if method_sig.self_param == Some(true) {
+                    mutability::check_mutable_receiver(ctx, &typed_obj, field, field_span);
                 }
+
+                // Build Func type from the method signature (excluding self param).
+                let mut param_tys: Vec<_> = method_sig.params.iter().map(|(_, ty)| *ty).collect();
+                let mut ret_ty = method_sig.ret;
+                if let Some(args) = &instance_args {
+                    param_tys = param_tys
+                        .into_iter()
+                        .map(|ty| super::super::infer::substitute(ty, args, &mut ctx.interner))
+                        .collect();
+                    ret_ty = super::super::infer::substitute(ret_ty, args, &mut ctx.interner);
+                }
+                let fn_ty = ctx.interner.func(param_tys, ret_ty);
+                return TypedExpr::Field {
+                    ty: fn_ty,
+                    span,
+                    receiver: Box::new(typed_obj),
+                    field: field.to_string(),
+                };
             }
 
             // Method not found on contract
@@ -197,6 +208,9 @@ pub(super) fn check_typed_member_access(
             }
         }
         TyKind::Array(elem_ty) => {
+            if matches!(field, "resize" | "copy_from") {
+                mutability::check_mutable_receiver(ctx, &typed_obj, field, field_span);
+            }
             let void_ty = ctx.interner.intern(TyKind::Void);
             let int_ty = ctx.interner.int();
             let fn_ty = match field {
@@ -278,7 +292,12 @@ pub(super) fn check_typed_member_access(
         }
         TyKind::Enum(def_id) => {
             // Check for associated methods via impl_index
-            if let Some(fn_ty) = matching_impl_method_type(ctx, def_id, obj_ty, field, field_span) {
+            if let Some((fn_ty, requires_mutable_receiver)) =
+                matching_impl_method_type(ctx, def_id, obj_ty, field, field_span)
+            {
+                if requires_mutable_receiver {
+                    mutability::check_mutable_receiver(ctx, &typed_obj, field, field_span);
+                }
                 return TypedExpr::Field {
                     ty: fn_ty,
                     span,
@@ -468,7 +487,7 @@ fn matching_impl_method_type(
     receiver_ty: super::super::ty::Ty,
     method_name: &str,
     span: SimpleSpan,
-) -> Option<super::super::ty::Ty> {
+) -> Option<(super::super::ty::Ty, bool)> {
     let mut candidates: Vec<_> = ctx
         .type_env
         .impl_index
@@ -503,13 +522,16 @@ fn matching_impl_method_type(
     }
 
     if candidates.len() > 1 {
-        return Some(ctx.emit_error(TypeError::AmbiguousImpl {
-            target_name: ctx.display_ty(receiver_ty),
-            member_name: method_name.to_string(),
-            candidate_count: candidates.len(),
-            span,
-            file: ctx.current_file,
-        }));
+        return Some((
+            ctx.emit_error(TypeError::AmbiguousImpl {
+                target_name: ctx.display_ty(receiver_ty),
+                member_name: method_name.to_string(),
+                candidate_count: candidates.len(),
+                span,
+                file: ctx.current_file,
+            }),
+            false,
+        ));
     }
 
     let (_, impl_generic_count, mut bindings, signature) = candidates.into_iter().next()?;
@@ -518,13 +540,14 @@ fn matching_impl_method_type(
         let infer_ty = ctx.interner.intern(TyKind::Infer(var));
         bindings.push((impl_generic_count + method_index as u32, infer_ty));
     }
+    let requires_mutable_receiver = signature.self_param == Some(true);
     let params = signature
         .params
         .into_iter()
         .map(|(_, ty)| super::super::infer::substitute_bindings(ty, &bindings, &mut ctx.interner))
         .collect();
     let ret = super::super::infer::substitute_bindings(signature.ret, &bindings, &mut ctx.interner);
-    Some(ctx.interner.func(params, ret))
+    Some((ctx.interner.func(params, ret), requires_mutable_receiver))
 }
 
 pub(super) fn check_bracket_access(

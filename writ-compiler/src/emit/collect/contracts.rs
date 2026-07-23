@@ -419,7 +419,7 @@ pub(super) fn collect_extern_component(
         for member in &comp_decl.members {
             if let AstComponentMember::Field(f) = member {
                 let is_field_pub = matches!(f.vis, Some(AstVisibility::Pub));
-                let flags = field_flags(is_field_pub, false, true);
+                let flags = field_flags(is_field_pub, false, true, f.is_mutable);
                 let type_blob =
                     encode_type_from_ast(&f.ty, interner, &entry.generics, def_map, builder);
                 builder.add_fielddef(handle, &f.name, type_blob, flags);

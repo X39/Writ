@@ -244,11 +244,13 @@ pub struct StructDecl<'src> {
     pub members: Vec<Spanned<StructMember<'src>>>,
 }
 
-/// A struct field: `[vis] name: type [= default]`
+/// A struct field: `[vis] [mut] name: type [= default]`
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructField<'src> {
     /// Optional visibility modifier.
     pub vis: Option<Visibility>,
+    /// Whether the field may be mutated after construction.
+    pub is_mutable: bool,
     /// Field name.
     pub name: Spanned<&'src str>,
     /// Type annotation.
@@ -260,7 +262,7 @@ pub struct StructField<'src> {
 /// A member inside a struct body: field or lifecycle hook.
 #[derive(Debug, Clone, PartialEq)]
 pub enum StructMember<'src> {
-    /// Field: `[vis] name: type [= default]`
+    /// Field: `[vis] [mut] name: type [= default]`
     Field(StructField<'src>),
     /// Lifecycle hook: `on event { body }`
     OnHook {
@@ -289,7 +291,7 @@ pub struct ClassDecl<'src> {
 /// Classes accept all lifecycle hooks (create, finalize, serialize, deserialize).
 #[derive(Debug, Clone, PartialEq)]
 pub enum ClassMember<'src> {
-    /// Field: `[vis] name: type [= default]`
+    /// Field: `[vis] [mut] name: type [= default]`
     Field(StructField<'src>),
     /// Lifecycle hook: `on event { body }`
     OnHook {
@@ -429,9 +431,10 @@ pub struct EntityDecl<'src> {
 /// An entity member: property, use clause, function, or on handler.
 #[derive(Debug, Clone, PartialEq)]
 pub enum EntityMember<'src> {
-    /// Property: `[vis] name: type [= default]`
+    /// Property: `[vis] [mut] name: type [= default]`
     Property {
         vis: Option<Visibility>,
+        is_mutable: bool,
         name: Spanned<&'src str>,
         ty: Spanned<TypeExpr<'src>>,
         default: Option<Spanned<Expr<'src>>>,

@@ -11,11 +11,11 @@ use rustc_hash::FxHashMap;
 use writ_diagnostics::FileId;
 use writ_module::Module;
 use writ_module::signature::TypeSignature;
-use writ_module::tables::TypeDefKind;
+use writ_module::tables::{FIELD_FLAG_HAS_DEFAULT, FIELD_FLAG_READONLY, TypeDefKind};
 
 use crate::resolve::def_map::{DefEntry, DefId, DefKind, DefMap, DefVis};
 
-use super::env::{FnSig, ImplEntry, TypeEnv};
+use super::env::{FieldSig, FnSig, ImplEntry, TypeEnv};
 use super::ty::{Ty, TyInterner, TyKind};
 
 // =============================================================================
@@ -672,6 +672,9 @@ pub fn inject_library_sigs(
                 Some(named) => named.def_id,
                 None => continue,
             };
+            let field_owner = def_map.get_entry(def_id);
+            let decl_file = field_owner.file_id;
+            let decl_namespace = field_owner.namespace.clone();
 
             // Already has fields from user AST? Skip (library overrides user is wrong)
             if type_env.struct_fields.contains_key(&def_id)
@@ -697,7 +700,7 @@ pub fn inject_library_sigs(
                 module.field_defs.len()
             };
 
-            let mut fields: Vec<(String, Ty, SimpleSpan)> = Vec::new();
+            let mut fields: Vec<FieldSig> = Vec::new();
             for field_def in &module.field_defs[field_start..field_end.min(module.field_defs.len())]
             {
                 let field_name =
@@ -720,7 +723,17 @@ pub fn inject_library_sigs(
                         Err(_) => interner.error(),
                     };
 
-                fields.push((field_name, field_ty, synthetic_span));
+                fields.push(FieldSig {
+                    name: field_name,
+                    ty: field_ty,
+                    span: synthetic_span,
+                    is_mutable: field_def.flags & FIELD_FLAG_READONLY == 0,
+                    has_default: field_def.flags & FIELD_FLAG_HAS_DEFAULT != 0,
+                    default: None,
+                    decl_file,
+                    decl_namespace: decl_namespace.clone(),
+                    decl_generics: FxHashMap::default(),
+                });
             }
 
             if matches!(kind, TypeDefKind::Entity) {
