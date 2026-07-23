@@ -43,10 +43,12 @@ NEW_DELEGATE  r_func, method_idx(add), r_null    // target = null
 
 ```
 // let f = fn(x: int) -> int { x + bonus };
-NEW           r_env, __closure_env_type            // capture struct
-SET_FIELD     r_env, bonus_field, r_bonus          // copy captured value
+NEW           r_env, __closure_env_type, 1, r_bonus // atomically copy the capture
 NEW_DELEGATE  r_f, method_idx(__closure_body), r_env  // target = capture struct
 ```
+
+Compiler-generated capture fields are read-only. The atomic `NEW` initializer establishes them before the environment
+can become a delegate target; later `SET_FIELD` instructions cannot modify them.
 
 **Closure without captures** (optimized — no allocation for empty env):
 

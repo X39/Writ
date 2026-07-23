@@ -73,6 +73,22 @@ impl BumpHeap {
         HeapRef(idx)
     }
 
+    /// Allocate a struct or class with all fields initialized atomically.
+    pub fn alloc_struct_initialized(
+        &mut self,
+        type_key: u32,
+        type_spec: Option<(usize, u32)>,
+        fields: Vec<Value>,
+    ) -> HeapRef {
+        let idx = self.objects.len() as u32;
+        self.objects.push(HeapObject::Struct {
+            type_key,
+            type_spec,
+            fields,
+        });
+        HeapRef(idx)
+    }
+
     /// Allocate an empty array with the given element type.
     pub fn alloc_array(&mut self, elem_type: u32) -> HeapRef {
         let idx = self.objects.len() as u32;
@@ -214,6 +230,15 @@ impl GcHeap for BumpHeap {
 
     fn alloc_struct(&mut self, type_key: u32, field_count: usize) -> HeapRef {
         BumpHeap::alloc_struct(self, type_key, field_count)
+    }
+
+    fn alloc_struct_initialized(
+        &mut self,
+        type_key: u32,
+        type_spec: Option<(usize, u32)>,
+        fields: Vec<Value>,
+    ) -> HeapRef {
+        BumpHeap::alloc_struct_initialized(self, type_key, type_spec, fields)
     }
 
     fn alloc_array(&mut self, elem_type: u32) -> HeapRef {

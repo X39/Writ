@@ -75,8 +75,8 @@ The task moves from Running to Suspended and does not resume until the host or a
 | `SET_FIELD` (component field, post-construction) | Proxied to host via suspend-and-confirm (§2.14.2).                   |
 | `GET_FIELD` (component field)                    | Host provides the current native value.                              |
 | `GET_COMPONENT`                                  | Host resolves whether the entity has the component.                  |
-| `SPAWN_ENTITY`                                   | Host creates native representation for attached components.          |
-| `INIT_ENTITY`                                    | Flushes buffered component field writes to host as a batch.          |
+| `SPAWN_ENTITY`                                   | After atomic script-field initialization, host provisions attached components. |
+| `INIT_ENTITY`                                    | Host confirms initialization before the entity becomes alive and `on_create` runs. |
 | `DESTROY_ENTITY`                                 | Notifies host of entity destruction after `on_destroy` completes.    |
 | `GET_OR_CREATE`                                  | May trigger entity spawn if the singleton does not yet exist.        |
 | `JOIN`                                           | Suspends until the target task reaches Completed or Cancelled state. |

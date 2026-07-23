@@ -179,8 +179,13 @@ pub enum Instruction {
     },
 
     // ── 0x08 Object Model ──────────────────────────────────────
-    /// 0x0800 — Shape RI32 (8B)
-    New { r_dst: u16, type_idx: u32 },
+    /// 0x0800 — var (12B): u16(op) u16(r_dst) u32(type_idx) u16(field_count) u16(r_base)
+    New {
+        r_dst: u16,
+        type_idx: u32,
+        field_count: u16,
+        r_base: u16,
+    },
     /// 0x0801 — var (10B): u16(op) u16(r_dst) u16(r_obj) u32(field_token)
     GetField {
         r_dst: u16,
@@ -193,8 +198,13 @@ pub enum Instruction {
         field_token: u32,
         r_val: u16,
     },
-    /// 0x0803 — Shape RI32 (8B)
-    SpawnEntity { r_dst: u16, type_idx: u32 },
+    /// 0x0803 — var (12B): u16(op) u16(r_dst) u32(type_idx) u16(field_count) u16(r_base)
+    SpawnEntity {
+        r_dst: u16,
+        type_idx: u32,
+        field_count: u16,
+        r_base: u16,
+    },
     /// 0x0804 — Shape R (4B)
     InitEntity { r_entity: u16 },
     /// 0x0805 — var (10B): u16(op) u16(r_dst) u16(r_entity) u32(comp_type_idx)
@@ -762,14 +772,6 @@ impl Instruction {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u32::<LittleEndian>(*string_idx)?;
             }
-            Instruction::New { r_dst, type_idx } => {
-                w.write_u16::<LittleEndian>(*r_dst)?;
-                w.write_u32::<LittleEndian>(*type_idx)?;
-            }
-            Instruction::SpawnEntity { r_dst, type_idx } => {
-                w.write_u16::<LittleEndian>(*r_dst)?;
-                w.write_u32::<LittleEndian>(*type_idx)?;
-            }
             Instruction::GetOrCreate { r_dst, type_idx } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u32::<LittleEndian>(*type_idx)?;
@@ -801,6 +803,25 @@ impl Instruction {
             Instruction::BrFalse { r_cond, offset } => {
                 w.write_u16::<LittleEndian>(*r_cond)?;
                 w.write_u32::<LittleEndian>(*offset as u32)?;
+            }
+
+            // ── Atomic object construction ───────────────────────────────
+            Instruction::New {
+                r_dst,
+                type_idx,
+                field_count,
+                r_base,
+            }
+            | Instruction::SpawnEntity {
+                r_dst,
+                type_idx,
+                field_count,
+                r_base,
+            } => {
+                w.write_u16::<LittleEndian>(*r_dst)?;
+                w.write_u32::<LittleEndian>(*type_idx)?;
+                w.write_u16::<LittleEndian>(*field_count)?;
+                w.write_u16::<LittleEndian>(*r_base)?;
             }
 
             // ── Shape RI64 (u16, u64) ──────────────────────────
@@ -1293,7 +1314,14 @@ impl Instruction {
             0x0800 => {
                 let r_dst = r.read_u16::<LittleEndian>()?;
                 let type_idx = r.read_u32::<LittleEndian>()?;
-                Ok(Instruction::New { r_dst, type_idx })
+                let field_count = r.read_u16::<LittleEndian>()?;
+                let r_base = r.read_u16::<LittleEndian>()?;
+                Ok(Instruction::New {
+                    r_dst,
+                    type_idx,
+                    field_count,
+                    r_base,
+                })
             }
             0x0801 => {
                 let r_dst = r.read_u16::<LittleEndian>()?;
@@ -1318,7 +1346,14 @@ impl Instruction {
             0x0803 => {
                 let r_dst = r.read_u16::<LittleEndian>()?;
                 let type_idx = r.read_u32::<LittleEndian>()?;
-                Ok(Instruction::SpawnEntity { r_dst, type_idx })
+                let field_count = r.read_u16::<LittleEndian>()?;
+                let r_base = r.read_u16::<LittleEndian>()?;
+                Ok(Instruction::SpawnEntity {
+                    r_dst,
+                    type_idx,
+                    field_count,
+                    r_base,
+                })
             }
             0x0804 => Ok(Instruction::InitEntity {
                 r_entity: r.read_u16::<LittleEndian>()?,

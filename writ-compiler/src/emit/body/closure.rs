@@ -3,7 +3,7 @@
 //! Handles:
 //! - `pre_scan_lambdas()`: walks all method bodies for Lambda nodes and registers
 //!   synthetic TypeDefs (capture structs) + MethodDefs (closure bodies) BEFORE finalize().
-//! - `emit_lambda()`: emits NEW(capture_struct) + SET_FIELD per capture + NEW_DELEGATE at lambda site.
+//! - `emit_lambda()`: atomically initializes a capture environment and emits NEW_DELEGATE.
 //!
 //! **Critical ordering (Pitfall 2 from RESEARCH.md):**
 //! `pre_scan_lambdas()` MUST be called BEFORE `builder.finalize()`.
@@ -12,7 +12,7 @@ use std::collections::HashSet;
 
 use crate::check::ir::{Capture, TypedAst, TypedDecl, TypedExpr};
 use crate::check::ty::{Ty, TyInterner};
-use crate::emit::metadata::{HookKind, MetadataToken, TypeDefKind, method_flags};
+use crate::emit::metadata::{HookKind, MetadataToken, TypeDefKind, field_flags, method_flags};
 use crate::emit::module_builder::ModuleBuilder;
 use crate::resolve::def_map::DefId;
 
@@ -120,7 +120,11 @@ fn scan_expr_for_lambdas(
                     let type_bytes =
                         crate::emit::type_sig::encode_type_bytes(cap.ty, interner, &token_for_def);
                     let type_sig = builder.blob_heap.intern(&type_bytes);
-                    builder.add_fielddef(type_handle, &cap.name, type_sig, 0);
+                    // Capture mutability is not represented reliably in Capture
+                    // metadata yet. Keep environment fields writable so mutable
+                    // shared captures continue to work after initialization.
+                    let flags = field_flags(false, false, false, true);
+                    builder.add_fielddef(type_handle, &cap.name, type_sig, flags);
                     (cap.name.clone(), cap.ty)
                 })
                 .collect();
@@ -325,12 +329,8 @@ fn scan_stmt_for_lambdas(
 ///   LOAD_NULL r_null
 ///   NEW_DELEGATE r_delegate, closure_method_token, r_null
 ///
-/// For capturing lambda:
-///   NEW r_env, capture_struct_type_token
-///   // For each capture:
-///   MOV/GET r_captured, <local reg>
-///   SET_FIELD r_env, capture_field_token, r_captured
-///   NEW_DELEGATE r_delegate, closure_method_token, r_env
+/// For a capturing lambda, captured registers are packed in capture-field order,
+/// then one atomic NEW initializes the environment before NEW_DELEGATE exposes it.
 ///
 /// The lambda body is registered as a separate EmittedBody (via closure.rs pre_scan).
 ///
@@ -368,32 +368,20 @@ pub fn emit_lambda(
             r_target: r_null,
         });
     } else {
-        // Capturing: NEW(capture_struct) + SET_FIELD per capture + NEW_DELEGATE
+        let capture_regs: Vec<u16> = captures
+            .iter()
+            .map(|cap| emitter.locals.get(&cap.name).copied().unwrap_or(0))
+            .collect();
+        let capture_count = u16::try_from(capture_regs.len())
+            .expect("closure environment has more than u16::MAX captures");
+        let r_base = super::call::pack_args_consecutive(emitter, &capture_regs);
         let r_env = emitter.alloc_reg(ty); // capture struct register (typed as closure ty)
         emitter.emit(Instruction::New {
             r_dst: r_env,
             type_idx: capture_type_token,
+            field_count: capture_count,
+            r_base,
         });
-
-        for cap in captures {
-            // Load capture from local or use 0 if not found
-            let r_cap = emitter.locals.get(&cap.name).copied().unwrap_or(0);
-            // Look up field token
-            let field_token = emitter
-                .builder
-                .field_token_by_name_on_closure(&closure_name, &cap.name)
-                .unwrap_or_else(|| {
-                    panic!(
-                        "checked closure capture `{}` has no FieldDef token",
-                        cap.name
-                    )
-                });
-            emitter.emit(Instruction::SetField {
-                r_obj: r_env,
-                field_token,
-                r_val: r_cap,
-            });
-        }
 
         emitter.emit(Instruction::NewDelegate {
             r_dst,

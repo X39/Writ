@@ -55,6 +55,109 @@ fn disassemble_type_with_fields() {
 }
 
 #[test]
+fn disassemble_uses_table_specific_flag_names() {
+    let src = r#"
+.module "test" "1.0.0" {
+    .type "State" struct pub {
+        .field "value" int pub has_default component readonly
+        .method "update" () -> void pub mut_self hook_destroy intrinsic dialogue {
+            RET_VOID
+        }
+    }
+    .global "counter" int pub mut
+    .global "answer" int pub const
+    .extern_fn "print" (string) -> void "host_print" pub
+    .method "main" () -> void pub static {
+        RET_VOID
+    }
+}
+"#;
+    let module = writ_assembler::assemble(src).expect("should assemble");
+    let text = writ_assembler::disassemble(&module);
+
+    assert!(text.contains(".type \"State\" struct pub {"), "{text}");
+    assert!(
+        text.contains(".field \"value\" int pub has_default component readonly"),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            ".method \"update\" () -> void pub mut_self hook_destroy intrinsic dialogue {"
+        ),
+        "{text}"
+    );
+    assert!(text.contains(".global \"counter\" int pub mut"), "{text}");
+    assert!(text.contains(".global \"answer\" int pub const"), "{text}");
+    assert!(
+        text.contains(".extern_fn \"print\" (string) -> void \"host_print\" pub"),
+        "{text}"
+    );
+    assert!(
+        text.contains(".method \"main\" () -> void pub static {"),
+        "{text}"
+    );
+
+    let reassembled =
+        writ_assembler::assemble(&text).expect("table-specific flags should round-trip");
+    assert_eq!(reassembled.type_defs[0].flags, module.type_defs[0].flags);
+    assert_eq!(reassembled.field_defs[0].flags, module.field_defs[0].flags);
+    assert_eq!(
+        reassembled.method_defs[0].flags,
+        module.method_defs[0].flags
+    );
+    assert_eq!(
+        reassembled.global_defs[0].flags,
+        module.global_defs[0].flags
+    );
+    assert_eq!(
+        reassembled.global_defs[1].flags,
+        module.global_defs[1].flags
+    );
+    assert_eq!(
+        reassembled.extern_defs[0].flags,
+        module.extern_defs[0].flags
+    );
+}
+
+#[test]
+fn disassemble_unknown_flags_as_complete_numeric_values() {
+    let src = r#"
+.module "test" "1.0.0" {
+    .type "Opaque" struct 32769 {
+        .field "value" int 32776
+        .method "run" () -> void 32769 {
+            RET_VOID
+        }
+    }
+    .global "state" int 32772
+    .extern_fn "native" () -> void "host_native" 32769
+}
+"#;
+    let module = writ_assembler::assemble(src).expect("should assemble numeric flags");
+    let text = writ_assembler::disassemble(&module);
+
+    assert!(text.contains(".type \"Opaque\" struct 32769 {"), "{text}");
+    assert!(text.contains(".field \"value\" int 32776"), "{text}");
+    assert!(
+        text.contains(".method \"run\" () -> void 32769 {"),
+        "{text}"
+    );
+    assert!(text.contains(".global \"state\" int 32772"), "{text}");
+    assert!(
+        text.contains(".extern_fn \"native\" () -> void \"host_native\" 32769"),
+        "{text}"
+    );
+
+    let reassembled =
+        writ_assembler::assemble(&text).expect("numeric fallback flags should round-trip");
+    assert_eq!(reassembled.type_defs[0].flags, 32769);
+    assert_eq!(reassembled.field_defs[0].flags, 32776);
+    assert_eq!(reassembled.method_defs[0].flags, 32769);
+    assert_eq!(reassembled.global_defs[0].flags, 32772);
+    assert_eq!(reassembled.extern_defs[0].flags, 32769);
+}
+
+#[test]
 fn disassemble_contract_with_methods() {
     let src = r#"
 .module "test" "1.0.0" {
@@ -131,6 +234,33 @@ fn disassemble_field_operands_as_tokens() {
         "{text}"
     );
     writ_assembler::assemble(&text).expect("disassembled field tokens should reassemble");
+}
+
+#[test]
+fn disassemble_atomic_construction_operands() {
+    let src = r#"
+.module "test" "1.0.0" {
+    .type "Thing" struct {
+        .field "value" int
+    }
+    .type "Actor" entity {
+    }
+    .method "main" () -> void {
+        .reg r0 int
+        .reg r1 int
+        .reg r2 int
+        NEW r0, Thing, 1, r1
+        SPAWN_ENTITY r1, Actor, 0, r2
+        RET_VOID
+    }
+}
+"#;
+    let module = writ_assembler::assemble(src).expect("should assemble");
+    let text = writ_assembler::disassemble(&module);
+
+    assert!(text.contains("NEW r0, 33554433, 1, r1"), "{text}");
+    assert!(text.contains("SPAWN_ENTITY r1, 33554434, 0, r2"), "{text}");
+    writ_assembler::assemble(&text).expect("disassembled atomic constructors should reassemble");
 }
 
 #[test]

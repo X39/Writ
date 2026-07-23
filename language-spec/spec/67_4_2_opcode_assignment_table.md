@@ -90,10 +90,10 @@ Opcodes are partitioned by category in the high byte (see §2.5 for the scheme).
 
 | Opcode   | Mnemonic        | Shape |
 |----------|-----------------|-------|
-| `0x0800` | NEW             | RI32  |
+| `0x0800` | NEW             | var   |
 | `0x0801` | GET_FIELD       | var   |
 | `0x0802` | SET_FIELD       | var   |
-| `0x0803` | SPAWN_ENTITY    | RI32  |
+| `0x0803` | SPAWN_ENTITY    | var   |
 | `0x0804` | INIT_ENTITY     | R     |
 | `0x0805` | GET_COMPONENT   | var   |
 | `0x0806` | GET_OR_CREATE   | RI32  |

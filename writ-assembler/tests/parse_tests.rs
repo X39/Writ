@@ -68,6 +68,105 @@ fn parse_type_with_fields() {
 }
 
 #[test]
+fn parse_flags_uses_each_metadata_table_layout() {
+    let m = parse_str(
+        r#".module "test" "1.0.0" {
+    .type "Visible" struct pub {
+        .field "state" int pub has_default component readonly
+        .method "tick" () -> void pub static mut_self hook_create intrinsic dialogue {
+            RET_VOID
+        }
+    }
+    .global "counter" int pub mut
+    .global "answer" int pub const
+    .extern_fn "print" (string) -> void "host_print" pub
+}"#,
+    );
+
+    assert_eq!(m.types[0].flags, 0x0001);
+    assert_eq!(m.types[0].fields[0].flags, 0x000F);
+    assert_eq!(m.types[0].methods[0].flags, 0x018F);
+    assert_eq!(m.globals[0].flags, 0x0005);
+    assert_eq!(m.globals[1].flags, 0x0003);
+    assert_eq!(m.extern_fns[0].flags, 0x0001);
+}
+
+#[test]
+fn numeric_flags_preserve_unknown_bits() {
+    let m = parse_str(
+        r#".module "test" "1.0.0" {
+    .type "Opaque" struct pub 32768 {
+        .field "value" int 32768
+    }
+    .global "state" int mut 32768
+}"#,
+    );
+
+    assert_eq!(m.types[0].flags, 0x8001);
+    assert_eq!(m.types[0].fields[0].flags, 0x8000);
+    assert_eq!(m.globals[0].flags, 0x8004);
+}
+
+#[test]
+fn field_mut_is_not_an_alias_for_has_default() {
+    let errors = parse_str_err(
+        r#".module "test" "1.0.0" {
+    .type "State" struct {
+        .field "value" int mut
+    }
+}"#,
+    );
+
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("invalid FieldDef flag 'mut'")),
+        "{errors:?}"
+    );
+}
+
+#[test]
+fn method_rejects_multiple_lifecycle_hook_flags() {
+    let errors = parse_str_err(
+        r#".module "test" "1.0.0" {
+    .method "bad" () -> void hook_create hook_destroy {
+        RET_VOID
+    }
+}"#,
+    );
+
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("only one lifecycle hook")),
+        "{errors:?}"
+    );
+}
+
+#[test]
+fn parse_all_lifecycle_hook_flag_values() {
+    let m = parse_str(
+        r#".module "test" "1.0.0" {
+    .type "Hooks" entity {
+        .method "create" () -> void hook_create { RET_VOID }
+        .method "destroy" () -> void hook_destroy { RET_VOID }
+        .method "finalize" () -> void hook_finalize { RET_VOID }
+        .method "serialize" () -> void hook_serialize { RET_VOID }
+        .method "deserialize" () -> void hook_deserialize { RET_VOID }
+        .method "interact" () -> void hook_interact { RET_VOID }
+    }
+}"#,
+    );
+
+    let flags: Vec<_> = m.types[0]
+        .methods
+        .iter()
+        .map(|method| method.flags)
+        .collect();
+    assert_eq!(flags, vec![0x0008, 0x0010, 0x0018, 0x0020, 0x0028, 0x0030]);
+}
+
+#[test]
 fn parse_type_kinds() {
     let m = parse_str(
         r#".module "test" "1.0.0" {
@@ -507,7 +606,7 @@ fn parse_comprehensive_module() {
 
     .type "Player" struct {
         .field "name" string pub
-        .field "health" int pub mut
+        .field "health" int pub readonly
     }
 
     .contract "IUpdatable" {

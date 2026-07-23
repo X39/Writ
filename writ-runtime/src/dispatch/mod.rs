@@ -628,7 +628,12 @@ pub(crate) fn execute_one(
         } => calls::exec_tail_call(&mut ctx, *method_idx, *r_base, *argc),
 
         // ── Object Model ──────────────────────────────────────
-        Instruction::New { r_dst, type_idx } => objects::exec_new(&mut ctx, *r_dst, *type_idx),
+        Instruction::New {
+            r_dst,
+            type_idx,
+            field_count,
+            r_base,
+        } => objects::exec_new(&mut ctx, *r_dst, *type_idx, *field_count, *r_base),
         Instruction::GetField {
             r_dst,
             r_obj,
@@ -641,9 +646,12 @@ pub(crate) fn execute_one(
         } => objects::exec_set_field(&mut ctx, *r_obj, *field_token, *r_val),
 
         // ── Entity Instructions ───────────────────────────────
-        Instruction::SpawnEntity { r_dst, type_idx } => {
-            entities::exec_spawn_entity(&mut ctx, *r_dst, *type_idx)
-        }
+        Instruction::SpawnEntity {
+            r_dst,
+            type_idx,
+            field_count,
+            r_base,
+        } => entities::exec_spawn_entity(&mut ctx, *r_dst, *type_idx, *field_count, *r_base),
         Instruction::InitEntity { r_entity } => entities::exec_init_entity(&mut ctx, *r_entity),
         Instruction::DestroyEntity { r_entity } => {
             entities::exec_destroy_entity(&mut ctx, *r_entity)

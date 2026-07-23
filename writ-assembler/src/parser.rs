@@ -7,6 +7,49 @@ use crate::ast::{
 use crate::error::AssembleError;
 use crate::lexer::{Token, TokenKind};
 
+const FLAG_PUBLIC: u16 = 1 << 0;
+
+const FIELD_FLAG_HAS_DEFAULT: u16 = 1 << 1;
+const FIELD_FLAG_COMPONENT: u16 = 1 << 2;
+const FIELD_FLAG_READONLY: u16 = 1 << 3;
+
+const METHOD_FLAG_STATIC: u16 = 1 << 1;
+const METHOD_FLAG_MUT_SELF: u16 = 1 << 2;
+const METHOD_HOOK_SHIFT: u16 = 3;
+const METHOD_HOOK_MASK: u16 = 0x07 << METHOD_HOOK_SHIFT;
+const METHOD_FLAG_INTRINSIC: u16 = 1 << 7;
+const METHOD_FLAG_DIALOGUE: u16 = 1 << 8;
+
+const GLOBAL_FLAG_CONST: u16 = 1 << 1;
+const GLOBAL_FLAG_MUTABLE: u16 = 1 << 2;
+
+#[derive(Clone, Copy)]
+enum FlagContext {
+    TypeDef,
+    FieldDef,
+    MethodDef,
+    GlobalDef,
+    ExternDef,
+}
+
+impl FlagContext {
+    fn name(self) -> &'static str {
+        match self {
+            Self::TypeDef => "TypeDef",
+            Self::FieldDef => "FieldDef",
+            Self::MethodDef => "MethodDef",
+            Self::GlobalDef => "GlobalDef",
+            Self::ExternDef => "ExternDef",
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ParsedFlag {
+    Bit(u16),
+    MethodHook(u16),
+}
+
 /// Recursive-descent parser for the `.writil` text format.
 ///
 /// Produces an `AsmModule` AST from a token sequence. Collects multiple
@@ -292,7 +335,7 @@ impl<'a> Parser<'a> {
         };
 
         // Parse optional flags before the block
-        let flags = self.parse_flags();
+        let flags = self.parse_flags(FlagContext::TypeDef);
 
         if !self.expect_token(&TokenKind::OpenBrace) {
             self.synchronize();
@@ -362,7 +405,7 @@ impl<'a> Parser<'a> {
         self.pos += 1; // consume .field
         let name = self.expect_string()?;
         let type_ref = self.parse_type_ref()?;
-        let flags = self.parse_flags();
+        let flags = self.parse_flags(FlagContext::FieldDef);
         Some(AsmField {
             name,
             type_ref,
@@ -605,7 +648,7 @@ impl<'a> Parser<'a> {
         };
 
         // Parse optional flags
-        let flags = self.parse_flags();
+        let flags = self.parse_flags(FlagContext::MethodDef);
 
         if !self.expect_token(&TokenKind::OpenBrace) {
             self.synchronize();
@@ -1029,39 +1072,101 @@ impl<'a> Parser<'a> {
         Some(AsmTypeRef::RawBlob(bytes))
     }
 
-    fn parse_flags(&mut self) -> u16 {
+    fn parse_flags(&mut self, context: FlagContext) -> u16 {
         let mut flags = 0u16;
         loop {
             self.skip_newlines();
-            let flag_word = if let TokenKind::Ident(s) = self.peek_kind() {
-                Some(s.to_lowercase())
-            } else {
-                None
-            };
+            match self.peek_kind() {
+                TokenKind::Ident(word) => {
+                    let word = word.to_lowercase();
+                    let parsed = match (context, word.as_str()) {
+                        (_, "pub") => Some(ParsedFlag::Bit(FLAG_PUBLIC)),
+                        (FlagContext::FieldDef, "has_default") => {
+                            Some(ParsedFlag::Bit(FIELD_FLAG_HAS_DEFAULT))
+                        }
+                        (FlagContext::FieldDef, "component") => {
+                            Some(ParsedFlag::Bit(FIELD_FLAG_COMPONENT))
+                        }
+                        (FlagContext::FieldDef, "readonly") => {
+                            Some(ParsedFlag::Bit(FIELD_FLAG_READONLY))
+                        }
+                        (FlagContext::MethodDef, "static") => {
+                            Some(ParsedFlag::Bit(METHOD_FLAG_STATIC))
+                        }
+                        (FlagContext::MethodDef, "mut_self") => {
+                            Some(ParsedFlag::Bit(METHOD_FLAG_MUT_SELF))
+                        }
+                        (FlagContext::MethodDef, "hook_create") => Some(ParsedFlag::MethodHook(1)),
+                        (FlagContext::MethodDef, "hook_destroy") => Some(ParsedFlag::MethodHook(2)),
+                        (FlagContext::MethodDef, "hook_finalize") => {
+                            Some(ParsedFlag::MethodHook(3))
+                        }
+                        (FlagContext::MethodDef, "hook_serialize") => {
+                            Some(ParsedFlag::MethodHook(4))
+                        }
+                        (FlagContext::MethodDef, "hook_deserialize") => {
+                            Some(ParsedFlag::MethodHook(5))
+                        }
+                        (FlagContext::MethodDef, "hook_interact") => {
+                            Some(ParsedFlag::MethodHook(6))
+                        }
+                        (FlagContext::MethodDef, "intrinsic") => {
+                            Some(ParsedFlag::Bit(METHOD_FLAG_INTRINSIC))
+                        }
+                        (FlagContext::MethodDef, "dialogue") => {
+                            Some(ParsedFlag::Bit(METHOD_FLAG_DIALOGUE))
+                        }
+                        (FlagContext::GlobalDef, "mut") => {
+                            Some(ParsedFlag::Bit(GLOBAL_FLAG_MUTABLE))
+                        }
+                        (FlagContext::GlobalDef, "const") => {
+                            Some(ParsedFlag::Bit(GLOBAL_FLAG_CONST))
+                        }
+                        _ => None,
+                    };
 
-            if let Some(word) = flag_word {
-                match word.as_str() {
-                    "pub" => {
-                        flags |= 0x0001;
-                        self.pos += 1;
+                    self.pos += 1;
+                    match parsed {
+                        Some(ParsedFlag::Bit(bit)) => flags |= bit,
+                        Some(ParsedFlag::MethodHook(hook)) => {
+                            if flags & METHOD_HOOK_MASK != 0 {
+                                let tok = &self.tokens[self.pos - 1];
+                                self.errors.push(AssembleError::new(
+                                    "MethodDef may specify only one lifecycle hook flag",
+                                    tok.line,
+                                    tok.col,
+                                ));
+                            } else {
+                                flags |= hook << METHOD_HOOK_SHIFT;
+                            }
+                        }
+                        None => {
+                            let tok = &self.tokens[self.pos - 1];
+                            self.errors.push(AssembleError::new(
+                                format!("invalid {} flag '{}'", context.name(), word),
+                                tok.line,
+                                tok.col,
+                            ));
+                        }
                     }
-                    "mut" => {
-                        flags |= 0x0002;
-                        self.pos += 1;
-                    }
-                    "static" => {
-                        flags |= 0x0004;
-                        self.pos += 1;
-                    }
-                    _ => break,
                 }
-            } else if let TokenKind::IntLit(v) = self.peek_kind() {
-                // Numeric flag literal
-                flags |= *v as u16;
-                self.pos += 1;
-                break;
-            } else {
-                break;
+                TokenKind::IntLit(v) => {
+                    let value = *v;
+                    let tok = self.peek().clone();
+                    self.pos += 1;
+                    match u16::try_from(value) {
+                        Ok(value) => flags |= value,
+                        Err(_) => self.errors.push(AssembleError::new(
+                            format!("{} flags must be in the u16 range", context.name()),
+                            tok.line,
+                            tok.col,
+                        )),
+                    }
+                    // A numeric literal denotes an exact bitset (possibly ORed with
+                    // preceding names), so it terminates the flag list.
+                    break;
+                }
+                _ => break,
             }
         }
         flags
@@ -1078,7 +1183,7 @@ impl<'a> Parser<'a> {
         self.pos += 1; // consume .global
         let name = self.expect_string()?;
         let type_ref = self.parse_type_ref()?;
-        let flags = self.parse_flags();
+        let flags = self.parse_flags(FlagContext::GlobalDef);
         Some(AsmGlobal {
             name,
             type_ref,
@@ -1092,7 +1197,7 @@ impl<'a> Parser<'a> {
         let name = self.expect_string()?;
         let signature = self.parse_method_sig()?;
         let import_name = self.expect_string()?;
-        let flags = self.parse_flags();
+        let flags = self.parse_flags(FlagContext::ExternDef);
         Some(AsmExternFn {
             name,
             signature,

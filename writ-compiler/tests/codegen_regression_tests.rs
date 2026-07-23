@@ -2,7 +2,6 @@
 
 use std::io::Cursor;
 
-use writ_module::signature::TypeSignature;
 use writ_module::tables::TableId;
 use writ_module::{Instruction, MetadataToken, Module};
 
@@ -41,12 +40,12 @@ fn method_instructions(module: &Module, name: &str) -> Vec<Instruction> {
 fn generic_impl_call_specializes_receiver_bound_signature() {
     let module = compile(
         r#"
-        class Holder<T> { value: T }
+        class Holder<T> { mut value: T }
         impl<T> Holder<T> {
             fn set(mut self, value: T) { self.value = value; }
         }
         fn main() {
-            let value: Holder<int> = new Holder<int> { value: 0 };
+            let mut value: Holder<int> = new Holder<int> { value: 0 };
             value.set(1);
         }
         "#,
@@ -72,7 +71,7 @@ fn generic_impl_call_specializes_receiver_bound_signature() {
 }
 
 #[test]
-fn range_construction_emits_runtime_fieldref_tokens() {
+fn range_construction_emits_atomic_ordered_field_block() {
     let module = compile(
         r#"
         fn main() {
@@ -80,50 +79,51 @@ fn range_construction_emits_runtime_fieldref_tokens() {
         }
         "#,
     );
-    let range_type_ref = module
-        .type_refs
-        .iter()
-        .position(|row| {
-            string(&module, row.namespace) == "writ" && string(&module, row.name) == "Range"
-        })
-        .expect("writ::Range TypeRef");
-    let range_parent = MetadataToken::new(TableId::TypeRef.as_u8(), (range_type_ref + 1) as u32);
-    let field_tokens: Vec<_> = method_instructions(&module, "main")
-        .into_iter()
-        .filter_map(|instruction| match instruction {
-            Instruction::SetField { field_token, .. } => Some(field_token),
-            _ => None,
-        })
-        .collect();
-
-    assert_eq!(field_tokens.len(), 4, "one write per Range field");
-    let mut fields = Vec::new();
-    for encoded in field_tokens {
-        let token = MetadataToken(encoded);
-        assert_eq!(
-            token.table_id(),
-            TableId::FieldRef.as_u8(),
-            "Range construction must use a FieldRef token"
-        );
-        let row = token.row_index().expect("non-null FieldRef") as usize - 1;
-        let field = module.field_refs.get(row).expect("FieldRef row");
-        assert_eq!(field.parent, range_parent);
-        let signature = writ_module::heap::read_blob(&module.blob_heap, field.type_sig)
-            .expect("FieldRef type signature");
-        fields.push((
-            string(&module, field.name).to_owned(),
-            writ_module::signature::decode_type_signature(signature)
-                .expect("canonical FieldRef type signature"),
-        ));
-    }
-
-    assert_eq!(
-        fields,
-        vec![
-            ("start".to_owned(), TypeSignature::GenericParam(0)),
-            ("end".to_owned(), TypeSignature::GenericParam(0)),
-            ("start_inclusive".to_owned(), TypeSignature::Bool),
-            ("end_inclusive".to_owned(), TypeSignature::Bool),
-        ]
+    let instructions = method_instructions(&module, "main");
+    assert!(
+        !instructions
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::SetField { .. })),
+        "Range construction must not expose a partially initialized object"
     );
+    let new_index = instructions
+        .iter()
+        .position(|instruction| matches!(instruction, Instruction::New { .. }))
+        .expect("Range construction should emit NEW");
+    let Instruction::New {
+        field_count,
+        r_base,
+        ..
+    } = &instructions[new_index]
+    else {
+        unreachable!()
+    };
+    let r_base = *r_base;
+    assert_eq!(*field_count, 4);
+    assert!(
+        new_index >= 4,
+        "all four Range values must be evaluated before NEW"
+    );
+    assert!(matches!(
+        instructions[new_index - 4],
+        Instruction::LoadInt {
+            r_dst,
+            value: 0
+        } if r_dst == r_base
+    ));
+    assert!(matches!(
+        instructions[new_index - 3],
+        Instruction::LoadInt {
+            r_dst,
+            value: 10
+        } if r_dst == r_base + 1
+    ));
+    assert!(matches!(
+        instructions[new_index - 2],
+        Instruction::LoadTrue { r_dst } if r_dst == r_base + 2
+    ));
+    assert!(matches!(
+        instructions[new_index - 1],
+        Instruction::LoadTrue { r_dst } if r_dst == r_base + 3
+    ));
 }

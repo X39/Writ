@@ -6,11 +6,11 @@ pub const FIELD_FLAG_PUBLIC: u16 = 1 << 0;
 pub const FIELD_FLAG_HAS_DEFAULT: u16 = 1 << 1;
 /// FieldDef flag: the field belongs to a component definition.
 pub const FIELD_FLAG_COMPONENT: u16 = 1 << 2;
-/// FieldDef flag: reflection must not mutate the field.
+/// FieldDef flag: the field may be initialized during atomic construction, but
+/// must not be changed afterward by `SET_FIELD` or reflection.
 ///
-/// Writ source currently has no per-field `let`/`mut` modifier, so the compiler
-/// leaves this bit clear. Runtime-provided and programmatically-authored modules
-/// may use it for metadata-only read-only fields such as `Array.length`.
+/// Source fields are read-only unless declared with the `mut` field modifier.
+/// Runtime-provided and programmatically-authored modules use the same flag.
 pub const FIELD_FLAG_READONLY: u16 = 1 << 3;
 
 /// MethodDef flag: the method is visible outside its declaring scope.

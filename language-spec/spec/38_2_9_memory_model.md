@@ -27,17 +27,20 @@ bits/references.
 
 ## 2.9.2 Assignment and Mutability
 
-`let` / `let mut` controls **binding mutability**, not object mutability:
+`let` / `let mut` controls whether an expression provides a mutable receiver path. Field declarations independently
+control whether a field is writable after construction:
 
-- `let a = thing` — immutable binding. Cannot reassign `a`. Cannot mutate fields through `a`.
-- `let mut a = thing` — mutable binding. Can reassign `a`. Can mutate fields through `a`.
+- `let a = thing` — immutable binding. Cannot reassign `a`, invoke `mut self`, or mutate fields through `a`.
+- `let mut a = thing` — mutable binding. Can reassign `a` and provides a mutable receiver path.
+- `field: T` — read-only after construction, even through a mutable receiver.
+- `mut field: T` — writable after construction, but only through a mutable receiver path.
 
 For reference types, assignment copies the reference. Both bindings point to the same object:
 
 ```
 let mut a = new Merchant { name: "Tim", gold: 100 };  // Merchant is a class (reference type)
 let mut b = a;     // b and a point to the same object
-b.gold += 50;      // a.gold is ALSO now 150
+b.gold += 50;      // valid when Merchant.gold is `mut`; a.gold is ALSO now 150
 ```
 
 This is standard GC-language behavior (Java classes, C# classes, Lua tables).
@@ -110,7 +113,9 @@ generation-indexed array is recommended, where each slot holds the entity's scri
 handle validation (stale handles detected by generation mismatch). Component access via `GET_COMPONENT` should resolve
 against the entity's `ComponentSlot` list from the TypeDef metadata — a type-tag lookup returning the component
 reference or `None`. Singleton entities (marked `[Singleton]`) should be maintained in a per-type registry indexed by
-TypeDef token; `GET_OR_CREATE` checks this registry first and falls through to full entity construction if absent.
+TypeDef token; `GET_OR_CREATE` checks this registry first. Until field-default initializers are represented in module
+metadata, its create branch is valid only for entities with zero script fields; attempting to create a field-bearing
+singleton through this instruction crashes and source must use an ordinary `new` expression.
 
 ## 2.9.6 GC Roots
 
@@ -142,7 +147,10 @@ at transition points.
 
 - `MOV` copies register contents. For reference types (classes, strings, arrays, entities, delegates), this copies the pointer -- no deep copy. For value types (int, float, bool, enums, structs), this copies the full value. For value-type structs, this is a multi-word copy of all fields.
 - No `FREE` / `DEALLOC` instructions exist. The GC handles all reclamation.
-- `NEW`, `NEW_ARRAY`, `NEW_ENUM`, `SPAWN_ENTITY` are allocation points. `NEW` behavior is kind-dependent: for classes (kind=4), it allocates on the GC heap; for structs (kind=0), it initializes the value inline with no heap allocation. The GC may trigger during any heap allocation.
+- `NEW`, `NEW_ARRAY`, `NEW_ENUM`, and `SPAWN_ENTITY` may be allocation points. `NEW` behavior is kind-dependent: for
+  classes (kind=4), it allocates on the GC heap; for structs (kind=0), it produces the complete value described by its
+  initializer block. Before an allocating `NEW` or `SPAWN_ENTITY`, the runtime copies the complete initializer block
+  out of the current frame so a GC-triggering allocation cannot invalidate its inputs.
 - **GC safepoints** are a runtime concern, not an IL concern. The runtime can GC at any instruction boundary because
   type metadata enables precise root scanning.
 - Dead entity access requires a liveness check in the runtime on field/method access through entity handles.

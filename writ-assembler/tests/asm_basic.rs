@@ -192,3 +192,52 @@ fn field_operands_assemble_as_metadata_tokens() {
         }
     );
 }
+
+#[test]
+fn atomic_construction_operands_assemble_in_wire_order() {
+    use std::io::Cursor;
+    use writ_module::Instruction;
+
+    let src = r#"
+.module "test" "1.0.0" {
+    .type "Thing" struct {
+        .field "left" int
+        .field "right" int
+    }
+    .type "Actor" entity {
+    }
+    .method "main" () -> void {
+        .reg r0 int
+        .reg r1 int
+        .reg r2 int
+        .reg r3 int
+        NEW r0, Thing, 2, r1
+        SPAWN_ENTITY r1, Actor, 0, r3
+        RET_VOID
+    }
+}
+"#;
+    let module = writ_assembler::assemble(src).expect("should assemble atomic constructors");
+    let code = &module.method_bodies[0].code;
+    assert_eq!(code.len(), 26, "two 12-byte constructors plus RET_VOID");
+    let mut cursor = Cursor::new(code.as_slice());
+
+    assert_eq!(
+        Instruction::decode(&mut cursor).unwrap(),
+        Instruction::New {
+            r_dst: 0,
+            type_idx: 0x0200_0001,
+            field_count: 2,
+            r_base: 1,
+        }
+    );
+    assert_eq!(
+        Instruction::decode(&mut cursor).unwrap(),
+        Instruction::SpawnEntity {
+            r_dst: 1,
+            type_idx: 0x0200_0002,
+            field_count: 0,
+            r_base: 3,
+        }
+    );
+}

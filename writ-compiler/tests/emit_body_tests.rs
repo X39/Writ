@@ -1104,7 +1104,7 @@ fn make_builder_with_entity_fields(entity_def_id: DefId, field_names: &[&str]) -
 
 #[test]
 fn test_object_model_struct_construction() {
-    // new MyStruct { x: 1, y: 2 } -> NEW + SET_FIELD(x) + SET_FIELD(y)
+    // new MyStruct { x: 1, y: 2 } -> evaluate values + one atomic NEW
     let mut interner = make_interner();
     let ty_int = interner.int();
     let (_, struct_def_id) = make_def_id();
@@ -1139,40 +1139,42 @@ fn test_object_model_struct_construction() {
 
     let r_obj = emit_expr(&mut emitter, &new_expr);
 
-    // Check instruction sequence: NEW, then 2x LoadInt + SET_FIELD, then SET_FIELD
     let instrs = &emitter.instructions;
+    assert_eq!(instrs.len(), 3, "expected two values followed by NEW");
+    assert!(matches!(
+        instrs[0],
+        Instruction::LoadInt { r_dst: 0, value: 1 }
+    ));
+    assert!(matches!(
+        instrs[1],
+        Instruction::LoadInt { r_dst: 1, value: 2 }
+    ));
+    assert!(matches!(
+        instrs[2],
+        Instruction::New {
+            r_dst,
+            field_count: 2,
+            r_base: 0,
+            ..
+        } if r_dst == r_obj
+    ));
     assert!(
-        instrs.len() >= 3,
-        "expected at least NEW + 2 SET_FIELDs, got {} instructions",
-        instrs.len()
-    );
-    assert!(
-        matches!(&instrs[0], Instruction::New { .. }),
-        "first instr should be New, got {:?}",
-        &instrs[0]
-    );
-    let set_fields: Vec<_> = instrs
-        .iter()
-        .filter(|i| matches!(i, Instruction::SetField { .. }))
-        .collect();
-    assert_eq!(
-        set_fields.len(),
-        2,
-        "expected 2 SetField instructions, got {}",
-        set_fields.len()
+        !instrs
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::SetField { .. })),
+        "construction must not emit post-allocation field writes"
     );
 }
 
 #[test]
 fn test_object_model_entity_construction_sequence() {
-    // new MyEntity { name: "x" } -> SPAWN_ENTITY + SET_FIELD(name) + INIT_ENTITY
-    // Default fields do NOT get SET_FIELD
+    // Normalized entity fields are initialized atomically before INIT_ENTITY.
     let mut interner = make_interner();
     let ty_int = interner.int();
     let (_, entity_def_id) = make_def_id();
     let ty_entity = interner.intern(TyKind::Entity(entity_def_id));
 
-    // Entity has fields: "health" (default), "name" (explicit)
+    // Entity has fields in declaration order: health, name.
     let builder = make_builder_with_entity_fields(entity_def_id, &["health", "name"]);
     let mut emitter = make_emitter(&builder, &interner);
 
@@ -1181,7 +1183,14 @@ fn test_object_model_entity_construction_sequence() {
         span: dummy_span(),
         target_def_id: entity_def_id,
         fields: vec![
-            // Only "name" is explicitly provided; "health" uses default
+            (
+                "health".to_string(),
+                TypedExpr::Literal {
+                    ty: ty_int,
+                    span: dummy_span(),
+                    value: TypedLiteral::Int(100),
+                },
+            ),
             (
                 "name".to_string(),
                 TypedExpr::Literal {
@@ -1196,11 +1205,18 @@ fn test_object_model_entity_construction_sequence() {
     let _r = emit_expr(&mut emitter, &new_expr);
     let instrs = &emitter.instructions;
 
-    // Must have: SpawnEntity, ..., InitEntity at end
+    // Values are evaluated before one atomic SpawnEntity, followed by lifecycle init.
     assert!(
-        matches!(&instrs[0], Instruction::SpawnEntity { .. }),
-        "first instr should be SpawnEntity, got {:?}",
-        &instrs[0]
+        matches!(
+            instrs[2],
+            Instruction::SpawnEntity {
+                field_count: 2,
+                r_base: 0,
+                ..
+            }
+        ),
+        "expected atomic SpawnEntity, got {:?}",
+        instrs
     );
     assert!(
         matches!(instrs.last().unwrap(), Instruction::InitEntity { .. }),
@@ -1208,16 +1224,11 @@ fn test_object_model_entity_construction_sequence() {
         instrs.last().unwrap()
     );
 
-    // Only 1 SET_FIELD (for "name", not "health")
-    let set_fields: Vec<_> = instrs
-        .iter()
-        .filter(|i| matches!(i, Instruction::SetField { .. }))
-        .collect();
-    assert_eq!(
-        set_fields.len(),
-        1,
-        "only explicit fields get SET_FIELD, expected 1 got {}",
-        set_fields.len()
+    assert!(
+        !instrs
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::SetField { .. })),
+        "entity construction must not emit post-spawn field writes"
     );
 }
 
@@ -2125,8 +2136,8 @@ fn test_lambda_no_captures_emits_load_null_and_new_delegate() {
 }
 
 #[test]
-fn test_lambda_with_captures_emits_new_set_field_new_delegate() {
-    // |x| x + 1 (captures x) -> NEW(capture_struct) + SET_FIELD(x) + NEW_DELEGATE
+fn test_lambda_with_captures_emits_atomic_new_and_new_delegate() {
+    // |x| x + 1 (captures x) -> atomic NEW(capture_struct) + NEW_DELEGATE
     let mut interner = make_interner();
     let ty_int = interner.int();
     let ty_func = interner.func(vec![ty_int], ty_int);
@@ -2163,26 +2174,32 @@ fn test_lambda_with_captures_emits_new_set_field_new_delegate() {
     };
 
     let _r = emit_expr(&mut emitter, &lambda_expr);
-    let has_new = emitter
+    let atomic_new = emitter
         .instructions
         .iter()
-        .any(|i| matches!(i, Instruction::New { .. }));
-    let has_set_field = emitter
-        .instructions
-        .iter()
-        .any(|i| matches!(i, Instruction::SetField { .. }));
+        .find(|i| matches!(i, Instruction::New { .. }));
     let has_new_delegate = emitter
         .instructions
         .iter()
         .any(|i| matches!(i, Instruction::NewDelegate { .. }));
     assert!(
-        has_new,
-        "capturing lambda should emit New (capture struct), got {:?}",
+        matches!(
+            atomic_new,
+            Some(Instruction::New {
+                field_count: 1,
+                r_base: 0,
+                ..
+            })
+        ),
+        "capturing lambda should atomically initialize its capture struct, got {:?}",
         emitter.instructions
     );
     assert!(
-        has_set_field,
-        "capturing lambda should emit the capture's FieldDef token, got {:?}",
+        !emitter
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::SetField { .. })),
+        "capturing lambda should not mutate its environment after allocation, got {:?}",
         emitter.instructions
     );
     assert!(
@@ -3884,6 +3901,11 @@ fn test_capturing_lambda_method_metadata_decodes_regular_signature_and_receiver(
 
     let capture_field = builder.finalized_field_defs().next().unwrap();
     assert_eq!(builder.string_heap.get_str(capture_field.name), "state");
+    assert_eq!(
+        capture_field.flags & writ_module::tables::FIELD_FLAG_READONLY,
+        0,
+        "capture fields remain writable until Capture records mutability"
+    );
     let capture_type =
         writ_module::heap::read_blob(builder.blob_heap.data(), capture_field.type_sig).unwrap();
     assert_eq!(
@@ -5232,24 +5254,15 @@ fn test_call_virt_register_impl_method_contract_and_lookup() {
 fn make_range_builder() -> ModuleBuilder {
     let mut builder = ModuleBuilder::new();
     let runtime_module = builder.add_module_ref("writ-runtime", "1.0.0");
-    let range_row = builder.add_type_ref(runtime_module, "Range", "writ");
-    let range_parent = MetadataToken::new(TableId::TypeRef, (range_row + 1) as u32);
-
-    builder.add_field_ref_row(range_parent, "start", &[0x12, 0, 0]);
-    builder.add_field_ref_row(range_parent, "end", &[0x12, 0, 0]);
-    builder.add_field_ref_row(range_parent, "start_inclusive", &[0x03]);
-    builder.add_field_ref_row(range_parent, "end_inclusive", &[0x03]);
+    builder.add_type_ref(runtime_module, "Range", "writ");
     builder.finalize();
     builder
 }
 
 /// BF-02: Range with start=0, end=10, inclusive=false should emit
-/// New + LoadInt(start) + SetField(FieldRef(start)) + LoadInt(end)
-/// + SetField(FieldRef(end)) + LoadTrue + SetField(FieldRef(start_inclusive))
-/// + LoadFalse + SetField(FieldRef(end_inclusive))
-/// and NO Nop instruction.
+/// its four values in field order followed by one atomic New.
 #[test]
-fn test_range_emits_new_and_set_field() {
+fn test_range_emits_atomic_new_with_ordered_fields() {
     let builder = make_range_builder();
     let mut interner = make_interner();
     let ty_int = interner.int();
@@ -5280,57 +5293,49 @@ fn test_range_emits_new_and_set_field() {
     let has_nop = instrs.iter().any(|i| matches!(i, Instruction::Nop));
     assert!(!has_nop, "Range should NOT emit Nop, got: {:?}", instrs);
 
-    // Must contain a New instruction
-    let has_new = instrs.iter().any(|i| matches!(i, Instruction::New { .. }));
-    assert!(has_new, "Range should emit New, got: {:?}", instrs);
-
-    // Must contain four table-6 FieldRef operands for the Range fields.
-    let set_fields: Vec<u32> = instrs
-        .iter()
-        .filter_map(|i| {
-            if let Instruction::SetField { field_token, .. } = i {
-                Some(*field_token)
-            } else {
-                None
-            }
-        })
-        .collect();
-    assert_eq!(
-        set_fields.len(),
-        4,
-        "Range should emit exactly 4 SetField, got: {:?}",
+    assert!(
+        !instrs
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::SetField { .. })),
+        "Range should not emit SetField, got: {:?}",
         instrs
     );
-    assert_eq!(
-        set_fields,
-        vec![0x0600_0001, 0x0600_0002, 0x0600_0003, 0x0600_0004],
-        "Range fields should use their FieldRef metadata tokens"
-    );
-
-    // The end_inclusive FieldRef for inclusive=false should use LoadFalse.
-    let set_end_inclusive_idx = instrs
+    let new_idx = instrs
         .iter()
-        .position(|i| {
-            matches!(
-                i,
-                Instruction::SetField {
-                    field_token: 0x0600_0004,
-                    ..
-                }
-            )
-        })
-        .expect("should have SetField for Range.end_inclusive");
-
-    assert!(
-        set_end_inclusive_idx > 0,
-        "SetField(Range.end_inclusive) should not be the first instruction"
-    );
-    let before_set_end_inclusive = &instrs[set_end_inclusive_idx - 1];
-    assert!(
-        matches!(before_set_end_inclusive, Instruction::LoadFalse { .. }),
-        "For inclusive=false, the instruction before SetField(Range.end_inclusive) should be LoadFalse, got: {:?}",
-        before_set_end_inclusive
-    );
+        .position(|instruction| matches!(instruction, Instruction::New { .. }))
+        .expect("Range should emit New");
+    let Instruction::New {
+        field_count,
+        r_base,
+        ..
+    } = instrs[new_idx]
+    else {
+        unreachable!()
+    };
+    assert_eq!(field_count, 4);
+    assert_eq!(new_idx, 4, "Range values should be evaluated before New");
+    assert!(matches!(
+        instrs[0],
+        Instruction::LoadInt {
+            r_dst,
+            value: 0
+        } if r_dst == r_base
+    ));
+    assert!(matches!(
+        instrs[1],
+        Instruction::LoadInt {
+            r_dst,
+            value: 10
+        } if r_dst == r_base + 1
+    ));
+    assert!(matches!(
+        instrs[2],
+        Instruction::LoadTrue { r_dst } if r_dst == r_base + 2
+    ));
+    assert!(matches!(
+        instrs[3],
+        Instruction::LoadFalse { r_dst } if r_dst == r_base + 3
+    ));
 }
 
 /// BF-02: Range with inclusive=true should emit LoadTrue for end_inclusive.
@@ -5361,28 +5366,26 @@ fn test_range_inclusive_emits_load_true_for_end() {
 
     let instrs = &emitter.instructions;
 
-    let set_end_inclusive_idx = instrs
+    let new_idx = instrs
         .iter()
-        .position(|i| {
-            matches!(
-                i,
-                Instruction::SetField {
-                    field_token: 0x0600_0004,
-                    ..
-                }
-            )
-        })
-        .expect("should have SetField for Range.end_inclusive");
-
+        .position(|instruction| matches!(instruction, Instruction::New { .. }))
+        .expect("Range should emit New");
+    let Instruction::New {
+        field_count,
+        r_base,
+        ..
+    } = instrs[new_idx]
+    else {
+        unreachable!()
+    };
+    assert_eq!(field_count, 4);
     assert!(
-        set_end_inclusive_idx > 0,
-        "SetField(Range.end_inclusive) should not be the first instruction"
-    );
-    let before_set_end_inclusive = &instrs[set_end_inclusive_idx - 1];
-    assert!(
-        matches!(before_set_end_inclusive, Instruction::LoadTrue { .. }),
-        "For inclusive=true, the instruction before SetField(Range.end_inclusive) should be LoadTrue, got: {:?}",
-        before_set_end_inclusive
+        matches!(
+            instrs[new_idx - 1],
+            Instruction::LoadTrue { r_dst } if r_dst == r_base + 3
+        ),
+        "inclusive Range should place true in the end_inclusive slot, got: {:?}",
+        instrs
     );
 }
 

@@ -210,7 +210,8 @@ bitfield FieldDefFlags {
     is_pub            : 1;
     has_default       : 1;
     is_component_field : 1;
-    reserved          : 13;
+    readonly          : 1;
+    reserved          : 12;
 };
 
 // ============================================================================
@@ -608,8 +609,7 @@ struct ILInstruction {
         u16 r_dst;
         u64 imm64;
     }
-    else if (op == Opcode::LOAD_STRING || op == Opcode::NEW ||
-             op == Opcode::SPAWN_ENTITY || op == Opcode::GET_OR_CREATE ||
+    else if (op == Opcode::LOAD_STRING || op == Opcode::GET_OR_CREATE ||
              op == Opcode::FIND_ALL || op == Opcode::NEW_ARRAY ||
              op == Opcode::DEFER_PUSH || op == Opcode::LOAD_GLOBAL ||
              op == Opcode::BR_TRUE || op == Opcode::BR_FALSE) {
@@ -657,6 +657,13 @@ struct ILInstruction {
         u32 method_idx  [[format("format_token")]];
         u16 r_base;
         u16 argc;
+    }
+    else if (op == Opcode::NEW || op == Opcode::SPAWN_ENTITY) {
+        // 12B: r_dst, type_idx(u32), field_count, r_base
+        u16 r_dst;
+        u32 type_idx [[format("format_token")]];
+        u16 field_count;
+        u16 r_base;
     }
     else if (op == Opcode::SWITCH) {
         // Variable: r_tag, n(u16), offsets[n] (6 + 4n B)

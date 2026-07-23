@@ -221,6 +221,8 @@ fn call_virt_rejects_argument_count_mismatching_method_metadata() {
             Instruction::New {
                 r_dst: 0,
                 type_idx: 0x0200_0001,
+                field_count: 0,
+                r_base: 0,
             },
             Instruction::CallVirt {
                 r_dst: 1,
@@ -246,6 +248,8 @@ fn call_virt_rejects_callee_register_capacity_overflow() {
             Instruction::New {
                 r_dst: 0,
                 type_idx: 0x0200_0001,
+                field_count: 0,
+                r_base: 0,
             },
             Instruction::LoadInt { r_dst: 1, value: 7 },
             Instruction::CallVirt {
@@ -272,6 +276,8 @@ fn call_virt_rejects_receiver_outside_argument_block() {
             Instruction::New {
                 r_dst: 0,
                 type_idx: 0x0200_0001,
+                field_count: 0,
+                r_base: 0,
             },
             Instruction::CallVirt {
                 r_dst: 0,
@@ -301,6 +307,8 @@ fn call_virt_rejects_argument_block_without_receiver() {
             Instruction::New {
                 r_dst: 0,
                 type_idx: 0x0200_0001,
+                field_count: 0,
+                r_base: 0,
             },
             Instruction::CallVirt {
                 r_dst: 0,
@@ -524,6 +532,8 @@ fn tail_call_resolves_methodref_and_switches_module() {
                 Instruction::New {
                     r_dst: 0,
                     type_idx: worker_ref.0,
+                    field_count: 0,
+                    r_base: 0,
                 },
                 Instruction::TailCall {
                     method_idx: answer_ref.0,
@@ -645,6 +655,8 @@ fn spawn_instructions_resolve_methodrefs_in_the_target_module() {
                 Instruction::New {
                     r_dst: 0,
                     type_idx: worker_ref.0,
+                    field_count: 0,
+                    r_base: 0,
                 },
                 Instruction::SpawnTask {
                     r_dst: 1,

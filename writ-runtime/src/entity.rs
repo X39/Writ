@@ -1,7 +1,7 @@
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::error::RuntimeError;
-use crate::value::{EntityId, HeapRef, Value};
+use crate::value::{EntityId, HeapRef};
 
 /// State of an entity slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,13 +37,6 @@ pub struct EntitySlot {
     pub data_ref: Option<HeapRef>,
 }
 
-/// Buffered field writes for an entity under construction.
-#[derive(Debug)]
-pub struct PendingEntity {
-    pub type_idx: u32,
-    pub field_writes: Vec<(u32, Value)>,
-}
-
 /// Manages entity lifecycle through generation-indexed handles.
 ///
 /// Entities are allocated in a slot array. Each slot tracks a generation counter
@@ -54,7 +47,7 @@ pub struct EntityRegistry {
     free_list: Vec<u32>,
     singletons: FxHashMap<u32, EntityId>,
     resolved_singletons: FxHashMap<EntityTypeIdentity, EntityId>,
-    pending: FxHashMap<u32, PendingEntity>, // keyed by slot index
+    pending: FxHashSet<u32>, // slot indices awaiting INIT_ENTITY
 }
 
 impl EntityRegistry {
@@ -65,7 +58,7 @@ impl EntityRegistry {
             free_list: Vec::new(),
             singletons: FxHashMap::default(),
             resolved_singletons: FxHashMap::default(),
-            pending: FxHashMap::default(),
+            pending: FxHashSet::default(),
         }
     }
 
@@ -142,24 +135,13 @@ impl EntityRegistry {
             EntityId::new(idx, 0)
         };
 
-        self.pending.insert(
-            entity_id.index,
-            PendingEntity {
-                type_idx,
-                field_writes: Vec::new(),
-            },
-        );
+        self.pending.insert(entity_id.index);
 
         entity_id
     }
 
-    /// Buffer a field write for a pending entity (between SPAWN and INIT).
-    pub fn buffer_field_write(
-        &mut self,
-        entity_id: EntityId,
-        field_idx: u32,
-        value: Value,
-    ) -> Result<(), RuntimeError> {
+    /// Commit an entity init, transitioning from Pending to Alive.
+    pub fn commit_init(&mut self, entity_id: EntityId) -> Result<(), RuntimeError> {
         self.validate_handle(entity_id)?;
         let slot = &self.slots[entity_id.index as usize];
         if slot.state != EntityState::Pending {
@@ -169,34 +151,14 @@ impl EntityRegistry {
             )));
         }
 
-        let pending = self.pending.get_mut(&entity_id.index).ok_or_else(|| {
-            RuntimeError::ExecutionError(format!("no pending entity for index {}", entity_id.index))
-        })?;
-
-        pending.field_writes.push((field_idx, value));
-        Ok(())
-    }
-
-    /// Commit an entity init, transitioning from Pending to Alive.
-    ///
-    /// Returns the buffered field writes so the caller can apply them.
-    pub fn commit_init(&mut self, entity_id: EntityId) -> Result<Vec<(u32, Value)>, RuntimeError> {
-        self.validate_handle(entity_id)?;
-        let slot = &mut self.slots[entity_id.index as usize];
-        if slot.state != EntityState::Pending {
+        if !self.pending.remove(&entity_id.index) {
             return Err(RuntimeError::ExecutionError(format!(
-                "entity {} is not pending (state: {:?})",
-                entity_id.index, slot.state
+                "no pending entity for index {}",
+                entity_id.index
             )));
         }
-
-        slot.state = EntityState::Alive;
-
-        let pending = self.pending.remove(&entity_id.index).ok_or_else(|| {
-            RuntimeError::ExecutionError(format!("no pending entity for index {}", entity_id.index))
-        })?;
-
-        Ok(pending.field_writes)
+        self.slots[entity_id.index as usize].state = EntityState::Alive;
+        Ok(())
     }
 
     /// Check if an entity is alive (valid handle and Alive state).
@@ -387,6 +349,20 @@ impl EntityRegistry {
             .enumerate()
             .filter(|(_, slot)| slot.state == EntityState::Alive)
             .map(|(idx, slot)| (EntityId::new(idx as u32, slot.generation), slot))
+    }
+
+    /// Iterate over entity slots whose script-field storage remains a GC root.
+    ///
+    /// Pending entities already contain their complete constructor state, and
+    /// destroying entities can still execute lifecycle hooks. Their data must
+    /// therefore remain rooted even though `is_alive` is false.
+    pub(crate) fn gc_root_entities(&self) -> impl Iterator<Item = &EntitySlot> {
+        self.slots.iter().filter(|slot| {
+            matches!(
+                slot.state,
+                EntityState::Pending | EntityState::Alive | EntityState::Destroying
+            )
+        })
     }
 
     /// Return the number of alive entities.
@@ -585,32 +561,11 @@ mod tests {
     }
 
     #[test]
-    fn buffer_field_write_on_pending() {
-        let mut reg = EntityRegistry::new();
-        let eid = reg.begin_spawn(5);
-        reg.buffer_field_write(eid, 0, Value::Int(42)).unwrap();
-        reg.buffer_field_write(eid, 1, Value::Bool(true)).unwrap();
-    }
-
-    #[test]
-    fn buffer_field_write_on_alive_fails() {
-        let mut reg = EntityRegistry::new();
-        let eid = reg.allocate(0);
-        assert!(reg.buffer_field_write(eid, 0, Value::Int(1)).is_err());
-    }
-
-    #[test]
     fn commit_init_transitions_to_alive() {
         let mut reg = EntityRegistry::new();
         let eid = reg.begin_spawn(5);
 
-        reg.buffer_field_write(eid, 0, Value::Int(42)).unwrap();
-        reg.buffer_field_write(eid, 1, Value::Bool(true)).unwrap();
-
-        let writes = reg.commit_init(eid).unwrap();
-        assert_eq!(writes.len(), 2);
-        assert_eq!(writes[0], (0, Value::Int(42)));
-        assert_eq!(writes[1], (1, Value::Bool(true)));
+        reg.commit_init(eid).unwrap();
 
         assert!(reg.is_alive(eid));
         assert_eq!(reg.get_state(eid), Some(EntityState::Alive));

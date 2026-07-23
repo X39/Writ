@@ -1674,6 +1674,8 @@ mod tests {
                     Instruction::New {
                         r_dst: 0,
                         type_idx: counter_ref.0,
+                        field_count: 0,
+                        r_base: 0,
                     },
                     Instruction::Call {
                         r_dst: 1,

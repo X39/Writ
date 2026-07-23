@@ -193,6 +193,8 @@ fn gc_preserves_entity_data_ref() {
             Instruction::SpawnEntity {
                 r_dst: 0,
                 type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
             },
             Instruction::InitEntity { r_entity: 0 },
             Instruction::RetVoid,
@@ -220,6 +222,8 @@ fn gc_frees_destroyed_entity_data() {
             Instruction::SpawnEntity {
                 r_dst: 0,
                 type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
             },
             Instruction::InitEntity { r_entity: 0 },
             Instruction::DestroyEntity { r_entity: 0 },
@@ -422,6 +426,8 @@ fn gc_class_containing_array_field_survives() {
             Instruction::New {
                 r_dst: 0,
                 type_idx: class_token.0,
+                field_count: 1,
+                r_base: 0,
             },
             // r1 = new int[] (empty array, elem_type=0x01 for int)
             Instruction::NewArray {

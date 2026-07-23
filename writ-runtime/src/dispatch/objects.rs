@@ -1,12 +1,19 @@
 use crate::heap::HeapObject;
 use crate::value::Value;
 use writ_module::instruction::ArrayDefaultKind;
+use writ_module::tables::FIELD_FLAG_READONLY;
 
 use super::{ExecContext, ExecutionResult, helpers};
 
 // ── Struct Object Model ────────────────────────────────────────
 
-pub(super) fn exec_new(ctx: &mut ExecContext<'_>, r_dst: u16, type_idx: u32) -> ExecutionResult {
+pub(super) fn exec_new(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    type_idx: u32,
+    field_count: u16,
+    r_base: u16,
+) -> ExecutionResult {
     let token = writ_module::MetadataToken(type_idx);
     let table_id = token.table_id();
     let row = token.row_index().unwrap_or(0);
@@ -45,70 +52,136 @@ pub(super) fn exec_new(ctx: &mut ExecContext<'_>, r_dst: u16, type_idx: u32) -> 
     };
 
     let target_module = &ctx.modules[target_module_idx];
-    // For TypeRef tokens, build a synthetic TypeDef token for the resolved typedef index
-    // so get_type_field_count can decode it correctly against the target module.
-    let resolved_type_idx = if table_id == 3 || table_id == 4 {
-        // Encode as TypeDef token (table_id=2) with 1-based row in the target module
-        (2u32 << 24) | ((target_typedef_idx as u32) + 1)
-    } else {
-        type_idx
-    };
-    let field_count = helpers::get_type_field_count(&target_module.module, resolved_type_idx);
+    let expected_field_count =
+        match helpers::get_type_field_count(&target_module.module, target_typedef_idx) {
+            Ok(field_count) => field_count,
+            Err(error) => return ExecutionResult::Crash(format!("NEW: {error}")),
+        };
     let kind_u8 = target_module
         .module
         .type_defs
         .get(target_typedef_idx)
         .map(|t| t.kind);
+    let kind = match kind_u8.and_then(writ_module::TypeDefKind::from_u8) {
+        Some(writ_module::TypeDefKind::Struct) => writ_module::TypeDefKind::Struct,
+        Some(writ_module::TypeDefKind::Class) => writ_module::TypeDefKind::Class,
+        Some(other) => {
+            return ExecutionResult::Crash(format!(
+                "NEW: type token 0x{type_idx:08x} has kind {other:?}; expected struct or class"
+            ));
+        }
+        None => {
+            return ExecutionResult::Crash(format!(
+                "NEW: type token 0x{type_idx:08x} resolved outside the TypeDef table"
+            ));
+        }
+    };
+    let (r_dst, fields) = match collect_constructor_fields(
+        ctx,
+        "NEW",
+        r_dst,
+        field_count,
+        r_base,
+        expected_field_count,
+    ) {
+        Ok(validated) => validated,
+        Err(error) => return ExecutionResult::Crash(error),
+    };
     let runtime_type_key = ((target_module_idx as u32) << 16) | target_typedef_idx as u32;
+    let href = ctx
+        .heap
+        .alloc_struct_initialized(runtime_type_key, type_spec, fields);
 
-    match kind_u8.and_then(writ_module::TypeDefKind::from_u8) {
-        Some(writ_module::TypeDefKind::Struct) => {
+    let value = match kind {
+        writ_module::TypeDefKind::Struct => {
             // kind=0: value-type struct — heap allocation with Copy-semantic HeapRef.
             // Keep the canonical base key and optional TypeSpec on the heap so
             // cross-module struct dispatch does not depend on a local token value.
-            let href = ctx.heap.alloc_struct(runtime_type_key, field_count);
-            attach_type_spec(ctx.heap, href, type_spec);
-            let frame = ctx.task.call_stack.last_mut().unwrap();
-            frame.registers[r_dst as usize] = Value::Struct { type_idx, href };
-            ExecutionResult::Continue
+            Value::Struct { type_idx, href }
         }
-        Some(writ_module::TypeDefKind::Class) | Some(writ_module::TypeDefKind::Entity) => {
-            // kind=4 (class) or kind=2 (entity): heap allocation.
+        writ_module::TypeDefKind::Class => {
+            // kind=4 (class): heap allocation.
             // Encode the type_key as (target_module_idx << 16) | target_typedef_idx so that
             // CALL_VIRT can resolve the dispatch table entry from the runtime object type.
-            let href = ctx.heap.alloc_struct(runtime_type_key, field_count);
-            attach_type_spec(ctx.heap, href, type_spec);
-            let frame = ctx.task.call_stack.last_mut().unwrap();
-            frame.registers[r_dst as usize] = Value::Ref(href);
-            ExecutionResult::Continue
+            Value::Ref(href)
         }
-        Some(other) => ExecutionResult::Crash(format!(
-            "NEW: type_idx {} has kind {:?}, expected struct or class",
-            type_idx, other
-        )),
-        None => ExecutionResult::Crash(format!("NEW: type_idx {} is out of range", type_idx)),
-    }
+        _ => unreachable!("NEW kind was validated before allocation"),
+    };
+    ctx.task.call_stack.last_mut().unwrap().registers[r_dst] = value;
+    ExecutionResult::Continue
 }
 
-fn attach_type_spec(
-    heap: &mut dyn crate::gc::GcHeap,
-    href: crate::value::HeapRef,
-    type_spec: Option<(usize, u32)>,
-) {
-    if let Some(type_spec) = type_spec
-        && let Ok(HeapObject::Struct {
-            type_spec: stored, ..
-        }) = heap.get_object_mut(href)
-    {
-        *stored = Some(type_spec);
+fn collect_constructor_fields(
+    ctx: &ExecContext<'_>,
+    opcode: &str,
+    r_dst: u16,
+    field_count: u16,
+    r_base: u16,
+    expected_field_count: usize,
+) -> Result<(usize, Vec<Value>), String> {
+    let registers = &ctx
+        .task
+        .call_stack
+        .last()
+        .ok_or_else(|| format!("{opcode}: task has no active call frame"))?
+        .registers;
+    let r_dst = r_dst as usize;
+    if r_dst >= registers.len() {
+        return Err(format!(
+            "{opcode}: destination register r{r_dst} exceeds caller register count {}",
+            registers.len()
+        ));
     }
+    if field_count as usize != expected_field_count {
+        return Err(format!(
+            "{opcode}: field count {} does not match TypeDef field count {expected_field_count}",
+            field_count
+        ));
+    }
+    if field_count == 0 {
+        return Ok((r_dst, Vec::new()));
+    }
+    let start = r_base as usize;
+    let end = start
+        .checked_add(field_count as usize)
+        .ok_or_else(|| format!("{opcode}: field register range overflow"))?;
+    if end > registers.len() {
+        return Err(format!(
+            "{opcode}: field register range r{start}..r{end} exceeds caller register count {}",
+            registers.len()
+        ));
+    }
+    Ok((r_dst, registers[start..end].to_vec()))
+}
+
+struct ResolvedFieldTarget {
+    href: crate::value::HeapRef,
+    field_offset: usize,
+    flags: u16,
+    name: String,
+}
+
+fn checked_field_register(
+    registers: &[Value],
+    opcode: &str,
+    register: u16,
+    role: &str,
+) -> Result<usize, String> {
+    let register = register as usize;
+    if register >= registers.len() {
+        return Err(format!(
+            "{opcode}: {role} register r{register} exceeds caller register count {}",
+            registers.len()
+        ));
+    }
+    Ok(register)
 }
 
 fn resolve_field_target(
     ctx: &ExecContext<'_>,
     object: Value,
     field_operand: u32,
-) -> Result<(crate::value::HeapRef, usize), String> {
+) -> Result<ResolvedFieldTarget, String> {
     let (href, entity_identity, is_entity) = match object {
         Value::Struct { href, .. } | Value::Ref(href) => (href, None, false),
         Value::Entity(entity) => {
@@ -205,13 +278,16 @@ fn resolve_field_target(
                 ));
             }
         };
-    debug_assert!(
-        ctx.modules[target_module_idx]
-            .module
-            .field_defs
-            .get(field_def_idx)
-            .is_some()
-    );
+    let target_module = &ctx.modules[target_module_idx].module;
+    let field_def = target_module.field_defs.get(field_def_idx).ok_or_else(|| {
+        format!(
+            "resolved FieldDef row {} is out of range",
+            field_def_idx + 1
+        )
+    })?;
+    let field_name = writ_module::heap::read_string(&target_module.string_heap, field_def.name)
+        .unwrap_or("<invalid field name>")
+        .to_string();
 
     let expected_identity = crate::entity::EntityTypeIdentity {
         module_idx: target_module_idx,
@@ -224,7 +300,12 @@ fn resolve_field_target(
                 actual_identity, expected_identity
             ));
         }
-        return Ok((href, field_offset));
+        return Ok(ResolvedFieldTarget {
+            href,
+            field_offset,
+            flags: field_def.flags,
+            name: field_name,
+        });
     }
     if is_entity {
         return Err("field-token entity receiver has no canonical type identity".into());
@@ -246,7 +327,12 @@ fn resolve_field_target(
         Err(error) => return Err(error.to_string()),
     }
 
-    Ok((href, field_offset))
+    Ok(ResolvedFieldTarget {
+        href,
+        field_offset,
+        flags: field_def.flags,
+        name: field_name,
+    })
 }
 
 pub(super) fn exec_get_field(
@@ -255,15 +341,27 @@ pub(super) fn exec_get_field(
     r_obj: u16,
     field_token: u32,
 ) -> ExecutionResult {
-    let object = ctx.task.call_stack.last().unwrap().registers[r_obj as usize];
-    let (href, field_offset) = match resolve_field_target(ctx, object, field_token) {
+    let frame = match ctx.task.call_stack.last() {
+        Some(frame) => frame,
+        None => return ExecutionResult::Crash("GetField: task has no active call frame".into()),
+    };
+    let r_dst = match checked_field_register(&frame.registers, "GetField", r_dst, "destination") {
+        Ok(register) => register,
+        Err(error) => return ExecutionResult::Crash(error),
+    };
+    let r_obj = match checked_field_register(&frame.registers, "GetField", r_obj, "object") {
+        Ok(register) => register,
+        Err(error) => return ExecutionResult::Crash(error),
+    };
+    let object = frame.registers[r_obj];
+    let target = match resolve_field_target(ctx, object, field_token) {
         Ok(target) => target,
         Err(error) => return ExecutionResult::Crash(format!("GetField: {error}")),
     };
-    match ctx.heap.get_field(href, field_offset) {
+    match ctx.heap.get_field(target.href, target.field_offset) {
         Ok(val) => {
             let frame = ctx.task.call_stack.last_mut().unwrap();
-            frame.registers[r_dst as usize] = val;
+            frame.registers[r_dst] = val;
             ExecutionResult::Continue
         }
         Err(error) => ExecutionResult::Crash(format!("GetField: {error}")),
@@ -276,14 +374,31 @@ pub(super) fn exec_set_field(
     field_token: u32,
     r_val: u16,
 ) -> ExecutionResult {
-    let frame = ctx.task.call_stack.last().unwrap();
-    let object = frame.registers[r_obj as usize];
-    let val = frame.registers[r_val as usize];
-    let (href, field_offset) = match resolve_field_target(ctx, object, field_token) {
+    let frame = match ctx.task.call_stack.last() {
+        Some(frame) => frame,
+        None => return ExecutionResult::Crash("SetField: task has no active call frame".into()),
+    };
+    let r_obj = match checked_field_register(&frame.registers, "SetField", r_obj, "object") {
+        Ok(register) => register,
+        Err(error) => return ExecutionResult::Crash(error),
+    };
+    let r_val = match checked_field_register(&frame.registers, "SetField", r_val, "value") {
+        Ok(register) => register,
+        Err(error) => return ExecutionResult::Crash(error),
+    };
+    let object = frame.registers[r_obj];
+    let val = frame.registers[r_val];
+    let target = match resolve_field_target(ctx, object, field_token) {
         Ok(target) => target,
         Err(error) => return ExecutionResult::Crash(format!("SetField: {error}")),
     };
-    match ctx.heap.set_field(href, field_offset, val) {
+    if target.flags & FIELD_FLAG_READONLY != 0 {
+        return ExecutionResult::Crash(format!(
+            "SetField: cannot write to read-only field '{}'",
+            target.name
+        ));
+    }
+    match ctx.heap.set_field(target.href, target.field_offset, val) {
         Ok(()) => ExecutionResult::Continue,
         Err(error) => ExecutionResult::Crash(format!("SetField: {error}")),
     }

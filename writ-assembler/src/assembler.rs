@@ -584,6 +584,27 @@ fn map_instruction(
         }
     };
 
+    let u16_lit = |idx: usize| -> Result<u16, AssembleError> {
+        match operands.get(idx) {
+            Some(AsmOperand::IntLit(v)) => u16::try_from(*v).map_err(|_| {
+                AssembleError::new(
+                    format!(
+                        "{}: integer at operand {} must be in the u16 range",
+                        upper,
+                        idx + 1
+                    ),
+                    line,
+                    col,
+                )
+            }),
+            _ => Err(AssembleError::new(
+                format!("{}: expected integer at operand {}", upper, idx + 1),
+                line,
+                col,
+            )),
+        }
+    };
+
     let float_lit = |idx: usize| -> Result<f64, AssembleError> {
         match operands.get(idx) {
             Some(AsmOperand::FloatLit(v)) => Ok(*v),
@@ -937,6 +958,8 @@ fn map_instruction(
         "NEW" => Ok(Instruction::New {
             r_dst: reg(0)?,
             type_idx: token_val(1)?,
+            field_count: u16_lit(2)?,
+            r_base: reg(3)?,
         }),
         "GET_FIELD" => Ok(Instruction::GetField {
             r_dst: reg(0)?,
@@ -951,6 +974,8 @@ fn map_instruction(
         "SPAWN_ENTITY" => Ok(Instruction::SpawnEntity {
             r_dst: reg(0)?,
             type_idx: token_val(1)?,
+            field_count: u16_lit(2)?,
+            r_base: reg(3)?,
         }),
         "INIT_ENTITY" => Ok(Instruction::InitEntity { r_entity: reg(0)? }),
         "GET_COMPONENT" => Ok(Instruction::GetComponent {

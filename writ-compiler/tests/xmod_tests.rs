@@ -351,7 +351,7 @@ fn xmod_top_level_function_call() {
 #[test]
 fn xmod_class_method_call() {
     let lib_src = r#"
-        pub class Counter { pub value: int }
+        pub class Counter { pub mut value: int }
         impl Counter {
             pub fn increment(mut self) {
                 self.value = self.value + 1;
@@ -369,8 +369,9 @@ fn xmod_class_method_call() {
 
     let user_src = r#"
         pub fn use_counter(c: Counter) -> int {
-            c.increment();
-            return c.get();
+            let mut counter = c;
+            counter.increment();
+            return counter.get();
         }
     "#;
     let result = compile_with_libs(user_src, &[&lib_module]);
@@ -434,7 +435,7 @@ fn xmod_mixed_module_factory_is_top_level() {
 fn xmod_multiple_impl_blocks_are_disjoint() {
     let lib_bytes = compile(
         r#"
-        pub class Counter { pub value: int }
+        pub class Counter { pub mut value: int }
         impl Counter {
             pub fn get(self) -> int { self.value }
         }
@@ -465,7 +466,8 @@ fn xmod_multiple_impl_blocks_are_disjoint() {
 
     let result = compile_with_libs(
         r#"
-        pub fn use_both(counter: Counter) -> int {
+        pub fn use_both(value: Counter) -> int {
+            let mut counter = value;
             counter.set(9);
             counter.get()
         }

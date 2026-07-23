@@ -1230,6 +1230,8 @@ fn new_allocates_struct() {
             Instruction::New {
                 r_dst: 0,
                 type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
             },
             Instruction::Ret { r_src: 0 },
         ],
@@ -1258,6 +1260,8 @@ fn get_set_field_round_trip() {
             Instruction::New {
                 r_dst: 0,
                 type_idx: typedef_token(0),
+                field_count: 1,
+                r_base: 0,
             },
             Instruction::LoadInt {
                 r_dst: 1,
@@ -1303,6 +1307,8 @@ fn fielddef_token_uses_absolute_row_and_owner_local_offset() {
             Instruction::New {
                 r_dst: 0,
                 type_idx: typedef_token(1),
+                field_count: 2,
+                r_base: 0,
             },
             Instruction::LoadInt {
                 r_dst: 1,
@@ -1352,6 +1358,8 @@ fn forged_get_field_tokens_crash_the_current_task() {
                 Instruction::New {
                     r_dst: 0,
                     type_idx: typedef_token(0),
+                    field_count: 1,
+                    r_base: 0,
                 },
                 Instruction::GetField {
                     r_dst: 1,
@@ -1396,6 +1404,8 @@ fn forged_set_field_tokens_crash_the_current_task() {
                 Instruction::New {
                     r_dst: 0,
                     type_idx: typedef_token(0),
+                    field_count: 1,
+                    r_base: 0,
                 },
                 Instruction::LoadInt {
                     r_dst: 1,
@@ -1439,6 +1449,8 @@ fn field_token_owner_mismatch_crashes_the_current_task() {
             Instruction::New {
                 r_dst: 0,
                 type_idx: typedef_token(1),
+                field_count: 1,
+                r_base: 0,
             },
             Instruction::GetField {
                 r_dst: 1,
@@ -1962,6 +1974,8 @@ fn spawn_entity_creates_pending_and_init_commits() {
             Instruction::SpawnEntity {
                 r_dst: 0,
                 type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
             },
             Instruction::InitEntity { r_entity: 0 },
             Instruction::Ret { r_src: 0 },
@@ -1986,6 +2000,8 @@ fn entity_is_alive_returns_true_for_alive() {
             Instruction::SpawnEntity {
                 r_dst: 0,
                 type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
             },
             Instruction::InitEntity { r_entity: 0 },
             Instruction::EntityIsAlive {
@@ -2006,6 +2022,8 @@ fn entity_is_alive_returns_false_after_destroy() {
             Instruction::SpawnEntity {
                 r_dst: 0,
                 type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
             },
             Instruction::InitEntity { r_entity: 0 },
             Instruction::DestroyEntity { r_entity: 0 },
@@ -2028,6 +2046,8 @@ fn destroy_stale_entity_crashes() {
             Instruction::SpawnEntity {
                 r_dst: 0,
                 type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
             },
             Instruction::InitEntity { r_entity: 0 },
             Instruction::DestroyEntity { r_entity: 0 },
@@ -2118,11 +2138,15 @@ fn spawn_init_two_entities_both_alive() {
             Instruction::SpawnEntity {
                 r_dst: 0,
                 type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
             },
             Instruction::InitEntity { r_entity: 0 },
             Instruction::SpawnEntity {
                 r_dst: 1,
                 type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
             },
             Instruction::InitEntity { r_entity: 1 },
             Instruction::RetVoid,
@@ -2143,11 +2167,15 @@ fn destroy_one_entity_other_survives() {
             Instruction::SpawnEntity {
                 r_dst: 0,
                 type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
             },
             Instruction::InitEntity { r_entity: 0 },
             Instruction::SpawnEntity {
                 r_dst: 1,
                 type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
             },
             Instruction::InitEntity { r_entity: 1 },
             Instruction::DestroyEntity { r_entity: 0 },
@@ -2433,10 +2461,12 @@ fn test_new_struct_heap_alloc() {
             Instruction::New {
                 r_dst: 0,
                 type_idx: typedef_token(0),
+                field_count: 2,
+                r_base: 0,
             },
             Instruction::Ret { r_src: 0 },
         ],
-        1,
+        2,
     );
     let heap_before = rt.heap().object_count();
     let task_id = rt.spawn_task(0, vec![]).unwrap();
@@ -2471,10 +2501,12 @@ fn test_new_class_heap_alloc() {
             Instruction::New {
                 r_dst: 0,
                 type_idx: typedef_token(0),
+                field_count: 2,
+                r_base: 0,
             },
             Instruction::Ret { r_src: 0 },
         ],
-        1,
+        2,
     );
     let heap_before = rt.heap().object_count();
     let task_id = rt.spawn_task(0, vec![]).unwrap();
@@ -2507,6 +2539,8 @@ fn test_new_enum_kind_crashes() {
             Instruction::New {
                 r_dst: 0,
                 type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
             },
             Instruction::Ret { r_src: 0 },
         ],
@@ -2536,6 +2570,8 @@ fn test_get_set_field_inline_struct() {
             Instruction::New {
                 r_dst: 0,
                 type_idx: typedef_token(0),
+                field_count: 2,
+                r_base: 0,
             },
             // r1 = 42
             Instruction::LoadInt {
@@ -2577,6 +2613,8 @@ fn test_get_set_field_class_ref() {
             Instruction::New {
                 r_dst: 0,
                 type_idx: typedef_token(0),
+                field_count: 2,
+                r_base: 0,
             },
             // r1 = 99
             Instruction::LoadInt {
@@ -2619,6 +2657,8 @@ fn test_box_unbox_inline_struct() {
             Instruction::New {
                 r_dst: 0,
                 type_idx: typedef_token(0),
+                field_count: 1,
+                r_base: 0,
             },
             // r1 = 77
             Instruction::LoadInt {

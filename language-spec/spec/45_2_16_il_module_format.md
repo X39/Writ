@@ -14,7 +14,7 @@ Bytes 4–5:   u16 format_version    (starts at 1, bumps on incompatible layout 
 Bytes 6–7:   u16 flags             (bit 0 = debug info present, rest reserved)
 ```
 
-**Format version history:** Version 1 — initial format (MethodDef row: 20 bytes). Version 2 — added `param_count(u16)` to MethodDef (row: 24 bytes, padded from 22). Version 3 — TypeDef.kind=4 (class) added; kind=0 (struct) now means value type. Version 4 — TYPEOF opcode added (reflection; section 3.10, section 4.2 0x0A30). Version 5 — array opcode overhaul (`ARRAY_RESIZE`, `ARRAY_COPY`, sized and filled array construction). Version 6 — appended `owner(token)` to MethodDef (row: 28 bytes), making method ownership explicit. Version 7 — made generic-instance (`0x11`) and function (`0x30`) TypeRef payloads recursive and self-contained, replacing TypeSpec-row and blob-offset indirection. Version 8 — appended `flags(u16)` plus two bytes of padding to MethodRef (row: 16 bytes), recording the receiver ABI in cross-module method identity. Version 9 — removed the `SPAWN_DETACHED` opcode and made `GET_FIELD`/`SET_FIELD` operands strict FieldDef-or-FieldRef metadata tokens; raw field ordinals are no longer valid. Readers reject modules from older format versions with `UnsupportedVersion`.
+**Format version history:** Version 1 — initial format (MethodDef row: 20 bytes). Version 2 — added `param_count(u16)` to MethodDef (row: 24 bytes, padded from 22). Version 3 — TypeDef.kind=4 (class) added; kind=0 (struct) now means value type. Version 4 — TYPEOF opcode added (reflection; section 3.10, section 4.2 0x0A30). Version 5 — array opcode overhaul (`ARRAY_RESIZE`, `ARRAY_COPY`, sized and filled array construction). Version 6 — appended `owner(token)` to MethodDef (row: 28 bytes), making method ownership explicit. Version 7 — made generic-instance (`0x11`) and function (`0x30`) TypeRef payloads recursive and self-contained, replacing TypeSpec-row and blob-offset indirection. Version 8 — appended `flags(u16)` plus two bytes of padding to MethodRef (row: 16 bytes), recording the receiver ABI in cross-module method identity. Version 9 — removed `SPAWN_DETACHED`; made `GET_FIELD`/`SET_FIELD` operands strict FieldDef-or-FieldRef metadata tokens; expanded `NEW` and `SPAWN_ENTITY` to carry an exact, consecutive field-initializer block; and made FieldDef `READONLY` apply to every post-construction write. Raw field ordinals and the older two-operand construction encodings are no longer valid. Readers reject modules from older format versions with `UnsupportedVersion`.
 
 **Module header** (fixed layout, immediately after the magic):
 
@@ -85,6 +85,14 @@ Entity allocation resolves its module-relative type operand before creating the 
 resolved `(module, TypeDef)` identity with the entity for its complete lifetime, including the pending-construction
 state, and uses that identity for FieldRef owner checks and lifecycle-hook dispatch.
 
+`NEW` and `SPAWN_ENTITY` encode `r_dst:u16, type_token:u32, field_count:u16, r_base:u16` (12 bytes including the
+opcode). The initializer block contains one value per resolved TypeDef field in declaration/layout order. Before any
+allocation or destination write, the runtime must resolve the type token, validate the permitted type kind, require
+`field_count` to equal the resolved field range exactly, validate the whole register span, and copy the values. A zero
+field count makes `r_base` irrelevant. A malformed instruction crashes the current task without construction side
+effects. Because `field_count` is `u16`, a source type with more than 65,535 fields is not constructible and the
+compiler must reject its declaration or any attempted construction; it must never truncate the count.
+
 After load-time resolution, cross-module references are equivalent to direct local references. The resolution cost is
 paid once at load time.
 
@@ -97,12 +105,16 @@ dependency modules, and the compiler reads their metadata tables.
 Each module declares its version as a **Semantic Versioning 3.0.0** (semver) string in the format `MAJOR.MINOR.PATCH`:
 
 - **MAJOR** — incremented for breaking changes (removed types, changed signatures, incompatible behavior).
-- **MINOR** — incremented for backwards-compatible additions (new types, new methods, new fields with defaults).
+- **MINOR** — incremented for backwards-compatible additions (for example new types or new methods).
 - **PATCH** — incremented for backwards-compatible bug fixes.
 
 Semantic Versioning is a widely adopted convention that encodes compatibility information in a version number. The key
 principle is that consumers can safely upgrade within the same major version. A change from `2.2.0` to `2.3.0` is safe
 (new features, nothing removed). A change from `1.x` to `3.0.0` signals breaking changes that require consumer updates.
+
+In format version 9, adding any field is a semantic-MAJOR change. Atomic construction encodes an exact field count, and
+FieldDef's `has_default` bit does not serialize code capable of supplying the new value to an already-compiled
+consumer. A future format with callable default initializer metadata may relax this rule.
 
 **Compatibility rule:** A loaded module with version `A.B.C` satisfies a dependency requirement of `>=X.Y.Z` when
 `A == X` and `(A, B, C) >= (X, Y, Z)` by lexicographic comparison. The major version must match exactly (a major
@@ -186,10 +198,11 @@ instance receiver in its call argument block. A clear bit denotes a static metho
 are reserved and readers must reject a MethodRef that sets them. The row is padded with two zero bytes to 16 bytes.
 
 **FieldDef.flags** is a `u16` bitset: bit 0 = public visibility, bit 1 = has_default, bit 2 =
-is_component_field, and bit 3 = read-only through reflection. Remaining bits are reserved. Adding bit 3 does not
-change the row layout. The source grammar currently has no per-field `let`/`mut` modifier, so the compiler leaves
-bit 3 clear for source-declared fields; runtime-provided or programmatically-authored modules may set it for
-metadata-only read-only fields such as `Array.length`.
+is_component_field, and bit 3 = read-only after construction. Remaining bits are reserved. The source field grammar is
+`[visibility] [mut] name: type [= default]`: the compiler sets bit 3 for an unqualified field and clears it only when
+`mut` is present. Runtime-provided and programmatically-authored modules use the same bit, for example on
+`Array.length`. The bit is enforced by ordinary `SET_FIELD` as well as reflection; visibility does not affect
+mutability.
 
 **MethodDef.param_count:** The number of parameter registers at method entry — registers `r0` through `r(param_count-1)` hold argument values as described in §2.16.6. For methods with an explicit `self`, `r0` is `self` and counts toward `param_count`. For free functions, `r0` is the first regular parameter. This field allows tooling to determine the register layout without parsing the method body or counting entries in the ParamDef table.
 
@@ -294,29 +307,23 @@ Debuggers and disassemblers use SourceSpan to display source context alongside i
 No defer table or exception table is needed in the method body. The defer stack is runtime state managed by
 `DEFER_PUSH`/`DEFER_POP` instructions. Writ has no try/catch, so no exception handler table.
 
-## 2.16.7 Entity Construction Buffering
-
-During entity construction, component field writes are **buffered** by the runtime and delivered to the host as a single
-batch when `INIT_ENTITY` executes. This avoids per-field round-trips through suspend-and-confirm (§2.14.2) during
-construction.
+## 2.16.7 Atomic Entity Construction
 
 **Construction sequence:**
 
-1. `SPAWN_ENTITY r, type_token` — Allocate entity in the runtime's heap. Set the entity's internal "under construction"
-   flag. Notify the host with the component list (from the ComponentSlot table) so it can prepare native
-   representations.
-2. `SET_FIELD r, field_token, r_val` on **script fields** — Written directly to the script heap. No host involvement.
-3. `SET_FIELD r, field_token, r_val` on **component fields** — **Buffered** by the runtime. Not sent to host.
-4. `INIT_ENTITY r` — Flush all buffered component field values to the host as a single batch. Clear the "under
-   construction" flag. Fire the `on_create` lifecycle hook.
+1. Evaluate and pack one value per script field in declaration order.
+2. `SPAWN_ENTITY r, type_token, field_count, r_base` — Validate every operand before side effects. Allocate pending
+   entity storage already containing the complete script-field vector, retain its canonical type identity, and notify
+   the host to provision the ComponentSlot declarations. The entity is not yet alive and `on_create` has not run.
+3. `INIT_ENTITY r` — Transition the pending entity to alive, complete host initialization, and fire `on_create`.
 
 **Safety invariant:** Every `SPAWN_ENTITY` must be followed by exactly one `INIT_ENTITY` for the same entity before the
-enclosing frame returns. If a frame exits with an entity still in "under construction" state, the runtime crashes the
-task and logs the error (§2.14.7). The compiler guarantees this pairing — `INIT_ENTITY` is always emitted as part of
-the `new Entity { ... }` lowering.
+enclosing construction completes. The compiler guarantees this pairing for `new Entity { ... }`. `INIT_ENTITY` on an
+invalid, already-initialized, or non-pending handle is a runtime error and crashes the current task.
 
-**After construction:** `SET_FIELD` on component fields goes to the host immediately via suspend-and-confirm (§2.14.2).
-Buffering applies only during the SPAWN_ENTITY → INIT_ENTITY construction window.
+There is no privileged `SET_FIELD` interval between the two instructions. Script fields, including read-only fields,
+are complete when `SPAWN_ENTITY` returns. Post-construction component writes go to the host through the normal
+suspend-and-confirm path (§2.14.2).
 
 ## 2.16.8 The `writ-runtime` Module
 

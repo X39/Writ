@@ -17,7 +17,8 @@ pub struct HealthPotion {
 }
 
 pub fn heal(target: Entity, amount: int) {
-    target[Health].current += amount;
+    let mut health = target[Health];
+    health.current += amount;
 }
 ```
 
@@ -267,7 +268,8 @@ pub struct HealthPotion {
 
 // Public — visible to any namespace
 pub fn heal(target: Entity, amount: int) {
-    target[Health].current += amount;
+    let mut health = target[Health];
+    health.current += amount;
 }
 
 // Private — helper function, file-local
@@ -366,7 +368,7 @@ Entities and components follow the same rules as structs:
 ```writ
 pub entity Guard {
     pub name: string = "Guard",
-    alertLevel: int = 0,
+    mut alertLevel: int = 0,
 
     use Speaker {
         displayName: "Guard",

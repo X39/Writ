@@ -227,10 +227,32 @@ fn test_load_string_round_trip() {
 
 #[test]
 fn test_new_round_trip() {
-    round_trip(&Instruction::New {
+    let instruction = Instruction::New {
         r_dst: 1,
         type_idx: 0x02_000001,
-    });
+        field_count: 2,
+        r_base: 3,
+    };
+    let mut encoded = Vec::new();
+    instruction.encode(&mut encoded).unwrap();
+
+    assert_eq!(encoded.len(), 12);
+    round_trip(&instruction);
+}
+
+#[test]
+fn test_spawn_entity_decoder_preserves_zero_count_base_register() {
+    let instruction = Instruction::SpawnEntity {
+        r_dst: 7,
+        type_idx: 0x02_000002,
+        field_count: 0,
+        r_base: u16::MAX,
+    };
+    let mut encoded = Vec::new();
+    instruction.encode(&mut encoded).unwrap();
+
+    assert_eq!(encoded.len(), 12);
+    assert_eq!(round_trip(&instruction), instruction);
 }
 
 #[test]
@@ -711,6 +733,8 @@ fn test_all_opcodes_round_trip() {
         Instruction::New {
             r_dst: 0,
             type_idx: 100,
+            field_count: 2,
+            r_base: 1,
         },
         Instruction::GetField {
             r_dst: 0,
@@ -725,6 +749,8 @@ fn test_all_opcodes_round_trip() {
         Instruction::SpawnEntity {
             r_dst: 0,
             type_idx: 400,
+            field_count: 3,
+            r_base: 2,
         },
         Instruction::InitEntity { r_entity: 0 },
         Instruction::GetComponent {

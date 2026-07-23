@@ -233,6 +233,8 @@ fn speaker_override_in_display_args() {
             Instruction::SpawnEntity {
                 r_dst: 0,
                 type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
             },
             Instruction::InitEntity { r_entity: 0 },
             Instruction::LoadString {
@@ -272,6 +274,8 @@ fn speaker_override_in_display_args() {
         Instruction::SpawnEntity {
             r_dst: 0,
             type_idx: typedef_token(0),
+            field_count: 0,
+            r_base: 0,
         },
         Instruction::InitEntity { r_entity: 0 },
         Instruction::LoadString {
@@ -345,6 +349,8 @@ fn entity_without_speaker_uses_type_name() {
             Instruction::SpawnEntity {
                 r_dst: 0,
                 type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
             },
             Instruction::InitEntity { r_entity: 0 },
             Instruction::LoadString {
@@ -371,6 +377,8 @@ fn entity_without_speaker_uses_type_name() {
         Instruction::SpawnEntity {
             r_dst: 0,
             type_idx: typedef_token(0),
+            field_count: 0,
+            r_base: 0,
         },
         Instruction::InitEntity { r_entity: 0 },
         Instruction::LoadString {

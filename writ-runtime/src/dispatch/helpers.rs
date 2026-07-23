@@ -40,23 +40,44 @@ pub(super) fn extract_entity(val: &Value) -> EntityId {
     }
 }
 
-/// Get the number of fields for a type from its TypeDef.
+/// Return the exact number of fields owned by a resolved, zero-based TypeDef.
 ///
-/// `type_idx` is a MetadataToken where the high byte is the table ID (2 for TypeDef)
-/// and the low 24 bits are the 1-based row index.
-pub(super) fn get_type_field_count(module: &writ_module::Module, type_idx: u32) -> usize {
-    // Strip table bits to get the 1-based row, then convert to 0-based index.
-    let row = type_idx & 0x00FF_FFFF;
-    let idx = row.saturating_sub(1) as usize;
-    if idx >= module.type_defs.len() {
-        return 4; // default field count for unknown types
-    }
-    let type_def = &module.type_defs[idx];
-    let field_start = type_def.field_list.saturating_sub(1) as usize;
-    let field_end = if idx + 1 < module.type_defs.len() {
-        module.type_defs[idx + 1].field_list.saturating_sub(1) as usize
+/// Loaded modules normally satisfy these invariants already. Keeping the
+/// calculation checked here prevents dispatch from inventing an object layout
+/// if malformed metadata is ever supplied programmatically.
+pub(super) fn get_type_field_count(
+    module: &writ_module::Module,
+    type_def_idx: usize,
+) -> Result<usize, String> {
+    let type_def = module
+        .type_defs
+        .get(type_def_idx)
+        .ok_or_else(|| format!("TypeDef row {} is out of range", type_def_idx + 1))?;
+    let field_start = type_def.field_list.checked_sub(1).ok_or_else(|| {
+        format!(
+            "TypeDef row {} has invalid zero field_list",
+            type_def_idx + 1
+        )
+    })? as usize;
+    let field_end = if type_def_idx + 1 < module.type_defs.len() {
+        module.type_defs[type_def_idx + 1]
+            .field_list
+            .checked_sub(1)
+            .ok_or_else(|| {
+                format!(
+                    "TypeDef row {} has invalid zero field_list",
+                    type_def_idx + 2
+                )
+            })? as usize
     } else {
         module.field_defs.len()
     };
-    field_end.saturating_sub(field_start)
+    if field_start > field_end || field_end > module.field_defs.len() {
+        return Err(format!(
+            "TypeDef row {} has invalid field range {field_start}..{field_end} for {} FieldDef row(s)",
+            type_def_idx + 1,
+            module.field_defs.len()
+        ));
+    }
+    Ok(field_end - field_start)
 }

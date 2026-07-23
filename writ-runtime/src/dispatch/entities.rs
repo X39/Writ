@@ -11,18 +11,34 @@ pub(super) fn exec_spawn_entity(
     ctx: &mut ExecContext<'_>,
     r_dst: u16,
     type_idx: u32,
+    field_count: u16,
+    r_base: u16,
 ) -> ExecutionResult {
-    let (type_identity, field_count) = match resolve_entity_type(ctx, type_idx) {
+    let (type_identity, expected_field_count) = match resolve_entity_type(ctx, type_idx) {
         Ok(resolved) => resolved,
         Err(error) => return ExecutionResult::Crash(format!("SpawnEntity: {error}")),
     };
+    let (r_dst, fields) = match collect_entity_constructor_fields(
+        ctx,
+        "SpawnEntity",
+        r_dst,
+        field_count,
+        r_base,
+        expected_field_count,
+    ) {
+        Ok(validated) => validated,
+        Err(error) => return ExecutionResult::Crash(error),
+    };
+    let data_ref = ctx.heap.alloc_struct_initialized(u32::MAX, None, fields);
     let entity_id = ctx
         .entity_registry
         .begin_spawn_resolved(type_idx, type_identity);
-    let data_ref = ctx.heap.alloc_struct(u32::MAX, field_count);
-    let _ = ctx.entity_registry.set_data_ref(entity_id, data_ref);
-    let frame = ctx.task.call_stack.last_mut().unwrap();
-    frame.registers[r_dst as usize] = Value::Entity(entity_id);
+    if let Err(error) = ctx.entity_registry.set_data_ref(entity_id, data_ref) {
+        return ExecutionResult::Crash(format!(
+            "SpawnEntity: failed to publish initialized field storage: {error}"
+        ));
+    }
+    ctx.task.call_stack.last_mut().unwrap().registers[r_dst] = Value::Entity(entity_id);
     // Notify host
     let req_id = RequestId(*ctx.next_request_id);
     *ctx.next_request_id += 1;
@@ -34,21 +50,58 @@ pub(super) fn exec_spawn_entity(
     ExecutionResult::Continue
 }
 
+fn collect_entity_constructor_fields(
+    ctx: &ExecContext<'_>,
+    opcode: &str,
+    r_dst: u16,
+    field_count: u16,
+    r_base: u16,
+    expected_field_count: usize,
+) -> Result<(usize, Vec<Value>), String> {
+    let registers = &ctx
+        .task
+        .call_stack
+        .last()
+        .ok_or_else(|| format!("{opcode}: task has no active call frame"))?
+        .registers;
+    let r_dst = r_dst as usize;
+    if r_dst >= registers.len() {
+        return Err(format!(
+            "{opcode}: destination register r{r_dst} exceeds caller register count {}",
+            registers.len()
+        ));
+    }
+    if field_count as usize != expected_field_count {
+        return Err(format!(
+            "{opcode}: field count {} does not match TypeDef field count {expected_field_count}",
+            field_count
+        ));
+    }
+    if field_count == 0 {
+        return Ok((r_dst, Vec::new()));
+    }
+    let start = r_base as usize;
+    let end = start
+        .checked_add(field_count as usize)
+        .ok_or_else(|| format!("{opcode}: field register range overflow"))?;
+    if end > registers.len() {
+        return Err(format!(
+            "{opcode}: field register range r{start}..r{end} exceeds caller register count {}",
+            registers.len()
+        ));
+    }
+    Ok((r_dst, registers[start..end].to_vec()))
+}
+
 pub(super) fn exec_init_entity(ctx: &mut ExecContext<'_>, r_entity: u16) -> ExecutionResult {
     let entity_id =
         helpers::extract_entity(&ctx.task.call_stack.last().unwrap().registers[r_entity as usize]);
 
-    // Commit initialization: flush buffered field writes
-    let field_writes = match ctx.entity_registry.commit_init(entity_id) {
-        Ok(writes) => writes,
+    // The field state was installed atomically by SPAWN_ENTITY. INIT_ENTITY only
+    // transitions lifecycle state and dispatches the creation hook.
+    match ctx.entity_registry.commit_init(entity_id) {
+        Ok(()) => {}
         Err(e) => return ExecutionResult::Crash(format!("InitEntity: {}", e)),
-    };
-
-    // Apply buffered field writes to the heap object
-    if let Ok(Some(data_ref)) = ctx.entity_registry.get_data_ref(entity_id) {
-        for (field_idx, value) in field_writes {
-            let _ = ctx.heap.set_field(data_ref, field_idx as usize, value);
-        }
     }
 
     // Notify host
@@ -162,13 +215,12 @@ fn resolve_entity_type(
             type_def_idx + 1
         ));
     }
-    let resolved_token = (2u32 << 24) | (type_def_idx as u32 + 1);
     Ok((
         EntityTypeIdentity {
             module_idx,
             type_def_idx,
         },
-        helpers::get_type_field_count(module, resolved_token),
+        helpers::get_type_field_count(module, type_def_idx)?,
     ))
 }
 
@@ -222,6 +274,11 @@ pub(super) fn exec_get_or_create(
         Ok(resolved) => resolved,
         Err(error) => return ExecutionResult::Crash(format!("GetOrCreate: {error}")),
     };
+    if field_count != 0 {
+        return ExecutionResult::Crash(format!(
+            "GetOrCreate: entity TypeDef has {field_count} script field(s); singleton construction requires explicit field initialization"
+        ));
+    }
     // Check singleton map first
     if let Some(existing) = ctx.entity_registry.get_resolved_singleton(type_identity)
         && ctx.entity_registry.is_alive(existing)
@@ -234,7 +291,9 @@ pub(super) fn exec_get_or_create(
     let entity_id = ctx
         .entity_registry
         .allocate_resolved(type_idx, type_identity);
-    let data_ref = ctx.heap.alloc_struct(u32::MAX, field_count);
+    let data_ref = ctx
+        .heap
+        .alloc_struct_initialized(u32::MAX, None, Vec::new());
     let _ = ctx.entity_registry.set_data_ref(entity_id, data_ref);
     ctx.entity_registry
         .register_resolved_singleton(type_identity, entity_id);

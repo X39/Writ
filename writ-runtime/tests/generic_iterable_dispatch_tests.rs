@@ -60,6 +60,8 @@ fn call_virt_places_receiver_in_callee_register_zero() {
                 Instruction::New {
                     r_dst: 0,
                     type_idx: receiver.0,
+                    field_count: 1,
+                    r_base: 0,
                 },
                 Instruction::LoadInt {
                     r_dst: 1,
@@ -139,6 +141,8 @@ fn list_set_and_custom_iterable_dispatch_sequences_complete() {
                     Instruction::New {
                         r_dst: 1,
                         type_idx: cursor.0,
+                        field_count: 0,
+                        r_base: 0,
                     },
                     Instruction::Ret { r_src: 1 },
                 ],
@@ -169,6 +173,8 @@ fn list_set_and_custom_iterable_dispatch_sequences_complete() {
             Instruction::New {
                 r_dst: 0,
                 type_idx: collection.0,
+                field_count: 0,
+                r_base: 0,
             },
             Instruction::CallVirt {
                 r_dst: 1,
@@ -317,6 +323,8 @@ fn cross_module_typespec_dispatch_distinguishes_named_specializations() {
                 Instruction::New {
                     r_dst: 0,
                     type_idx: receiver_ref.0,
+                    field_count: 0,
+                    r_base: 0,
                 },
                 Instruction::CallVirt {
                     r_dst: 1,
@@ -386,6 +394,8 @@ fn target_typespec_dispatch_distinguishes_same_bare_contract() {
                 Instruction::New {
                     r_dst: 0,
                     type_idx: crate_int.0,
+                    field_count: 0,
+                    r_base: 0,
                 },
                 Instruction::CallVirt {
                     r_dst: 1,
@@ -398,6 +408,8 @@ fn target_typespec_dispatch_distinguishes_same_bare_contract() {
                 Instruction::New {
                     r_dst: 2,
                     type_idx: crate_string.0,
+                    field_count: 0,
+                    r_base: 0,
                 },
                 Instruction::CallVirt {
                     r_dst: 3,
@@ -477,6 +489,8 @@ fn disjoint_open_target_patterns_do_not_collapse_to_one_dispatch_entry() {
                 Instruction::New {
                     r_dst: 0,
                     type_idx: crate_boxed_int.0,
+                    field_count: 0,
+                    r_base: 0,
                 },
                 Instruction::CallVirt {
                     r_dst: 1,
@@ -489,6 +503,8 @@ fn disjoint_open_target_patterns_do_not_collapse_to_one_dispatch_entry() {
                 Instruction::New {
                     r_dst: 2,
                     type_idx: crate_paired_string.0,
+                    field_count: 0,
+                    r_base: 0,
                 },
                 Instruction::CallVirt {
                     r_dst: 3,
@@ -555,6 +571,8 @@ fn correlated_target_and_contract_parameters_reject_mismatched_call() {
                 Instruction::New {
                     r_dst: 0,
                     type_idx: crate_int.0,
+                    field_count: 0,
+                    r_base: 0,
                 },
                 Instruction::CallVirt {
                     r_dst: 1,
@@ -621,6 +639,8 @@ fn ambiguous_structural_specializations_crash_deterministically() {
                 Instruction::New {
                     r_dst: 0,
                     type_idx: crate_int.0,
+                    field_count: 0,
+                    r_base: 0,
                 },
                 Instruction::CallVirt {
                     r_dst: 1,
@@ -676,6 +696,8 @@ fn malformed_contract_typespec_fails_closed() {
                 Instruction::New {
                     r_dst: 0,
                     type_idx: receiver.0,
+                    field_count: 0,
+                    r_base: 0,
                 },
                 Instruction::CallVirt {
                     r_dst: 1,

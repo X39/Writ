@@ -326,9 +326,10 @@ Describes a single public field of a type.
 | `set`  | `fn set(self, instance: Box, value: Box)`           | `FieldSet`       |
 | `attributes` | `fn attributes(self) -> AttributeInfo[]`       | `FieldAttributes`|
 
-`FieldInfo.set()` on an immutable field (`is_mutable == false`) crashes the current task. Source field declarations
-have no per-field `let`/`mut` modifier and compile as mutable; runtime-provided and programmatically-authored module
-metadata may set FieldDef bit 3 to expose a read-only field.
+`FieldInfo.set()` on a read-only field (`is_mutable == false`) crashes the current task before the field changes.
+Source fields use `[visibility] [mut] name: type [= default]`: an unqualified field sets FieldDef bit 3 and a `mut`
+field clears it. Runtime-provided and programmatically authored modules use the same metadata rule. The bit governs
+all post-construction writes, including ordinary `SET_FIELD`; reflection does not define a separate mutability model.
 
 ### MethodInfo
 

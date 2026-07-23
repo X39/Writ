@@ -407,6 +407,8 @@ fn test_field_info_get() {
             Instruction::New {
                 r_dst: 0,
                 type_idx: typedef_token(0),
+                field_count: 2,
+                r_base: 0,
             },
             Instruction::LoadInt {
                 r_dst: 1,
@@ -958,6 +960,8 @@ fn test_gc_survival_after_reflection_ops() {
             Instruction::New {
                 r_dst: 0,
                 type_idx: typedef_token(0),
+                field_count: 1,
+                r_base: 0,
             },
             Instruction::LoadInt {
                 r_dst: 1,
@@ -1717,6 +1721,8 @@ fn test_field_info_set_mut_field() {
             Instruction::New {
                 r_dst: 0,
                 type_idx: typedef_token(0),
+                field_count: 1,
+                r_base: 0,
             },
             // r0.val = 42
             Instruction::LoadInt {
@@ -1817,20 +1823,17 @@ fn test_field_info_set_readonly_crashes() {
     let body = MethodBody {
         register_types: vec![0; 9],
         code: encode(&[
-            // r0 = new Frozen
-            Instruction::New {
-                r_dst: 0,
-                type_idx: typedef_token(0),
-            },
-            // r0.immut_val = 42 (initial write via direct SetField — still allowed at module level)
+            // Constructor input for the read-only field.
             Instruction::LoadInt {
                 r_dst: 1,
                 value: 42,
             },
-            Instruction::SetField {
-                r_obj: 0,
-                field_token: 0x0500_0001,
-                r_val: 1,
+            // Atomic construction may initialize a read-only field exactly once.
+            Instruction::New {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+                field_count: 1,
+                r_base: 1,
             },
             // r2 = TypeOf Frozen
             Instruction::TypeOf {
@@ -2037,6 +2040,8 @@ fn test_method_info_invoke_executes_method() {
             Instruction::New {
                 r_dst: 0,
                 type_idx: typedef_token(0),
+                field_count: 1,
+                r_base: 0,
             },
             // r0.data = 0
             Instruction::LoadInt { r_dst: 1, value: 0 },
@@ -2293,6 +2298,8 @@ fn test_method_info_invoke_wrong_argc_crashes() {
             Instruction::New {
                 r_dst: 0,
                 type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
             },
             // r1 = TypeOf Stub
             Instruction::TypeOf {
@@ -2429,6 +2436,8 @@ fn test_method_info_invoke_cooperative_scheduling() {
             Instruction::New {
                 r_dst: 0,
                 type_idx: typedef_token(0),
+                field_count: 1,
+                r_base: 0,
             },
             Instruction::LoadInt { r_dst: 1, value: 0 },
             Instruction::SetField {

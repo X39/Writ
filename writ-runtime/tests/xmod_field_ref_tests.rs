@@ -39,8 +39,8 @@ fn compiled_cross_module_second_field_set_and_get_execute() {
     let library = compile(
         r#"
             pub class Pair {
-                pub first: int,
-                pub second: int
+                pub mut first: int,
+                pub mut second: int
             }
         "#,
     );
@@ -89,8 +89,8 @@ fn compiled_cross_module_entity_field_set_and_get_execute() {
     let library = compile(
         r#"
             pub entity Pair {
-                pub first: int,
-                pub second: int
+                pub mut first: int,
+                pub mut second: int
             }
         "#,
     );
@@ -149,6 +149,8 @@ fn fieldref_rejects_an_entity_with_the_wrong_owner() {
                 Instruction::SpawnEntity {
                     r_dst: 0,
                     type_idx: actual_ref.0,
+                    field_count: 1,
+                    r_base: 1,
                 },
                 Instruction::LoadInt {
                     r_dst: 1,
@@ -197,6 +199,8 @@ fn spawn_entity_rejects_a_non_entity_typedef() {
                 Instruction::SpawnEntity {
                     r_dst: 0,
                     type_idx: struct_token.0,
+                    field_count: 0,
+                    r_base: 0,
                 },
                 Instruction::RetVoid,
             ],
@@ -243,6 +247,8 @@ fn fieldref_row_order_is_independent_from_target_field_layout() {
                 Instruction::New {
                     r_dst: 0,
                     type_idx: pair_ref.0,
+                    field_count: 2,
+                    r_base: 0,
                 },
                 Instruction::LoadInt {
                     r_dst: 1,

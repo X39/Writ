@@ -109,6 +109,8 @@ fn call_indirect_prepends_captured_target_before_explicit_arguments() {
                 Instruction::New {
                     r_dst: 0,
                     type_idx: env.0,
+                    field_count: 1,
+                    r_base: 0,
                 },
                 Instruction::LoadInt {
                     r_dst: 1,

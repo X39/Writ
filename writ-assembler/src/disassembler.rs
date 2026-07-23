@@ -95,8 +95,8 @@ fn disassemble_inner(module: &Module, verbose: bool) -> String {
             None => unreachable!("reader validates TypeDef kinds"),
         };
 
-        // Emit type flags as keyword(s) if recognized, otherwise as integer
-        let type_flags_str = flags_to_str(td.flags);
+        // Emit type flags as keyword(s) if recognized, otherwise as integer.
+        let type_flags_str = type_flags_to_str(td.flags);
         if type_flags_str.is_empty() {
             writeln!(out, "    .type {:?} {} {{", s(td.name), kind_str).unwrap();
         } else {
@@ -119,7 +119,7 @@ fn disassemble_inner(module: &Module, verbose: bool) -> String {
             .unwrap_or(module.field_defs.len());
         for fd in &module.field_defs[field_start..field_end] {
             let type_text = decode_type_sig(&module.blob_heap, fd.type_sig, module);
-            let field_flags_str = flags_to_str(fd.flags);
+            let field_flags_str = field_flags_to_str(fd.flags);
             if field_flags_str.is_empty() {
                 writeln!(out, "        .field {:?} {}", s(fd.name), type_text).unwrap();
             } else {
@@ -139,7 +139,7 @@ fn disassemble_inner(module: &Module, verbose: bool) -> String {
             let param_names = get_param_names(method_idx);
             let (params, ret) =
                 decode_method_sig(&module.blob_heap, md.signature, module, &param_names);
-            let method_flags_str = flags_to_str(md.flags);
+            let method_flags_str = method_flags_to_str(md.flags);
 
             if method_flags_str.is_empty() {
                 writeln!(
@@ -228,7 +228,7 @@ fn disassemble_inner(module: &Module, verbose: bool) -> String {
             let param_names = get_param_names(real_idx);
             let (params, ret) =
                 decode_method_sig(&module.blob_heap, md.signature, module, &param_names);
-            let method_flags_str = flags_to_str(md.flags);
+            let method_flags_str = method_flags_to_str(md.flags);
 
             if method_flags_str.is_empty() {
                 writeln!(
@@ -267,7 +267,7 @@ fn disassemble_inner(module: &Module, verbose: bool) -> String {
     // ── 5. Global defs ──
     for gd in &module.global_defs {
         let type_text = decode_type_sig(&module.blob_heap, gd.type_sig, module);
-        let global_flags_str = flags_to_str(gd.flags);
+        let global_flags_str = global_flags_to_str(gd.flags);
         if global_flags_str.is_empty() {
             writeln!(out, "    .global {:?} {}", s(gd.name), type_text).unwrap();
         } else {
@@ -286,15 +286,29 @@ fn disassemble_inner(module: &Module, verbose: bool) -> String {
     // Module-level extern function declarations (different from module refs).
     for ed in &module.extern_defs {
         let (params, ret) = decode_method_sig(&module.blob_heap, ed.signature, module, &[]);
-        writeln!(
-            out,
-            "    .extern_fn {:?} ({}) -> {} {:?}",
-            s(ed.name),
-            params.join(", "),
-            ret,
-            s(ed.import_name)
-        )
-        .unwrap();
+        let extern_flags_str = extern_flags_to_str(ed.flags);
+        if extern_flags_str.is_empty() {
+            writeln!(
+                out,
+                "    .extern_fn {:?} ({}) -> {} {:?}",
+                s(ed.name),
+                params.join(", "),
+                ret,
+                s(ed.import_name)
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                out,
+                "    .extern_fn {:?} ({}) -> {} {:?} {}",
+                s(ed.name),
+                params.join(", "),
+                ret,
+                s(ed.import_name),
+                extern_flags_str
+            )
+            .unwrap();
+        }
     }
 
     // ── 7. Top-level methods (explicitly owned by the module) ──
@@ -303,7 +317,7 @@ fn disassemble_inner(module: &Module, verbose: bool) -> String {
         let param_names = get_param_names(mi);
         let (params, ret) =
             decode_method_sig(&module.blob_heap, md.signature, module, &param_names);
-        let method_flags_str = flags_to_str(md.flags);
+        let method_flags_str = method_flags_to_str(md.flags);
 
         if method_flags_str.is_empty() {
             writeln!(
@@ -887,7 +901,20 @@ fn instr_to_text(instr: &Instruction) -> (String, Vec<String>) {
         ),
 
         // ── 0x08 Object Model ──
-        Instruction::New { r_dst, type_idx } => ("NEW".into(), vec![r(*r_dst), tok(*type_idx)]),
+        Instruction::New {
+            r_dst,
+            type_idx,
+            field_count,
+            r_base,
+        } => (
+            "NEW".into(),
+            vec![
+                r(*r_dst),
+                tok(*type_idx),
+                format!("{}", field_count),
+                r(*r_base),
+            ],
+        ),
         Instruction::GetField {
             r_dst,
             r_obj,
@@ -904,9 +931,20 @@ fn instr_to_text(instr: &Instruction) -> (String, Vec<String>) {
             "SET_FIELD".into(),
             vec![r(*r_obj), format!("token({})", field_token), r(*r_val)],
         ),
-        Instruction::SpawnEntity { r_dst, type_idx } => {
-            ("SPAWN_ENTITY".into(), vec![r(*r_dst), tok(*type_idx)])
-        }
+        Instruction::SpawnEntity {
+            r_dst,
+            type_idx,
+            field_count,
+            r_base,
+        } => (
+            "SPAWN_ENTITY".into(),
+            vec![
+                r(*r_dst),
+                tok(*type_idx),
+                format!("{}", field_count),
+                r(*r_base),
+            ],
+        ),
         Instruction::InitEntity { r_entity } => ("INIT_ENTITY".into(), vec![r(*r_entity)]),
         Instruction::GetComponent {
             r_dst,
@@ -1155,34 +1193,117 @@ fn instr_to_text(instr: &Instruction) -> (String, Vec<String>) {
     }
 }
 
-/// Convert a flags u16 to keyword string(s) for text output.
+const FLAG_PUBLIC: u16 = 1 << 0;
+
+const FIELD_FLAG_HAS_DEFAULT: u16 = 1 << 1;
+const FIELD_FLAG_COMPONENT: u16 = 1 << 2;
+const FIELD_FLAG_READONLY: u16 = 1 << 3;
+
+const METHOD_FLAG_STATIC: u16 = 1 << 1;
+const METHOD_FLAG_MUT_SELF: u16 = 1 << 2;
+const METHOD_HOOK_SHIFT: u16 = 3;
+const METHOD_HOOK_MASK: u16 = 0x07 << METHOD_HOOK_SHIFT;
+const METHOD_FLAG_INTRINSIC: u16 = 1 << 7;
+const METHOD_FLAG_DIALOGUE: u16 = 1 << 8;
+
+const GLOBAL_FLAG_CONST: u16 = 1 << 1;
+const GLOBAL_FLAG_MUTABLE: u16 = 1 << 2;
+
+/// Convert a simple table-specific flag bitset to assembly keywords.
 ///
-/// Supports: 0x0001=pub, 0x0002=mut, 0x0004=static. Unknown flags emitted as integer.
-fn flags_to_str(flags: u16) -> String {
+/// If any bit has no keyword in that table's grammar, emit the complete numeric
+/// value so disassembly remains lossless.
+fn simple_flags_to_str(flags: u16, known: &[(u16, &'static str)]) -> String {
     if flags == 0 {
         return String::new();
     }
 
-    let mut parts = Vec::new();
-    let mut remaining = flags;
-
-    if remaining & 0x0001 != 0 {
-        parts.push("pub");
-        remaining &= !0x0001;
-    }
-    if remaining & 0x0002 != 0 {
-        parts.push("mut");
-        remaining &= !0x0002;
-    }
-    if remaining & 0x0004 != 0 {
-        parts.push("static");
-        remaining &= !0x0004;
-    }
-
-    if remaining != 0 {
-        // Unknown flags: emit as integer
+    let known_mask = known.iter().fold(0, |mask, (bit, _)| mask | bit);
+    if flags & !known_mask != 0 {
         return format!("{}", flags);
     }
 
+    let parts: Vec<_> = known
+        .iter()
+        .filter_map(|(bit, name)| (flags & bit != 0).then_some(*name))
+        .collect();
     parts.join(" ")
+}
+
+fn type_flags_to_str(flags: u16) -> String {
+    simple_flags_to_str(flags, &[(FLAG_PUBLIC, "pub")])
+}
+
+fn field_flags_to_str(flags: u16) -> String {
+    simple_flags_to_str(
+        flags,
+        &[
+            (FLAG_PUBLIC, "pub"),
+            (FIELD_FLAG_HAS_DEFAULT, "has_default"),
+            (FIELD_FLAG_COMPONENT, "component"),
+            (FIELD_FLAG_READONLY, "readonly"),
+        ],
+    )
+}
+
+fn method_flags_to_str(flags: u16) -> String {
+    const KNOWN_MASK: u16 = FLAG_PUBLIC
+        | METHOD_FLAG_STATIC
+        | METHOD_FLAG_MUT_SELF
+        | METHOD_HOOK_MASK
+        | METHOD_FLAG_INTRINSIC
+        | METHOD_FLAG_DIALOGUE;
+
+    if flags == 0 {
+        return String::new();
+    }
+
+    let hook = (flags & METHOD_HOOK_MASK) >> METHOD_HOOK_SHIFT;
+    if flags & !KNOWN_MASK != 0 || hook == 7 {
+        return format!("{}", flags);
+    }
+
+    let mut parts = Vec::new();
+    if flags & FLAG_PUBLIC != 0 {
+        parts.push("pub");
+    }
+    if flags & METHOD_FLAG_STATIC != 0 {
+        parts.push("static");
+    }
+    if flags & METHOD_FLAG_MUT_SELF != 0 {
+        parts.push("mut_self");
+    }
+    if hook != 0 {
+        parts.push(match hook {
+            1 => "hook_create",
+            2 => "hook_destroy",
+            3 => "hook_finalize",
+            4 => "hook_serialize",
+            5 => "hook_deserialize",
+            6 => "hook_interact",
+            _ => unreachable!("hook value 7 was rejected above"),
+        });
+    }
+    if flags & METHOD_FLAG_INTRINSIC != 0 {
+        parts.push("intrinsic");
+    }
+    if flags & METHOD_FLAG_DIALOGUE != 0 {
+        parts.push("dialogue");
+    }
+    parts.join(" ")
+}
+
+fn global_flags_to_str(flags: u16) -> String {
+    simple_flags_to_str(
+        flags,
+        &[
+            (FLAG_PUBLIC, "pub"),
+            (GLOBAL_FLAG_CONST, "const"),
+            (GLOBAL_FLAG_MUTABLE, "mut"),
+        ],
+    )
+}
+
+fn extern_flags_to_str(flags: u16) -> String {
+    simple_flags_to_str(flags, &[(FLAG_PUBLIC, "pub")])
 }

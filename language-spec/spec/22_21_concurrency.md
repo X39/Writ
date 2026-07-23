@@ -38,9 +38,10 @@ dlg boulderScene {
 }
 
 fn moveBoulder(target: vec2) {
-    defer { boulder.animation = "idle"; }
-    boulder.animation = "rolling";
-    lerp(boulder.position, target, 3.0);
+    let mut moving = boulder;
+    defer { moving.animation = "idle"; }
+    moving.animation = "rolling";
+    lerp(moving.position, target, 3.0);
 }
 ```
 

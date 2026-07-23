@@ -633,8 +633,9 @@ impl<H: RuntimeHost> Runtime<H> {
             }
         }
 
-        // Entity data refs for alive entities
-        for (_entity_id, slot) in self.scheduler.entity_registry.alive_entities() {
+        // Entity data refs remain roots throughout construction, normal life,
+        // and destruction hooks.
+        for slot in self.scheduler.entity_registry.gc_root_entities() {
             if let Some(href) = slot.data_ref {
                 roots.push(href);
             }
@@ -861,10 +862,7 @@ impl<H: RuntimeHost> Runtime<H> {
 
         // Step 6: Allocate on heap
         let heap = self.heap.as_mut();
-        let obj_ref = heap.alloc_struct(type_idx as u32, expected_count);
-        for (i, val) in fields.into_iter().enumerate() {
-            let _ = heap.set_field(obj_ref, i, val);
-        }
+        let obj_ref = heap.alloc_struct_initialized(type_idx as u32, None, fields);
 
         Ok(Value::Ref(obj_ref))
     }
@@ -954,6 +952,8 @@ mod tests {
                     Instruction::New {
                         r_dst: 0,
                         type_idx: counter_ref.0,
+                        field_count: 0,
+                        r_base: 0,
                     },
                     Instruction::Call {
                         r_dst: 1,

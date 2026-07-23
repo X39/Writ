@@ -504,10 +504,10 @@ pub fn build_writ_runtime_module() -> Module {
 
     // Range<T> (kind=Struct=0) with 4 fields
     let range_type = builder.add_type_def("Range", "writ", TypeDefKind::Struct, 0);
-    builder.add_field_def("start", &[0x12, 0x00, 0x00], 0); // GenericParam ordinal 0 = T
-    builder.add_field_def("end", &[0x12, 0x00, 0x00], 0);
-    builder.add_field_def("start_inclusive", &[0x03], 0); // bool
-    builder.add_field_def("end_inclusive", &[0x03], 0);
+    builder.add_field_def("start", &[0x12, 0x00, 0x00], FIELD_FLAG_READONLY); // GenericParam ordinal 0 = T
+    builder.add_field_def("end", &[0x12, 0x00, 0x00], FIELD_FLAG_READONLY);
+    builder.add_field_def("start_inclusive", &[0x03], FIELD_FLAG_READONLY); // bool
+    builder.add_field_def("end_inclusive", &[0x03], FIELD_FLAG_READONLY);
     builder.add_generic_param(range_type, TYPE_GENERIC_OWNER_KIND, 0, "T");
 
     // ────────────────────────────────────────────────────────────────
@@ -824,7 +824,7 @@ pub fn build_writ_runtime_module() -> Module {
     // ────────────────────────────────────────────────────────────────
 
     let array_type = builder.add_type_def("Array", "writ", TypeDefKind::Struct, 0);
-    builder.add_field_def("length", &[0x01], FIELD_FLAG_PUBLIC | FIELD_FLAG_READONLY); // public int, read-only through reflection
+    builder.add_field_def("length", &[0x01], FIELD_FLAG_PUBLIC | FIELD_FLAG_READONLY); // public int, read-only after construction
     builder.add_generic_param(array_type, TYPE_GENERIC_OWNER_KIND, 0, "T");
 
     // Array intrinsic instance methods
@@ -1920,6 +1920,12 @@ mod tests {
         assert!(field_names.contains(&"end"));
         assert!(field_names.contains(&"start_inclusive"));
         assert!(field_names.contains(&"end_inclusive"));
+        assert!(
+            module.field_defs[field_start..field_end]
+                .iter()
+                .all(|field| field.flags & FIELD_FLAG_READONLY != 0),
+            "Range fields should be read-only after construction"
+        );
 
         // Generic param
         let range_token = MetadataToken::new(2, range_idx as u32 + 1);
@@ -2001,7 +2007,7 @@ mod tests {
         assert_ne!(
             module.field_defs[field_start].flags & FIELD_FLAG_READONLY,
             0,
-            "Array.length should be read-only through reflection"
+            "Array.length should be read-only after construction"
         );
 
         // Generic param

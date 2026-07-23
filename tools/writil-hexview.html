@@ -465,7 +465,7 @@ function decodeOperands(buf, pos, opcode, end) {
     return { pos, operands: `${rd}, ${val}` };
   }
   // Shape RI32
-  if ([0x0105,0x0800,0x0803,0x0806,0x0807,0x0900,0x0B04,0x0C00].includes(opcode))
+  if ([0x0105,0x0806,0x0807,0x0900,0x0B04,0x0C00].includes(opcode))
     return { pos, operands: `${r()}, 0x${u32v().toString(16)}` };
   // BR
   if (opcode === 0x0600) { pos += 2; return { pos, operands: `${i32v()}` }; }
@@ -492,6 +492,9 @@ function decodeOperands(buf, pos, opcode, end) {
   if (opcode === 0x0704) return { pos, operands: `${r()}, ${r()}, ${r()}, ${u16v()}` };
   // TAIL_CALL
   if (opcode === 0x0705) return { pos, operands: `0x${u32v().toString(16)}, ${r()}, ${u16v()}` };
+  // NEW / SPAWN_ENTITY
+  if (opcode === 0x0800 || opcode === 0x0803)
+    return { pos, operands: `${r()}, ${tokenStr(u32v())}, ${u16v()}, ${r()}` };
   // GET_FIELD
   if (opcode === 0x0801) return { pos, operands: `${r()}, ${r()}, ${tokenStr(u32v())}` };
   // SET_FIELD

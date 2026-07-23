@@ -59,6 +59,32 @@ fn wrong_operand_count() {
 }
 
 #[test]
+fn atomic_constructors_require_initializer_operands_and_u16_counts() {
+    for (instruction, expected) in [
+        ("NEW r0, 33554433", "operand 3"),
+        ("NEW r0, 33554433, -1, r0", "u16 range"),
+        ("SPAWN_ENTITY r0, 33554433, 65536, r0", "u16 range"),
+    ] {
+        let src = format!(
+            r#"
+.module "test" "1.0.0" {{
+    .method "main" () -> void {{
+        {instruction}
+        RET_VOID
+    }}
+}}
+"#
+        );
+        let errors =
+            writ_assembler::assemble(&src).expect_err("invalid constructor should be rejected");
+        assert!(
+            errors.iter().any(|error| error.message.contains(expected)),
+            "{instruction} should report {expected:?}: {errors:?}"
+        );
+    }
+}
+
+#[test]
 fn multiple_errors_collected() {
     let src = r#"
 .module "test" "1.0.0" {

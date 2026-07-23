@@ -139,6 +139,8 @@ fn init_entity_dispatches_on_create_hook() {
             Instruction::SpawnEntity {
                 r_dst: 0,
                 type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
             },
             Instruction::InitEntity { r_entity: 0 },
             Instruction::RetVoid,
@@ -214,6 +216,8 @@ fn destroy_entity_dispatches_on_destroy_hook() {
             Instruction::SpawnEntity {
                 r_dst: 0,
                 type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
             },
             Instruction::InitEntity { r_entity: 0 },
             Instruction::DestroyEntity { r_entity: 0 },
@@ -269,6 +273,8 @@ fn entity_without_hooks_inits_and_destroys_ok() {
             Instruction::SpawnEntity {
                 r_dst: 0,
                 type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
             },
             Instruction::InitEntity { r_entity: 0 },
             Instruction::DestroyEntity { r_entity: 0 },

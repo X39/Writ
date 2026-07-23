@@ -25,6 +25,16 @@ pub trait GcHeap: Send + Sync {
     // ── Allocation ────────────────────────────────────────────
     fn alloc_string(&mut self, s: &str) -> HeapRef;
     fn alloc_struct(&mut self, type_key: u32, field_count: usize) -> HeapRef;
+    /// Allocate a struct or class whose complete field state is supplied up front.
+    ///
+    /// Constructor dispatch uses this entry point so an object with partially
+    /// initialized fields is never observable through a heap reference.
+    fn alloc_struct_initialized(
+        &mut self,
+        type_key: u32,
+        type_spec: Option<(usize, u32)>,
+        fields: Vec<Value>,
+    ) -> HeapRef;
     fn alloc_array(&mut self, elem_type: u32) -> HeapRef;
     fn alloc_delegate(
         &mut self,
@@ -183,6 +193,19 @@ impl GcHeap for MarkSweepHeap {
             type_key,
             type_spec: None,
             fields: vec![Value::Void; field_count],
+        })
+    }
+
+    fn alloc_struct_initialized(
+        &mut self,
+        type_key: u32,
+        type_spec: Option<(usize, u32)>,
+        fields: Vec<Value>,
+    ) -> HeapRef {
+        self.alloc_slot(HeapObject::Struct {
+            type_key,
+            type_spec,
+            fields,
         })
     }
 

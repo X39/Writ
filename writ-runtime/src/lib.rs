@@ -40,7 +40,7 @@ pub mod virtual_module;
 pub use domain::{
     Domain, DomainAttributeMatch, ResolvedField, ResolvedMethod, ResolvedRefs, ResolvedType,
 };
-pub use entity::{EntityRegistry, EntitySlot, EntityState, EntityTypeIdentity, PendingEntity};
+pub use entity::{EntityRegistry, EntitySlot, EntityState, EntityTypeIdentity};
 pub use error::{CrashInfo, HostError, RuntimeError, StackFrame};
 pub use extern_registry::{DeferredCall, ExternHandler, ExternHost, ExternRegistry};
 pub use frame::{CallFrame, FrameLocation, RegisterPool};
