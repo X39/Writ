@@ -304,20 +304,20 @@ fn test_class_typedef_round_trip() {
 
 #[test]
 fn test_format_version_rejection() {
-    // Build a valid v8 module, then patch the format_version bytes to the
-    // stale v7 ABI, whose MethodRef rows do not contain receiver flags.
+    // Build a valid v9 module, then patch the format_version bytes to stale v8.
+    // Version 8 permits raw field ordinals and has the removed SPAWN_DETACHED opcode.
     let module = Module::new();
     let mut bytes = module.to_bytes().expect("to_bytes should succeed");
 
     // format_version is at bytes 4-5 (little-endian u16)
-    bytes[4] = 0x07;
+    bytes[4] = 0x08;
     bytes[5] = 0x00;
 
     let result = Module::from_bytes(&bytes);
     assert!(result.is_err());
     match result.unwrap_err() {
         DecodeError::UnsupportedVersion(v) => {
-            assert_eq!(v, 7, "Expected UnsupportedVersion(7)");
+            assert_eq!(v, 8, "Expected UnsupportedVersion(8)");
         }
         other => panic!("Expected UnsupportedVersion, got {other:?}"),
     }

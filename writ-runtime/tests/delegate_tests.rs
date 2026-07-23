@@ -87,7 +87,7 @@ fn call_indirect_prepends_captured_target_before_explicit_arguments() {
                 Instruction::GetField {
                     r_dst: 2,
                     r_obj: 0,
-                    field_idx: 0,
+                    field_token: 0x0500_0001,
                 },
                 Instruction::AddI {
                     r_dst: 2,
@@ -116,7 +116,7 @@ fn call_indirect_prepends_captured_target_before_explicit_arguments() {
                 },
                 Instruction::SetField {
                     r_obj: 0,
-                    field_idx: 0,
+                    field_token: 0x0500_0001,
                     r_val: 1,
                 },
                 Instruction::NewDelegate {

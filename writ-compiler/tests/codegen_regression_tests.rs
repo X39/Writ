@@ -2,6 +2,7 @@
 
 use std::io::Cursor;
 
+use writ_module::signature::TypeSignature;
 use writ_module::tables::TableId;
 use writ_module::{Instruction, MetadataToken, Module};
 
@@ -67,5 +68,62 @@ fn generic_impl_call_specializes_receiver_bound_signature() {
         !instructions
             .iter()
             .any(|instruction| matches!(instruction, Instruction::CallIndirect { .. }))
+    );
+}
+
+#[test]
+fn range_construction_emits_runtime_fieldref_tokens() {
+    let module = compile(
+        r#"
+        fn main() {
+            let range = 0..=10;
+        }
+        "#,
+    );
+    let range_type_ref = module
+        .type_refs
+        .iter()
+        .position(|row| {
+            string(&module, row.namespace) == "writ" && string(&module, row.name) == "Range"
+        })
+        .expect("writ::Range TypeRef");
+    let range_parent = MetadataToken::new(TableId::TypeRef.as_u8(), (range_type_ref + 1) as u32);
+    let field_tokens: Vec<_> = method_instructions(&module, "main")
+        .into_iter()
+        .filter_map(|instruction| match instruction {
+            Instruction::SetField { field_token, .. } => Some(field_token),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(field_tokens.len(), 4, "one write per Range field");
+    let mut fields = Vec::new();
+    for encoded in field_tokens {
+        let token = MetadataToken(encoded);
+        assert_eq!(
+            token.table_id(),
+            TableId::FieldRef.as_u8(),
+            "Range construction must use a FieldRef token"
+        );
+        let row = token.row_index().expect("non-null FieldRef") as usize - 1;
+        let field = module.field_refs.get(row).expect("FieldRef row");
+        assert_eq!(field.parent, range_parent);
+        let signature = writ_module::heap::read_blob(&module.blob_heap, field.type_sig)
+            .expect("FieldRef type signature");
+        fields.push((
+            string(&module, field.name).to_owned(),
+            writ_module::signature::decode_type_signature(signature)
+                .expect("canonical FieldRef type signature"),
+        ));
+    }
+
+    assert_eq!(
+        fields,
+        vec![
+            ("start".to_owned(), TypeSignature::GenericParam(0)),
+            ("end".to_owned(), TypeSignature::GenericParam(0)),
+            ("start_inclusive".to_owned(), TypeSignature::Bool),
+            ("end_inclusive".to_owned(), TypeSignature::Bool),
+        ]
     );
 }

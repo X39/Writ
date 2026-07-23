@@ -891,18 +891,18 @@ fn instr_to_text(instr: &Instruction) -> (String, Vec<String>) {
         Instruction::GetField {
             r_dst,
             r_obj,
-            field_idx,
+            field_token,
         } => (
             "GET_FIELD".into(),
-            vec![r(*r_dst), r(*r_obj), format!("{}", field_idx)],
+            vec![r(*r_dst), r(*r_obj), format!("token({})", field_token)],
         ),
         Instruction::SetField {
             r_obj,
-            field_idx,
+            field_token,
             r_val,
         } => (
             "SET_FIELD".into(),
-            vec![r(*r_obj), format!("{}", field_idx), r(*r_val)],
+            vec![r(*r_obj), format!("token({})", field_token), r(*r_val)],
         ),
         Instruction::SpawnEntity { r_dst, type_idx } => {
             ("SPAWN_ENTITY".into(), vec![r(*r_dst), tok(*type_idx)])

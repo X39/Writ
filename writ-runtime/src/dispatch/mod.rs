@@ -632,13 +632,13 @@ pub(crate) fn execute_one(
         Instruction::GetField {
             r_dst,
             r_obj,
-            field_idx,
-        } => objects::exec_get_field(&mut ctx, *r_dst, *r_obj, *field_idx),
+            field_token,
+        } => objects::exec_get_field(&mut ctx, *r_dst, *r_obj, *field_token),
         Instruction::SetField {
             r_obj,
-            field_idx,
+            field_token,
             r_val,
-        } => objects::exec_set_field(&mut ctx, *r_obj, *field_idx, *r_val),
+        } => objects::exec_set_field(&mut ctx, *r_obj, *field_token, *r_val),
 
         // ── Entity Instructions ───────────────────────────────
         Instruction::SpawnEntity { r_dst, type_idx } => {

@@ -1331,10 +1331,15 @@ fn test_object_model_field_write() {
     };
 
     let _r = emit_expr(&mut emitter, &assign_expr);
-    let has_set_field = emitter
-        .instructions
-        .iter()
-        .any(|i| matches!(i, Instruction::SetField { .. }));
+    let has_set_field = emitter.instructions.iter().any(|i| {
+        matches!(
+            i,
+            Instruction::SetField {
+                field_token: 0x0500_0001,
+                ..
+            }
+        )
+    });
     assert!(
         has_set_field,
         "expected SetField instruction for field write"
@@ -2177,7 +2182,7 @@ fn test_lambda_with_captures_emits_new_set_field_new_delegate() {
     );
     assert!(
         has_set_field,
-        "capturing lambda should emit SetField per capture, got {:?}",
+        "capturing lambda should emit the capture's FieldDef token, got {:?}",
         emitter.instructions
     );
     assert!(
@@ -5224,13 +5229,28 @@ fn test_call_virt_register_impl_method_contract_and_lookup() {
 
 // ─── Phase 28 Plan 02: BF-02 Range construction + BF-03 DeferPush handler offset ─
 
+fn make_range_builder() -> ModuleBuilder {
+    let mut builder = ModuleBuilder::new();
+    let runtime_module = builder.add_module_ref("writ-runtime", "1.0.0");
+    let range_row = builder.add_type_ref(runtime_module, "Range", "writ");
+    let range_parent = MetadataToken::new(TableId::TypeRef, (range_row + 1) as u32);
+
+    builder.add_field_ref_row(range_parent, "start", &[0x12, 0, 0]);
+    builder.add_field_ref_row(range_parent, "end", &[0x12, 0, 0]);
+    builder.add_field_ref_row(range_parent, "start_inclusive", &[0x03]);
+    builder.add_field_ref_row(range_parent, "end_inclusive", &[0x03]);
+    builder.finalize();
+    builder
+}
+
 /// BF-02: Range with start=0, end=10, inclusive=false should emit
-/// New + LoadInt(start) + SetField(0) + LoadInt(end) + SetField(1)
-/// + LoadTrue + SetField(2) + LoadFalse + SetField(3)
+/// New + LoadInt(start) + SetField(FieldRef(start)) + LoadInt(end)
+/// + SetField(FieldRef(end)) + LoadTrue + SetField(FieldRef(start_inclusive))
+/// + LoadFalse + SetField(FieldRef(end_inclusive))
 /// and NO Nop instruction.
 #[test]
 fn test_range_emits_new_and_set_field() {
-    let builder = ModuleBuilder::new();
+    let builder = make_range_builder();
     let mut interner = make_interner();
     let ty_int = interner.int();
 
@@ -5264,12 +5284,12 @@ fn test_range_emits_new_and_set_field() {
     let has_new = instrs.iter().any(|i| matches!(i, Instruction::New { .. }));
     assert!(has_new, "Range should emit New, got: {:?}", instrs);
 
-    // Must contain 4 SetField instructions for fields 0..=3
+    // Must contain four table-6 FieldRef operands for the Range fields.
     let set_fields: Vec<u32> = instrs
         .iter()
         .filter_map(|i| {
-            if let Instruction::SetField { field_idx, .. } = i {
-                Some(*field_idx)
+            if let Instruction::SetField { field_token, .. } = i {
+                Some(*field_token)
             } else {
                 None
             }
@@ -5281,47 +5301,42 @@ fn test_range_emits_new_and_set_field() {
         "Range should emit exactly 4 SetField, got: {:?}",
         instrs
     );
-    assert!(
-        set_fields.contains(&0),
-        "should have SetField for field 0 (start)"
-    );
-    assert!(
-        set_fields.contains(&1),
-        "should have SetField for field 1 (end)"
-    );
-    assert!(
-        set_fields.contains(&2),
-        "should have SetField for field 2 (start_inclusive)"
-    );
-    assert!(
-        set_fields.contains(&3),
-        "should have SetField for field 3 (end_inclusive)"
+    assert_eq!(
+        set_fields,
+        vec![0x0600_0001, 0x0600_0002, 0x0600_0003, 0x0600_0004],
+        "Range fields should use their FieldRef metadata tokens"
     );
 
-    // Field 3 (end_inclusive) for inclusive=false should use LoadFalse
-    // Find the SetField { field_idx: 3 } and check the register before it uses LoadFalse
-    let set_field_3_idx = instrs
+    // The end_inclusive FieldRef for inclusive=false should use LoadFalse.
+    let set_end_inclusive_idx = instrs
         .iter()
-        .position(|i| matches!(i, Instruction::SetField { field_idx: 3, .. }))
-        .expect("should have SetField for field 3");
+        .position(|i| {
+            matches!(
+                i,
+                Instruction::SetField {
+                    field_token: 0x0600_0004,
+                    ..
+                }
+            )
+        })
+        .expect("should have SetField for Range.end_inclusive");
 
-    // The instruction immediately before SetField(3) should be LoadFalse (for inclusive=false)
     assert!(
-        set_field_3_idx > 0,
-        "SetField(3) should not be the first instruction"
+        set_end_inclusive_idx > 0,
+        "SetField(Range.end_inclusive) should not be the first instruction"
     );
-    let before_set_field_3 = &instrs[set_field_3_idx - 1];
+    let before_set_end_inclusive = &instrs[set_end_inclusive_idx - 1];
     assert!(
-        matches!(before_set_field_3, Instruction::LoadFalse { .. }),
-        "For inclusive=false, instruction before SetField(field_idx=3) should be LoadFalse, got: {:?}",
-        before_set_field_3
+        matches!(before_set_end_inclusive, Instruction::LoadFalse { .. }),
+        "For inclusive=false, the instruction before SetField(Range.end_inclusive) should be LoadFalse, got: {:?}",
+        before_set_end_inclusive
     );
 }
 
-/// BF-02: Range with inclusive=true should emit LoadTrue for field 3 (end_inclusive).
+/// BF-02: Range with inclusive=true should emit LoadTrue for end_inclusive.
 #[test]
 fn test_range_inclusive_emits_load_true_for_end() {
-    let builder = ModuleBuilder::new();
+    let builder = make_range_builder();
     let mut interner = make_interner();
     let ty_int = interner.int();
 
@@ -5346,21 +5361,28 @@ fn test_range_inclusive_emits_load_true_for_end() {
 
     let instrs = &emitter.instructions;
 
-    // Field 3 (end_inclusive) for inclusive=true should use LoadTrue
-    let set_field_3_idx = instrs
+    let set_end_inclusive_idx = instrs
         .iter()
-        .position(|i| matches!(i, Instruction::SetField { field_idx: 3, .. }))
-        .expect("should have SetField for field 3");
+        .position(|i| {
+            matches!(
+                i,
+                Instruction::SetField {
+                    field_token: 0x0600_0004,
+                    ..
+                }
+            )
+        })
+        .expect("should have SetField for Range.end_inclusive");
 
     assert!(
-        set_field_3_idx > 0,
-        "SetField(3) should not be the first instruction"
+        set_end_inclusive_idx > 0,
+        "SetField(Range.end_inclusive) should not be the first instruction"
     );
-    let before_set_field_3 = &instrs[set_field_3_idx - 1];
+    let before_set_end_inclusive = &instrs[set_end_inclusive_idx - 1];
     assert!(
-        matches!(before_set_field_3, Instruction::LoadTrue { .. }),
-        "For inclusive=true, instruction before SetField(field_idx=3) should be LoadTrue, got: {:?}",
-        before_set_field_3
+        matches!(before_set_end_inclusive, Instruction::LoadTrue { .. }),
+        "For inclusive=true, the instruction before SetField(Range.end_inclusive) should be LoadTrue, got: {:?}",
+        before_set_end_inclusive
     );
 }
 

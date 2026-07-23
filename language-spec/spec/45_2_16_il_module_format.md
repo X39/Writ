@@ -14,7 +14,7 @@ Bytes 4–5:   u16 format_version    (starts at 1, bumps on incompatible layout 
 Bytes 6–7:   u16 flags             (bit 0 = debug info present, rest reserved)
 ```
 
-**Format version history:** Version 1 — initial format (MethodDef row: 20 bytes). Version 2 — added `param_count(u16)` to MethodDef (row: 24 bytes, padded from 22). Version 3 — TypeDef.kind=4 (class) added; kind=0 (struct) now means value type. Version 4 — TYPEOF opcode added (reflection; section 3.10, section 4.2 0x0A30). Version 5 — array opcode overhaul (`ARRAY_RESIZE`, `ARRAY_COPY`, sized and filled array construction). Version 6 — appended `owner(token)` to MethodDef (row: 28 bytes), making method ownership explicit. Version 7 — made generic-instance (`0x11`) and function (`0x30`) TypeRef payloads recursive and self-contained, replacing TypeSpec-row and blob-offset indirection. Version 8 — appended `flags(u16)` plus two bytes of padding to MethodRef (row: 16 bytes), recording the receiver ABI in cross-module method identity. Readers reject modules from older format versions with `UnsupportedVersion`.
+**Format version history:** Version 1 — initial format (MethodDef row: 20 bytes). Version 2 — added `param_count(u16)` to MethodDef (row: 24 bytes, padded from 22). Version 3 — TypeDef.kind=4 (class) added; kind=0 (struct) now means value type. Version 4 — TYPEOF opcode added (reflection; section 3.10, section 4.2 0x0A30). Version 5 — array opcode overhaul (`ARRAY_RESIZE`, `ARRAY_COPY`, sized and filled array construction). Version 6 — appended `owner(token)` to MethodDef (row: 28 bytes), making method ownership explicit. Version 7 — made generic-instance (`0x11`) and function (`0x30`) TypeRef payloads recursive and self-contained, replacing TypeSpec-row and blob-offset indirection. Version 8 — appended `flags(u16)` plus two bytes of padding to MethodRef (row: 16 bytes), recording the receiver ABI in cross-module method identity. Version 9 — removed the `SPAWN_DETACHED` opcode and made `GET_FIELD`/`SET_FIELD` operands strict FieldDef-or-FieldRef metadata tokens; raw field ordinals are no longer valid. Readers reject modules from older format versions with `UnsupportedVersion`.
 
 **Module header** (fixed layout, immediately after the magic):
 
@@ -66,11 +66,20 @@ resolves cross-module references at load time.
   This provides ABI-safe cross-module field access — recompiling a dependency that reorders fields does not break
   dependent modules as long as field names and types are preserved.
 
-`GET_FIELD` and `SET_FIELD` accept either a legacy raw 0-based local field ordinal or a table-6 FieldRef token. A
-table-6 operand is resolved in the currently executing module and translated to the resolved field's target-local
-offset before heap access. When the receiver carries a runtime owner identity, it must match the FieldRef's resolved
-owner. A missing, malformed, type-mismatched, or unresolved FieldRef is a link or execution error and must never fall
-back to ordinal zero.
+`GET_FIELD` and `SET_FIELD` take a non-null metadata token, never a physical field ordinal. The only valid token
+tables are FieldDef (table 5) and FieldRef (table 6):
+
+- A FieldDef token names an absolute, 1-based row in the currently executing module's FieldDef table. The runtime uses
+  the TypeDef `field_list` ranges to recover that row's declaring TypeDef and its zero-based physical offset within the
+  declaring type.
+- A FieldRef token names a 1-based row in the currently executing module's FieldRef table. Its load-time resolution
+  supplies the target module, declaring TypeDef, absolute FieldDef row, and physical offset.
+
+Before reading or writing object storage, the runtime validates the token table, its non-zero row, row bounds,
+resolution state, and the receiver's canonical runtime type identity against the field's declaring TypeDef. Any
+failure is a runtime error and therefore crashes the current task. There is no compatibility interpretation of an
+unqualified integer as a field ordinal and no fallback to field zero. Since this operand contract is incompatible
+with older binaries, version 9 readers reject all older module versions instead of attempting to reinterpret them.
 
 Entity allocation resolves its module-relative type operand before creating the instance. The runtime retains the
 resolved `(module, TypeDef)` identity with the entity for its complete lifetime, including the pending-construction

@@ -38,7 +38,7 @@ pub(super) fn emit_struct_eq(
 
     let mut r_result: Option<u16> = None;
     for (field_name, field_ty) in &fields {
-        let field_idx = emitter
+        let field_token = emitter
             .builder
             .field_token_by_name(def_id, field_name)
             .unwrap_or_else(|| {
@@ -49,13 +49,13 @@ pub(super) fn emit_struct_eq(
         emitter.emit(Instruction::GetField {
             r_dst: r_fa,
             r_obj: r_a,
-            field_idx,
+            field_token,
         });
         let r_fb = emitter.alloc_reg(*field_ty);
         emitter.emit(Instruction::GetField {
             r_dst: r_fb,
             r_obj: r_b,
-            field_idx,
+            field_token,
         });
 
         let r_field_eq = emit_field_eq(emitter, r_fa, r_fb, *field_ty);
@@ -103,7 +103,7 @@ pub(super) fn emit_struct_neq(
 
     let mut r_result: Option<u16> = None;
     for (field_name, field_ty) in &fields {
-        let field_idx = emitter
+        let field_token = emitter
             .builder
             .field_token_by_name(def_id, field_name)
             .unwrap_or_else(|| {
@@ -114,13 +114,13 @@ pub(super) fn emit_struct_neq(
         emitter.emit(Instruction::GetField {
             r_dst: r_fa,
             r_obj: r_a,
-            field_idx,
+            field_token,
         });
         let r_fb = emitter.alloc_reg(*field_ty);
         emitter.emit(Instruction::GetField {
             r_dst: r_fb,
             r_obj: r_b,
-            field_idx,
+            field_token,
         });
 
         // Compare equal, then NOT to get "this field differs"

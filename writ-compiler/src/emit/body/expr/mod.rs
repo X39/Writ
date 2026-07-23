@@ -216,7 +216,7 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
                     let r_obj = emit_expr(emitter, receiver);
                     let receiver_def_id = extract_type_def_id(emitter, receiver.ty())
                         .expect("checked field assignment must have a nominal receiver type");
-                    let field_idx = emitter
+                    let field_token = emitter
                         .builder
                         .field_token_by_name(receiver_def_id, field)
                         .unwrap_or_else(|| {
@@ -224,7 +224,7 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
                         });
                     emitter.emit(Instruction::SetField {
                         r_obj,
-                        field_idx,
+                        field_token,
                         r_val,
                     });
                     r_val
@@ -564,7 +564,7 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
             let r_obj = emit_expr(emitter, receiver);
             let receiver_def_id = extract_type_def_id(emitter, receiver.ty())
                 .expect("checked field access must have a nominal receiver type");
-            let field_idx = emitter
+            let field_token = emitter
                 .builder
                 .field_token_by_name(receiver_def_id, field)
                 .unwrap_or_else(|| {
@@ -574,7 +574,7 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
             emitter.emit(Instruction::GetField {
                 r_dst,
                 r_obj,
-                field_idx,
+                field_token,
             });
             r_dst
         }

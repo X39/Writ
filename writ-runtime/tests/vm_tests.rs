@@ -35,6 +35,10 @@ fn typedef_token(index: u32) -> u32 {
     0x0200_0000 | (index + 1)
 }
 
+fn fielddef_token(index: u32) -> u32 {
+    0x0500_0000 | (index + 1)
+}
+
 /// Build a module with one type and one method containing the given instructions.
 /// `reg_count` specifies how many registers the method body has.
 /// Returns a Runtime ready for spawning tasks.
@@ -1261,13 +1265,13 @@ fn get_set_field_round_trip() {
             },
             Instruction::SetField {
                 r_obj: 0,
-                field_idx: 0,
+                field_token: 0x0500_0001,
                 r_val: 1,
             },
             Instruction::GetField {
                 r_dst: 2,
                 r_obj: 0,
-                field_idx: 0,
+                field_token: 0x0500_0001,
             },
             Instruction::Ret { r_src: 2 },
         ]),
@@ -1282,6 +1286,183 @@ fn get_set_field_round_trip() {
     rt.tick(0.0, ExecutionLimit::None);
 
     assert_eq!(rt.return_value(tid), Some(Value::Int(42)));
+}
+
+#[test]
+fn fielddef_token_uses_absolute_row_and_owner_local_offset() {
+    let mut builder = ModuleBuilder::new("test");
+    builder.add_type_def("First", "", TypeDefKind::Struct, 0);
+    builder.add_field_def("first", &[0x01], 0);
+    builder.add_type_def("Second", "", TypeDefKind::Struct, 0);
+    builder.add_field_def("second_0", &[0x01], 0);
+    builder.add_field_def("second_1", &[0x01], 0);
+
+    let body = MethodBody {
+        register_types: vec![0; 3],
+        code: encode(&[
+            Instruction::New {
+                r_dst: 0,
+                type_idx: typedef_token(1),
+            },
+            Instruction::LoadInt {
+                r_dst: 1,
+                value: 73,
+            },
+            Instruction::SetField {
+                r_obj: 0,
+                field_token: fielddef_token(2),
+                r_val: 1,
+            },
+            Instruction::GetField {
+                r_dst: 2,
+                r_obj: 0,
+                field_token: fielddef_token(2),
+            },
+            Instruction::Ret { r_src: 2 },
+        ]),
+        debug_locals: vec![],
+        source_spans: vec![],
+    };
+    builder.add_method("main", &[0], 0, 3, body);
+
+    let mut runtime = RuntimeBuilder::new(builder.build()).build().unwrap();
+    let task_id = runtime.spawn_task(0, vec![]).unwrap();
+    runtime.tick(0.0, ExecutionLimit::None);
+
+    assert_eq!(runtime.task_state(task_id), Some(TaskState::Completed));
+    assert_eq!(runtime.return_value(task_id), Some(Value::Int(73)));
+}
+
+#[test]
+fn forged_get_field_tokens_crash_the_current_task() {
+    let cases = [
+        (0, "null"),
+        (1, "table 0"),
+        (0x0500_0000, "row zero"),
+        (typedef_token(0), "table 2"),
+        (fielddef_token(1), "out of range"),
+    ];
+
+    for (field_token, description) in cases {
+        let mut runtime = build_runtime_with_type(
+            "MyStruct",
+            TypeDefKind::Struct,
+            1,
+            &[
+                Instruction::New {
+                    r_dst: 0,
+                    type_idx: typedef_token(0),
+                },
+                Instruction::GetField {
+                    r_dst: 1,
+                    r_obj: 0,
+                    field_token,
+                },
+                Instruction::Ret { r_src: 1 },
+            ],
+            2,
+        );
+        let task_id = runtime.spawn_task(0, vec![]).unwrap();
+        runtime.tick(0.0, ExecutionLimit::None);
+
+        assert_eq!(
+            runtime.task_state(task_id),
+            Some(TaskState::Cancelled),
+            "{description} field token must crash the task"
+        );
+        assert!(
+            runtime.crash_info(task_id).is_some(),
+            "{description} field token must record crash information"
+        );
+    }
+}
+
+#[test]
+fn forged_set_field_tokens_crash_the_current_task() {
+    let cases = [
+        (0, "null"),
+        (1, "table 0"),
+        (0x0500_0000, "row zero"),
+        (typedef_token(0), "table 2"),
+        (fielddef_token(1), "out of range"),
+    ];
+
+    for (field_token, description) in cases {
+        let mut runtime = build_runtime_with_type(
+            "MyStruct",
+            TypeDefKind::Struct,
+            1,
+            &[
+                Instruction::New {
+                    r_dst: 0,
+                    type_idx: typedef_token(0),
+                },
+                Instruction::LoadInt {
+                    r_dst: 1,
+                    value: 99,
+                },
+                Instruction::SetField {
+                    r_obj: 0,
+                    field_token,
+                    r_val: 1,
+                },
+                Instruction::RetVoid,
+            ],
+            2,
+        );
+        let task_id = runtime.spawn_task(0, vec![]).unwrap();
+        runtime.tick(0.0, ExecutionLimit::None);
+
+        assert_eq!(
+            runtime.task_state(task_id),
+            Some(TaskState::Cancelled),
+            "{description} field token must crash the task"
+        );
+        assert!(
+            runtime.crash_info(task_id).is_some(),
+            "{description} field token must record crash information"
+        );
+    }
+}
+
+#[test]
+fn field_token_owner_mismatch_crashes_the_current_task() {
+    let mut builder = ModuleBuilder::new("test");
+    builder.add_type_def("First", "", TypeDefKind::Struct, 0);
+    builder.add_field_def("first", &[0x01], 0);
+    builder.add_type_def("Second", "", TypeDefKind::Struct, 0);
+    builder.add_field_def("second", &[0x01], 0);
+
+    let body = MethodBody {
+        register_types: vec![0; 2],
+        code: encode(&[
+            Instruction::New {
+                r_dst: 0,
+                type_idx: typedef_token(1),
+            },
+            Instruction::GetField {
+                r_dst: 1,
+                r_obj: 0,
+                field_token: fielddef_token(0),
+            },
+            Instruction::Ret { r_src: 1 },
+        ]),
+        debug_locals: vec![],
+        source_spans: vec![],
+    };
+    builder.add_method("main", &[0], 0, 2, body);
+
+    let mut runtime = RuntimeBuilder::new(builder.build()).build().unwrap();
+    let task_id = runtime.spawn_task(0, vec![]).unwrap();
+    runtime.tick(0.0, ExecutionLimit::None);
+
+    assert_eq!(runtime.task_state(task_id), Some(TaskState::Cancelled));
+    let crash = runtime.crash_info(task_id).expect("owner mismatch crash");
+    assert!(
+        crash.message.contains("owner mismatch"),
+        "unexpected crash message: {}",
+        crash.message
+    );
 }
 
 // ── Array Tests ──────────────────────────────────────────────────
@@ -2364,14 +2545,14 @@ fn test_get_set_field_inline_struct() {
             // r0.field[0] = r1
             Instruction::SetField {
                 r_obj: 0,
-                field_idx: 0,
+                field_token: 0x0500_0001,
                 r_val: 1,
             },
             // r2 = r0.field[0]
             Instruction::GetField {
                 r_dst: 2,
                 r_obj: 0,
-                field_idx: 0,
+                field_token: 0x0500_0001,
             },
             Instruction::Ret { r_src: 2 },
         ],
@@ -2405,14 +2586,14 @@ fn test_get_set_field_class_ref() {
             // r0.field[1] = r1
             Instruction::SetField {
                 r_obj: 0,
-                field_idx: 1,
+                field_token: 0x0500_0002,
                 r_val: 1,
             },
             // r2 = r0.field[1]
             Instruction::GetField {
                 r_dst: 2,
                 r_obj: 0,
-                field_idx: 1,
+                field_token: 0x0500_0002,
             },
             Instruction::Ret { r_src: 2 },
         ],
@@ -2447,7 +2628,7 @@ fn test_box_unbox_inline_struct() {
             // r0.field[0] = 77
             Instruction::SetField {
                 r_obj: 0,
-                field_idx: 0,
+                field_token: 0x0500_0001,
                 r_val: 1,
             },
             // r2 = Box(r0) — heap allocates Boxed(Value::Struct{...})
@@ -2461,7 +2642,7 @@ fn test_box_unbox_inline_struct() {
             Instruction::GetField {
                 r_dst: 4,
                 r_obj: 3,
-                field_idx: 0,
+                field_token: 0x0500_0001,
             },
             Instruction::Ret { r_src: 4 },
         ],

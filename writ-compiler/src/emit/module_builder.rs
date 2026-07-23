@@ -487,8 +487,29 @@ impl ModuleBuilder {
         name: &str,
         type_signature: &[u8],
     ) -> usize {
-        let row = self
-            .field_refs
+        let row = self.add_field_ref_row(parent, name, type_signature);
+
+        let identity = (owner_def_id, name.to_owned());
+        if let Some(previous) = self.field_ref_by_owner_name.insert(identity, row) {
+            assert_eq!(
+                previous, row,
+                "ambiguous imported field identity for `{name}`"
+            );
+        }
+        row
+    }
+
+    /// Add or reuse a FieldRef row without binding a source-level owner.
+    ///
+    /// Runtime-provided lowering paths that identify a field by its metadata
+    /// parent and name use this directly.
+    pub fn add_field_ref_row(
+        &mut self,
+        parent: MetadataToken,
+        name: &str,
+        type_signature: &[u8],
+    ) -> usize {
+        self.field_refs
             .iter()
             .position(|field_ref| {
                 field_ref.parent == parent
@@ -505,16 +526,7 @@ impl ModuleBuilder {
                     type_sig,
                 });
                 self.field_refs.len() - 1
-            });
-
-        let identity = (owner_def_id, name.to_owned());
-        if let Some(previous) = self.field_ref_by_owner_name.insert(identity, row) {
-            assert_eq!(
-                previous, row,
-                "ambiguous imported field identity for `{name}`"
-            );
-        }
-        row
+            })
     }
 
     /// Add a MethodDef row, optionally under a parent TypeDef.
@@ -1216,8 +1228,8 @@ impl ModuleBuilder {
 
     /// Look up a field operand by parent type DefId and field name.
     ///
-    /// Local fields retain their historical 0-based object-layout ordinal.
-    /// Imported fields return an encoded table-6 FieldRef token.
+    /// Local fields return an encoded table-5 FieldDef token. Imported fields
+    /// return an encoded table-6 FieldRef token.
     ///
     /// Returns None if the type is not registered or the field is not found.
     pub fn field_token_by_name(&self, parent_def_id: DefId, field_name: &str) -> Option<u32> {
@@ -1227,14 +1239,14 @@ impl ModuleBuilder {
             .position(|id| id.as_ref() == Some(&parent_def_id))
         {
             let parent_handle = TypeDefHandle(parent_idx);
-            let mut local_idx = 0u32;
-            for entry in self.field_defs.iter() {
+            for (field_idx, entry) in self.field_defs.iter().enumerate() {
                 if entry.parent == parent_handle {
                     let name_in_heap = self.string_heap.get_str(entry.row.name);
                     if name_in_heap == field_name {
-                        return Some(local_idx);
+                        return Some(
+                            MetadataToken::new(TableId::FieldDef, (field_idx + 1) as u32).0,
+                        );
                     }
-                    local_idx += 1;
                 }
             }
         }
@@ -1592,18 +1604,38 @@ impl ModuleBuilder {
             .position(|td| self.string_heap.get_str(td.name) == closure_type_name)?;
         let parent_handle = TypeDefHandle(parent_idx);
 
-        // Return a 0-based local field index within the closure type.
-        let mut local_idx = 0u32;
-        for entry in self.field_defs.iter() {
+        // Return the absolute, 1-based FieldDef metadata token.
+        for (field_idx, entry) in self.field_defs.iter().enumerate() {
             if entry.parent == parent_handle {
                 let name_in_heap = self.string_heap.get_str(entry.row.name);
                 if name_in_heap == field_name {
-                    return Some(local_idx);
+                    return Some(MetadataToken::new(TableId::FieldDef, (field_idx + 1) as u32).0);
                 }
-                local_idx += 1;
             }
         }
         None
+    }
+
+    /// Look up an imported field token by the referenced type and field names.
+    ///
+    /// This is used by lowering for runtime-provided types such as `Range<T>`,
+    /// whose fields have no source-level `DefId` at the lowering site.
+    pub fn imported_field_token_by_type_name(
+        &self,
+        type_name: &str,
+        field_name: &str,
+    ) -> Option<u32> {
+        let parent_row = self
+            .type_refs
+            .iter()
+            .position(|type_ref| self.string_heap.get_str(type_ref.name) == type_name)?;
+        let parent = MetadataToken::new(TableId::TypeRef, (parent_row + 1) as u32);
+        self.field_refs
+            .iter()
+            .position(|field_ref| {
+                field_ref.parent == parent && self.string_heap.get_str(field_ref.name) == field_name
+            })
+            .map(|field_row| MetadataToken::new(TableId::FieldRef, (field_row + 1) as u32).0)
     }
 
     // =========================================================================
@@ -1905,6 +1937,55 @@ mod tests {
                 parent, None, "identity", &signature, false,
             ),
             Some(MetadataToken::new(TableId::MethodRef, (static_method + 1) as u32).0)
+        );
+    }
+
+    #[test]
+    fn local_field_lookup_returns_absolute_fielddef_tokens() {
+        let span = SimpleSpan::new((), 0..0);
+        let mut def_map = DefMap::new();
+        let first_id = def_map.arena.alloc(DefEntry {
+            id: None,
+            kind: DefKind::Struct,
+            vis: DefVis::Pub,
+            file_id: FileId(0),
+            namespace: "test".to_string(),
+            name: "First".to_string(),
+            name_span: span,
+            generics: vec![],
+            span,
+        });
+        let second_id = def_map.arena.alloc(DefEntry {
+            id: None,
+            kind: DefKind::Struct,
+            vis: DefVis::Pub,
+            file_id: FileId(0),
+            namespace: "test".to_string(),
+            name: "Second".to_string(),
+            name_span: span,
+            generics: vec![],
+            span,
+        });
+
+        let mut builder = ModuleBuilder::new();
+        let first = builder.add_typedef("First", "test", TypeDefKind::Struct, 0, Some(first_id));
+        builder.add_fielddef(first, "first", 0, 0);
+        let second = builder.add_typedef("Second", "test", TypeDefKind::Struct, 0, Some(second_id));
+        builder.add_fielddef(second, "second_0", 0, 0);
+        builder.add_fielddef(second, "second_1", 0, 0);
+        builder.finalize();
+
+        assert_eq!(
+            builder.field_token_by_name(first_id, "first"),
+            Some(MetadataToken::new(TableId::FieldDef, 1).0)
+        );
+        assert_eq!(
+            builder.field_token_by_name(second_id, "second_0"),
+            Some(MetadataToken::new(TableId::FieldDef, 2).0)
+        );
+        assert_eq!(
+            builder.field_token_by_name(second_id, "second_1"),
+            Some(MetadataToken::new(TableId::FieldDef, 3).0)
         );
     }
 }

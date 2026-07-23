@@ -42,7 +42,7 @@ fn call_virt_places_receiver_in_callee_register_zero() {
                 Instruction::GetField {
                     r_dst: 1,
                     r_obj: 0,
-                    field_idx: 0,
+                    field_token: 0x0500_0001,
                 },
                 Instruction::Ret { r_src: 1 },
             ],
@@ -67,7 +67,7 @@ fn call_virt_places_receiver_in_callee_register_zero() {
                 },
                 Instruction::SetField {
                     r_obj: 0,
-                    field_idx: 0,
+                    field_token: 0x0500_0001,
                     r_val: 1,
                 },
                 Instruction::CallVirt {

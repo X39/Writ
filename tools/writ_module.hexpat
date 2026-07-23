@@ -664,17 +664,23 @@ struct ILInstruction {
         u16 n;
         s32 offsets[n];
     }
-    else if (op == Opcode::GET_FIELD || op == Opcode::GET_COMPONENT) {
-        // 10B: r_dst, r_obj, field_idx(u32)
+    else if (op == Opcode::GET_FIELD) {
+        // 10B: r_dst, r_obj, field_token(u32; FieldDef or FieldRef)
         u16 r_dst;
         u16 r_obj;
-        u32 field_idx   [[format("format_token")]];
+        u32 field_token [[format("format_token")]];
     }
     else if (op == Opcode::SET_FIELD) {
-        // 10B: r_obj, field_idx(u32), r_val
+        // 10B: r_obj, field_token(u32; FieldDef or FieldRef), r_val
         u16 r_obj;
-        u32 field_idx   [[format("format_token")]];
+        u32 field_token [[format("format_token")]];
         u16 r_val;
+    }
+    else if (op == Opcode::GET_COMPONENT) {
+        // 10B: r_dst, r_entity, component_type(u32)
+        u16 r_dst;
+        u16 r_entity;
+        u32 component_type [[format("format_token")]];
     }
     else if (op == Opcode::ARRAY_INIT) {
         // 12B: r_dst, elem_type(u32), count, r_base

@@ -792,13 +792,15 @@ pub(in crate::emit) fn emit_all_bodies_excluding(
             let r_self = 0;
             for (cap_name, cap_ty) in &info.captures_info {
                 let r_cap = emitter.alloc_reg(*cap_ty);
-                let field_idx = builder
+                let field_token = builder
                     .field_token_by_name_on_closure(&closure_name, cap_name)
-                    .unwrap_or(0);
+                    .unwrap_or_else(|| {
+                        panic!("checked closure capture `{cap_name}` has no FieldDef token")
+                    });
                 emitter.emit(Instruction::GetField {
                     r_dst: r_cap,
                     r_obj: r_self,
-                    field_idx,
+                    field_token,
                 });
                 emitter.locals.insert(cap_name.clone(), r_cap);
             }

@@ -109,8 +109,8 @@ fn resolve_field_target(
     object: Value,
     field_operand: u32,
 ) -> Result<(crate::value::HeapRef, usize), String> {
-    let (href, entity_identity) = match object {
-        Value::Struct { href, .. } | Value::Ref(href) => (href, None),
+    let (href, entity_identity, is_entity) = match object {
+        Value::Struct { href, .. } | Value::Ref(href) => (href, None, false),
         Value::Entity(entity) => {
             let href = ctx
                 .entity_registry
@@ -121,7 +121,7 @@ fn resolve_field_target(
                 .entity_registry
                 .get_type_identity(entity)
                 .map_err(|error| format!("invalid entity receiver: {error}"))?;
-            (href, identity)
+            (href, identity, true)
         }
         other => {
             return Err(format!(
@@ -131,64 +131,132 @@ fn resolve_field_target(
     };
 
     let token = writ_module::MetadataToken(field_operand);
-    if token.table_id() != writ_module::tables::TableId::FieldRef.as_u8() {
-        return Ok((href, field_operand as usize));
+    if token.is_null() {
+        return Err("null field token".into());
     }
-
     let row = token
         .row_index()
         .and_then(|row| row.checked_sub(1))
-        .ok_or_else(|| "null FieldRef token".to_string())?;
-    let resolved = ctx.modules[ctx.current_module_idx]
-        .resolved_refs
-        .fields
-        .get(&row)
-        .ok_or_else(|| format!("unresolved FieldRef row {row}"))?;
+        .ok_or_else(|| format!("field token 0x{field_operand:08x} has row zero"))?
+        as usize;
+
+    let (target_module_idx, owner_type_idx, field_def_idx, field_offset) =
+        match writ_module::tables::TableId::from_u8(token.table_id()) {
+            Some(writ_module::tables::TableId::FieldDef) => {
+                let location = ctx.modules[ctx.current_module_idx]
+                    .field_def_locations
+                    .get(row)
+                    .ok_or_else(|| format!("FieldDef row {} is out of range", row + 1))?;
+                (
+                    ctx.current_module_idx,
+                    location.owner_type_idx,
+                    row,
+                    location.field_offset,
+                )
+            }
+            Some(writ_module::tables::TableId::FieldRef) => {
+                let current_module = &ctx.modules[ctx.current_module_idx];
+                current_module
+                    .module
+                    .field_refs
+                    .get(row)
+                    .ok_or_else(|| format!("FieldRef row {} is out of range", row + 1))?;
+                let resolved = current_module
+                    .resolved_refs
+                    .fields
+                    .get(&(row as u32))
+                    .ok_or_else(|| format!("unresolved FieldRef row {}", row + 1))?;
+                let target_module = ctx.modules.get(resolved.module_idx).ok_or_else(|| {
+                    format!(
+                        "FieldRef row {} resolved to missing module {}",
+                        row + 1,
+                        resolved.module_idx
+                    )
+                })?;
+                let location = target_module
+                    .field_def_locations
+                    .get(resolved.field_idx)
+                    .ok_or_else(|| {
+                        format!(
+                            "FieldRef row {} resolved to out-of-range FieldDef row {}",
+                            row + 1,
+                            resolved.field_idx + 1
+                        )
+                    })?;
+                if location.owner_type_idx != resolved.owner_type_idx
+                    || location.field_offset != resolved.field_offset
+                {
+                    return Err(format!(
+                        "FieldRef row {} resolved to inconsistent field metadata",
+                        row + 1
+                    ));
+                }
+                (
+                    resolved.module_idx,
+                    resolved.owner_type_idx,
+                    resolved.field_idx,
+                    resolved.field_offset,
+                )
+            }
+            _ => {
+                return Err(format!(
+                    "field token 0x{field_operand:08x} uses table {}; expected FieldDef (5) or FieldRef (6)",
+                    token.table_id()
+                ));
+            }
+        };
+    debug_assert!(
+        ctx.modules[target_module_idx]
+            .module
+            .field_defs
+            .get(field_def_idx)
+            .is_some()
+    );
 
     let expected_identity = crate::entity::EntityTypeIdentity {
-        module_idx: resolved.module_idx,
-        type_def_idx: resolved.owner_type_idx,
+        module_idx: target_module_idx,
+        type_def_idx: owner_type_idx,
     };
     if let Some(actual_identity) = entity_identity {
         if actual_identity != expected_identity {
             return Err(format!(
-                "FieldRef owner mismatch: entity type {:?}, expected {:?}",
+                "field token owner mismatch: entity type {:?}, expected {:?}",
                 actual_identity, expected_identity
             ));
         }
-        return Ok((href, resolved.field_offset));
+        return Ok((href, field_offset));
     }
-    if matches!(object, Value::Entity(_)) {
-        return Err("FieldRef entity receiver has no canonical type identity".into());
+    if is_entity {
+        return Err("field-token entity receiver has no canonical type identity".into());
     }
 
     match ctx.heap.get_object(href) {
         Ok(HeapObject::Struct { type_key, .. }) if *type_key != u32::MAX => {
-            let expected = ((resolved.module_idx as u32) << 16) | resolved.owner_type_idx as u32;
+            let expected = ((target_module_idx as u32) << 16) | owner_type_idx as u32;
             if *type_key != expected {
                 return Err(format!(
-                    "FieldRef owner mismatch: object type key 0x{type_key:08x}, expected 0x{expected:08x}"
+                    "field token owner mismatch: object type key 0x{type_key:08x}, expected 0x{expected:08x}"
                 ));
             }
         }
         Ok(HeapObject::Struct { .. }) => {
-            return Err("FieldRef receiver has no canonical type identity".into());
+            return Err("field-token receiver has no canonical type identity".into());
         }
-        Ok(_) => return Err("FieldRef receiver is not a struct or class object".into()),
+        Ok(_) => return Err("field-token receiver is not a struct or class object".into()),
         Err(error) => return Err(error.to_string()),
     }
 
-    Ok((href, resolved.field_offset))
+    Ok((href, field_offset))
 }
 
 pub(super) fn exec_get_field(
     ctx: &mut ExecContext<'_>,
     r_dst: u16,
     r_obj: u16,
-    field_idx: u32,
+    field_token: u32,
 ) -> ExecutionResult {
     let object = ctx.task.call_stack.last().unwrap().registers[r_obj as usize];
-    let (href, field_offset) = match resolve_field_target(ctx, object, field_idx) {
+    let (href, field_offset) = match resolve_field_target(ctx, object, field_token) {
         Ok(target) => target,
         Err(error) => return ExecutionResult::Crash(format!("GetField: {error}")),
     };
@@ -205,13 +273,13 @@ pub(super) fn exec_get_field(
 pub(super) fn exec_set_field(
     ctx: &mut ExecContext<'_>,
     r_obj: u16,
-    field_idx: u32,
+    field_token: u32,
     r_val: u16,
 ) -> ExecutionResult {
     let frame = ctx.task.call_stack.last().unwrap();
     let object = frame.registers[r_obj as usize];
     let val = frame.registers[r_val as usize];
-    let (href, field_offset) = match resolve_field_target(ctx, object, field_idx) {
+    let (href, field_offset) = match resolve_field_target(ctx, object, field_token) {
         Ok(target) => target,
         Err(error) => return ExecutionResult::Crash(format!("SetField: {error}")),
     };

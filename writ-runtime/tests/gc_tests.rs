@@ -448,7 +448,7 @@ fn gc_class_containing_array_field_survives() {
             // r0.field[0] = r1 (store array ref as class field)
             Instruction::SetField {
                 r_obj: 0,
-                field_idx: 0,
+                field_token: 0x0500_0001,
                 r_val: 1,
             },
             // Store class ref in global so it's a GC root after task completes

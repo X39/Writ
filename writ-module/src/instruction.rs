@@ -181,16 +181,16 @@ pub enum Instruction {
     // ── 0x08 Object Model ──────────────────────────────────────
     /// 0x0800 — Shape RI32 (8B)
     New { r_dst: u16, type_idx: u32 },
-    /// 0x0801 — var (10B): u16(op) u16(r_dst) u16(r_obj) u32(field_idx)
+    /// 0x0801 — var (10B): u16(op) u16(r_dst) u16(r_obj) u32(field_token)
     GetField {
         r_dst: u16,
         r_obj: u16,
-        field_idx: u32,
+        field_token: u32,
     },
-    /// 0x0802 — var (10B): u16(op) u16(r_obj) u32(field_idx) u16(r_val)
+    /// 0x0802 — var (10B): u16(op) u16(r_obj) u32(field_token) u16(r_val)
     SetField {
         r_obj: u16,
-        field_idx: u32,
+        field_token: u32,
         r_val: u16,
     },
     /// 0x0803 — Shape RI32 (8B)
@@ -908,19 +908,19 @@ impl Instruction {
             Instruction::GetField {
                 r_dst,
                 r_obj,
-                field_idx,
+                field_token,
             } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u16::<LittleEndian>(*r_obj)?;
-                w.write_u32::<LittleEndian>(*field_idx)?;
+                w.write_u32::<LittleEndian>(*field_token)?;
             }
             Instruction::SetField {
                 r_obj,
-                field_idx,
+                field_token,
                 r_val,
             } => {
                 w.write_u16::<LittleEndian>(*r_obj)?;
-                w.write_u32::<LittleEndian>(*field_idx)?;
+                w.write_u32::<LittleEndian>(*field_token)?;
                 w.write_u16::<LittleEndian>(*r_val)?;
             }
             Instruction::GetComponent {
@@ -1298,20 +1298,20 @@ impl Instruction {
             0x0801 => {
                 let r_dst = r.read_u16::<LittleEndian>()?;
                 let r_obj = r.read_u16::<LittleEndian>()?;
-                let field_idx = r.read_u32::<LittleEndian>()?;
+                let field_token = r.read_u32::<LittleEndian>()?;
                 Ok(Instruction::GetField {
                     r_dst,
                     r_obj,
-                    field_idx,
+                    field_token,
                 })
             }
             0x0802 => {
                 let r_obj = r.read_u16::<LittleEndian>()?;
-                let field_idx = r.read_u32::<LittleEndian>()?;
+                let field_token = r.read_u32::<LittleEndian>()?;
                 let r_val = r.read_u16::<LittleEndian>()?;
                 Ok(Instruction::SetField {
                     r_obj,
-                    field_idx,
+                    field_token,
                     r_val,
                 })
             }

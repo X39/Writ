@@ -219,10 +219,10 @@ fn xmod_field_access() {
     let mut cursor = std::io::Cursor::new(&user_module.method_bodies[method_idx].code);
     let mut operand = None;
     while (cursor.position() as usize) < user_module.method_bodies[method_idx].code.len() {
-        if let writ_module::Instruction::GetField { field_idx, .. } =
+        if let writ_module::Instruction::GetField { field_token, .. } =
             writ_module::Instruction::decode(&mut cursor).unwrap()
         {
-            operand = Some(field_idx);
+            operand = Some(field_token);
         }
     }
     assert_eq!(operand, Some(expected_operand));

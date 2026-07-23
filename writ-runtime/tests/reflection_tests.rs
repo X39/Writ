@@ -414,7 +414,7 @@ fn test_field_info_get() {
             },
             Instruction::SetField {
                 r_obj: 0,
-                field_idx: 0,
+                field_token: 0x0500_0001,
                 r_val: 1,
             }, // x = 10
             Instruction::LoadInt {
@@ -423,7 +423,7 @@ fn test_field_info_get() {
             },
             Instruction::SetField {
                 r_obj: 0,
-                field_idx: 1,
+                field_token: 0x0500_0002,
                 r_val: 2,
             }, // y = 20
             // r3 = TypeOf Point
@@ -965,7 +965,7 @@ fn test_gc_survival_after_reflection_ops() {
             },
             Instruction::SetField {
                 r_obj: 0,
-                field_idx: 0,
+                field_token: 0x0500_0001,
                 r_val: 1,
             }, // a = 77
             // r2 = TypeOf Sample
@@ -1725,7 +1725,7 @@ fn test_field_info_set_mut_field() {
             },
             Instruction::SetField {
                 r_obj: 0,
-                field_idx: 0,
+                field_token: 0x0500_0001,
                 r_val: 1,
             },
             // r2 = TypeOf Counter
@@ -1770,7 +1770,7 @@ fn test_field_info_set_mut_field() {
             Instruction::GetField {
                 r_dst: 8,
                 r_obj: 0,
-                field_idx: 0,
+                field_token: 0x0500_0001,
             },
             Instruction::Ret { r_src: 8 },
         ]),
@@ -1829,7 +1829,7 @@ fn test_field_info_set_readonly_crashes() {
             },
             Instruction::SetField {
                 r_obj: 0,
-                field_idx: 0,
+                field_token: 0x0500_0001,
                 r_val: 1,
             },
             // r2 = TypeOf Frozen
@@ -2010,7 +2010,7 @@ fn test_method_info_invoke_executes_method() {
             // r0.data = r1
             Instruction::SetField {
                 r_obj: 0,
-                field_idx: 0,
+                field_token: 0x0500_0001,
                 r_val: 1,
             },
             Instruction::RetVoid,
@@ -2042,7 +2042,7 @@ fn test_method_info_invoke_executes_method() {
             Instruction::LoadInt { r_dst: 1, value: 0 },
             Instruction::SetField {
                 r_obj: 0,
-                field_idx: 0,
+                field_token: 0x0500_0001,
                 r_val: 1,
             },
             // r2 = TypeOf Widget
@@ -2101,7 +2101,7 @@ fn test_method_info_invoke_executes_method() {
             Instruction::GetField {
                 r_dst: 9,
                 r_obj: 0,
-                field_idx: 0,
+                field_token: 0x0500_0001,
             },
             Instruction::Ret { r_src: 9 },
         ]),
@@ -2404,7 +2404,7 @@ fn test_method_info_invoke_cooperative_scheduling() {
             },
             Instruction::SetField {
                 r_obj: 0,
-                field_idx: 0,
+                field_token: 0x0500_0001,
                 r_val: 1,
             },
             Instruction::RetVoid,
@@ -2433,7 +2433,7 @@ fn test_method_info_invoke_cooperative_scheduling() {
             Instruction::LoadInt { r_dst: 1, value: 0 },
             Instruction::SetField {
                 r_obj: 0,
-                field_idx: 0,
+                field_token: 0x0500_0001,
                 r_val: 1,
             },
             Instruction::TypeOf {
@@ -2470,7 +2470,7 @@ fn test_method_info_invoke_cooperative_scheduling() {
             Instruction::GetField {
                 r_dst: 1,
                 r_obj: 0,
-                field_idx: 0,
+                field_token: 0x0500_0001,
             },
             Instruction::Ret { r_src: 1 },
         ]),

@@ -5,7 +5,7 @@ use crate::heap;
 use crate::tables::*;
 
 /// Current binary module format version.
-pub const FORMAT_VERSION: u16 = 8;
+pub const FORMAT_VERSION: u16 = 9;
 
 /// The 200-byte header of a binary module file.
 #[derive(Debug, Clone)]

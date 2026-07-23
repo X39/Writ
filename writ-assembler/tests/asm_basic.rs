@@ -148,3 +148,47 @@ fn test_typeof_assembles() {
     // TYPEOF is 8 bytes (RI32 shape) + RET_VOID is 2 bytes = 10 bytes
     assert_eq!(module.method_bodies[0].code.len(), 10);
 }
+
+#[test]
+fn field_operands_assemble_as_metadata_tokens() {
+    use std::io::Cursor;
+    use writ_module::Instruction;
+
+    let src = r#"
+.module "test" "1.0.0" {
+    .type "First" struct {
+        .field "first" int pub
+    }
+    .type "Second" struct {
+        .field "second_0" int pub
+        .field "second_1" int pub
+    }
+    .method "main" () -> void {
+        .reg r0 int
+        .reg r1 int
+        GET_FIELD r0, r1, Second::second_1
+        SET_FIELD r1, token(83886083), r0
+        RET_VOID
+    }
+}
+"#;
+    let module = writ_assembler::assemble(src).expect("should assemble field tokens");
+    let mut cursor = Cursor::new(module.method_bodies[0].code.as_slice());
+
+    assert_eq!(
+        Instruction::decode(&mut cursor).unwrap(),
+        Instruction::GetField {
+            r_dst: 0,
+            r_obj: 1,
+            field_token: 0x0500_0003,
+        }
+    );
+    assert_eq!(
+        Instruction::decode(&mut cursor).unwrap(),
+        Instruction::SetField {
+            r_obj: 1,
+            field_token: 0x0500_0003,
+            r_val: 0,
+        }
+    );
+}

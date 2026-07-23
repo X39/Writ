@@ -379,13 +379,18 @@ pub fn emit_lambda(
             // Load capture from local or use 0 if not found
             let r_cap = emitter.locals.get(&cap.name).copied().unwrap_or(0);
             // Look up field token
-            let field_idx = emitter
+            let field_token = emitter
                 .builder
                 .field_token_by_name_on_closure(&closure_name, &cap.name)
-                .unwrap_or(0);
+                .unwrap_or_else(|| {
+                    panic!(
+                        "checked closure capture `{}` has no FieldDef token",
+                        cap.name
+                    )
+                });
             emitter.emit(Instruction::SetField {
                 r_obj: r_env,
-                field_idx,
+                field_token,
                 r_val: r_cap,
             });
         }

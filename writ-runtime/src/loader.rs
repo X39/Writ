@@ -1,7 +1,7 @@
 use rustc_hash::FxHashMap;
 use std::io::Cursor;
 
-use writ_module::{Instruction, Module};
+use writ_module::{FORMAT_VERSION, Instruction, Module};
 
 use crate::domain::ResolvedRefs;
 use crate::error::RuntimeError;
@@ -20,12 +20,30 @@ pub struct LoadedModule {
     pub byte_offsets: Vec<Vec<u32>>,
     /// Cross-module reference resolution results. Populated by Domain::resolve_refs().
     pub resolved_refs: ResolvedRefs,
+    /// Absolute FieldDef row index -> declaring TypeDef and local object-layout offset.
+    ///
+    /// Built and validated once at load time so field instructions never infer
+    /// ownership from an unchecked ordinal while executing.
+    pub field_def_locations: Vec<FieldDefLocation>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FieldDefLocation {
+    pub owner_type_idx: usize,
+    pub field_offset: usize,
 }
 
 impl LoadedModule {
     /// Decode all method bodies from raw code bytes into `Vec<Instruction>`,
     /// converting branch byte offsets to instruction indices.
     pub fn from_module(module: Module) -> Result<Self, RuntimeError> {
+        if module.header.format_version != FORMAT_VERSION {
+            return Err(RuntimeError::LoadError(format!(
+                "unsupported format version: {} (expected {})",
+                module.header.format_version, FORMAT_VERSION
+            )));
+        }
+        let field_def_locations = build_field_def_locations(&module)?;
         let mut decoded_bodies = Vec::with_capacity(module.method_bodies.len());
         let mut byte_offsets_all = Vec::with_capacity(module.method_bodies.len());
         for (method_idx, body) in module.method_bodies.iter().enumerate() {
@@ -38,8 +56,73 @@ impl LoadedModule {
             decoded_bodies,
             byte_offsets: byte_offsets_all,
             resolved_refs: ResolvedRefs::new(),
+            field_def_locations,
         })
     }
+}
+
+fn build_field_def_locations(module: &Module) -> Result<Vec<FieldDefLocation>, RuntimeError> {
+    let field_count = module.field_defs.len();
+    if module.type_defs.is_empty() {
+        return if field_count == 0 {
+            Ok(Vec::new())
+        } else {
+            Err(RuntimeError::LoadError(
+                "FieldDef rows exist without an owning TypeDef".into(),
+            ))
+        };
+    }
+
+    let mut starts = Vec::with_capacity(module.type_defs.len());
+    for (type_idx, type_def) in module.type_defs.iter().enumerate() {
+        let start = type_def.field_list.checked_sub(1).ok_or_else(|| {
+            RuntimeError::LoadError(format!(
+                "TypeDef row {} has invalid zero field_list",
+                type_idx + 1
+            ))
+        })? as usize;
+        if start > field_count {
+            return Err(RuntimeError::LoadError(format!(
+                "TypeDef row {} field_list {} exceeds FieldDef row count {}",
+                type_idx + 1,
+                type_def.field_list,
+                field_count
+            )));
+        }
+        if starts.last().is_some_and(|previous| *previous > start) {
+            return Err(RuntimeError::LoadError(format!(
+                "TypeDef row {} field_list is not monotonic",
+                type_idx + 1
+            )));
+        }
+        starts.push(start);
+    }
+
+    if field_count != 0 && starts[0] != 0 {
+        return Err(RuntimeError::LoadError(
+            "FieldDef rows precede the first TypeDef field_list".into(),
+        ));
+    }
+
+    let mut locations = Vec::with_capacity(field_count);
+    for type_idx in 0..module.type_defs.len() {
+        let start = starts[type_idx];
+        let end = starts.get(type_idx + 1).copied().unwrap_or(field_count);
+        for field_idx in start..end {
+            debug_assert_eq!(locations.len(), field_idx);
+            locations.push(FieldDefLocation {
+                owner_type_idx: type_idx,
+                field_offset: field_idx - start,
+            });
+        }
+    }
+    if locations.len() != field_count {
+        return Err(RuntimeError::LoadError(format!(
+            "{} FieldDef row(s) have no owning TypeDef",
+            field_count - locations.len()
+        )));
+    }
+    Ok(locations)
 }
 
 /// Decode raw instruction bytes and reindex branch targets.
@@ -184,7 +267,7 @@ fn decode_and_reindex(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use writ_module::Instruction;
+    use writ_module::{Instruction, ModuleBuilder};
 
     fn encode_instructions(instrs: &[Instruction]) -> Vec<u8> {
         let mut code = Vec::new();
@@ -199,6 +282,35 @@ mod tests {
         let (result, offsets) = decode_and_reindex(&[], 0).unwrap();
         assert!(result.is_empty());
         assert!(offsets.is_empty());
+    }
+
+    #[test]
+    fn rejects_in_memory_module_from_older_format_version() {
+        let mut module = Module::new();
+        module.header.format_version = FORMAT_VERSION - 1;
+
+        match LoadedModule::from_module(module) {
+            Err(RuntimeError::LoadError(message)) => {
+                assert!(message.contains("unsupported format version"));
+            }
+            _ => panic!("older in-memory module must be rejected"),
+        }
+    }
+
+    #[test]
+    fn rejects_zero_typedef_field_list() {
+        let mut builder = ModuleBuilder::new("invalid-field-list");
+        builder.add_type_def("Broken", "", writ_module::tables::TypeDefKind::Struct, 0);
+        builder.add_field_def("field", &[0x01], 0);
+        let mut module = builder.build();
+        module.type_defs[0].field_list = 0;
+
+        match LoadedModule::from_module(module) {
+            Err(RuntimeError::LoadError(message)) => {
+                assert!(message.contains("invalid zero field_list"));
+            }
+            _ => panic!("zero field_list must be rejected"),
+        }
     }
 
     #[test]

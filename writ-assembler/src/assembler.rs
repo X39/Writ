@@ -629,6 +629,90 @@ fn map_instruction(
         }
     };
 
+    let field_token_val = |idx: usize| -> Result<u32, AssembleError> {
+        let raw = match operands.get(idx) {
+            Some(AsmOperand::IntLit(value)) => u32::try_from(*value).map_err(|_| {
+                AssembleError::new(
+                    format!(
+                        "{}: field token at operand {} must be a u32",
+                        upper,
+                        idx + 1
+                    ),
+                    line,
+                    col,
+                )
+            })?,
+            Some(AsmOperand::Token(token)) => *token,
+            Some(AsmOperand::FieldRef(field_ref)) => resolve_field_ref(field_ref, ctx, line, col)?,
+            // Qualified members are syntactically ambiguous while parsing.
+            // GET_FIELD/SET_FIELD provide the field context here.
+            Some(AsmOperand::MethodRef(member_ref)) => {
+                let Some(type_name) = &member_ref.type_name else {
+                    return Err(AssembleError::new(
+                        format!(
+                            "{}: expected a qualified field at operand {}",
+                            upper,
+                            idx + 1
+                        ),
+                        line,
+                        col,
+                    ));
+                };
+                resolve_field_ref(
+                    &AsmFieldRef {
+                        type_name: type_name.clone(),
+                        field_name: member_ref.method_name.clone(),
+                        module_name: member_ref.module_name.clone(),
+                    },
+                    ctx,
+                    line,
+                    col,
+                )?
+            }
+            _ => {
+                return Err(AssembleError::new(
+                    format!(
+                        "{}: expected FieldDef/FieldRef token at operand {}",
+                        upper,
+                        idx + 1
+                    ),
+                    line,
+                    col,
+                ));
+            }
+        };
+        let token = MetadataToken(raw);
+        let row = token.row_index().ok_or_else(|| {
+            AssembleError::new(
+                format!(
+                    "{}: field token at operand {} must have a non-zero row",
+                    upper,
+                    idx + 1
+                ),
+                line,
+                col,
+            )
+        })?;
+        debug_assert_ne!(row, 0);
+        if !matches!(
+            token.table_id(),
+            id if id == writ_module::tables::TableId::FieldDef.as_u8()
+                || id == writ_module::tables::TableId::FieldRef.as_u8()
+        ) {
+            return Err(AssembleError::new(
+                format!(
+                    "{}: field token at operand {} uses table {}; expected FieldDef (5) or FieldRef (6)",
+                    upper,
+                    idx + 1,
+                    token.table_id()
+                ),
+                line,
+                col,
+            ));
+        }
+        Ok(raw)
+    };
+
     // For branch instructions: label ref -> offset placeholder 0, integer literal passes through
     let label_offset = |idx: usize| -> Result<i32, AssembleError> {
         match operands.get(idx) {
@@ -857,11 +941,11 @@ fn map_instruction(
         "GET_FIELD" => Ok(Instruction::GetField {
             r_dst: reg(0)?,
             r_obj: reg(1)?,
-            field_idx: int_lit(2)? as u32,
+            field_token: field_token_val(2)?,
         }),
         "SET_FIELD" => Ok(Instruction::SetField {
             r_obj: reg(0)?,
-            field_idx: int_lit(1)? as u32,
+            field_token: field_token_val(1)?,
             r_val: reg(2)?,
         }),
         "SPAWN_ENTITY" => Ok(Instruction::SpawnEntity {

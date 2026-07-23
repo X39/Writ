@@ -135,3 +135,28 @@ fn undefined_type_in_impl_error() {
         errors
     );
 }
+
+#[test]
+fn field_operands_reject_raw_ordinals_and_non_field_tokens() {
+    for operand in ["0", "1", "token(83886080)", "token(33554433)"] {
+        let src = format!(
+            r#"
+.module "test" "1.0.0" {{
+    .method "main" () -> void {{
+        .reg r0 int
+        GET_FIELD r0, r0, {operand}
+        RET_VOID
+    }}
+}}
+"#
+        );
+        let errors = writ_assembler::assemble(&src)
+            .expect_err(&format!("field operand {operand} should be rejected"));
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("field token")),
+            "field operand {operand} should report a field-token error: {errors:?}"
+        );
+    }
+}

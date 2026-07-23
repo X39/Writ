@@ -434,7 +434,7 @@ fn test_get_field_round_trip() {
     round_trip(&Instruction::GetField {
         r_dst: 0,
         r_obj: 1,
-        field_idx: 0x05_000001,
+        field_token: 0x05_000001,
     });
 }
 
@@ -442,7 +442,7 @@ fn test_get_field_round_trip() {
 fn test_set_field_round_trip() {
     round_trip(&Instruction::SetField {
         r_obj: 1,
-        field_idx: 0x05_000002,
+        field_token: 0x05_000002,
         r_val: 2,
     });
 }
@@ -715,11 +715,11 @@ fn test_all_opcodes_round_trip() {
         Instruction::GetField {
             r_dst: 0,
             r_obj: 1,
-            field_idx: 200,
+            field_token: 0x05_0000C8,
         },
         Instruction::SetField {
             r_obj: 1,
-            field_idx: 300,
+            field_token: 0x05_00012C,
             r_val: 2,
         },
         Instruction::SpawnEntity {

@@ -493,9 +493,9 @@ function decodeOperands(buf, pos, opcode, end) {
   // TAIL_CALL
   if (opcode === 0x0705) return { pos, operands: `0x${u32v().toString(16)}, ${r()}, ${u16v()}` };
   // GET_FIELD
-  if (opcode === 0x0801) return { pos, operands: `${r()}, ${r()}, 0x${u32v().toString(16)}` };
+  if (opcode === 0x0801) return { pos, operands: `${r()}, ${r()}, ${tokenStr(u32v())}` };
   // SET_FIELD
-  if (opcode === 0x0802) return { pos, operands: `${r()}, 0x${u32v().toString(16)}, ${r()}` };
+  if (opcode === 0x0802) return { pos, operands: `${r()}, ${tokenStr(u32v())}, ${r()}` };
   // GET_COMPONENT
   if (opcode === 0x0805) return { pos, operands: `${r()}, ${r()}, 0x${u32v().toString(16)}` };
   // ARRAY_INIT

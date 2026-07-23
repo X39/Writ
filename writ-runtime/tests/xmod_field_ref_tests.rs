@@ -62,9 +62,8 @@ fn compiled_cross_module_second_field_set_and_get_execute() {
     let mut field_operands = Vec::new();
     while (cursor.position() as usize) < user.method_bodies[main].code.len() {
         match Instruction::decode(&mut cursor).expect("decode main instruction") {
-            Instruction::GetField { field_idx, .. } | Instruction::SetField { field_idx, .. } => {
-                field_operands.push(field_idx)
-            }
+            Instruction::GetField { field_token, .. }
+            | Instruction::SetField { field_token, .. } => field_operands.push(field_token),
             _ => {}
         }
     }
@@ -157,7 +156,7 @@ fn fieldref_rejects_an_entity_with_the_wrong_owner() {
                 },
                 Instruction::SetField {
                     r_obj: 0,
-                    field_idx: value_ref.0,
+                    field_token: value_ref.0,
                     r_val: 1,
                 },
                 Instruction::InitEntity { r_entity: 0 },
@@ -177,7 +176,7 @@ fn fieldref_rejects_an_entity_with_the_wrong_owner() {
         .crash_info(task)
         .expect("wrong-owner FieldRef must fail closed");
     assert!(
-        crash.message.contains("FieldRef owner mismatch"),
+        crash.message.contains("field token owner mismatch"),
         "unexpected crash: {}",
         crash.message
     );
@@ -251,13 +250,13 @@ fn fieldref_row_order_is_independent_from_target_field_layout() {
                 },
                 Instruction::SetField {
                     r_obj: 0,
-                    field_idx: second_ref.0,
+                    field_token: second_ref.0,
                     r_val: 1,
                 },
                 Instruction::GetField {
                     r_dst: 2,
                     r_obj: 0,
-                    field_idx: second_ref.0,
+                    field_token: second_ref.0,
                 },
                 Instruction::Ret { r_src: 2 },
             ],

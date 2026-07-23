@@ -19,10 +19,7 @@ use super::emit_expr;
 /// followed by 4 SetField instructions for start, end, start_inclusive, end_inclusive.
 ///
 /// The Range<T> type in writ-runtime has 4 fields (per §1.18):
-///   field 0: start (T)
-///   field 1: end (T)
-///   field 2: start_inclusive (Bool) — always true in Writ syntax
-///   field 3: end_inclusive (Bool)   — true for ..=, false for ..
+/// Each SET_FIELD uses the imported field's table-6 FieldRef token.
 pub(super) fn emit_range(
     emitter: &mut BodyEmitter<'_>,
     ty: Ty,
@@ -36,8 +33,18 @@ pub(super) fn emit_range(
         r_dst: r_range,
         type_idx: range_type_idx,
     });
+    let range_field = |name: &str| {
+        emitter
+            .builder
+            .imported_field_token_by_type_name("Range", name)
+            .unwrap_or_else(|| panic!("writ-runtime Range field `{name}` has no FieldRef token"))
+    };
+    let start_field = range_field("start");
+    let end_field = range_field("end");
+    let start_inclusive_field = range_field("start_inclusive");
+    let end_inclusive_field = range_field("end_inclusive");
 
-    // Field 0: start
+    // Field: start
     let int_ty = Ty(0); // Int is Ty(0) per TyInterner pre-interned ordering
     let r_start = if let Some(s) = start {
         emit_expr(emitter, s)
@@ -48,11 +55,11 @@ pub(super) fn emit_range(
     };
     emitter.emit(Instruction::SetField {
         r_obj: r_range,
-        field_idx: 0,
+        field_token: start_field,
         r_val: r_start,
     });
 
-    // Field 1: end
+    // Field: end
     let r_end = if let Some(e) = end {
         emit_expr(emitter, e)
     } else {
@@ -62,21 +69,21 @@ pub(super) fn emit_range(
     };
     emitter.emit(Instruction::SetField {
         r_obj: r_range,
-        field_idx: 1,
+        field_token: end_field,
         r_val: r_end,
     });
 
-    // Field 2: start_inclusive (always true — Writ ranges always include the start)
+    // Field: start_inclusive (always true — Writ ranges always include the start)
     let bool_ty = Ty(2); // Bool is Ty(2)
     let r_si = emitter.alloc_reg(bool_ty);
     emitter.emit(Instruction::LoadTrue { r_dst: r_si });
     emitter.emit(Instruction::SetField {
         r_obj: r_range,
-        field_idx: 2,
+        field_token: start_inclusive_field,
         r_val: r_si,
     });
 
-    // Field 3: end_inclusive (true for ..=, false for ..)
+    // Field: end_inclusive (true for ..=, false for ..)
     let r_ei = emitter.alloc_reg(bool_ty);
     if inclusive {
         emitter.emit(Instruction::LoadTrue { r_dst: r_ei });
@@ -85,7 +92,7 @@ pub(super) fn emit_range(
     }
     emitter.emit(Instruction::SetField {
         r_obj: r_range,
-        field_idx: 3,
+        field_token: end_inclusive_field,
         r_val: r_ei,
     });
 
@@ -184,7 +191,7 @@ pub(super) fn emit_new(
             // ONLY explicitly-provided fields get SET_FIELD
             for (field_name, field_expr) in fields {
                 let r_val = emit_expr(emitter, field_expr);
-                let field_idx = emitter
+                let field_token = emitter
                     .builder
                     .field_token_by_name(target_def_id, field_name)
                     .unwrap_or_else(|| {
@@ -192,7 +199,7 @@ pub(super) fn emit_new(
                     });
                 emitter.emit(Instruction::SetField {
                     r_obj: r_entity,
-                    field_idx,
+                    field_token,
                     r_val,
                 });
             }
@@ -214,7 +221,7 @@ pub(super) fn emit_new(
             });
             for (field_name, field_expr) in fields {
                 let r_val = emit_expr(emitter, field_expr);
-                let field_idx = emitter
+                let field_token = emitter
                     .builder
                     .field_token_by_name(target_def_id, field_name)
                     .unwrap_or_else(|| {
@@ -222,7 +229,7 @@ pub(super) fn emit_new(
                     });
                 emitter.emit(Instruction::SetField {
                     r_obj,
-                    field_idx,
+                    field_token,
                     r_val,
                 });
             }

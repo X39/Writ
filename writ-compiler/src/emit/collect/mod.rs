@@ -71,16 +71,16 @@ pub fn collect_defs(
     // 2. ModuleRef: preserve normalized dependency order. Public emit entry
     // points guarantee that exactly one of these entries is writ-runtime.
     let library_module_refs = register_library_module_refs(library_modules, builder);
-    let runtime_mod_idx = library_modules
+    let (runtime_module, runtime_mod_idx) = library_modules
         .iter()
         .zip(&library_module_refs)
         .find_map(|(module, &module_ref)| {
-            crate::core_library::is_core_module(module).then_some(module_ref)
+            crate::core_library::is_core_module(module).then_some((*module, module_ref))
         })
-        .unwrap_or_else(|| builder.add_module_ref("writ-runtime", "1.0.0"));
+        .expect("normalized libraries must contain writ-runtime");
 
     // 2b. TypeRef: register Range<T> from writ-runtime so range expressions can construct it.
-    builder.add_type_ref(runtime_mod_idx, "Range", "writ");
+    let range_type_ref = builder.add_type_ref(runtime_mod_idx, "Range", "writ");
 
     // 2c. TypeRef: register the writ-runtime Type class and primitive pseudo-TypeDefs
     //     so typeof() expressions can resolve type_idx tokens.
@@ -100,6 +100,7 @@ pub fn collect_defs(
     builder.add_type_ref(runtime_mod_idx, "Iterator", "writ");
 
     register_library_type_refs(library_modules, &library_module_refs, def_map, builder);
+    register_runtime_range_field_refs(runtime_module, range_type_ref, def_map, builder);
     register_library_field_refs(library_modules, def_map, builder);
     register_library_method_refs(library_modules, &library_module_refs, def_map, builder);
     register_provisional_named_tokens(typed_ast, builder);
@@ -654,6 +655,67 @@ fn register_library_field_refs(
                 builder.add_field_ref(owner_def_id, parent, field_name, &signature);
             }
         }
+    }
+}
+
+/// Register the fields used by Range expression lowering independently of
+/// source-level DefId reachability.
+///
+/// Range syntax is compiler-known, so its four field operands must exist even
+/// when no source expression explicitly resolves a `writ::Range` field. Read
+/// the canonical signatures from writ-runtime rather than duplicating them.
+fn register_runtime_range_field_refs(
+    runtime_module: &writ_module::Module,
+    range_type_ref: usize,
+    def_map: &DefMap,
+    builder: &mut ModuleBuilder,
+) {
+    const RANGE_FIELDS: [&str; 4] = ["start", "end", "start_inclusive", "end_inclusive"];
+
+    let range_index = runtime_module
+        .type_defs
+        .iter()
+        .position(|type_def| {
+            writ_module::heap::read_string(&runtime_module.string_heap, type_def.name)
+                .is_ok_and(|name| name == "Range")
+                && writ_module::heap::read_string(&runtime_module.string_heap, type_def.namespace)
+                    .is_ok_and(|namespace| namespace == "writ")
+        })
+        .expect("writ-runtime must define writ::Range");
+    let field_start = runtime_module.type_defs[range_index]
+        .field_list
+        .checked_sub(1)
+        .expect("writ::Range must have a valid field_list") as usize;
+    let field_end = runtime_module
+        .type_defs
+        .get(range_index + 1)
+        .map(|type_def| {
+            type_def
+                .field_list
+                .checked_sub(1)
+                .expect("TypeDef after writ::Range must have a valid field_list")
+                as usize
+        })
+        .unwrap_or(runtime_module.field_defs.len());
+    let range_parent = MetadataToken::new(TableId::TypeRef, (range_type_ref + 1) as u32);
+
+    for field_name in RANGE_FIELDS {
+        let field = runtime_module.field_defs[field_start..field_end]
+            .iter()
+            .find(|field| {
+                writ_module::heap::read_string(&runtime_module.string_heap, field.name)
+                    .is_ok_and(|name| name == field_name)
+            })
+            .unwrap_or_else(|| panic!("writ-runtime Range is missing field `{field_name}`"));
+        let signature = writ_module::heap::read_blob(&runtime_module.blob_heap, field.type_sig)
+            .expect("writ-runtime Range field must have a valid type signature");
+        let signature = writ_module::signature::decode_type_signature(signature)
+            .expect("writ-runtime Range field must have a canonical type signature");
+        let signature = remap_library_type_signature(runtime_module, &signature, def_map, builder)
+            .expect("writ-runtime Range field signature must remap into the consumer module");
+        let signature = writ_module::signature::encode_type_signature(&signature)
+            .expect("remapped writ-runtime Range field signature must encode");
+        builder.add_field_ref_row(range_parent, field_name, &signature);
     }
 }
 

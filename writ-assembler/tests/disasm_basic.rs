@@ -111,6 +111,29 @@ fn disassemble_method_with_instructions() {
 }
 
 #[test]
+fn disassemble_field_operands_as_tokens() {
+    let src = r#"
+.module "test" "1.0.0" {
+    .method "main" () -> void {
+        .reg r0 int
+        GET_FIELD r0, r0, token(83886081)
+        SET_FIELD r0, token(100663297), r0
+        RET_VOID
+    }
+}
+"#;
+    let module = writ_assembler::assemble(src).expect("should assemble");
+    let text = writ_assembler::disassemble(&module);
+
+    assert!(text.contains("GET_FIELD r0, r0, token(83886081)"), "{text}");
+    assert!(
+        text.contains("SET_FIELD r0, token(100663297), r0"),
+        "{text}"
+    );
+    writ_assembler::assemble(&text).expect("disassembled field tokens should reassemble");
+}
+
+#[test]
 fn disassemble_param_names_ignore_implicit_receiver_registers() {
     use writ_module::TypeDefKind;
     use writ_module::builder::ModuleBuilder;
