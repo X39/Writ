@@ -353,13 +353,13 @@ pub fn main() {
 // ─── Test: Struct field access (get + set) with multiple fields ────────────
 
 /// Compile and run a program that constructs a struct, reads back its fields,
-/// and assigns to them. Validates that field indices are correctly emitted
-/// as 0-based local offsets (not MetadataTokens with table prefix).
+/// and assigns to them. Validates that strict field metadata tokens resolve
+/// to the correct 0-based local heap offsets.
 #[test]
 fn test_struct_field_get_set() {
     let src = r#"
 struct Point {
-    x: int,
+    mut x: int,
     y: int
 }
 
