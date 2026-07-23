@@ -47,8 +47,10 @@ NEW           r_env, __closure_env_type, 1, r_bonus // atomically copy the captu
 NEW_DELEGATE  r_f, method_idx(__closure_body), r_env  // target = capture struct
 ```
 
-Compiler-generated capture fields are read-only. The atomic `NEW` initializer establishes them before the environment
-can become a delegate target; later `SET_FIELD` instructions cannot modify them.
+Compiler-generated fields for immutable by-value captures are read-only. The atomic `NEW` initializer establishes
+them before the environment can become a delegate target; later `SET_FIELD` instructions cannot modify them. A
+captured `let mut` instead uses the shared environment storage described in section 2.9.3: the storage field is
+declared `mut`, and both the outer scope and closure access that same field.
 
 **Closure without captures** (optimized — no allocation for empty env):
 

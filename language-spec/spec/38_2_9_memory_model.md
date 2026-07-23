@@ -76,7 +76,7 @@ The capture environment is a compiler-generated class type, not a special runtim
 
 ```
 class __closure_env_0 {
-    count: int,   // shared mutable field
+    mut count: int,   // shared mutable field
 }
 ```
 
