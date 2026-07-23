@@ -195,7 +195,7 @@ Reflection supports dynamic field access and method invocation through `FieldInf
 
 - `get()` reads the field value from the given instance and returns it as a `Box`.
 - `set()` writes a new value only when the FieldDef `READONLY` metadata bit is clear. If the bit is set, `set()`
-  **crashes the current task** with the message `"Reflection write to immutable field '{field_name}'"` and leaves the
+  **crashes the current task** with the message `"Reflection write to read-only field '{field_name}'"` and leaves the
   field unchanged.
 - The source field grammar is `[visibility] [mut] name: type [= default]`. A field without `mut` is read-only, so the
   compiler sets its FieldDef `READONLY` bit. A field declared with `mut` is writable, so the compiler clears the bit.
