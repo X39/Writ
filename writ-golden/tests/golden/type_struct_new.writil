@@ -1,8 +1,8 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
     .type "Point" struct pub {
-        .field "x" int
-        .field "y" int
+        .field "x" int readonly
+        .field "y" int readonly
     }
     .impl Point : contract_50331684 {
         .method "get_type" () -> Type pub {
@@ -12,21 +12,19 @@
             RET r1
         }
     }
-    .method "main" () -> void mut {
+    .method "main" () -> void static {
         .locals {
-            r0: Point "p" [52, 64)
-            r3: int "px" [62, 64)
+            r2: Point "p" [36, 48)
+            r3: int "px" [46, 48)
         }
-        .reg r0 Point
+        .reg r0 int
         .reg r1 int
-        .reg r2 int
+        .reg r2 Point
         .reg r3 int
-        NEW r0, 33554433  ; line:7 col:5
-        LOAD_INT r1, 1
-        SET_FIELD r0, 0, r1
-        LOAD_INT r2, 2
-        SET_FIELD r0, 1, r2
-        GET_FIELD r3, r0, 0  ; line:8 col:5
+        LOAD_INT r0, 1  ; line:7 col:5
+        LOAD_INT r1, 2
+        NEW r2, 33554433, 2, r0
+        GET_FIELD r3, r2, token(83886081)  ; line:8 col:5
         RET_VOID
     }
     .export "Point" type 33554433

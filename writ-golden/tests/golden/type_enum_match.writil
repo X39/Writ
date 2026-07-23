@@ -10,7 +10,7 @@
             RET r1
         }
     }
-    .method "pick" (c: Color) -> int mut {
+    .method "pick" (c: Color) -> int static {
         .locals {
             r0: Color "c" [0, 106)
         }
@@ -33,7 +33,7 @@
         BR 8
         RET r2
     }
-    .method "main" () -> void mut {
+    .method "main" () -> void static {
         .locals {
             r0: int "x" [24, 26)
         }

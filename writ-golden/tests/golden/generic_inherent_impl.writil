@@ -18,29 +18,28 @@
             }
             .reg r0 Box<T0>
             .reg r1 T0
-            GET_FIELD r1, r0, 0  ; line:7 col:9
+            GET_FIELD r1, r0, token(83886081)  ; line:7 col:9
             RET r1
         }
-        .method "set" (v: T0) -> void pub static {
+        .method "set" (v: T0) -> void pub mut_self {
             .locals {
                 r0: Box<T0> "self" [0, 12)
                 r1: T0 "v" [0, 12)
             }
             .reg r0 Box<T0>
             .reg r1 T0
-            SET_FIELD r0, 0, r1  ; line:11 col:9
+            SET_FIELD r0, token(83886081), r1  ; line:11 col:9
             RET_VOID
         }
     }
-    .method "main" () -> void mut {
+    .method "main" () -> void static {
         .locals {
-            r0: Box<int> "b" [30, 32)
+            r1: Box<int> "b" [24, 26)
         }
-        .reg r0 Box<int>
-        .reg r1 int
-        NEW r0, 67108866  ; line:16 col:5
-        LOAD_INT r1, 42
-        SET_FIELD r0, 0, r1
+        .reg r0 int
+        .reg r1 Box<int>
+        LOAD_INT r0, 42  ; line:16 col:5
+        NEW r1, 67108866, 1, r0
         RET_VOID
     }
     .export "Box" type 33554433

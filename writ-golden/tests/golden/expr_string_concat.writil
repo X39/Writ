@@ -1,6 +1,6 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
-    .method "main" () -> void mut {
+    .method "main" () -> void static {
         .locals {
             r0: string "a" [8, 26)
             r1: string "b" [16, 26)
@@ -9,8 +9,8 @@
         .reg r0 string
         .reg r1 string
         .reg r2 string
-        LOAD_STRING r0, 2455  ; line:2 col:5
-        LOAD_STRING r1, 2464  ; line:3 col:5
+        LOAD_STRING r0, 2432  ; line:2 col:5
+        LOAD_STRING r1, 2441  ; line:3 col:5
         STR_CONCAT r2, r0, r1  ; line:4 col:5
         RET_VOID
     }

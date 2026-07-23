@@ -1,6 +1,6 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
-    .method "main" () -> void mut {
+    .method "main" () -> void static {
         .locals {
             r0: string "plain" [8, 66)
             r1: string "escaped_quote" [16, 66)
@@ -19,14 +19,14 @@
         .reg r5 string
         .reg r6 string
         .reg r7 string
-        LOAD_STRING r0, 2455  ; line:2 col:5
-        LOAD_STRING r1, 2464  ; line:3 col:5
-        LOAD_STRING r2, 2480  ; line:4 col:5
-        LOAD_STRING r3, 2495  ; line:5 col:5
-        LOAD_STRING r4, 2508  ; line:6 col:5
-        LOAD_STRING r5, 2522  ; line:7 col:5
-        LOAD_STRING r6, 2535  ; line:8 col:5
-        LOAD_STRING r7, 2546  ; line:9 col:5
+        LOAD_STRING r0, 2432  ; line:2 col:5
+        LOAD_STRING r1, 2441  ; line:3 col:5
+        LOAD_STRING r2, 2457  ; line:4 col:5
+        LOAD_STRING r3, 2472  ; line:5 col:5
+        LOAD_STRING r4, 2485  ; line:6 col:5
+        LOAD_STRING r5, 2499  ; line:7 col:5
+        LOAD_STRING r6, 2512  ; line:8 col:5
+        LOAD_STRING r7, 2523  ; line:9 col:5
         RET_VOID
     }
 }

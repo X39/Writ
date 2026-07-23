@@ -1,7 +1,7 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
     .type "Stub" class pub {
-        .field "value" int
+        .field "value" int readonly
     }
     .impl Stub : contract_50331684 {
         .method "get_type" () -> Type pub {
@@ -11,18 +11,17 @@
             RET r1
         }
     }
-    .method "main" () -> void mut {
+    .method "main" () -> void static {
         .locals {
-            r0: Stub "s" [30, 42)
-            r2: int "v" [40, 42)
+            r1: Stub "s" [24, 36)
+            r2: int "v" [34, 36)
         }
-        .reg r0 Stub
-        .reg r1 int
+        .reg r0 int
+        .reg r1 Stub
         .reg r2 int
-        NEW r0, 33554433  ; line:6 col:5
-        LOAD_INT r1, 42
-        SET_FIELD r0, 0, r1
-        GET_FIELD r2, r0, 0  ; line:7 col:5
+        LOAD_INT r0, 42  ; line:6 col:5
+        NEW r1, 33554433, 1, r0
+        GET_FIELD r2, r1, token(83886081)  ; line:7 col:5
         RET_VOID
     }
     .export "Stub" type 33554433

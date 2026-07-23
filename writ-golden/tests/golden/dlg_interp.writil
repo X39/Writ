@@ -10,8 +10,8 @@
             RET r1
         }
     }
-    .extern_fn "say" (Entity, string) -> void "say"
-    .method "greet" (npc: Entity, name: string, count: int) -> void 258 {
+    .extern_fn "say" (Entity, string) -> void "say" pub
+    .method "greet" (npc: Entity, name: string, count: int) -> void static dialogue {
         .locals {
             r0: Entity "npc" [0, 214)
             r1: string "name" [0, 214)
@@ -49,8 +49,8 @@
         .reg r29 string
         .reg r30 Entity
         .reg r31 string
-        LOAD_STRING r4, 2524  ; line:9 col:5
-        LOAD_STRING r5, 2534
+        LOAD_STRING r4, 2501  ; line:9 col:5
+        LOAD_STRING r5, 2511
         MOV r6, r4
         MOV r7, r1
         MOV r8, r5
@@ -58,17 +58,17 @@
         MOV r10, r0
         MOV r11, r9
         CALL_EXTERN r3, 268435457, r10, 2
-        LOAD_STRING r13, 2539  ; line:10 col:5
+        LOAD_STRING r13, 2516  ; line:10 col:5
         I2S r14, r2
-        LOAD_STRING r15, 2556
+        LOAD_STRING r15, 2533
         STR_BUILD r16, 3, r13
         MOV r17, r0
         MOV r18, r16
         CALL_EXTERN r12, 268435457, r17, 2
-        LOAD_STRING r20, 2569  ; line:11 col:5
-        LOAD_STRING r21, 2587
+        LOAD_STRING r20, 2546  ; line:11 col:5
+        LOAD_STRING r21, 2564
         I2S r22, r2
-        LOAD_STRING r23, 2602
+        LOAD_STRING r23, 2579
         MOV r24, r20
         MOV r25, r1
         MOV r26, r21
@@ -80,7 +80,7 @@
         CALL_EXTERN r19, 268435457, r30, 2
         RET_VOID
     }
-    .method "main" () -> void mut {
+    .method "main" () -> void static {
         .locals {
             r0: Narrator "e" [8, 60)
         }
@@ -92,7 +92,7 @@
         .reg r5 string
         .reg r6 int
         GET_OR_CREATE r0, 33554433  ; line:15 col:5
-        LOAD_STRING r2, 2607  ; line:16 col:5
+        LOAD_STRING r2, 2584  ; line:16 col:5
         LOAD_INT r3, 3
         MOV r4, r0
         MOV r5, r2

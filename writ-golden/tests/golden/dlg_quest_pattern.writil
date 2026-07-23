@@ -3,8 +3,8 @@
     .type "QuestState" enum {
     }
     .type "Merchant" entity {
-        .field "name" string
-        .field "has_quest" bool
+        .field "name" string readonly
+        .field "has_quest" bool readonly
     }
     .impl QuestState : contract_50331684 {
         .method "get_type" () -> Type pub {
@@ -22,9 +22,9 @@
             RET r1
         }
     }
-    .extern_fn "log::info" (string) -> void "log::info"
-    .extern_fn "say" (Entity, string) -> void "say"
-    .method "can_offer_quest" (state: QuestState) -> bool mut {
+    .extern_fn "log::info" (string) -> void "log::info" pub
+    .extern_fn "say" (Entity, string) -> void "say" pub
+    .method "can_offer_quest" (state: QuestState) -> bool static {
         .locals {
             r0: QuestState "state" [0, 82)
         }
@@ -47,7 +47,7 @@
         BR 8
         RET r2
     }
-    .method "get_reward" (base: int) -> int mut {
+    .method "get_reward" (base: int) -> int static {
         .locals {
             r0: int "base" [0, 24)
         }
@@ -58,7 +58,7 @@
         MUL_I r2, r0, r1
         RET r2
     }
-    .method "merchant_greeting" (merchant: Entity) -> void 258 {
+    .method "merchant_greeting" (merchant: Entity) -> void static dialogue {
         .locals {
             r0: Entity "merchant" [0, 76)
         }
@@ -72,18 +72,18 @@
         .reg r7 Entity
         .reg r8 string
         .reg r9 void
-        LOAD_STRING r2, 2648  ; line:36 col:5
+        LOAD_STRING r2, 2625  ; line:36 col:5
         MOV r3, r0
         MOV r4, r2
         CALL_EXTERN r1, 268435458, r3, 2
-        LOAD_STRING r6, 2681  ; line:37 col:5
+        LOAD_STRING r6, 2658  ; line:37 col:5
         MOV r7, r0
         MOV r8, r6
         CALL_EXTERN r5, 268435458, r7, 2
         TAIL_CALL 117440518, r0, 1  ; line:38 col:5
         RET_VOID
     }
-    .method "merchant_quest" (merchant: Entity) -> void 258 {
+    .method "merchant_quest" (merchant: Entity) -> void static dialogue {
         .locals {
             r0: Entity "merchant" [0, 150)
             r1: QuestState "state" [12, 150)
@@ -108,24 +108,24 @@
         LOAD_INT r1, 0  ; line:43 col:7
         CALL r2, 117440515, r1, 1  ; line:44 col:7
         BR_FALSE r2, 86  ; line:45 col:10
-        LOAD_STRING r5, 2710  ; line:46 col:9
+        LOAD_STRING r5, 2687  ; line:46 col:9
         MOV r6, r0
         MOV r7, r5
         CALL_EXTERN r4, 268435458, r6, 2
-        LOAD_STRING r9, 2736  ; line:47 col:9
+        LOAD_STRING r9, 2713  ; line:47 col:9
         MOV r10, r0
         MOV r11, r9
         CALL_EXTERN r8, 268435458, r10, 2
         MOV r3, r8
         BR 46
-        LOAD_STRING r13, 2783  ; line:49 col:9
+        LOAD_STRING r13, 2760  ; line:49 col:9
         MOV r14, r0
         MOV r15, r13
         CALL_EXTERN r12, 268435458, r14, 2
         MOV r3, r12
         RET_VOID
     }
-    .method "merchant_complete" (merchant: Entity) -> void 258 {
+    .method "merchant_complete" (merchant: Entity) -> void static dialogue {
         .locals {
             r0: Entity "merchant" [0, 110)
             r5: int "reward" [56, 110)
@@ -143,24 +143,24 @@
         .reg r10 string
         .reg r11 void
         .reg r12 string
-        LOAD_STRING r2, 2828  ; line:55 col:5
+        LOAD_STRING r2, 2805  ; line:55 col:5
         MOV r3, r0
         MOV r4, r2
         CALL_EXTERN r1, 268435458, r3, 2
         LOAD_INT r6, 50  ; line:56 col:7
         CALL r5, 117440516, r6, 1
-        LOAD_STRING r8, 2869  ; line:57 col:5
+        LOAD_STRING r8, 2846  ; line:57 col:5
         MOV r9, r0
         MOV r10, r8
         CALL_EXTERN r7, 268435458, r9, 2
-        LOAD_STRING r12, 2893  ; line:58 col:7
+        LOAD_STRING r12, 2870  ; line:58 col:7
         CALL_EXTERN r11, 268435457, r12, 1
         RET_VOID
     }
-    .method "main" () -> void mut {
+    .method "main" () -> void static {
         .reg r0 void
         .reg r1 string
-        LOAD_STRING r1, 2912  ; line:62 col:5
+        LOAD_STRING r1, 2889  ; line:62 col:5
         CALL_EXTERN r0, 268435457, r1, 1
         RET_VOID
     }

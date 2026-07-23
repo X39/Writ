@@ -1,10 +1,10 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
     .type "Alpha" struct {
-        .field "a" int
+        .field "a" int readonly
     }
     .type "Beta" struct {
-        .field "b" int
+        .field "b" int readonly
     }
     .impl Alpha : contract_50331684 {
         .method "get_type" () -> Type pub {
@@ -22,7 +22,7 @@
             RET r1
         }
     }
-    .method "main" () -> bool mut {
+    .method "main" () -> bool static {
         .locals {
             r2: bool "same" [24, 52)
             r5: bool "diff" [48, 52)

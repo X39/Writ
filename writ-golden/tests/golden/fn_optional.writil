@@ -1,6 +1,6 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
-    .method "main" () -> void mut {
+    .method "main" () -> void static {
         .locals {
             r0: writ::Option<bool> "opt_val_keyword" [4, 44)
             r1: writ::Option<bool> "opt_val_type" [8, 44)
@@ -22,14 +22,14 @@
         CALL r5, 117440515, r6, 0  ; line:6 col:5
         RET_VOID
     }
-    .method "produce_option_some" () -> writ::Option<bool> mut {
+    .method "produce_option_some" () -> writ::Option<bool> static {
         .reg r0 bool
         .reg r1 writ::Option<bool>
         LOAD_TRUE r0  ; line:10 col:5
         WRAP_SOME r1, r0
         RET r1
     }
-    .method "produce_option_none" () -> writ::Option<bool> mut {
+    .method "produce_option_none" () -> writ::Option<bool> static {
         .reg r0 writ::Option<void>
         LOAD_NULL r0  ; line:14 col:5
         RET r0

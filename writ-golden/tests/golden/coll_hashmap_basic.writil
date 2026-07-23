@@ -20,7 +20,7 @@
             .reg r0 HashMap<T0, T1>
             .reg r1 array<T0>
             .reg r2 int
-            GET_FIELD r1, r0, 0  ; line:8 col:9
+            GET_FIELD r1, r0, token(83886081)  ; line:8 col:9
             ARRAY_LEN r2, r1
             RET r2
         }
@@ -47,11 +47,11 @@
             .reg r14 int
             .reg r15 bool
             LOAD_INT r2, 0  ; line:12 col:9
-            GET_FIELD r3, r0, 0  ; line:13 col:9
+            GET_FIELD r3, r0, token(83886081)  ; line:13 col:9
             ARRAY_LEN r4, r3
             CMP_LT_I r5, r2, r4
             BR_FALSE r5, 120
-            GET_FIELD r6, r0, 0  ; line:14 col:13
+            GET_FIELD r6, r0, token(83886081)  ; line:14 col:13
             ARRAY_LOAD r7, r6, r2
             MOV r9, r7
             MOV r10, r1
@@ -95,17 +95,17 @@
             .reg r17 int
             .reg r18 T1
             LOAD_INT r2, 0  ; line:21 col:9
-            GET_FIELD r3, r0, 0  ; line:22 col:9
+            GET_FIELD r3, r0, token(83886081)  ; line:22 col:9
             ARRAY_LEN r4, r3
             CMP_LT_I r5, r2, r4
             BR_FALSE r5, 134
-            GET_FIELD r6, r0, 0  ; line:23 col:13
+            GET_FIELD r6, r0, token(83886081)  ; line:23 col:13
             ARRAY_LOAD r7, r6, r2
             MOV r9, r7
             MOV r10, r1
             CALL_VIRT r8, r9, 50331655, 0, r9, 2
             BR_FALSE r8, 44
-            GET_FIELD r12, r0, 1  ; line:23 col:38
+            GET_FIELD r12, r0, token(83886082)  ; line:23 col:38
             ARRAY_LOAD r13, r12, r2
             RET r13
             MOV r11, r0
@@ -115,12 +115,12 @@
             ADD_I r15, r2, r14
             MOV r2, r15
             BR -150
-            GET_FIELD r16, r0, 1  ; line:26 col:9
+            GET_FIELD r16, r0, token(83886082)  ; line:26 col:9
             LOAD_INT r17, 0
             ARRAY_LOAD r18, r16, r17
             RET r18
         }
-        .method "set" (key: T0, value: T1) -> void pub static {
+        .method "set" (key: T0, value: T1) -> void pub mut_self {
             .locals {
                 r0: HashMap<T0, T1> "self" [0, 294)
                 r1: T0 "key" [0, 294)
@@ -157,17 +157,17 @@
             .reg r26 array<T0>
             .reg r27 array<T1>
             LOAD_INT r3, 0  ; line:30 col:9
-            GET_FIELD r4, r0, 0  ; line:31 col:9
+            GET_FIELD r4, r0, token(83886081)  ; line:31 col:9
             ARRAY_LEN r5, r4
             CMP_LT_I r6, r3, r5
             BR_FALSE r6, 132
-            GET_FIELD r7, r0, 0  ; line:32 col:13
+            GET_FIELD r7, r0, token(83886081)  ; line:32 col:13
             ARRAY_LOAD r8, r7, r3
             MOV r10, r8
             MOV r11, r1
             CALL_VIRT r9, r10, 50331655, 0, r10, 2
             BR_FALSE r9, 42
-            GET_FIELD r13, r0, 1  ; line:33 col:17
+            GET_FIELD r13, r0, token(83886082)  ; line:33 col:17
             ARRAY_STORE r13, r3, r2
             RET_VOID  ; line:34 col:17
             MOV r12, r0
@@ -177,23 +177,23 @@
             ADD_I r15, r3, r14
             MOV r3, r15
             BR -148
-            GET_FIELD r16, r0, 0  ; line:38 col:9
+            GET_FIELD r16, r0, token(83886081)  ; line:38 col:9
             ARRAY_LEN r17, r16
-            GET_FIELD r18, r0, 0  ; line:39 col:9
+            GET_FIELD r18, r0, token(83886081)  ; line:39 col:9
             LOAD_INT r19, 1
             ADD_I r20, r17, r19
             ARRAY_RESIZE r18, r20
-            GET_FIELD r22, r0, 1  ; line:40 col:9
+            GET_FIELD r22, r0, token(83886082)  ; line:40 col:9
             LOAD_INT r23, 1
             ADD_I r24, r17, r23
             ARRAY_RESIZE r22, r24
-            GET_FIELD r26, r0, 0  ; line:41 col:9
+            GET_FIELD r26, r0, token(83886081)  ; line:41 col:9
             ARRAY_STORE r26, r17, r1
-            GET_FIELD r27, r0, 1  ; line:42 col:9
+            GET_FIELD r27, r0, token(83886082)  ; line:42 col:9
             ARRAY_STORE r27, r17, r2
             RET_VOID
         }
-        .method "remove" (key: T0) -> void pub static {
+        .method "remove" (key: T0) -> void pub mut_self {
             .locals {
                 r0: HashMap<T0, T1> "self" [0, 422)
                 r1: T0 "key" [0, 422)
@@ -240,43 +240,43 @@
             .reg r37 int
             .reg r38 int
             LOAD_INT r2, 0  ; line:46 col:9
-            GET_FIELD r3, r0, 0  ; line:47 col:9
+            GET_FIELD r3, r0, token(83886081)  ; line:47 col:9
             ARRAY_LEN r4, r3
             CMP_LT_I r5, r2, r4
             BR_FALSE r5, 384
-            GET_FIELD r6, r0, 0  ; line:48 col:13
+            GET_FIELD r6, r0, token(83886081)  ; line:48 col:13
             ARRAY_LOAD r7, r6, r2
             MOV r9, r7
             MOV r10, r1
             CALL_VIRT r8, r9, 50331655, 0, r9, 2
             BR_FALSE r8, 294
-            GET_FIELD r12, r0, 0  ; line:49 col:17
+            GET_FIELD r12, r0, token(83886081)  ; line:49 col:17
             ARRAY_LEN r13, r12
             LOAD_INT r14, 1  ; line:51 col:17
             SUB_I r15, r13, r14
             CMP_LT_I r16, r2, r15
             BR_FALSE r16, 154
-            GET_FIELD r17, r0, 0  ; line:52 col:21
+            GET_FIELD r17, r0, token(83886081)  ; line:52 col:21
             LOAD_INT r18, 1
             ADD_I r19, r2, r18
             ARRAY_LOAD r20, r17, r19
-            GET_FIELD r21, r0, 0
+            GET_FIELD r21, r0, token(83886081)
             ARRAY_STORE r21, r2, r20
-            GET_FIELD r22, r0, 1  ; line:53 col:21
+            GET_FIELD r22, r0, token(83886082)  ; line:53 col:21
             LOAD_INT r23, 1
             ADD_I r24, r2, r23
             ARRAY_LOAD r25, r22, r24
-            GET_FIELD r26, r0, 1
+            GET_FIELD r26, r0, token(83886082)
             ARRAY_STORE r26, r2, r25
             LOAD_INT r27, 1  ; line:54 col:21
             ADD_I r28, r2, r27
             MOV r2, r28
             BR -174
-            GET_FIELD r29, r0, 0  ; line:56 col:17
+            GET_FIELD r29, r0, token(83886081)  ; line:56 col:17
             LOAD_INT r30, 1
             SUB_I r31, r13, r30
             ARRAY_RESIZE r29, r31
-            GET_FIELD r33, r0, 1  ; line:57 col:17
+            GET_FIELD r33, r0, token(83886082)  ; line:57 col:17
             LOAD_INT r34, 1
             SUB_I r35, r13, r34
             ARRAY_RESIZE r33, r35
@@ -291,16 +291,16 @@
             RET_VOID
         }
     }
-    .method "main" () -> void mut {
+    .method "main" () -> void static {
         .locals {
-            r0: HashMap<string, int> "hm" [44, 254)
-            r15: int "_v" [176, 254)
-            r19: bool "_has" [208, 254)
-            r23: int "_len" [220, 254)
+            r2: HashMap<string, int> "hm" [28, 238)
+            r15: int "_v" [160, 238)
+            r19: bool "_has" [192, 238)
+            r23: int "_len" [204, 238)
         }
-        .reg r0 HashMap<string, int>
-        .reg r1 array<string>
-        .reg r2 array<int>
+        .reg r0 array<string>
+        .reg r1 array<int>
+        .reg r2 HashMap<string, int>
         .reg r3 void
         .reg r4 string
         .reg r5 int
@@ -326,34 +326,32 @@
         .reg r25 string
         .reg r26 HashMap<string, int>
         .reg r27 string
-        NEW r0, 67108866  ; line:66 col:5
-        NEW_ARRAY r1, 3
-        SET_FIELD r0, 0, r1
-        NEW_ARRAY r2, 0
-        SET_FIELD r0, 1, r2
-        LOAD_STRING r4, 2546  ; line:67 col:5
+        NEW_ARRAY r0, 3  ; line:66 col:5
+        NEW_ARRAY r1, 0
+        NEW r2, 67108866, 2, r0
+        LOAD_STRING r4, 2516  ; line:67 col:5
         LOAD_INT r5, 10
-        MOV r6, r0
+        MOV r6, r2
         MOV r7, r4
         MOV r8, r5
         CALL r3, 117440517, r6, 3
-        LOAD_STRING r10, 2551  ; line:68 col:5
+        LOAD_STRING r10, 2521  ; line:68 col:5
         LOAD_INT r11, 20
-        MOV r12, r0
+        MOV r12, r2
         MOV r13, r10
         MOV r14, r11
         CALL r9, 117440517, r12, 3
-        LOAD_STRING r16, 2546  ; line:69 col:5
-        MOV r17, r0
+        LOAD_STRING r16, 2516  ; line:69 col:5
+        MOV r17, r2
         MOV r18, r16
         CALL r15, 117440516, r17, 2
-        LOAD_STRING r20, 2551  ; line:70 col:5
-        MOV r21, r0
+        LOAD_STRING r20, 2521  ; line:70 col:5
+        MOV r21, r2
         MOV r22, r20
         CALL r19, 117440515, r21, 2
-        CALL r23, 117440514, r0, 1  ; line:71 col:5
-        LOAD_STRING r25, 2546  ; line:72 col:5
-        MOV r26, r0
+        CALL r23, 117440514, r2, 1  ; line:71 col:5
+        LOAD_STRING r25, 2516  ; line:72 col:5
+        MOV r26, r2
         MOV r27, r25
         CALL r24, 117440518, r26, 2
         RET_VOID

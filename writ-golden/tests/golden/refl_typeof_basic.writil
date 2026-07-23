@@ -1,8 +1,8 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
     .type "Point" struct {
-        .field "x" int
-        .field "y" int
+        .field "x" int readonly
+        .field "y" int readonly
     }
     .impl Point : contract_50331684 {
         .method "get_type" () -> Type pub {
@@ -12,7 +12,7 @@
             RET r1
         }
     }
-    .method "main" () -> void mut {
+    .method "main" () -> void static {
         .locals {
             r0: writ::Type<Point> "t" [8, 10)
         }

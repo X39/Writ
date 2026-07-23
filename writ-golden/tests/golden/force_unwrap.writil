@@ -1,6 +1,6 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
-    .method "main" () -> void pub mut {
+    .method "main" () -> void pub static {
         .locals {
             r1: writ::Option<int> "n" [18, 90)
             r2: int "a" [24, 90)
@@ -23,7 +23,7 @@
         UNWRAP r2, r1  ; line:3 col:5
         IS_NONE r3, r1  ; line:4 col:5
         BR_FALSE r3, 34
-        LOAD_STRING r5, 2455
+        LOAD_STRING r5, 2432
         CRASH r5
         MOV r4, r6
         BR 20

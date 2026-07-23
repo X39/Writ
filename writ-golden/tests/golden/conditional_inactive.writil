@@ -1,14 +1,14 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
-    .extern_fn "log::info" (string) -> void "log::info"
-    .method "greet" () -> void pub mut {
+    .extern_fn "log::info" (string) -> void "log::info" pub
+    .method "greet" () -> void pub static {
         .reg r0 void
         .reg r1 string
-        LOAD_STRING r1, 2477  ; line:7 col:5
+        LOAD_STRING r1, 2454  ; line:7 col:5
         CALL_EXTERN r0, 268435457, r1, 1
         RET_VOID
     }
-    .method "main" () -> void pub mut {
+    .method "main" () -> void pub static {
         .reg r0 void
         CALL r0, 117440513, r1, 0  ; line:11 col:5
         RET_VOID

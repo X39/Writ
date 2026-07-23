@@ -1,7 +1,6 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
     .type "Guard" entity {
-        .field "health" int mut
     }
     .impl Guard : contract_50331684 {
         .method "get_type" () -> Type pub {
@@ -11,12 +10,12 @@
             RET r1
         }
     }
-    .method "main" () -> void mut {
+    .method "main" () -> void static {
         .locals {
             r0: Guard "g" [8, 10)
         }
         .reg r0 Guard
-        GET_OR_CREATE r0, 33554433  ; line:7 col:5
+        GET_OR_CREATE r0, 33554433  ; line:5 col:5
         RET_VOID
     }
     .attribute 33554433 0 "Singleton"

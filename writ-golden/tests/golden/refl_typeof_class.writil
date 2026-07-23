@@ -1,7 +1,7 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
     .type "Widget" class {
-        .field "name" string
+        .field "name" string readonly
     }
     .impl Widget : contract_50331684 {
         .method "get_type" () -> Type pub {
@@ -11,7 +11,7 @@
             RET r1
         }
     }
-    .method "main" () -> void mut {
+    .method "main" () -> void static {
         .locals {
             r0: writ::Type<Widget> "t" [8, 10)
         }

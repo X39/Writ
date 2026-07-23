@@ -3,10 +3,10 @@
     .type "Narrator" entity {
     }
     .type "__closure_0" class {
-        .method "__invoke_0" () -> void mut {
+        .method "__invoke_0" () -> void static {
             .reg r0 void
             .reg r1 string
-            LOAD_STRING r1, 2572  ; line:10 col:53
+            LOAD_STRING r1, 2549  ; line:10 col:53
             CALL_EXTERN r0, 268435457, r1, 1
             RET_VOID
         }
@@ -19,15 +19,15 @@
             RET r1
         }
     }
-    .extern_fn "log::info" (string) -> void "log::info"
-    .extern_fn "choice" (array<int>) -> int "choice"
-    .extern_fn "ChoiceOption" (string, string, fn()) -> int "ChoiceOption"
-    .method "helper" () -> int mut {
+    .extern_fn "log::info" (string) -> void "log::info" pub
+    .extern_fn "choice" (array<int>) -> int "choice" pub
+    .extern_fn "ChoiceOption" (string, string, fn()) -> int "ChoiceOption" pub
+    .method "helper" () -> int static {
         .reg r0 int
         LOAD_INT r0, 42  ; line:7 col:22
         RET r0
     }
-    .method "main" () -> int pub mut {
+    .method "main" () -> int pub static {
         .reg r0 int
         .reg r1 array<int>
         .reg r2 int
@@ -36,8 +36,8 @@
         .reg r5 fn()
         .reg r6 void
         .reg r7 int
-        LOAD_STRING r3, 2557  ; line:10 col:5
-        LOAD_STRING r4, 2567
+        LOAD_STRING r3, 2534  ; line:10 col:5
+        LOAD_STRING r4, 2544
         LOAD_NULL r6
         NEW_DELEGATE r5, 117440516, r6
         CALL_EXTERN r2, 268435459, r3, 3

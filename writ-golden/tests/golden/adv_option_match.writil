@@ -1,6 +1,6 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
-    .method "check" (val: writ::Option<bool>) -> int mut {
+    .method "check" (val: writ::Option<bool>) -> int static {
         .locals {
             r0: writ::Option<bool> "val" [0, 56)
         }
@@ -16,7 +16,7 @@
         BR 8
         RET r1
     }
-    .method "main" () -> void mut {
+    .method "main" () -> void static {
         .locals {
             r0: int "a" [16, 40)
             r2: int "b" [38, 40)

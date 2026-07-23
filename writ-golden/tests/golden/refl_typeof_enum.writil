@@ -10,7 +10,7 @@
             RET r1
         }
     }
-    .method "main" () -> void mut {
+    .method "main" () -> void static {
         .locals {
             r0: writ::Type<Direction> "t" [8, 10)
         }

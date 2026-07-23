@@ -1,8 +1,8 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
-    .extern_fn "log::info" (string) -> void "log::info"
-    .extern_fn "say" (Entity, string) -> void "say"
-    .method "format_greeting" (name: string) -> string mut {
+    .extern_fn "log::info" (string) -> void "log::info" pub
+    .extern_fn "say" (Entity, string) -> void "say" pub
+    .method "format_greeting" (name: string) -> string static {
         .locals {
             r0: string "name" [0, 46)
         }
@@ -13,15 +13,15 @@
         .reg r4 string
         .reg r5 string
         .reg r6 string
-        LOAD_STRING r1, 2621  ; line:8 col:5
-        LOAD_STRING r2, 2634
+        LOAD_STRING r1, 2598  ; line:8 col:5
+        LOAD_STRING r2, 2611
         MOV r3, r1
         MOV r4, r0
         MOV r5, r2
         STR_BUILD r6, 3, r3
         RET r6
     }
-    .method "quest_reward" (base: int, multiplier: int) -> int mut {
+    .method "quest_reward" (base: int, multiplier: int) -> int static {
         .locals {
             r0: int "base" [0, 12)
             r1: int "multiplier" [0, 12)
@@ -32,7 +32,7 @@
         MUL_I r2, r0, r1  ; line:13 col:5
         RET r2
     }
-    .method "greet" (npc: Entity, player_name: string) -> void 258 {
+    .method "greet" (npc: Entity, player_name: string) -> void static dialogue {
         .locals {
             r0: Entity "npc" [0, 134)
             r1: string "player_name" [0, 134)
@@ -55,23 +55,23 @@
         .reg r13 int
         .reg r14 void
         .reg r15 string
-        LOAD_STRING r3, 2639  ; line:18 col:5
+        LOAD_STRING r3, 2616  ; line:18 col:5
         MOV r4, r0
         MOV r5, r3
         CALL_EXTERN r2, 268435458, r4, 2
         CALL r6, 117440513, r1, 1  ; line:19 col:7
-        LOAD_STRING r8, 2659  ; line:20 col:5
+        LOAD_STRING r8, 2636  ; line:20 col:5
         MOV r9, r0
         MOV r10, r8
         CALL_EXTERN r7, 268435458, r9, 2
         LOAD_INT r12, 10  ; line:21 col:7
         LOAD_INT r13, 3
         CALL r11, 117440514, r12, 2
-        LOAD_STRING r15, 2681  ; line:22 col:7
+        LOAD_STRING r15, 2658  ; line:22 col:7
         CALL_EXTERN r14, 268435457, r15, 1
         RET_VOID
     }
-    .method "intro" (narrator: Entity) -> void 258 {
+    .method "intro" (narrator: Entity) -> void static dialogue {
         .locals {
             r0: Entity "narrator" [0, 76)
         }
@@ -85,18 +85,18 @@
         .reg r7 Entity
         .reg r8 string
         .reg r9 void
-        LOAD_STRING r2, 2700  ; line:27 col:5
+        LOAD_STRING r2, 2677  ; line:27 col:5
         MOV r3, r0
         MOV r4, r2
         CALL_EXTERN r1, 268435458, r3, 2
-        LOAD_STRING r6, 2730  ; line:28 col:5
+        LOAD_STRING r6, 2707  ; line:28 col:5
         MOV r7, r0
         MOV r8, r6
         CALL_EXTERN r5, 268435458, r7, 2
         TAIL_CALL 117440517, r0, 1  ; line:29 col:5
         RET_VOID
     }
-    .method "quest_start" (narrator: Entity) -> void 258 {
+    .method "quest_start" (narrator: Entity) -> void static dialogue {
         .locals {
             r0: Entity "narrator" [0, 78)
             r5: int "progress" [44, 78)
@@ -111,18 +111,18 @@
         .reg r7 string
         .reg r8 Entity
         .reg r9 string
-        LOAD_STRING r2, 2748  ; line:34 col:5
+        LOAD_STRING r2, 2725  ; line:34 col:5
         MOV r3, r0
         MOV r4, r2
         CALL_EXTERN r1, 268435458, r3, 2
         LOAD_INT r5, 0  ; line:35 col:7
-        LOAD_STRING r7, 2773  ; line:36 col:5
+        LOAD_STRING r7, 2750  ; line:36 col:5
         MOV r8, r0
         MOV r9, r7
         CALL_EXTERN r6, 268435458, r8, 2
         RET_VOID
     }
-    .method "start_conversation" (npc: Entity) -> void mut {
+    .method "start_conversation" (npc: Entity) -> void static {
         .locals {
             r0: Entity "npc" [0, 34)
         }
@@ -131,16 +131,16 @@
         .reg r2 string
         .reg r3 Entity
         .reg r4 string
-        LOAD_STRING r2, 2803  ; line:41 col:5
+        LOAD_STRING r2, 2780  ; line:41 col:5
         MOV r3, r0
         MOV r4, r2
         CALL r1, 117440515, r3, 2
         RET_VOID
     }
-    .method "main" () -> void mut {
+    .method "main" () -> void static {
         .reg r0 void
         .reg r1 string
-        LOAD_STRING r1, 2811  ; line:45 col:5
+        LOAD_STRING r1, 2788  ; line:45 col:5
         CALL_EXTERN r0, 268435457, r1, 1
         RET_VOID
     }

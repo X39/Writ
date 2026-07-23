@@ -4,7 +4,7 @@
         .field "items" array<T0>
     }
     .type "__closure_0" class {
-        .method "__invoke_0" (acc: int, x: int) -> int mut {
+        .method "__invoke_0" (acc: int, x: int) -> int static {
             .reg r0 int
             .reg r1 int
             .reg r2 int
@@ -21,7 +21,7 @@
         }
     }
     .impl List : ? {
-        .method "add" (item: T0) -> void pub static {
+        .method "add" (item: T0) -> void pub mut_self {
             .locals {
                 r0: List<T0> "self" [0, 72)
                 r1: T0 "item" [0, 72)
@@ -36,13 +36,13 @@
             .reg r6 int
             .reg r7 void
             .reg r8 array<T0>
-            GET_FIELD r2, r0, 0  ; line:7 col:9
+            GET_FIELD r2, r0, token(83886081)  ; line:7 col:9
             ARRAY_LEN r3, r2
-            GET_FIELD r4, r0, 0  ; line:8 col:9
+            GET_FIELD r4, r0, token(83886081)  ; line:8 col:9
             LOAD_INT r5, 1
             ADD_I r6, r3, r5
             ARRAY_RESIZE r4, r6
-            GET_FIELD r8, r0, 0  ; line:9 col:9
+            GET_FIELD r8, r0, token(83886081)  ; line:9 col:9
             ARRAY_STORE r8, r3, r1
             RET_VOID
         }
@@ -53,7 +53,7 @@
             .reg r0 List<T0>
             .reg r1 array<T0>
             .reg r2 int
-            GET_FIELD r1, r0, 0  ; line:13 col:9
+            GET_FIELD r1, r0, token(83886081)  ; line:13 col:9
             ARRAY_LEN r2, r1
             RET r2
         }
@@ -79,11 +79,11 @@
             .reg r12 int
             .reg r13 int
             LOAD_INT r3, 0  ; line:18 col:9
-            GET_FIELD r4, r0, 0  ; line:19 col:9
+            GET_FIELD r4, r0, token(83886081)  ; line:19 col:9
             ARRAY_LEN r5, r4
             CMP_LT_I r6, r3, r5
             BR_FALSE r6, 88
-            GET_FIELD r8, r0, 0  ; line:20 col:13
+            GET_FIELD r8, r0, token(83886081)  ; line:20 col:13
             ARRAY_LOAD r9, r8, r3
             MOV r10, r1
             MOV r11, r9
@@ -96,13 +96,13 @@
             RET r1  ; line:23 col:9
         }
     }
-    .method "main" () -> void mut {
+    .method "main" () -> void static {
         .locals {
-            r0: List<int> "list" [26, 192)
-            r14: int "_sum" [190, 192)
+            r1: List<int> "list" [20, 186)
+            r14: int "_sum" [184, 186)
         }
-        .reg r0 List<int>
-        .reg r1 array<int>
+        .reg r0 array<int>
+        .reg r1 List<int>
         .reg r2 void
         .reg r3 int
         .reg r4 List<int>
@@ -122,25 +122,24 @@
         .reg r18 List<int>
         .reg r19 int
         .reg r20 fn(int, int) -> int
-        NEW r0, 67108866  ; line:28 col:5
-        NEW_ARRAY r1, 0
-        SET_FIELD r0, 0, r1
+        NEW_ARRAY r0, 0  ; line:28 col:5
+        NEW r1, 67108866, 1, r0
         LOAD_INT r3, 1  ; line:29 col:5
-        MOV r4, r0
+        MOV r4, r1
         MOV r5, r3
         CALL r2, 117440514, r4, 2
         LOAD_INT r7, 2  ; line:30 col:5
-        MOV r8, r0
+        MOV r8, r1
         MOV r9, r7
         CALL r6, 117440514, r8, 2
         LOAD_INT r11, 3  ; line:31 col:5
-        MOV r12, r0
+        MOV r12, r1
         MOV r13, r11
         CALL r10, 117440514, r12, 2
         LOAD_INT r15, 0  ; line:32 col:5
         LOAD_NULL r17
         NEW_DELEGATE r16, 117440518, r17
-        MOV r18, r0
+        MOV r18, r1
         MOV r19, r15
         MOV r20, r16
         CALL r14, 117440516, r18, 3

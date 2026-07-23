@@ -1,7 +1,7 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
     .type "ListIterator" class pub {
-        .field "source" array<T0>
+        .field "source" array<T0> readonly
         .field "index" int
     }
     .type "List" class pub {
@@ -16,7 +16,7 @@
         }
     }
     .impl ListIterator : ? {
-        .method "next" () -> writ::Option<T0> pub static {
+        .method "next" () -> writ::Option<T0> pub mut_self {
             .locals {
                 r0: ListIterator<T0> "self" [0, 150)
                 r10: T0 "item" [100, 150)
@@ -36,8 +36,8 @@
             .reg r12 int
             .reg r13 int
             .reg r14 writ::Option<T0>
-            GET_FIELD r1, r0, 1  ; line:8 col:9
-            GET_FIELD r2, r0, 0
+            GET_FIELD r1, r0, token(83886082)  ; line:8 col:9
+            GET_FIELD r2, r0, token(83886081)
             ARRAY_LEN r3, r2
             CMP_LT_I r4, r1, r3
             NOT r5, r4
@@ -47,19 +47,19 @@
             MOV r6, r0
             BR 10
             NOP
-            GET_FIELD r8, r0, 0  ; line:11 col:9
-            GET_FIELD r9, r0, 1
+            GET_FIELD r8, r0, token(83886081)  ; line:11 col:9
+            GET_FIELD r9, r0, token(83886082)
             ARRAY_LOAD r10, r8, r9
-            GET_FIELD r11, r0, 1  ; line:12 col:9
+            GET_FIELD r11, r0, token(83886082)  ; line:12 col:9
             LOAD_INT r12, 1
             ADD_I r13, r11, r12
-            SET_FIELD r0, 1, r13
+            SET_FIELD r0, token(83886082), r13
             WRAP_SOME r14, r10  ; line:13 col:9
             RET r14
         }
     }
     .impl ListIterator : contract_67108868 {
-        .method "next" () -> writ::Option<T0> pub static {
+        .method "next" () -> writ::Option<T0> pub mut_self {
             .locals {
                 r0: ListIterator<T0> "self" [0, 150)
                 r10: T0 "item" [100, 150)
@@ -79,8 +79,8 @@
             .reg r12 int
             .reg r13 int
             .reg r14 writ::Option<T0>
-            GET_FIELD r1, r0, 1  ; line:19 col:9
-            GET_FIELD r2, r0, 0
+            GET_FIELD r1, r0, token(83886082)  ; line:19 col:9
+            GET_FIELD r2, r0, token(83886081)
             ARRAY_LEN r3, r2
             CMP_LT_I r4, r1, r3
             NOT r5, r4
@@ -90,13 +90,13 @@
             MOV r6, r0
             BR 10
             NOP
-            GET_FIELD r8, r0, 0  ; line:22 col:9
-            GET_FIELD r9, r0, 1
+            GET_FIELD r8, r0, token(83886081)  ; line:22 col:9
+            GET_FIELD r9, r0, token(83886082)
             ARRAY_LOAD r10, r8, r9
-            GET_FIELD r11, r0, 1  ; line:23 col:9
+            GET_FIELD r11, r0, token(83886082)  ; line:23 col:9
             LOAD_INT r12, 1
             ADD_I r13, r11, r12
-            SET_FIELD r0, 1, r13
+            SET_FIELD r0, token(83886082), r13
             WRAP_SOME r14, r10  ; line:24 col:9
             RET r14
         }
@@ -110,7 +110,7 @@
         }
     }
     .impl List : ? {
-        .method "add" (item: T0) -> void pub static {
+        .method "add" (item: T0) -> void pub mut_self {
             .locals {
                 r0: List<T0> "self" [0, 72)
                 r1: T0 "item" [0, 72)
@@ -125,13 +125,13 @@
             .reg r6 int
             .reg r7 void
             .reg r8 array<T0>
-            GET_FIELD r2, r0, 0  ; line:34 col:9
+            GET_FIELD r2, r0, token(83886083)  ; line:34 col:9
             ARRAY_LEN r3, r2
-            GET_FIELD r4, r0, 0  ; line:35 col:9
+            GET_FIELD r4, r0, token(83886083)  ; line:35 col:9
             LOAD_INT r5, 1
             ADD_I r6, r3, r5
             ARRAY_RESIZE r4, r6
-            GET_FIELD r8, r0, 0  ; line:36 col:9
+            GET_FIELD r8, r0, token(83886083)  ; line:36 col:9
             ARRAY_STORE r8, r3, r1
             RET_VOID
         }
@@ -142,7 +142,7 @@
             .reg r0 List<T0>
             .reg r1 array<T0>
             .reg r2 int
-            GET_FIELD r1, r0, 0  ; line:40 col:9
+            GET_FIELD r1, r0, token(83886083)  ; line:40 col:9
             ARRAY_LEN r2, r1
             RET r2
         }
@@ -150,27 +150,25 @@
     .impl List : contract_67108869 {
         .method "iterator" () -> writ::Iterator<T0> pub {
             .locals {
-                r0: List<T0> "self" [0, 54)
+                r0: List<T0> "self" [0, 38)
             }
             .reg r0 List<T0>
-            .reg r1 ListIterator<T0>
-            .reg r2 array<T0>
-            .reg r3 int
-            NEW r1, 67108865  ; line:46 col:9
-            GET_FIELD r2, r0, 0
-            SET_FIELD r1, 0, r2
-            LOAD_INT r3, 0
-            SET_FIELD r1, 1, r3
-            RET r1
+            .reg r1 array<T0>
+            .reg r2 int
+            .reg r3 ListIterator<T0>
+            GET_FIELD r1, r0, token(83886083)  ; line:46 col:9
+            LOAD_INT r2, 0
+            NEW r3, 67108865, 2, r1
+            RET r3
         }
     }
-    .method "main" () -> void mut {
+    .method "main" () -> void static {
         .locals {
-            r0: List<int> "list" [26, 222)
-            r14: int "sum" [146, 222)
+            r1: List<int> "list" [20, 216)
+            r14: int "sum" [140, 216)
         }
-        .reg r0 List<int>
-        .reg r1 array<int>
+        .reg r0 array<int>
+        .reg r1 List<int>
         .reg r2 void
         .reg r3 int
         .reg r4 List<int>
@@ -189,23 +187,22 @@
         .reg r17 bool
         .reg r18 int
         .reg r19 int
-        NEW r0, 67108867  ; line:51 col:5
-        NEW_ARRAY r1, 0
-        SET_FIELD r0, 0, r1
+        NEW_ARRAY r0, 0  ; line:51 col:5
+        NEW r1, 67108867, 1, r0
         LOAD_INT r3, 10  ; line:52 col:5
-        MOV r4, r0
+        MOV r4, r1
         MOV r5, r3
         CALL r2, 117440517, r4, 2
         LOAD_INT r7, 20  ; line:53 col:5
-        MOV r8, r0
+        MOV r8, r1
         MOV r9, r7
         CALL r6, 117440517, r8, 2
         LOAD_INT r11, 30  ; line:54 col:5
-        MOV r12, r0
+        MOV r12, r1
         MOV r13, r11
         CALL r10, 117440517, r12, 2
         LOAD_INT r14, 0  ; line:55 col:5
-        CALL_VIRT r15, r0, 50331656, 0, r0, 1  ; line:56 col:5
+        CALL_VIRT r15, r1, 50331656, 0, r1, 1  ; line:56 col:5
         CALL_VIRT r16, r15, 50331657, 0, r15, 1
         IS_NONE r17, r16
         BR_TRUE r17, 36
