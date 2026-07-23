@@ -597,14 +597,7 @@ where
                                 )
                             });
 
-                        // Concurrency prefix keywords: spawn, spawn detached, join, cancel, defer, try
-                        // spawn detached must come before spawn (both start with KwSpawn)
-                        let spawn_detached_expr = just(Token::KwSpawn)
-                            .ignore_then(just(Token::KwDetached))
-                            .ignore_then(expr.clone())
-                            .map_with(|e, extra| {
-                                (cst::Expr::SpawnDetached(Box::new(e)), extra.span())
-                            });
+                        // Concurrency prefix keywords: spawn, join, cancel, defer, try
                         let spawn_expr = just(Token::KwSpawn)
                             .ignore_then(expr.clone())
                             .map_with(|e, extra| (cst::Expr::Spawn(Box::new(e)), extra.span()));
@@ -720,8 +713,7 @@ where
                         // Generic call must come before ident_or_path so chumsky
                         // tries the f<T>(args) parse first.
                         let atom = choice((
-                            // Concurrency prefix keywords (spawn detached before spawn)
-                            spawn_detached_expr,
+                            // Concurrency prefix keywords
                             spawn_expr,
                             join_expr,
                             cancel_expr,

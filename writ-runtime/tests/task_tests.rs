@@ -886,61 +886,6 @@ fn spawn_task_creates_child() {
 }
 
 #[test]
-fn spawn_detached_survives_parent_completion() {
-    // Method 0 (parent): SpawnDetached to method 1, then immediately RetVoid
-    // Method 1 (detached child): many Nops then RetVoid
-    // After parent completes, child should still be ready/running.
-
-    let parent_instrs = vec![
-        Instruction::SpawnDetached {
-            r_dst: 0,
-            method_idx: methoddef_token(1),
-            r_base: 0,
-            argc: 0,
-        },
-        Instruction::RetVoid,
-    ];
-
-    let child_instrs = vec![
-        Instruction::Nop,
-        Instruction::Nop,
-        Instruction::Nop,
-        Instruction::LoadInt {
-            r_dst: 0,
-            value: 55,
-        },
-        Instruction::Ret { r_src: 0 },
-    ];
-
-    let mut runtime = build_multi_method_runtime_with_globals(
-        vec![
-            ("parent", &parent_instrs, 2),
-            ("detached_child", &child_instrs, 1),
-        ],
-        0,
-    );
-
-    let parent_id = runtime.spawn_task(0, vec![]).unwrap();
-
-    // Run one tick with limit so parent finishes but child may still be running
-    runtime.tick(0.0, ExecutionLimit::Instructions(3));
-
-    // Parent should be completed
-    assert_eq!(runtime.task_state(parent_id), Some(TaskState::Completed));
-
-    // Continue running - child should eventually complete too
-    loop {
-        match runtime.tick(0.0, ExecutionLimit::None) {
-            TickResult::AllCompleted | TickResult::Empty => break,
-            _ => continue,
-        }
-    }
-
-    // At least 2 tasks existed
-    assert!(runtime.task_count() >= 2);
-}
-
-#[test]
 fn join_waits_for_child_completion() {
     // Method 0 (main): SpawnTask to method 1, Join on child, read child's result.
     // Method 1 (child): LoadInt r0 42, Ret r0

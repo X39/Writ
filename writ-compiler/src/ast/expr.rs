@@ -8,7 +8,7 @@ use chumsky::span::SimpleSpan;
 /// - NO `FormattableString` — lowered to string concatenation chains before reaching AST.
 /// - NO compound `Assign` variants — `+=` lowered to `a = a + b` before reaching AST.
 /// - NO `NullLit` — lowered to `Option::None` (a path expression) before reaching AST.
-/// - YES `Spawn`, `SpawnDetached`, `Join`, `Cancel`, `Defer` — concurrency pass-through (R1).
+/// - YES `Spawn`, `Join`, `Cancel`, `Defer` — concurrency pass-through (R1).
 /// - YES `Error` — error recovery sentinel (R1).
 /// - `Assign` is plain assignment only (`=`), no compound operators.
 /// - All data is owned (`String`, `Box<T>`, `Vec<T>`) — no `'src` lifetime.
@@ -142,11 +142,6 @@ pub enum AstExpr {
     // --- Concurrency pass-through (R1: first-class AST nodes) ---
     /// Spawn expression: `spawn expr`
     Spawn {
-        expr: Box<AstExpr>,
-        span: SimpleSpan,
-    },
-    /// Spawn detached expression: `spawn detached expr` (fused)
-    SpawnDetached {
         expr: Box<AstExpr>,
         span: SimpleSpan,
     },

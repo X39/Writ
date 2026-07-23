@@ -397,22 +397,6 @@ pub fn check_expr(ctx: &mut CheckCtx, expr: &AstExpr) -> TypedExpr {
                 expr: Box::new(typed_inner),
             }
         }
-        AstExpr::SpawnDetached { expr: inner, span } => {
-            let typed_inner = check_expr(ctx, inner);
-            if let Some(reason) = unsupported_spawn_reason(ctx, &typed_inner) {
-                let ty = ctx.emit_error(TypeError::UnsupportedSpawnTarget {
-                    reason: reason.to_string(),
-                    span: *span,
-                    file: ctx.current_file,
-                });
-                return TypedExpr::Error { ty, span: *span };
-            }
-            TypedExpr::SpawnDetached {
-                ty: ctx.interner.void(),
-                span: *span,
-                expr: Box::new(typed_inner),
-            }
-        }
         AstExpr::Join { expr: inner, span } => {
             let typed_inner = check_expr(ctx, inner);
             let inner_ty = typed_inner.ty();

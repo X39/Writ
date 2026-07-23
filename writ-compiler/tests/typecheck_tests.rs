@@ -1144,22 +1144,12 @@ fn spawn_produces_task_handle() {
 }
 
 #[test]
-fn spawn_detached_is_void() {
-    let (_ast, diags) = typecheck_src(
-        "pub fn work() -> int { 42 }
-         pub fn test() { spawn detached work(); }",
-    );
-    assert!(has_no_errors(&diags), "errors: {:?}", diags);
-}
-
-#[test]
-fn spawn_accepts_concrete_instance_methods_for_both_lifetimes() {
+fn spawn_accepts_concrete_instance_methods() {
     let (_ast, diags) = typecheck_src(
         "pub class Worker {}
          impl Worker { pub fn run(self, value: int) -> int { value } }
          pub fn test(worker: Worker) {
              let task = spawn worker.run(1);
-             spawn detached worker.run(2);
          }",
     );
     assert!(has_no_errors(&diags), "errors: {:?}", diags);
@@ -1174,9 +1164,15 @@ fn spawn_rejects_targets_without_concrete_bytecode_bodies() {
             "operand is not a call",
         ),
         (
+            "retired detached spelling",
+            "pub fn doWork() {}
+             pub fn test() { spawn detached doWork(); }",
+            "operand is not a call",
+        ),
+        (
             "extern",
             "pub extern fn host_work() -> int;
-             pub fn test() { spawn detached host_work(); }",
+             pub fn test() { spawn host_work(); }",
             "extern functions do not have bytecode bodies",
         ),
         (

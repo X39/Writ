@@ -639,8 +639,6 @@ pub enum Expr<'src> {
     // Concurrency
     /// Spawn expression: `spawn expr`
     Spawn(Box<Spanned<Expr<'src>>>),
-    /// Spawn detached expression: `spawn detached expr` (fused, not nested)
-    SpawnDetached(Box<Spanned<Expr<'src>>>),
     /// Join expression: `join expr`
     Join(Box<Spanned<Expr<'src>>>),
     /// Cancel expression: `cancel expr`

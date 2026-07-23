@@ -143,11 +143,6 @@ pub enum TypedExpr {
         span: SimpleSpan,
         expr: Box<TypedExpr>,
     },
-    SpawnDetached {
-        ty: Ty,
-        span: SimpleSpan,
-        expr: Box<TypedExpr>,
-    },
     Join {
         ty: Ty,
         span: SimpleSpan,
@@ -215,7 +210,6 @@ impl TypedExpr {
             | TypedExpr::ArrayLit { ty, .. }
             | TypedExpr::Range { ty, .. }
             | TypedExpr::Spawn { ty, .. }
-            | TypedExpr::SpawnDetached { ty, .. }
             | TypedExpr::Join { ty, .. }
             | TypedExpr::Cancel { ty, .. }
             | TypedExpr::Defer { ty, .. }
@@ -247,7 +241,6 @@ impl TypedExpr {
             | TypedExpr::ArrayLit { span, .. }
             | TypedExpr::Range { span, .. }
             | TypedExpr::Spawn { span, .. }
-            | TypedExpr::SpawnDetached { span, .. }
             | TypedExpr::Join { span, .. }
             | TypedExpr::Cancel { span, .. }
             | TypedExpr::Defer { span, .. }

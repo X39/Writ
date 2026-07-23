@@ -188,7 +188,6 @@ fn collect_var_refs(
             }
         }
         TypedExpr::Spawn { expr: inner, .. }
-        | TypedExpr::SpawnDetached { expr: inner, .. }
         | TypedExpr::Join { expr: inner, .. }
         | TypedExpr::Cancel { expr: inner, .. }
         | TypedExpr::Defer { expr: inner, .. } => {

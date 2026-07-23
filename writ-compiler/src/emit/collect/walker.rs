@@ -72,7 +72,6 @@ fn walk_expr(expr: &TypedExpr, ids: &mut FxHashSet<DefId>) {
         }
         TypedExpr::UnaryPrefix { expr, .. }
         | TypedExpr::Spawn { expr, .. }
-        | TypedExpr::SpawnDetached { expr, .. }
         | TypedExpr::Join { expr, .. }
         | TypedExpr::Cancel { expr, .. }
         | TypedExpr::Defer { expr, .. } => walk_expr(expr, ids),
@@ -278,7 +277,6 @@ fn walk_expr_types(
         }
         TypedExpr::UnaryPrefix { expr, .. }
         | TypedExpr::Spawn { expr, .. }
-        | TypedExpr::SpawnDetached { expr, .. }
         | TypedExpr::Join { expr, .. }
         | TypedExpr::Cancel { expr, .. }
         | TypedExpr::Defer { expr, .. } => walk_expr_types(expr, interner, seen, types),

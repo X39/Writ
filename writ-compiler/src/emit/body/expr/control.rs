@@ -79,12 +79,7 @@ pub(super) fn emit_if(
 /// Type checking guarantees that the inner expression is a statically resolved
 /// concrete bytecode call. Emission therefore uses the same signature-aware
 /// target resolution and receiver ABI as an ordinary direct call.
-pub(super) fn emit_spawn(
-    emitter: &mut BodyEmitter<'_>,
-    ty: Ty,
-    inner: &TypedExpr,
-    detached: bool,
-) -> u16 {
+pub(super) fn emit_spawn(emitter: &mut BodyEmitter<'_>, ty: Ty, inner: &TypedExpr) -> u16 {
     let r_dst = emitter.alloc_reg(ty);
 
     let TypedExpr::Call {
@@ -108,21 +103,12 @@ pub(super) fn emit_spawn(
     let (r_base, argc) = pack_concrete_call_args(emitter, callee, args, target)
         .expect("resolved instance spawn must have a field receiver");
 
-    if detached {
-        emitter.emit(Instruction::SpawnDetached {
-            r_dst,
-            method_idx: target.token,
-            r_base,
-            argc,
-        });
-    } else {
-        emitter.emit(Instruction::SpawnTask {
-            r_dst,
-            method_idx: target.token,
-            r_base,
-            argc,
-        });
-    }
+    emitter.emit(Instruction::SpawnTask {
+        r_dst,
+        method_idx: target.token,
+        r_base,
+        argc,
+    });
 
     r_dst
 }

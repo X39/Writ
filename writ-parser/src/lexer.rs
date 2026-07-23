@@ -315,8 +315,6 @@ pub enum Token<'src> {
     // =========================================================
     #[token("spawn")]
     KwSpawn,
-    #[token("detached")]
-    KwDetached,
     #[token("join")]
     KwJoin,
     #[token("cancel")]

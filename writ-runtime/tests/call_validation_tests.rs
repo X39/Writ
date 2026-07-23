@@ -1,6 +1,6 @@
 use writ_module::module::MethodBody;
 use writ_module::signature::{TypeSignature, encode_method_signature};
-use writ_module::tables::TypeDefKind;
+use writ_module::tables::{METHOD_FLAG_INTRINSIC, TypeDefKind};
 use writ_module::{Instruction, Module, ModuleBuilder};
 use writ_runtime::{ExecutionLimit, RuntimeBuilder, TaskState, Value};
 
@@ -42,6 +42,27 @@ fn assert_crash(module: Module, main_method_idx: usize, expected: &str) {
 
     assert_eq!(runtime.task_state(task), Some(TaskState::Cancelled));
     let crash = runtime.crash_info(task).expect("malformed call must crash");
+    assert!(
+        crash.message.contains(expected),
+        "expected crash containing {expected:?}, got {:?}",
+        crash.message
+    );
+}
+
+fn assert_spawn_crash_before_child(module: Module, expected: &str) {
+    let mut runtime = RuntimeBuilder::new(module).build().expect("build runtime");
+    let task = runtime.spawn_task(0, vec![]).expect("spawn main");
+    runtime.tick(0.0, ExecutionLimit::None);
+
+    assert_eq!(runtime.task_state(task), Some(TaskState::Cancelled));
+    assert_eq!(
+        runtime.task_count(),
+        1,
+        "an invalid SPAWN_TASK target must not create a child"
+    );
+    let crash = runtime
+        .crash_info(task)
+        .expect("malformed spawn must crash");
     assert!(
         crash.message.contains(expected),
         "expected crash containing {expected:?}, got {:?}",
@@ -618,7 +639,7 @@ fn spawn_instructions_resolve_methodrefs_in_the_target_module() {
         "main",
         &method_signature,
         0,
-        7,
+        3,
         body(
             &[
                 Instruction::New {
@@ -635,28 +656,9 @@ fn spawn_instructions_resolve_methodrefs_in_the_target_module() {
                     r_dst: 2,
                     r_task: 1,
                 },
-                Instruction::New {
-                    r_dst: 3,
-                    type_idx: worker_ref.0,
-                },
-                Instruction::SpawnDetached {
-                    r_dst: 4,
-                    method_idx: answer_ref.0,
-                    r_base: 3,
-                    argc: 1,
-                },
-                Instruction::Join {
-                    r_dst: 5,
-                    r_task: 4,
-                },
-                Instruction::AddI {
-                    r_dst: 6,
-                    r_a: 2,
-                    r_b: 5,
-                },
-                Instruction::Ret { r_src: 6 },
+                Instruction::Ret { r_src: 2 },
             ],
-            7,
+            3,
         ),
     );
 
@@ -676,7 +678,7 @@ fn spawn_instructions_resolve_methodrefs_in_the_target_module() {
     }
 
     assert_eq!(runtime.task_state(task), Some(TaskState::Completed));
-    assert_eq!(runtime.return_value(task), Some(Value::Int(84)));
+    assert_eq!(runtime.return_value(task), Some(Value::Int(42)));
 }
 
 #[test]
@@ -710,8 +712,8 @@ fn spawn_task_rejects_argument_register_range_out_of_bounds() {
 }
 
 #[test]
-fn spawn_detached_rejects_argument_count_mismatching_method_metadata() {
-    let mut builder = ModuleBuilder::new("spawn-detached-arity");
+fn spawn_task_rejects_argument_count_mismatching_method_metadata() {
+    let mut builder = ModuleBuilder::new("spawn-arity");
     builder.add_type_def("Owner", "test", TypeDefKind::Struct, 0);
     builder.add_method(
         "main",
@@ -719,7 +721,7 @@ fn spawn_detached_rejects_argument_count_mismatching_method_metadata() {
         0,
         1,
         body(
-            &[Instruction::SpawnDetached {
+            &[Instruction::SpawnTask {
                 r_dst: 0,
                 method_idx: 0x0700_0002,
                 r_base: 0,
@@ -736,5 +738,105 @@ fn spawn_detached_rejects_argument_count_mismatching_method_metadata() {
         body(&[Instruction::RetVoid], 1),
     );
 
-    assert_crash(builder.build(), 0, "SPAWN_DETACHED: argument count 0");
+    assert_crash(builder.build(), 0, "SPAWN_TASK: argument count 0");
+}
+
+#[test]
+fn spawn_task_rejects_null_method_token_before_creating_child() {
+    let mut builder = ModuleBuilder::new("spawn-null-target");
+    builder.add_method(
+        "main",
+        &signature(0),
+        0,
+        1,
+        body(
+            &[Instruction::SpawnTask {
+                r_dst: 0,
+                method_idx: 0,
+                r_base: 0,
+                argc: 0,
+            }],
+            1,
+        ),
+    );
+
+    assert_spawn_crash_before_child(builder.build(), "call to null method token");
+}
+
+#[test]
+fn spawn_task_rejects_extern_token_before_creating_child() {
+    let mut builder = ModuleBuilder::new("spawn-extern-target");
+    let target = builder.add_extern_def("host_work", &signature(0), "host_work", 0);
+    builder.add_method(
+        "main",
+        &signature(0),
+        0,
+        1,
+        body(
+            &[Instruction::SpawnTask {
+                r_dst: 0,
+                method_idx: target.0,
+                r_base: 0,
+                argc: 0,
+            }],
+            1,
+        ),
+    );
+
+    assert_spawn_crash_before_child(
+        builder.build(),
+        "call uses unsupported method token table 16",
+    );
+}
+
+#[test]
+fn spawn_task_rejects_intrinsic_method_before_creating_child() {
+    let mut builder = ModuleBuilder::new("spawn-intrinsic-target");
+    builder.add_method(
+        "main",
+        &signature(0),
+        0,
+        1,
+        body(
+            &[Instruction::SpawnTask {
+                r_dst: 0,
+                method_idx: 0x0700_0002,
+                r_base: 0,
+                argc: 0,
+            }],
+            1,
+        ),
+    );
+    builder.add_method(
+        "intrinsic",
+        &signature(0),
+        METHOD_FLAG_INTRINSIC,
+        0,
+        body(&[], 0),
+    );
+
+    assert_spawn_crash_before_child(builder.build(), "runtime-intrinsic");
+}
+
+#[test]
+fn spawn_task_rejects_empty_bytecode_body_before_creating_child() {
+    let mut builder = ModuleBuilder::new("spawn-empty-target");
+    builder.add_method(
+        "main",
+        &signature(0),
+        0,
+        1,
+        body(
+            &[Instruction::SpawnTask {
+                r_dst: 0,
+                method_idx: 0x0700_0002,
+                r_base: 0,
+                argc: 0,
+            }],
+            1,
+        ),
+    );
+    builder.add_method("empty", &signature(0), 0, 0, body(&[], 0));
+
+    assert_spawn_crash_before_child(builder.build(), "no executable bytecode body");
 }

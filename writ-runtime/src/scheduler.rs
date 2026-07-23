@@ -232,25 +232,6 @@ impl Scheduler {
                     }
                     continue;
                 }
-                ExecutionResult::SpawnDetachedTask {
-                    r_dst,
-                    module_idx,
-                    method_idx,
-                    args,
-                } => {
-                    let child_id = self.create_task(method_idx, args, None, &modules[module_idx]);
-                    self.tasks
-                        .get_mut(&child_id)
-                        .and_then(|task| task.call_stack.last_mut())
-                        .expect("new detached task must have an initial frame")
-                        .module_idx = Some(module_idx);
-                    if let Some(parent) = self.tasks.get_mut(&task_id)
-                        && let Some(frame) = parent.call_stack.last_mut()
-                    {
-                        frame.registers[r_dst as usize] = pack_task_id(child_id);
-                    }
-                    continue;
-                }
                 ExecutionResult::JoinTask { r_dst, target } => {
                     // Check if target is already terminal
                     let target_info = self
@@ -415,7 +396,7 @@ impl Scheduler {
 
     /// Schedule a finalizer task for the given method with a self argument.
     ///
-    /// The task is detached (no parent) and runs the on_finalize hook.
+    /// The task is a runtime-owned root task and runs the on_finalize hook.
     pub fn schedule_finalizer(
         &mut self,
         method_idx: usize,

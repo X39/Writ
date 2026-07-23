@@ -1017,12 +1017,6 @@ fn map_instruction(
             r_base: reg(2)?,
             argc: int_lit(3)? as u16,
         }),
-        "SPAWN_DETACHED" => Ok(Instruction::SpawnDetached {
-            r_dst: reg(0)?,
-            method_idx: token_val(1)?,
-            r_base: reg(2)?,
-            argc: int_lit(3)? as u16,
-        }),
         "JOIN" => Ok(Instruction::Join {
             r_dst: reg(0)?,
             r_task: reg(1)?,

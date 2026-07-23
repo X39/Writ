@@ -1271,7 +1271,7 @@ fn xmod_static_methodref_does_not_prepend_qualified_receiver() {
 }
 
 #[test]
-fn xmod_spawn_variants_use_methodrefs_and_the_declared_receiver_abi() {
+fn xmod_spawn_uses_methodrefs_and_the_declared_receiver_abi() {
     let library_bytes = compile(
         r#"
         pub class Worker {}
@@ -1287,9 +1287,7 @@ fn xmod_spawn_variants_use_methodrefs_and_the_declared_receiver_abi() {
         r#"
         pub fn start(worker: Worker) {
             let instance_task = spawn worker.choose(7);
-            spawn detached worker.choose(8);
             let static_task = spawn worker.select(9);
-            spawn detached worker.select(10);
         }
     "#,
         &[&library],
@@ -1298,27 +1296,20 @@ fn xmod_spawn_variants_use_methodrefs_and_the_declared_receiver_abi() {
     let user = writ_module::Module::from_bytes(&user_bytes).unwrap();
     let body = &user.method_bodies[user.top_level_method_indices()[0]];
     let mut cursor = std::io::Cursor::new(&body.code);
-    let mut scoped = Vec::new();
-    let mut detached = Vec::new();
+    let mut spawns = Vec::new();
     while (cursor.position() as usize) < body.code.len() {
         match writ_module::Instruction::decode(&mut cursor).unwrap() {
             writ_module::Instruction::SpawnTask {
                 method_idx, argc, ..
             } => {
-                scoped.push((method_idx, argc));
-            }
-            writ_module::Instruction::SpawnDetached {
-                method_idx, argc, ..
-            } => {
-                detached.push((method_idx, argc));
+                spawns.push((method_idx, argc));
             }
             _ => {}
         }
     }
 
-    assert_eq!(scoped.len(), 2);
-    assert_eq!(detached.len(), 2);
-    for (method_idx, _) in scoped.iter().chain(&detached) {
+    assert_eq!(spawns.len(), 2);
+    for (method_idx, _) in &spawns {
         let token = writ_module::MetadataToken(*method_idx);
         assert!(!token.is_null(), "spawn target must not be the null token");
         assert_eq!(
@@ -1328,18 +1319,8 @@ fn xmod_spawn_variants_use_methodrefs_and_the_declared_receiver_abi() {
         );
     }
 
-    let scoped_instance = scoped.iter().find(|(_, argc)| *argc == 2).unwrap();
-    let detached_instance = detached.iter().find(|(_, argc)| *argc == 2).unwrap();
-    assert_eq!(
-        scoped_instance.0, detached_instance.0,
-        "scoped and detached instance spawn must select the same overload",
-    );
-    let scoped_static = scoped.iter().find(|(_, argc)| *argc == 1).unwrap();
-    let detached_static = detached.iter().find(|(_, argc)| *argc == 1).unwrap();
-    assert_eq!(
-        scoped_static.0, detached_static.0,
-        "scoped and detached static spawn must select the same method",
-    );
+    assert!(spawns.iter().any(|(_, argc)| *argc == 2));
+    assert!(spawns.iter().any(|(_, argc)| *argc == 1));
 }
 
 #[test]

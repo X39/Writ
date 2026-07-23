@@ -8,7 +8,7 @@
 | Visibility            | `pub`, `priv`                                                                                            |
 | Variables             | `let`, `mut`, `const`, `global`                                                                          |
 | Control flow          | `if`, `else`, `match`, `for`, `while`, `in`, `return`, `break`, `continue`                               |
-| Concurrency           | `spawn`, `detached`, `join`, `cancel`, `defer`                                                           |
+| Concurrency           | `spawn`, `join`, `cancel`, `defer`                                                                       |
 | Error handling        | `try`                                                                                                    |
 | Types                 | `void`                                                                                                   |
 | Values                | `true`, `false`, `null`, `self`                                                                          |

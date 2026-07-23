@@ -2232,51 +2232,11 @@ fn test_spawn_task_emits_spawn_task_instruction() {
 }
 
 #[test]
-fn test_spawn_detached_emits_spawn_detached_instruction() {
-    let mut interner = make_interner();
-    let ty_void = interner.void();
-    let (_, fn_def_id) = make_def_id();
-    let builder = make_builder_with_fn(fn_def_id);
-    let mut emitter = make_emitter(&builder, &interner);
-
-    let spawn_expr = TypedExpr::SpawnDetached {
-        ty: ty_void,
-        span: dummy_span(),
-        expr: Box::new(TypedExpr::Call {
-            ty: ty_void,
-            span: dummy_span(),
-            callee: Box::new(TypedExpr::Var {
-                ty: ty_void,
-                span: dummy_span(),
-                name: "bg_fn".to_string(),
-            }),
-            args: vec![],
-            callee_def_id: Some(fn_def_id),
-            callee_has_receiver: Some(false),
-        }),
-    };
-
-    let _r = emit_expr(&mut emitter, &spawn_expr);
-    let expected = builder.token_for_def(fn_def_id).unwrap().0;
-    assert!(
-        matches!(
-            emitter.instructions.as_slice(),
-            [Instruction::SpawnDetached { method_idx, argc: 0, .. }] if *method_idx == expected
-        ),
-        "spawn_detached should emit a non-null SpawnDetached, got {:?}",
-        emitter.instructions
-    );
-    assert_ne!(expected, 0);
-    assert_eq!(MetadataToken(expected).table(), TableId::MethodDef);
-}
-
-#[test]
-fn test_cross_module_overloaded_instance_spawn_variants_pack_self_and_resolve_methodref() {
+fn test_cross_module_overloaded_instance_spawn_packs_self_and_resolves_methodref() {
     use writ_module::signature::{TypeSignature, encode_method_signature};
 
     let mut interner = make_interner();
     let ty_int = interner.int();
-    let ty_void = interner.void();
     let ty_task = interner.intern(TyKind::TaskHandle(ty_int));
     let (_, remote_type_def_id) = make_def_id();
     let ty_remote = interner.intern(TyKind::Class(remote_type_def_id));
@@ -2330,17 +2290,6 @@ fn test_cross_module_overloaded_instance_spawn_variants_pack_self_and_resolve_me
         &TypedExpr::Spawn {
             ty: ty_task,
             span: dummy_span(),
-            expr: Box::new(call.clone()),
-        },
-    );
-    let mut detached = make_emitter(&builder, &interner);
-    let detached_self = detached.alloc_reg(ty_remote);
-    detached.locals.insert("remote".to_string(), detached_self);
-    emit_expr(
-        &mut detached,
-        &TypedExpr::SpawnDetached {
-            ty: ty_void,
-            span: dummy_span(),
             expr: Box::new(call),
         },
     );
@@ -2358,24 +2307,7 @@ fn test_cross_module_overloaded_instance_spawn_variants_pack_self_and_resolve_me
             _ => None,
         })
         .expect("scoped spawn instruction");
-    let detached_operands = detached
-        .instructions
-        .iter()
-        .find_map(|instruction| match instruction {
-            Instruction::SpawnDetached {
-                method_idx,
-                r_base,
-                argc,
-                ..
-            } => Some((*method_idx, *r_base, *argc)),
-            _ => None,
-        })
-        .expect("detached spawn instruction");
     assert_eq!((scoped_operands.0, scoped_operands.2), (expected_token, 2));
-    assert_eq!(
-        (detached_operands.0, detached_operands.2),
-        (expected_token, 2)
-    );
     assert!(
         scoped_operands.1 == scoped_self
             || scoped.instructions.iter().any(|instruction| matches!(
@@ -2385,26 +2317,16 @@ fn test_cross_module_overloaded_instance_spawn_variants_pack_self_and_resolve_me
             )),
         "scoped instance spawn argument block must begin with self",
     );
-    assert!(
-        detached_operands.1 == detached_self
-            || detached.instructions.iter().any(|instruction| matches!(
-                instruction,
-                Instruction::Mov { r_dst, r_src }
-                    if *r_dst == detached_operands.1 && *r_src == detached_self
-            )),
-        "detached instance spawn argument block must begin with self",
-    );
     assert_ne!(expected_token, 0);
     assert_eq!(MetadataToken(expected_token).table(), TableId::MethodRef);
 }
 
 #[test]
-fn test_cross_module_static_qualified_spawn_variants_exclude_qualifier() {
+fn test_cross_module_static_qualified_spawn_excludes_qualifier() {
     use writ_module::signature::{TypeSignature, encode_method_signature};
 
     let mut interner = make_interner();
     let ty_int = interner.int();
-    let ty_void = interner.void();
     let ty_task = interner.intern(TyKind::TaskHandle(ty_int));
     let (_, remote_type_def_id) = make_def_id();
     let ty_remote = interner.intern(TyKind::Class(remote_type_def_id));
@@ -2455,19 +2377,6 @@ fn test_cross_module_static_qualified_spawn_variants_exclude_qualifier() {
         &TypedExpr::Spawn {
             ty: ty_task,
             span: dummy_span(),
-            expr: Box::new(call.clone()),
-        },
-    );
-    let mut detached = make_emitter(&builder, &interner);
-    let detached_qualifier = detached.alloc_reg(ty_remote);
-    detached
-        .locals
-        .insert("remote".to_string(), detached_qualifier);
-    emit_expr(
-        &mut detached,
-        &TypedExpr::SpawnDetached {
-            ty: ty_void,
-            span: dummy_span(),
             expr: Box::new(call),
         },
     );
@@ -2485,25 +2394,9 @@ fn test_cross_module_static_qualified_spawn_variants_exclude_qualifier() {
             _ => None,
         })
         .expect("scoped spawn instruction");
-    let detached_operands = detached
-        .instructions
-        .iter()
-        .find_map(|instruction| match instruction {
-            Instruction::SpawnDetached {
-                method_idx,
-                r_base,
-                argc,
-                ..
-            } => Some((*method_idx, *r_base, *argc)),
-            _ => None,
-        })
-        .expect("detached spawn instruction");
     assert_eq!(scoped_operands.0, expected_token);
-    assert_eq!(detached_operands.0, expected_token);
     assert_eq!(scoped_operands.2, 1);
-    assert_eq!(detached_operands.2, 1);
     assert_ne!(scoped_operands.1, scoped_qualifier);
-    assert_ne!(detached_operands.1, detached_qualifier);
     assert_ne!(expected_token, 0);
     assert_eq!(MetadataToken(expected_token).table(), TableId::MethodRef);
 }

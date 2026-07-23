@@ -354,13 +354,13 @@ fn test_spawn_task_round_trip() {
 }
 
 #[test]
-fn test_spawn_detached_round_trip() {
-    round_trip(&Instruction::SpawnDetached {
-        r_dst: 3,
-        method_idx: 200,
-        r_base: 4,
-        argc: 0,
-    });
+fn retired_spawn_detached_opcode_is_rejected() {
+    let bytes = 0x0B01_u16.to_le_bytes();
+    let err = Instruction::decode(&mut &bytes[..]).expect_err("0x0B01 must stay unassigned");
+    match err {
+        DecodeError::InvalidOpcode(op) => assert_eq!(op, 0x0B01),
+        other => panic!("expected InvalidOpcode, got {other:?}"),
+    }
 }
 
 // ── Variable-layout ────────────────────────────────────────────
@@ -522,10 +522,10 @@ fn test_str_build_round_trip() {
     });
 }
 
-// ── Comprehensive all-91 test ──────────────────────────────────
+// ── Comprehensive opcode test ──────────────────────────────────
 
 #[test]
-fn test_all_91_opcodes_round_trip() {
+fn test_all_opcodes_round_trip() {
     let instructions: Vec<Instruction> = vec![
         // 0x00 Meta (2)
         Instruction::Nop,
@@ -841,18 +841,12 @@ fn test_all_91_opcodes_round_trip() {
             r_dst: 0,
             type_idx: 42,
         },
-        // 0x0B Concurrency (7)
+        // 0x0B Concurrency (6)
         Instruction::SpawnTask {
             r_dst: 0,
             method_idx: 100,
             r_base: 1,
             argc: 2,
-        },
-        Instruction::SpawnDetached {
-            r_dst: 0,
-            method_idx: 200,
-            r_base: 1,
-            argc: 0,
         },
         Instruction::Join {
             r_dst: 0,
@@ -907,13 +901,11 @@ fn test_all_91_opcodes_round_trip() {
         },
     ];
 
-    // The plan references "93 opcodes" in the doc comment. The actual opcode assignment table
-    // (spec section 4.2) defines 100 distinct opcodes when fully counted across all categories
-    // (array group now has 10 opcodes: 0x0900-0x0909).
+    // The opcode assignment table in spec section 4.2 defines 99 instructions.
     assert_eq!(
         instructions.len(),
-        100,
-        "expected exactly 100 instructions (all opcodes from spec section 4.2)"
+        99,
+        "expected exactly 99 instructions (all opcodes from spec section 4.2)"
     );
 
     for instr in &instructions {

@@ -22,26 +22,6 @@ pub(super) fn exec_spawn_task(
     }
 }
 
-pub(super) fn exec_spawn_detached(
-    ctx: &mut ExecContext<'_>,
-    r_dst: u16,
-    method_idx: u32,
-    r_base: u16,
-    argc: u16,
-) -> ExecutionResult {
-    let (module_idx, method_idx, args) =
-        match prepare_spawn(ctx, "SPAWN_DETACHED", r_dst, method_idx, r_base, argc) {
-            Ok(spawn) => spawn,
-            Err(message) => return ExecutionResult::Crash(message),
-        };
-    ExecutionResult::SpawnDetachedTask {
-        r_dst,
-        module_idx,
-        method_idx,
-        args,
-    }
-}
-
 fn prepare_spawn(
     ctx: &mut ExecContext<'_>,
     opcode: &str,
@@ -57,6 +37,18 @@ fn prepare_spawn(
             .map_err(|message| format!("{opcode}: {message}"))?;
     let (register_count, param_count) =
         super::calls::checked_method_register_count(opcode, ctx.modules, module_idx, method_idx)?;
+    let target_module = &ctx.modules[module_idx];
+    let method = &target_module.module.method_defs[method_idx];
+    if method.flags & writ_module::tables::METHOD_FLAG_INTRINSIC != 0 {
+        return Err(format!(
+            "{opcode}: MethodDef {method_idx} in module {module_idx} is runtime-intrinsic and has no spawnable IL body"
+        ));
+    }
+    if target_module.decoded_bodies[method_idx].is_empty() {
+        return Err(format!(
+            "{opcode}: MethodDef {method_idx} in module {module_idx} has no executable bytecode body"
+        ));
+    }
     super::calls::validate_method_param_count(opcode, param_count, argc as usize)?;
     super::calls::validate_callee_register_capacity(opcode, register_count, argc, 0)?;
 

@@ -16,12 +16,12 @@
 
 use crate::module::MethodBody;
 use crate::signature::{TypeSignature, encode_method_signature, encode_type_signature};
-use crate::tables::{FIELD_FLAG_PUBLIC, FIELD_FLAG_READONLY, TableId, TypeDefKind};
+use crate::tables::{
+    FIELD_FLAG_PUBLIC, FIELD_FLAG_READONLY, METHOD_FLAG_INTRINSIC, TableId, TypeDefKind,
+};
 use crate::token::MetadataToken;
 use crate::{Module, ModuleBuilder};
 
-/// The intrinsic method flag (bit 7).
-const INTRINSIC_FLAG: u16 = 0x80;
 const PUBLIC_FLAG: u16 = 1 << 0;
 const STATIC_FLAG: u16 = 1 << 1;
 const MUT_SELF_FLAG: u16 = 1 << 2;
@@ -250,7 +250,7 @@ fn add_intrinsic_impl(
         impl_token,
         name,
         &signature,
-        INTRINSIC_FLAG | flags,
+        METHOD_FLAG_INTRINSIC | flags,
         reg_count,
         empty_body(),
     )
@@ -288,7 +288,7 @@ fn add_intrinsic_type_method(
         owner,
         name,
         &signature,
-        PUBLIC_FLAG | INTRINSIC_FLAG | flags,
+        PUBLIC_FLAG | METHOD_FLAG_INTRINSIC | flags,
         reg_count,
         empty_body(),
     )
@@ -1962,7 +1962,7 @@ mod tests {
         for method in &module.method_defs {
             // All methods in the virtual module should be intrinsic
             assert!(
-                method.flags & INTRINSIC_FLAG != 0,
+                method.flags & METHOD_FLAG_INTRINSIC != 0,
                 "method should have intrinsic flag set, flags=0x{:04x}",
                 method.flags
             );
@@ -2045,7 +2045,7 @@ mod tests {
             let name = str_from_heap(&module, method.name);
             assert_ne!(method.flags & PUBLIC_FLAG, 0, "Array.{name} must be public");
             assert_ne!(
-                method.flags & INTRINSIC_FLAG,
+                method.flags & METHOD_FLAG_INTRINSIC,
                 0,
                 "Array.{name} must be intrinsic"
             );
@@ -2100,7 +2100,7 @@ mod tests {
                 "Entity.{name} must be static"
             );
             assert_ne!(
-                method.flags & INTRINSIC_FLAG,
+                method.flags & METHOD_FLAG_INTRINSIC,
                 0,
                 "Entity.{name} must be intrinsic"
             );
@@ -2238,7 +2238,7 @@ mod tests {
                 "{type_name}.{name} must be public"
             );
             assert_ne!(
-                method.flags & INTRINSIC_FLAG,
+                method.flags & METHOD_FLAG_INTRINSIC,
                 0,
                 "{type_name}.{name} must be intrinsic"
             );

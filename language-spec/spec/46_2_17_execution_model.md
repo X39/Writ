@@ -49,7 +49,7 @@ Cancelled task crashes the joining task — there is no return value to deliver.
 
 | From      | To        | Trigger                                                                      |
 |-----------|-----------|------------------------------------------------------------------------------|
-| *(new)*   | Ready     | `SPAWN_TASK`, `SPAWN_DETACHED`, or host command (fire event, start dialogue) |
+| *(new)*   | Ready     | `SPAWN_TASK` or host command (fire event, start dialogue)                    |
 | Ready     | Running   | Scheduler selects the task for execution                                     |
 | Running   | Suspended | Task hits a transition point (§2.17.3) or `JOIN` on an incomplete task       |
 | Running   | Ready     | Execution limit reached (§2.17.5) — task paused mid-execution                |
@@ -180,14 +180,11 @@ handlers firing at each frame.
 
 ## 2.17.8 Task Tree
 
-Tasks form a tree based on their spawn relationships:
+Tasks created by `SPAWN_TASK` are children of the spawning task. When the parent completes, crashes, or is cancelled,
+all children are automatically cancelled first (defer handlers run). The parent's own completion is deferred until
+all children have terminated. Host-created entry tasks and runtime-owned maintenance tasks are roots rather than
+children of a script task.
 
-- **Scoped tasks** (`SPAWN_TASK`): Children of the spawning task. When the parent completes, crashes, or is cancelled,
-  all scoped children are automatically cancelled first (defer handlers run). The parent's own completion is deferred
-  until all scoped children have terminated.
-- **Detached tasks** (`SPAWN_DETACHED`): Independent of the spawning task. They are not affected by the parent's
-  lifecycle and must be explicitly cancelled or allowed to run to completion.
-
-Scoped task cancellation is recursive: cancelling a parent cancels its scoped children, which cancels their scoped
-children, and so on. Defer handlers fire at each level during unwinding.
+Task cancellation is recursive: cancelling a parent cancels its children, which cancels their children, and so on.
+Defer handlers fire at each level during unwinding.
 

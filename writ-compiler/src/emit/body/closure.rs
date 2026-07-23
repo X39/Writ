@@ -238,7 +238,6 @@ fn scan_expr_for_lambdas(
             }
         }
         TypedExpr::Spawn { expr: inner, .. }
-        | TypedExpr::SpawnDetached { expr: inner, .. }
         | TypedExpr::Join { expr: inner, .. }
         | TypedExpr::Cancel { expr: inner, .. }
         | TypedExpr::Defer { expr: inner, .. } => {

@@ -44,7 +44,7 @@ use writ_parser::cst::{
 ///    - `lower_fmt_string` — `$"..."` → string concatenation with `.into<string>()` calls
 ///    - `lower_compound_assign` — `a += b` → `a = a + b` (mechanical expansion)
 ///    - `lower_operator` — operator decls → contract impl methods
-///    - `lower_concurrency` — spawn/join/cancel/defer/detached pass-through (1:1 mapping)
+///    - `lower_concurrency` — spawn/join/cancel/defer pass-through (1:1 mapping)
 ///
 /// 2. **Structural passes** (top-level, process Item variants):
 ///    - `lower_fn` — Fn items; invokes expression helpers on body

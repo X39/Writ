@@ -641,11 +641,7 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
         // ── Spawn — SPAWN_TASK (EMIT-15) ──────────────────────────────────────
         TypedExpr::Spawn {
             ty, expr: inner, ..
-        } => emit_spawn(emitter, *ty, inner, false),
-        // ── SpawnDetached — SPAWN_DETACHED (EMIT-15) ──────────────────────────
-        TypedExpr::SpawnDetached {
-            ty, expr: inner, ..
-        } => emit_spawn(emitter, *ty, inner, true),
+        } => emit_spawn(emitter, *ty, inner),
         // ── Join — JOIN (EMIT-15) ──────────────────────────────────────────────
         TypedExpr::Join {
             ty, expr: inner, ..

@@ -307,13 +307,6 @@ pub(crate) enum ExecutionResult {
         method_idx: usize,
         args: Vec<Value>,
     },
-    /// Task wants to spawn a detached task.
-    SpawnDetachedTask {
-        r_dst: u16,
-        module_idx: usize,
-        method_idx: usize,
-        args: Vec<Value>,
-    },
     /// Task wants to join another task.
     JoinTask { r_dst: u16, target: TaskId },
     /// Task wants to cancel another task.
@@ -761,12 +754,6 @@ pub(crate) fn execute_one(
             r_base,
             argc,
         } => concurrency::exec_spawn_task(&mut ctx, *r_dst, *method_idx, *r_base, *argc),
-        Instruction::SpawnDetached {
-            r_dst,
-            method_idx,
-            r_base,
-            argc,
-        } => concurrency::exec_spawn_detached(&mut ctx, *r_dst, *method_idx, *r_base, *argc),
         Instruction::Join { r_dst, r_task } => concurrency::exec_join(&mut ctx, *r_dst, *r_task),
         Instruction::Cancel { r_task } => concurrency::exec_cancel(&mut ctx, *r_task),
         Instruction::DeferPush {

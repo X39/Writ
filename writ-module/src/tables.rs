@@ -17,6 +17,8 @@ pub const FIELD_FLAG_READONLY: u16 = 1 << 3;
 pub const METHOD_FLAG_PUBLIC: u16 = 1 << 0;
 /// MethodDef flag: the method has no implicit instance receiver.
 pub const METHOD_FLAG_STATIC: u16 = 1 << 1;
+/// MethodDef flag: the method is implemented by the runtime, not by IL bytecode.
+pub const METHOD_FLAG_INTRINSIC: u16 = 1 << 7;
 /// MethodDef flag: the top-level function originated from a dialogue declaration.
 pub const METHOD_FLAG_DIALOGUE: u16 = 1 << 8;
 /// MethodRef flag: the referenced method uses an implicit instance receiver.

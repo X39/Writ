@@ -214,11 +214,6 @@ pub(crate) fn lower_expr(spanned: Spanned<Expr<'_>>, ctx: &mut LoweringContext) 
             span,
         },
 
-        Expr::SpawnDetached(e) => AstExpr::SpawnDetached {
-            expr: Box::new(lower_expr(*e, ctx)),
-            span,
-        },
-
         Expr::Join(e) => AstExpr::Join {
             expr: Box::new(lower_expr(*e, ctx)),
             span,

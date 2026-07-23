@@ -81,28 +81,29 @@ impl Domain {
                     let method_def = &module.method_defs[method_idx];
                     let slot = slot as u16;
 
-                    let target = if method_def.flags & 0x80 != 0 {
-                        // Intrinsic method -- resolve to IntrinsicId
-                        let type_name = self.get_type_name(mod_idx, impl_def.type_token);
-                        let method_name =
-                            read_string(&module.string_heap, method_def.name).unwrap_or("");
-                        match resolve_intrinsic_id(&type_name, method_name) {
-                            Some(intrinsic) => DispatchTarget::Intrinsic(intrinsic),
-                            None => {
-                                // Unknown intrinsic -- treat as IL method (shouldn't happen with
-                                // correct virtual module, but avoids panic)
-                                DispatchTarget::Method {
-                                    module_idx: mod_idx,
-                                    method_idx,
+                    let target =
+                        if method_def.flags & writ_module::tables::METHOD_FLAG_INTRINSIC != 0 {
+                            // Intrinsic method -- resolve to IntrinsicId
+                            let type_name = self.get_type_name(mod_idx, impl_def.type_token);
+                            let method_name =
+                                read_string(&module.string_heap, method_def.name).unwrap_or("");
+                            match resolve_intrinsic_id(&type_name, method_name) {
+                                Some(intrinsic) => DispatchTarget::Intrinsic(intrinsic),
+                                None => {
+                                    // Unknown intrinsic -- treat as IL method (shouldn't happen with
+                                    // correct virtual module, but avoids panic)
+                                    DispatchTarget::Method {
+                                        module_idx: mod_idx,
+                                        method_idx,
+                                    }
                                 }
                             }
-                        }
-                    } else {
-                        DispatchTarget::Method {
-                            module_idx: mod_idx,
-                            method_idx,
-                        }
-                    };
+                        } else {
+                            DispatchTarget::Method {
+                                module_idx: mod_idx,
+                                method_idx,
+                            }
+                        };
 
                     let type_args_hash = crate::type_specs::specialization_hash(
                         mod_idx,

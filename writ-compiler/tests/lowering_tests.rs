@@ -237,7 +237,7 @@ fn impl_mixed_fn_and_op_members() {
 // =========================================================
 // R7 — Concurrency Pass-Through
 //
-// spawn, join, cancel, defer, detached each map 1:1 to their
+// spawn, join, cancel, and defer each map 1:1 to their
 // AstExpr variant with span preserved and no semantic transformation.
 // =========================================================
 
@@ -266,13 +266,6 @@ fn concurrency_cancel_passthrough() {
 #[test]
 fn concurrency_defer_passthrough() {
     let ast = lower_src("fn f() { defer { cleanup(); } }");
-    insta::assert_debug_snapshot!(ast);
-}
-
-/// spawn detached doWork() → AstExpr::SpawnDetached { expr: AstExpr::Call { ... } }
-#[test]
-fn concurrency_detached_spawn_passthrough() {
-    let ast = lower_src("fn f() { spawn detached doWork(); }");
     insta::assert_debug_snapshot!(ast);
 }
 
@@ -1074,13 +1067,6 @@ fn lower_bitand_bitor_operators() {
 // =========================================================
 // Phase 11: Lowering tests for new declarations/expressions
 // =========================================================
-
-/// SpawnDetached lowers to AstExpr::SpawnDetached (not nested Spawn+Detached)
-#[test]
-fn lower_spawn_detached() {
-    let ast = lower_src("pub fn test() { spawn detached playSound(\"beep\"); }");
-    insta::assert_debug_snapshot!(ast);
-}
 
 /// impl<T> with generics passes through to AstImplDecl.generics
 #[test]

@@ -1057,15 +1057,6 @@ fn instr_to_text(instr: &Instruction) -> (String, Vec<String>) {
             "SPAWN_TASK".into(),
             vec![r(*r_dst), tok(*method_idx), r(*r_base), format!("{}", argc)],
         ),
-        Instruction::SpawnDetached {
-            r_dst,
-            method_idx,
-            r_base,
-            argc,
-        } => (
-            "SPAWN_DETACHED".into(),
-            vec![r(*r_dst), tok(*method_idx), r(*r_base), format!("{}", argc)],
-        ),
         Instruction::Join { r_dst, r_task } => ("JOIN".into(), vec![r(*r_dst), r(*r_task)]),
         Instruction::Cancel { r_task } => ("CANCEL".into(), vec![r(*r_task)]),
         Instruction::DeferPush { r_dst, method_idx } => {

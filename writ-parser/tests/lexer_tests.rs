@@ -524,7 +524,6 @@ fn all_keywords_recognized() {
         ("break", Token::KwBreak),
         ("continue", Token::KwContinue),
         ("spawn", Token::KwSpawn),
-        ("detached", Token::KwDetached),
         ("join", Token::KwJoin),
         ("cancel", Token::KwCancel),
         ("defer", Token::KwDefer),
@@ -554,6 +553,11 @@ fn all_keywords_recognized() {
             text, expected, tokens[0].0
         );
     }
+}
+
+#[test]
+fn detached_is_an_identifier() {
+    assert_eq!(lex("detached")[0].0, Token::Ident("detached"));
 }
 
 // =============================================================

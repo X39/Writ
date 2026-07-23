@@ -1261,21 +1261,6 @@ fn snippet_cancel_expr() {
 }
 
 #[test]
-fn snippet_spawn_detached_expr() {
-    let stmts = parse_ok_stmts("spawn detached playSound(\"beep\");");
-    assert_eq!(stmts.len(), 1);
-    match &stmts[0].0 {
-        Stmt::Expr((Expr::SpawnDetached(inner), _)) => match &inner.0 {
-            Expr::Call(callee, _) => {
-                assert!(matches!(callee.0, Expr::Ident("playSound")));
-            }
-            other => panic!("Expected Call inside SpawnDetached, got {:?}", other),
-        },
-        other => panic!("Expected SpawnDetached, got {:?}", other),
-    }
-}
-
-#[test]
 fn snippet_try_expr() {
     let stmts = parse_ok("let file = try openFile(\"save.dat\");");
     match let_value(&stmts[0]) {
@@ -4290,33 +4275,20 @@ fn test_caret_outside_brackets_error() {
 }
 
 // ---------------------------------------------------------
-// EXPR-04: spawn detached
+// EXPR-04: spawn
 // ---------------------------------------------------------
 
 #[test]
-fn test_spawn_detached() {
-    let stmts = parse_ok("let x = spawn detached doWork();");
-    let expr = let_value(&stmts[0]);
-    match expr {
-        Expr::SpawnDetached(inner) => {
-            assert!(matches!(&inner.0, Expr::Call(_, _)));
-        }
-        _ => panic!("expected SpawnDetached, got {:?}", expr),
-    }
-}
-
-#[test]
-fn test_spawn_without_detached() {
-    // Regression: spawn without detached still works
+fn test_spawn() {
     let stmts = parse_ok("let x = spawn doWork();");
     let expr = let_value(&stmts[0]);
     assert!(matches!(expr, Expr::Spawn(_)));
 }
 
 #[test]
-fn test_detached_standalone_error() {
-    // standalone "detached expr" should be a parse error
-    assert!(parse_has_errors("pub fn foo() { detached doWork(); }"));
+fn test_detached_can_be_used_as_an_identifier() {
+    let stmts = parse_ok("let detached = 1;");
+    assert_eq!(stmts.len(), 1);
 }
 
 // ---------------------------------------------------------

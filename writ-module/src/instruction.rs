@@ -317,13 +317,6 @@ pub enum Instruction {
         r_base: u16,
         argc: u16,
     },
-    /// 0x0B01 — Shape CALL (12B)
-    SpawnDetached {
-        r_dst: u16,
-        method_idx: u32,
-        r_base: u16,
-        argc: u16,
-    },
     /// 0x0B02 — Shape RR (6B)
     Join { r_dst: u16, r_task: u16 },
     /// 0x0B03 — Shape R (4B)
@@ -511,7 +504,6 @@ impl Instruction {
             Instruction::TypeOf { .. } => 0x0A30,
             // 0x0B Concurrency
             Instruction::SpawnTask { .. } => 0x0B00,
-            Instruction::SpawnDetached { .. } => 0x0B01,
             Instruction::Join { .. } => 0x0B02,
             Instruction::Cancel { .. } => 0x0B03,
             Instruction::DeferPush { .. } => 0x0B04,
@@ -861,18 +853,6 @@ impl Instruction {
                 w.write_u16::<LittleEndian>(*r_base)?;
                 w.write_u16::<LittleEndian>(*argc)?;
             }
-            Instruction::SpawnDetached {
-                r_dst,
-                method_idx,
-                r_base,
-                argc,
-            } => {
-                w.write_u16::<LittleEndian>(*r_dst)?;
-                w.write_u32::<LittleEndian>(*method_idx)?;
-                w.write_u16::<LittleEndian>(*r_base)?;
-                w.write_u16::<LittleEndian>(*argc)?;
-            }
-
             // ── Variable-layout instructions ───────────────────
             Instruction::Switch { r_tag, offsets } => {
                 w.write_u16::<LittleEndian>(*r_tag)?;
@@ -1523,18 +1503,6 @@ impl Instruction {
                 let r_base = r.read_u16::<LittleEndian>()?;
                 let argc = r.read_u16::<LittleEndian>()?;
                 Ok(Instruction::SpawnTask {
-                    r_dst,
-                    method_idx,
-                    r_base,
-                    argc,
-                })
-            }
-            0x0B01 => {
-                let r_dst = r.read_u16::<LittleEndian>()?;
-                let method_idx = r.read_u32::<LittleEndian>()?;
-                let r_base = r.read_u16::<LittleEndian>()?;
-                let argc = r.read_u16::<LittleEndian>()?;
-                Ok(Instruction::SpawnDetached {
                     r_dst,
                     method_idx,
                     r_base,

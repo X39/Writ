@@ -162,7 +162,6 @@ enum Opcode : u16 {
     EXTRACT_FIELD = 0x0A22,
     // 0x0B Concurrency
     SPAWN_TASK    = 0x0B00,
-    SPAWN_DETACHED = 0x0B01,
     JOIN          = 0x0B02,
     CANCEL        = 0x0B03,
     DEFER_PUSH    = 0x0B04,
@@ -624,7 +623,7 @@ struct ILInstruction {
         s32 offset;
     }
     else if (op == Opcode::CALL || op == Opcode::CALL_EXTERN ||
-             op == Opcode::SPAWN_TASK || op == Opcode::SPAWN_DETACHED) {
+             op == Opcode::SPAWN_TASK) {
         // Shape CALL: r_dst, method_idx(u32), r_base, argc (12B total)
         u16 r_dst;
         u32 method_idx  [[format("format_token")]];

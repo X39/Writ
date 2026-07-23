@@ -334,7 +334,6 @@ fn expr_has_error(expr: &TypedExpr) -> bool {
             }
         }
         TypedExpr::Spawn { expr: inner, .. }
-        | TypedExpr::SpawnDetached { expr: inner, .. }
         | TypedExpr::Join { expr: inner, .. }
         | TypedExpr::Cancel { expr: inner, .. }
         | TypedExpr::Defer { expr: inner, .. } => {
@@ -932,7 +931,6 @@ fn collect_lambda_exprs_from_expr<'a>(expr: &'a TypedExpr, out: &mut Vec<&'a Typ
             }
         }
         TypedExpr::Spawn { expr: inner, .. }
-        | TypedExpr::SpawnDetached { expr: inner, .. }
         | TypedExpr::Join { expr: inner, .. }
         | TypedExpr::Cancel { expr: inner, .. }
         | TypedExpr::Defer { expr: inner, .. } => {

@@ -157,12 +157,14 @@ Opcodes are partitioned by category in the high byte (see §2.5 for the scheme).
 | Opcode   | Mnemonic       | Shape |
 |----------|----------------|-------|
 | `0x0B00` | SPAWN_TASK     | CALL  |
-| `0x0B01` | SPAWN_DETACHED | CALL  |
+| `0x0B01` | *(unassigned)* | —     |
 | `0x0B02` | JOIN           | RR    |
 | `0x0B03` | CANCEL         | R     |
 | `0x0B04` | DEFER_PUSH     | RI32  |
 | `0x0B05` | DEFER_POP      | N     |
 | `0x0B06` | DEFER_END      | N     |
+
+Decoders must reject the unassigned opcode `0x0B01`; it has no compatibility interpretation.
 
 ## 0x0C — Globals & Atomics
 

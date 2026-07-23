@@ -935,7 +935,6 @@ fn find_call_in_expr(expr: &TypedExpr, offset: usize) -> Option<&TypedExpr> {
             .and_then(|s| find_call_in_expr(s, offset))
             .or_else(|| end.as_ref().and_then(|e| find_call_in_expr(e, offset))),
         TypedExpr::Spawn { expr: inner, .. }
-        | TypedExpr::SpawnDetached { expr: inner, .. }
         | TypedExpr::Join { expr: inner, .. }
         | TypedExpr::Cancel { expr: inner, .. }
         | TypedExpr::Defer { expr: inner, .. } => find_call_in_expr(inner, offset),
