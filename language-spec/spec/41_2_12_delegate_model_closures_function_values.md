@@ -9,14 +9,26 @@ A delegate is a GC-managed object containing:
 
 ```
 Delegate {
-    target: Option<object>,   // capture struct, self, or null
-    method: method_index,     // resolved concrete method
+    target: optional receiver/capture value,
+    method: (module, MethodDef row),  // resolved concrete method identity
 }
 ```
 
-The presence of `target` must match the resolved method's receiver ABI. An instance method or capturing closure body
-requires a non-null target; a static method, top-level function, or non-capturing closure body requires a null target.
-The runtime validates this invariant both when `NEW_DELEGATE` executes and when `CALL_INDIRECT` invokes a delegate.
+The resolved `MethodDef` requires a receiver exactly when its `owner` token is non-null and its `STATIC` flag is clear.
+Such a method requires a non-null delegate target. A top-level function or static method requires a null target. The
+runtime compares these two conditions; it never repairs a mismatch by treating the target as an explicit argument or
+by treating an explicit argument as `self`.
+
+`NEW_DELEGATE` validates its destination and target registers, resolves its method operand, verifies that the resolved
+method and body metadata are present and consistent, and validates the target/receiver binding before allocating the
+delegate. The method operand may be a local `MethodDef` token or a `MethodRef` token. A `MethodRef` is resolved at
+creation time, and the delegate stores the resulting concrete `(module, MethodDef row)` identity rather than the
+reference token.
+
+An invalid register, null or unsupported method token, unresolved `MethodRef`, missing or inconsistent method body, or
+target/receiver mismatch is a runtime error. Every such runtime error crashes the current task. Validation completes
+before allocation, so a failing `NEW_DELEGATE` does not allocate a delegate or write a result to its destination
+register.
 
 ## 2.12.2 Creation Scenarios
 
@@ -60,21 +72,30 @@ CALL_INDIRECT  r_result, r_delegate, r_base, argc
 
 The runtime:
 
-1. Reads the delegate from `r_delegate`.
-2. Extracts `target` and `method`.
-3. If `target` is non-null, prepends it as the first argument (it becomes `r0` / self / env in the callee).
-4. Calls the resolved method.
+1. Validates the destination, delegate, and explicit-argument register ranges.
+2. Requires `r_delegate` to refer to a delegate object and extracts its target and concrete method identity.
+3. Revalidates the stored method metadata and the target/receiver binding. This second validation is required because
+   delegates may enter the heap through deserialization, host integration, or programmatic runtime APIs rather than
+   through `NEW_DELEGATE`.
+4. Validates that `argc` plus the implicit receiver count exactly equals `MethodDef.param_count` and that the callee
+   has enough registers. The implicit receiver count is one for a receiver method and zero otherwise.
+5. For a receiver method, prepends the validated target as the first argument; it becomes `r0` (`self` or the closure
+   environment) in the callee.
+6. Pushes the callee frame and calls the resolved method.
 
-A delegate whose target presence does not match the resolved `MethodDef` receiver ABI is malformed and the task
-crashes instead of reinterpreting the target as an explicit argument (or an explicit argument as `self`).
+A non-delegate value, invalid stored method identity or body, target/receiver mismatch, invalid register range,
+argument-count mismatch, or insufficient callee register capacity is a runtime error. Every such runtime error crashes
+the current task before a callee frame is created. The runtime does not continue the malformed call, reinterpret its
+arguments, or panic the runtime process.
 
 The callee does not know or care whether it was called directly, through a delegate, or through a closure.
 
 ## 2.12.4 Virtual Method References
 
-`NEW_DELEGATE` always takes a **concrete method index**. For virtual/contract methods, the compiler resolves the
-dispatch at delegate creation time. If that's not possible (rare), the compiler generates a small wrapper closure that
-performs the virtual call internally.
+The encoded `NEW_DELEGATE` operand is a method metadata token: either a local `MethodDef` or a `MethodRef`. Both forms
+must resolve to a concrete `(module, MethodDef row)` before the delegate is allocated. For a virtual or contract method
+reference, the compiler resolves dispatch at delegate creation time when possible. Otherwise, it generates a small
+wrapper closure whose concrete body performs the virtual call.
 
 ## 2.12.5 Relationship to Function Types
 
