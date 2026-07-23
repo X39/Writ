@@ -144,7 +144,7 @@ fn coll_with_library_separate_modules() {
     run_with_library(
         r#"
 fn main() -> int {
-    let list: List<int> = new List<int> { items: [] };
+    let mut list: List<int> = new List<int> { items: [] };
     list.add(42);
     list.get(0)
 }
@@ -159,7 +159,7 @@ fn main() -> int {
 fn coll_list_add_get_len() {
     run_to_completion(
         r#"
-pub class List<T> { items: T[] }
+pub class List<T> { mut items: T[] }
 impl<T> List<T> {
     pub fn add(mut self, item: T) {
         let old_len: int = self.items.len();
@@ -188,7 +188,7 @@ impl<T> List<T> {
     }
 }
 fn main() -> int {
-    let list: List<int> = new List<int> { items: [] };
+    let mut list: List<int> = new List<int> { items: [] };
     list.add(10);
     list.add(20);
     list.add(30);
@@ -212,7 +212,7 @@ fn main() -> int {
 fn coll_map_set_get_remove() {
     run_to_completion(
         r#"
-pub class Map<K: Ord + Eq, V> { keys: K[], values: V[] }
+pub class Map<K: Ord + Eq, V> { mut keys: K[], mut values: V[] }
 impl<K: Ord + Eq, V> Map<K, V> {
     pub fn len(self) -> int { self.keys.len() }
     pub fn has(self, key: K) -> bool {
@@ -263,7 +263,7 @@ impl<K: Ord + Eq, V> Map<K, V> {
     }
 }
 fn main() -> int {
-    let map: Map<string, int> = new Map<string, int> { keys: [], values: [] };
+    let mut map: Map<string, int> = new Map<string, int> { keys: [], values: [] };
     map.set("a", 1);
     map.set("b", 2);
     map.remove("a");
@@ -283,7 +283,7 @@ fn main() -> int {
 fn coll_map_distinguishes_different_string_keys() {
     run_to_completion(
         r#"
-pub class Map<K: Ord + Eq, V> { keys: K[], values: V[] }
+pub class Map<K: Ord + Eq, V> { mut keys: K[], mut values: V[] }
 impl<K: Ord + Eq, V> Map<K, V> {
     pub fn set(mut self, key: K, value: V) {
         let mut i: int = 0;
@@ -300,7 +300,7 @@ impl<K: Ord + Eq, V> Map<K, V> {
     pub fn len(self) -> int { self.keys.len() }
 }
 fn main() -> int {
-    let map: Map<string, int> = new Map<string, int> { keys: [], values: [] };
+    let mut map: Map<string, int> = new Map<string, int> { keys: [], values: [] };
     map.set("alpha", 1);
     map.set("beta", 2);
     map.len()
@@ -314,7 +314,7 @@ fn main() -> int {
 fn coll_set_add_dedup_remove() {
     run_to_completion(
         r#"
-pub class Set<T: Eq> { items: T[] }
+pub class Set<T: Eq> { mut items: T[] }
 impl<T: Eq> Set<T> {
     pub fn add(mut self, item: T) {
         if self.has(item) { return; }
@@ -349,7 +349,7 @@ impl<T: Eq> Set<T> {
     pub fn len(self) -> int { self.items.len() }
 }
 fn main() -> int {
-    let s: Set<int> = new Set<int> { items: [] };
+    let mut s: Set<int> = new Set<int> { items: [] };
     s.add(1);
     s.add(2);
     s.add(1);
@@ -370,7 +370,7 @@ fn main() -> int {
 fn coll_hashmap_set_get_remove() {
     run_to_completion(
         r#"
-pub class HashMap<K: Hashable, V> { keys: K[], values: V[] }
+pub class HashMap<K: Hashable, V> { mut keys: K[], mut values: V[] }
 impl<K: Hashable, V> HashMap<K, V> {
     pub fn len(self) -> int { self.keys.len() }
     pub fn has(self, key: K) -> bool {
@@ -421,7 +421,7 @@ impl<K: Hashable, V> HashMap<K, V> {
     }
 }
 fn main() -> int {
-    let hm: HashMap<string, int> = new HashMap<string, int> { keys: [], values: [] };
+    let mut hm: HashMap<string, int> = new HashMap<string, int> { keys: [], values: [] };
     hm.set("x", 10);
     hm.set("y", 20);
     hm.remove("x");
@@ -441,7 +441,7 @@ fn main() -> int {
 fn coll_hashmap_distinguishes_different_string_keys() {
     run_to_completion(
         r#"
-pub class HashMap<K: Hashable, V> { keys: K[], values: V[] }
+pub class HashMap<K: Hashable, V> { mut keys: K[], mut values: V[] }
 impl<K: Hashable, V> HashMap<K, V> {
     pub fn set(mut self, key: K, value: V) {
         let mut i: int = 0;
@@ -458,7 +458,7 @@ impl<K: Hashable, V> HashMap<K, V> {
     pub fn len(self) -> int { self.keys.len() }
 }
 fn main() -> int {
-    let map: HashMap<string, int> = new HashMap<string, int> { keys: [], values: [] };
+    let mut map: HashMap<string, int> = new HashMap<string, int> { keys: [], values: [] };
     map.set("alpha", 1);
     map.set("beta", 2);
     map.len()
@@ -475,7 +475,7 @@ fn iter_for_in_list() {
         r#"
 pub class ListIterator<T> {
     source: T[],
-    index: int
+    mut index: int
 }
 impl<T> ListIterator<T> {
     pub fn next(mut self) -> T? {
@@ -493,7 +493,7 @@ impl<T> Iterator<T> for ListIterator<T> {
         item
     }
 }
-pub class List<T> { items: T[] }
+pub class List<T> { mut items: T[] }
 impl<T> List<T> {
     pub fn add(mut self, item: T) {
         let old_len: int = self.items.len();
@@ -508,7 +508,7 @@ impl<T> Iterable<T> for List<T> {
     }
 }
 fn main() -> int {
-    let list: List<int> = new List<int> { items: [] };
+    let mut list: List<int> = new List<int> { items: [] };
     list.add(10);
     list.add(20);
     list.add(30);
@@ -530,7 +530,7 @@ fn iter_for_in_set() {
         r#"
 pub class SetIterator<T: Eq> {
     source: T[],
-    index: int
+    mut index: int
 }
 impl<T: Eq> SetIterator<T> {
     pub fn next(mut self) -> T? {
@@ -548,7 +548,7 @@ impl<T: Eq> Iterator<T> for SetIterator<T> {
         item
     }
 }
-pub class Set<T: Eq> { items: T[] }
+pub class Set<T: Eq> { mut items: T[] }
 impl<T: Eq> Set<T> {
     pub fn add(mut self, item: T) {
         if self.has(item) { return; }
@@ -572,7 +572,7 @@ impl<T: Eq> Iterable<T> for Set<T> {
     }
 }
 fn main() -> int {
-    let s: Set<int> = new Set<int> { items: [] };
+    let mut s: Set<int> = new Set<int> { items: [] };
     s.add(1);
     s.add(2);
     s.add(1);
@@ -594,8 +594,8 @@ fn iter_for_map_keys() {
     run_to_completion(
         r#"
 pub class Map<K: Ord + Eq, V> {
-    keys: K[],
-    values: V[]
+    mut keys: K[],
+    mut values: V[]
 }
 impl<K: Ord + Eq, V> Map<K, V> {
     pub fn set(mut self, key: K, value: V) {
@@ -614,7 +614,7 @@ impl<K: Ord + Eq, V> Map<K, V> {
     pub fn len(self) -> int { self.keys.len() }
 }
 fn main() -> int {
-    let map: Map<string, int> = new Map<string, int> { keys: [], values: [] };
+    let mut map: Map<string, int> = new Map<string, int> { keys: [], values: [] };
     map.set("a", 10);
     map.set("b", 20);
     map.set("c", 30);
@@ -636,7 +636,7 @@ fn iter_custom_iterable() {
     run_to_completion(
         r#"
 pub class CounterIterator {
-    current: int,
+    mut current: int,
     max: int
 }
 impl CounterIterator {
@@ -681,7 +681,7 @@ fn main() -> int {
 fn coll_list_map_filter_reduce() {
     run_to_completion(
         r#"
-pub class List<T> { items: T[] }
+pub class List<T> { mut items: T[] }
 impl<T> List<T> {
     pub fn add(mut self, item: T) {
         let old_len: int = self.items.len();
@@ -690,7 +690,7 @@ impl<T> List<T> {
     }
     pub fn len(self) -> int { self.items.len() }
     pub fn map(self, f: fn(T) -> T) -> List<T> {
-        let result: List<T> = new List<T> { items: self.items.slice(0, 0) };
+        let mut result: List<T> = new List<T> { items: self.items.slice(0, 0) };
         let mut i: int = 0;
         while i < self.items.len() {
             result.add(f(self.items[i]));
@@ -699,7 +699,7 @@ impl<T> List<T> {
         result
     }
     pub fn filter(self, f: fn(T) -> bool) -> List<T> {
-        let result: List<T> = new List<T> { items: self.items.slice(0, 0) };
+        let mut result: List<T> = new List<T> { items: self.items.slice(0, 0) };
         let mut i: int = 0;
         while i < self.items.len() {
             if f(self.items[i]) { result.add(self.items[i]); }
@@ -718,7 +718,7 @@ impl<T> List<T> {
     }
 }
 fn main() -> int {
-    let list: List<int> = new List<int> { items: [] };
+    let mut list: List<int> = new List<int> { items: [] };
     list.add(1);
     list.add(2);
     list.add(3);
