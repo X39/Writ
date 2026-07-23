@@ -91,7 +91,11 @@ pub fn from_bytes(bytes: &[u8]) -> Result<Module, DecodeError> {
     };
 
     // Read heaps
-    let string_heap = read_slice(bytes, string_heap_offset as usize, string_heap_size as usize)?;
+    let string_heap = read_slice(
+        bytes,
+        string_heap_offset as usize,
+        string_heap_size as usize,
+    )?;
     let blob_heap = read_slice(bytes, blob_heap_offset as usize, blob_heap_size as usize)?;
 
     // Read tables
@@ -154,7 +158,9 @@ pub fn from_bytes(bytes: &[u8]) -> Result<Module, DecodeError> {
                 11 => module.contract_methods.push(read_contract_method(&mut c)?),
                 12 => module.impl_defs.push(read_impl_def(&mut c)?),
                 13 => module.generic_params.push(read_generic_param(&mut c)?),
-                14 => module.generic_constraints.push(read_generic_constraint(&mut c)?),
+                14 => module
+                    .generic_constraints
+                    .push(read_generic_constraint(&mut c)?),
                 15 => module.global_defs.push(read_global_def(&mut c)?),
                 16 => module.extern_defs.push(read_extern_def(&mut c)?),
                 17 => module.component_slots.push(read_component_slot(&mut c)?),
@@ -272,7 +278,14 @@ fn read_type_def(c: &mut Cursor<&[u8]>) -> Result<TypeDefRow, DecodeError> {
     let method_list = c.read_u32::<LittleEndian>()?;
     // 1 byte padding to reach 20 bytes
     let _ = c.read_u8()?;
-    Ok(TypeDefRow { name, namespace, kind, flags, field_list, method_list })
+    Ok(TypeDefRow {
+        name,
+        namespace,
+        kind,
+        flags,
+        field_list,
+        method_list,
+    })
 }
 
 fn read_type_ref(c: &mut Cursor<&[u8]>) -> Result<TypeRefRow, DecodeError> {
@@ -284,7 +297,9 @@ fn read_type_ref(c: &mut Cursor<&[u8]>) -> Result<TypeRefRow, DecodeError> {
 }
 
 fn read_type_spec(c: &mut Cursor<&[u8]>) -> Result<TypeSpecRow, DecodeError> {
-    Ok(TypeSpecRow { signature: c.read_u32::<LittleEndian>()? })
+    Ok(TypeSpecRow {
+        signature: c.read_u32::<LittleEndian>()?,
+    })
 }
 
 fn read_field_def(c: &mut Cursor<&[u8]>) -> Result<FieldDefRow, DecodeError> {
@@ -293,7 +308,11 @@ fn read_field_def(c: &mut Cursor<&[u8]>) -> Result<FieldDefRow, DecodeError> {
     let flags = c.read_u16::<LittleEndian>()?;
     // 2 bytes padding to reach 12 bytes
     let _ = c.read_u16::<LittleEndian>()?;
-    Ok(FieldDefRow { name, type_sig, flags })
+    Ok(FieldDefRow {
+        name,
+        type_sig,
+        flags,
+    })
 }
 
 fn read_field_ref(c: &mut Cursor<&[u8]>) -> Result<FieldRefRow, DecodeError> {
@@ -314,7 +333,16 @@ fn read_method_def(c: &mut Cursor<&[u8]>) -> Result<MethodDefRow, DecodeError> {
     let param_count = c.read_u16::<LittleEndian>()?;
     let _ = c.read_u16::<LittleEndian>()?; // 2-byte alignment pad
     let owner = MetadataToken(c.read_u32::<LittleEndian>()?);
-    Ok(MethodDefRow { name, signature, flags, body_offset, body_size, reg_count, param_count, owner })
+    Ok(MethodDefRow {
+        name,
+        signature,
+        flags,
+        body_offset,
+        body_size,
+        reg_count,
+        param_count,
+        owner,
+    })
 }
 
 fn read_method_ref(c: &mut Cursor<&[u8]>) -> Result<MethodRefRow, DecodeError> {
@@ -326,7 +354,12 @@ fn read_method_ref(c: &mut Cursor<&[u8]>) -> Result<MethodRefRow, DecodeError> {
     if flags & !METHOD_REF_FLAG_HAS_RECEIVER != 0 {
         return Err(DecodeError::InvalidMethodRefFlags(flags));
     }
-    Ok(MethodRefRow { parent, name, signature, flags })
+    Ok(MethodRefRow {
+        parent,
+        name,
+        signature,
+        flags,
+    })
 }
 
 fn read_param_def(c: &mut Cursor<&[u8]>) -> Result<ParamDefRow, DecodeError> {
@@ -334,7 +367,11 @@ fn read_param_def(c: &mut Cursor<&[u8]>) -> Result<ParamDefRow, DecodeError> {
     let type_sig = c.read_u32::<LittleEndian>()?;
     let sequence = c.read_u16::<LittleEndian>()?;
     let _ = c.read_u16::<LittleEndian>()?; // padding
-    Ok(ParamDefRow { name, type_sig, sequence })
+    Ok(ParamDefRow {
+        name,
+        type_sig,
+        sequence,
+    })
 }
 
 fn read_contract_def(c: &mut Cursor<&[u8]>) -> Result<ContractDefRow, DecodeError> {
@@ -351,7 +388,11 @@ fn read_contract_method(c: &mut Cursor<&[u8]>) -> Result<ContractMethodRow, Deco
     let signature = c.read_u32::<LittleEndian>()?;
     let slot = c.read_u16::<LittleEndian>()?;
     let _ = c.read_u16::<LittleEndian>()?; // padding
-    Ok(ContractMethodRow { name, signature, slot })
+    Ok(ContractMethodRow {
+        name,
+        signature,
+        slot,
+    })
 }
 
 fn read_impl_def(c: &mut Cursor<&[u8]>) -> Result<ImplDefRow, DecodeError> {
@@ -368,7 +409,12 @@ fn read_generic_param(c: &mut Cursor<&[u8]>) -> Result<GenericParamRow, DecodeEr
     let ordinal = c.read_u16::<LittleEndian>()?;
     let name = c.read_u32::<LittleEndian>()?;
     let _ = c.read_u8()?; // padding
-    Ok(GenericParamRow { owner, owner_kind, ordinal, name })
+    Ok(GenericParamRow {
+        owner,
+        owner_kind,
+        ordinal,
+        name,
+    })
 }
 
 fn read_generic_constraint(c: &mut Cursor<&[u8]>) -> Result<GenericConstraintRow, DecodeError> {
@@ -384,7 +430,12 @@ fn read_global_def(c: &mut Cursor<&[u8]>) -> Result<GlobalDefRow, DecodeError> {
     let flags = c.read_u16::<LittleEndian>()?;
     let init_value = c.read_u32::<LittleEndian>()?;
     let _ = c.read_u16::<LittleEndian>()?; // padding
-    Ok(GlobalDefRow { name, type_sig, flags, init_value })
+    Ok(GlobalDefRow {
+        name,
+        type_sig,
+        flags,
+        init_value,
+    })
 }
 
 fn read_extern_def(c: &mut Cursor<&[u8]>) -> Result<ExternDefRow, DecodeError> {
@@ -393,7 +444,12 @@ fn read_extern_def(c: &mut Cursor<&[u8]>) -> Result<ExternDefRow, DecodeError> {
     let import_name = c.read_u32::<LittleEndian>()?;
     let flags = c.read_u16::<LittleEndian>()?;
     let _ = c.read_u16::<LittleEndian>()?; // padding
-    Ok(ExternDefRow { name, signature, import_name, flags })
+    Ok(ExternDefRow {
+        name,
+        signature,
+        import_name,
+        flags,
+    })
 }
 
 fn read_component_slot(c: &mut Cursor<&[u8]>) -> Result<ComponentSlotRow, DecodeError> {
@@ -417,7 +473,11 @@ fn read_export_def(c: &mut Cursor<&[u8]>) -> Result<ExportDefRow, DecodeError> {
     let item = MetadataToken(c.read_u32::<LittleEndian>()?);
     let _ = c.read_u8()?; // padding (1 byte)
     let _ = c.read_u16::<LittleEndian>()?; // padding (2 bytes) -> total 12
-    Ok(ExportDefRow { name, item_kind, item })
+    Ok(ExportDefRow {
+        name,
+        item_kind,
+        item,
+    })
 }
 
 fn read_attribute_def(c: &mut Cursor<&[u8]>) -> Result<AttributeDefRow, DecodeError> {
@@ -427,5 +487,10 @@ fn read_attribute_def(c: &mut Cursor<&[u8]>) -> Result<AttributeDefRow, DecodeEr
     let value = c.read_u32::<LittleEndian>()?;
     let _ = c.read_u8()?; // padding (1 byte)
     let _ = c.read_u16::<LittleEndian>()?; // padding (2 bytes) -> total 16
-    Ok(AttributeDefRow { owner, owner_kind, name, value })
+    Ok(AttributeDefRow {
+        owner,
+        owner_kind,
+        name,
+        value,
+    })
 }

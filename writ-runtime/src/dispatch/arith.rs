@@ -1,7 +1,7 @@
 use crate::value::Value;
 use writ_module::instruction::ArrayDefaultKind;
 
-use super::{helpers, ExecContext, ExecutionResult};
+use super::{ExecContext, ExecutionResult, helpers};
 
 // ── Meta / Crash ───────────────────────────────────────────────
 
@@ -35,7 +35,11 @@ pub(super) fn exec_load_int(ctx: &mut ExecContext<'_>, r_dst: u16, value: i64) -
 }
 
 #[inline]
-pub(super) fn exec_load_float(ctx: &mut ExecContext<'_>, r_dst: u16, value: f64) -> ExecutionResult {
+pub(super) fn exec_load_float(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    value: f64,
+) -> ExecutionResult {
     let frame = ctx.task.call_stack.last_mut().unwrap();
     frame.registers[r_dst as usize] = Value::Float(value);
     ExecutionResult::Continue
@@ -56,7 +60,11 @@ pub(super) fn exec_load_false(ctx: &mut ExecContext<'_>, r_dst: u16) -> Executio
 }
 
 #[inline]
-pub(super) fn exec_load_string(ctx: &mut ExecContext<'_>, r_dst: u16, string_idx: u32) -> ExecutionResult {
+pub(super) fn exec_load_string(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    string_idx: u32,
+) -> ExecutionResult {
     let module = &ctx.modules[ctx.current_module_idx];
     let s = match writ_module::heap::read_string(&module.module.string_heap, string_idx) {
         Ok(s) => s.to_string(),
@@ -94,7 +102,11 @@ pub(super) fn exec_br_true(ctx: &mut ExecContext<'_>, r_cond: u16, offset: i32) 
 }
 
 #[inline]
-pub(super) fn exec_br_false(ctx: &mut ExecContext<'_>, r_cond: u16, offset: i32) -> ExecutionResult {
+pub(super) fn exec_br_false(
+    ctx: &mut ExecContext<'_>,
+    r_cond: u16,
+    offset: i32,
+) -> ExecutionResult {
     let frame = ctx.task.call_stack.last_mut().unwrap();
     if !helpers::extract_bool(&frame.registers[r_cond as usize]) {
         frame.pc = offset as usize;
@@ -103,7 +115,11 @@ pub(super) fn exec_br_false(ctx: &mut ExecContext<'_>, r_cond: u16, offset: i32)
 }
 
 #[inline]
-pub(super) fn exec_switch(ctx: &mut ExecContext<'_>, r_tag: u16, offsets: &[i32]) -> ExecutionResult {
+pub(super) fn exec_switch(
+    ctx: &mut ExecContext<'_>,
+    r_tag: u16,
+    offsets: &[i32],
+) -> ExecutionResult {
     let frame = ctx.task.call_stack.last_mut().unwrap();
     let tag = helpers::extract_int(&frame.registers[r_tag as usize]) as usize;
     if tag >= offsets.len() {
@@ -120,7 +136,12 @@ pub(super) fn exec_switch(ctx: &mut ExecContext<'_>, r_tag: u16, offsets: &[i32]
 // ── Integer Arithmetic ─────────────────────────────────────────
 
 #[inline]
-pub(super) fn exec_add_i(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b: u16) -> ExecutionResult {
+pub(super) fn exec_add_i(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    r_a: u16,
+    r_b: u16,
+) -> ExecutionResult {
     let frame = ctx.task.call_stack.last_mut().unwrap();
     let a = helpers::extract_int(&frame.registers[r_a as usize]);
     let b = helpers::extract_int(&frame.registers[r_b as usize]);
@@ -129,7 +150,12 @@ pub(super) fn exec_add_i(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b: u
 }
 
 #[inline]
-pub(super) fn exec_sub_i(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b: u16) -> ExecutionResult {
+pub(super) fn exec_sub_i(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    r_a: u16,
+    r_b: u16,
+) -> ExecutionResult {
     let frame = ctx.task.call_stack.last_mut().unwrap();
     let a = helpers::extract_int(&frame.registers[r_a as usize]);
     let b = helpers::extract_int(&frame.registers[r_b as usize]);
@@ -138,7 +164,12 @@ pub(super) fn exec_sub_i(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b: u
 }
 
 #[inline]
-pub(super) fn exec_mul_i(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b: u16) -> ExecutionResult {
+pub(super) fn exec_mul_i(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    r_a: u16,
+    r_b: u16,
+) -> ExecutionResult {
     let frame = ctx.task.call_stack.last_mut().unwrap();
     let a = helpers::extract_int(&frame.registers[r_a as usize]);
     let b = helpers::extract_int(&frame.registers[r_b as usize]);
@@ -147,7 +178,12 @@ pub(super) fn exec_mul_i(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b: u
 }
 
 #[inline]
-pub(super) fn exec_div_i(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b: u16) -> ExecutionResult {
+pub(super) fn exec_div_i(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    r_a: u16,
+    r_b: u16,
+) -> ExecutionResult {
     let frame = ctx.task.call_stack.last_mut().unwrap();
     let a = helpers::extract_int(&frame.registers[r_a as usize]);
     let b = helpers::extract_int(&frame.registers[r_b as usize]);
@@ -159,7 +195,12 @@ pub(super) fn exec_div_i(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b: u
 }
 
 #[inline]
-pub(super) fn exec_mod_i(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b: u16) -> ExecutionResult {
+pub(super) fn exec_mod_i(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    r_a: u16,
+    r_b: u16,
+) -> ExecutionResult {
     let frame = ctx.task.call_stack.last_mut().unwrap();
     let a = helpers::extract_int(&frame.registers[r_a as usize]);
     let b = helpers::extract_int(&frame.registers[r_b as usize]);
@@ -181,7 +222,12 @@ pub(super) fn exec_neg_i(ctx: &mut ExecContext<'_>, r_dst: u16, r_src: u16) -> E
 // ── Float Arithmetic ───────────────────────────────────────────
 
 #[inline]
-pub(super) fn exec_add_f(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b: u16) -> ExecutionResult {
+pub(super) fn exec_add_f(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    r_a: u16,
+    r_b: u16,
+) -> ExecutionResult {
     let frame = ctx.task.call_stack.last_mut().unwrap();
     let a = helpers::extract_float(&frame.registers[r_a as usize]);
     let b = helpers::extract_float(&frame.registers[r_b as usize]);
@@ -190,7 +236,12 @@ pub(super) fn exec_add_f(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b: u
 }
 
 #[inline]
-pub(super) fn exec_sub_f(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b: u16) -> ExecutionResult {
+pub(super) fn exec_sub_f(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    r_a: u16,
+    r_b: u16,
+) -> ExecutionResult {
     let frame = ctx.task.call_stack.last_mut().unwrap();
     let a = helpers::extract_float(&frame.registers[r_a as usize]);
     let b = helpers::extract_float(&frame.registers[r_b as usize]);
@@ -199,7 +250,12 @@ pub(super) fn exec_sub_f(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b: u
 }
 
 #[inline]
-pub(super) fn exec_mul_f(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b: u16) -> ExecutionResult {
+pub(super) fn exec_mul_f(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    r_a: u16,
+    r_b: u16,
+) -> ExecutionResult {
     let frame = ctx.task.call_stack.last_mut().unwrap();
     let a = helpers::extract_float(&frame.registers[r_a as usize]);
     let b = helpers::extract_float(&frame.registers[r_b as usize]);
@@ -208,7 +264,12 @@ pub(super) fn exec_mul_f(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b: u
 }
 
 #[inline]
-pub(super) fn exec_div_f(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b: u16) -> ExecutionResult {
+pub(super) fn exec_div_f(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    r_a: u16,
+    r_b: u16,
+) -> ExecutionResult {
     let frame = ctx.task.call_stack.last_mut().unwrap();
     let a = helpers::extract_float(&frame.registers[r_a as usize]);
     let b = helpers::extract_float(&frame.registers[r_b as usize]);
@@ -217,7 +278,12 @@ pub(super) fn exec_div_f(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b: u
 }
 
 #[inline]
-pub(super) fn exec_mod_f(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b: u16) -> ExecutionResult {
+pub(super) fn exec_mod_f(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    r_a: u16,
+    r_b: u16,
+) -> ExecutionResult {
     let frame = ctx.task.call_stack.last_mut().unwrap();
     let a = helpers::extract_float(&frame.registers[r_a as usize]);
     let b = helpers::extract_float(&frame.registers[r_b as usize]);
@@ -236,7 +302,12 @@ pub(super) fn exec_neg_f(ctx: &mut ExecContext<'_>, r_dst: u16, r_src: u16) -> E
 // ── Bitwise & Logical ──────────────────────────────────────────
 
 #[inline]
-pub(super) fn exec_bit_and(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b: u16) -> ExecutionResult {
+pub(super) fn exec_bit_and(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    r_a: u16,
+    r_b: u16,
+) -> ExecutionResult {
     let frame = ctx.task.call_stack.last_mut().unwrap();
     let a = helpers::extract_int(&frame.registers[r_a as usize]);
     let b = helpers::extract_int(&frame.registers[r_b as usize]);
@@ -245,7 +316,12 @@ pub(super) fn exec_bit_and(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b:
 }
 
 #[inline]
-pub(super) fn exec_bit_or(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b: u16) -> ExecutionResult {
+pub(super) fn exec_bit_or(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    r_a: u16,
+    r_b: u16,
+) -> ExecutionResult {
     let frame = ctx.task.call_stack.last_mut().unwrap();
     let a = helpers::extract_int(&frame.registers[r_a as usize]);
     let b = helpers::extract_int(&frame.registers[r_b as usize]);
@@ -254,7 +330,12 @@ pub(super) fn exec_bit_or(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b: 
 }
 
 #[inline]
-pub(super) fn exec_shl(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b: u16) -> ExecutionResult {
+pub(super) fn exec_shl(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    r_a: u16,
+    r_b: u16,
+) -> ExecutionResult {
     let frame = ctx.task.call_stack.last_mut().unwrap();
     let a = helpers::extract_int(&frame.registers[r_a as usize]);
     let b = helpers::extract_int(&frame.registers[r_b as usize]);
@@ -263,7 +344,12 @@ pub(super) fn exec_shl(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b: u16
 }
 
 #[inline]
-pub(super) fn exec_shr(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b: u16) -> ExecutionResult {
+pub(super) fn exec_shr(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    r_a: u16,
+    r_b: u16,
+) -> ExecutionResult {
     let frame = ctx.task.call_stack.last_mut().unwrap();
     let a = helpers::extract_int(&frame.registers[r_a as usize]);
     let b = helpers::extract_int(&frame.registers[r_b as usize]);
@@ -283,7 +369,12 @@ pub(super) fn exec_not(ctx: &mut ExecContext<'_>, r_dst: u16, r_src: u16) -> Exe
 // ── Comparison ─────────────────────────────────────────────────
 
 #[inline]
-pub(super) fn exec_cmp_eq_i(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b: u16) -> ExecutionResult {
+pub(super) fn exec_cmp_eq_i(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    r_a: u16,
+    r_b: u16,
+) -> ExecutionResult {
     let frame = ctx.task.call_stack.last_mut().unwrap();
     let a = helpers::extract_int(&frame.registers[r_a as usize]);
     let b = helpers::extract_int(&frame.registers[r_b as usize]);
@@ -292,7 +383,12 @@ pub(super) fn exec_cmp_eq_i(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b
 }
 
 #[inline]
-pub(super) fn exec_cmp_eq_f(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b: u16) -> ExecutionResult {
+pub(super) fn exec_cmp_eq_f(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    r_a: u16,
+    r_b: u16,
+) -> ExecutionResult {
     let frame = ctx.task.call_stack.last_mut().unwrap();
     let a = helpers::extract_float(&frame.registers[r_a as usize]);
     let b = helpers::extract_float(&frame.registers[r_b as usize]);
@@ -301,7 +397,12 @@ pub(super) fn exec_cmp_eq_f(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b
 }
 
 #[inline]
-pub(super) fn exec_cmp_eq_b(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b: u16) -> ExecutionResult {
+pub(super) fn exec_cmp_eq_b(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    r_a: u16,
+    r_b: u16,
+) -> ExecutionResult {
     let frame = ctx.task.call_stack.last_mut().unwrap();
     let a = helpers::extract_bool(&frame.registers[r_a as usize]);
     let b = helpers::extract_bool(&frame.registers[r_b as usize]);
@@ -310,7 +411,12 @@ pub(super) fn exec_cmp_eq_b(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b
 }
 
 #[inline]
-pub(super) fn exec_cmp_eq_s(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b: u16) -> ExecutionResult {
+pub(super) fn exec_cmp_eq_s(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    r_a: u16,
+    r_b: u16,
+) -> ExecutionResult {
     // CRITICAL: Compare string CONTENT, not HeapRef indices
     let frame = ctx.task.call_stack.last().unwrap();
     let href_a = helpers::extract_ref(&frame.registers[r_a as usize]);
@@ -330,7 +436,12 @@ pub(super) fn exec_cmp_eq_s(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b
 }
 
 #[inline]
-pub(super) fn exec_cmp_lt_i(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b: u16) -> ExecutionResult {
+pub(super) fn exec_cmp_lt_i(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    r_a: u16,
+    r_b: u16,
+) -> ExecutionResult {
     let frame = ctx.task.call_stack.last_mut().unwrap();
     let a = helpers::extract_int(&frame.registers[r_a as usize]);
     let b = helpers::extract_int(&frame.registers[r_b as usize]);
@@ -339,7 +450,12 @@ pub(super) fn exec_cmp_lt_i(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b
 }
 
 #[inline]
-pub(super) fn exec_cmp_lt_f(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b: u16) -> ExecutionResult {
+pub(super) fn exec_cmp_lt_f(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    r_a: u16,
+    r_b: u16,
+) -> ExecutionResult {
     let frame = ctx.task.call_stack.last_mut().unwrap();
     let a = helpers::extract_float(&frame.registers[r_a as usize]);
     let b = helpers::extract_float(&frame.registers[r_b as usize]);
@@ -409,7 +525,12 @@ pub(super) fn exec_convert(ctx: &mut ExecContext<'_>, r_dst: u16, r_src: u16) ->
 // ── Strings ────────────────────────────────────────────────────
 
 #[inline]
-pub(super) fn exec_str_concat(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r_b: u16) -> ExecutionResult {
+pub(super) fn exec_str_concat(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    r_a: u16,
+    r_b: u16,
+) -> ExecutionResult {
     let frame = ctx.task.call_stack.last().unwrap();
     let href_a = helpers::extract_ref(&frame.registers[r_a as usize]);
     let href_b = helpers::extract_ref(&frame.registers[r_b as usize]);
@@ -429,7 +550,12 @@ pub(super) fn exec_str_concat(ctx: &mut ExecContext<'_>, r_dst: u16, r_a: u16, r
 }
 
 #[inline]
-pub(super) fn exec_str_build(ctx: &mut ExecContext<'_>, r_dst: u16, count: u16, r_base: u16) -> ExecutionResult {
+pub(super) fn exec_str_build(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    count: u16,
+    r_base: u16,
+) -> ExecutionResult {
     let mut parts = Vec::with_capacity(count as usize);
     {
         let frame = ctx.task.call_stack.last().unwrap();
@@ -437,7 +563,12 @@ pub(super) fn exec_str_build(ctx: &mut ExecContext<'_>, r_dst: u16, count: u16, 
             let href = helpers::extract_ref(&frame.registers[r_base as usize + i]);
             match ctx.heap.read_string(href) {
                 Ok(s) => parts.push(s.to_string()),
-                Err(_) => return ExecutionResult::Crash(format!("StrBuild: argument {} not a string", i)),
+                Err(_) => {
+                    return ExecutionResult::Crash(format!(
+                        "StrBuild: argument {} not a string",
+                        i
+                    ));
+                }
             }
         }
     }
@@ -530,7 +661,11 @@ pub(super) fn exec_str_trim(ctx: &mut ExecContext<'_>, r_dst: u16, r_src: u16) -
 }
 
 #[inline]
-pub(super) fn exec_str_to_upper(ctx: &mut ExecContext<'_>, r_dst: u16, r_src: u16) -> ExecutionResult {
+pub(super) fn exec_str_to_upper(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    r_src: u16,
+) -> ExecutionResult {
     let frame = ctx.task.call_stack.last().unwrap();
     let href = helpers::extract_ref(&frame.registers[r_src as usize]);
     let result = match ctx.heap.read_string(href) {
@@ -544,7 +679,11 @@ pub(super) fn exec_str_to_upper(ctx: &mut ExecContext<'_>, r_dst: u16, r_src: u1
 }
 
 #[inline]
-pub(super) fn exec_str_to_lower(ctx: &mut ExecContext<'_>, r_dst: u16, r_src: u16) -> ExecutionResult {
+pub(super) fn exec_str_to_lower(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    r_src: u16,
+) -> ExecutionResult {
     let frame = ctx.task.call_stack.last().unwrap();
     let href = helpers::extract_ref(&frame.registers[r_src as usize]);
     let result = match ctx.heap.read_string(href) {

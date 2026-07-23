@@ -31,12 +31,13 @@ impl Suggestion {
     /// Format the suggestion as a help string.
     pub fn to_help_string(&self) -> String {
         if self.needs_import
-            && let Some(ref fqn) = self.fqn {
-                if let Some(ref ns) = self.import_ns {
-                    return format!("did you mean `{fqn}`? (add `using {ns};`)");
-                }
-                return format!("did you mean `{fqn}`?");
+            && let Some(ref fqn) = self.fqn
+        {
+            if let Some(ref ns) = self.import_ns {
+                return format!("did you mean `{fqn}`? (add `using {ns};`)");
             }
+            return format!("did you mean `{fqn}`?");
+        }
         format!("did you mean `{}`?", self.name)
     }
 }
@@ -129,7 +130,11 @@ pub fn suggest_similar(
     }
 
     // Sort by score descending, take top MAX_SUGGESTIONS
-    suggestions.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
+    suggestions.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     suggestions.truncate(MAX_SUGGESTIONS);
 
     suggestions
@@ -167,7 +172,10 @@ mod tests {
         let visible = vec!["HealthPotion".to_string()];
         let def_map = DefMap::new();
         let suggestions = suggest_similar("XyzAbc123", &visible, &def_map);
-        assert!(suggestions.is_empty(), "should not suggest for unrelated name");
+        assert!(
+            suggestions.is_empty(),
+            "should not suggest for unrelated name"
+        );
     }
 
     #[test]
@@ -175,7 +183,10 @@ mod tests {
         let visible = vec![];
         let def_map = DefMap::new();
         let suggestions = suggest_similar("strng", &visible, &def_map);
-        assert!(!suggestions.is_empty(), "should suggest 'string' for 'strng'");
+        assert!(
+            !suggestions.is_empty(),
+            "should suggest 'string' for 'strng'"
+        );
         assert_eq!(suggestions[0].name, "string");
     }
 
@@ -184,7 +195,10 @@ mod tests {
         let visible = vec![];
         let def_map = DefMap::new();
         let suggestions = suggest_similar("Optiom", &visible, &def_map);
-        assert!(!suggestions.is_empty(), "should suggest 'Option' for 'Optiom'");
+        assert!(
+            !suggestions.is_empty(),
+            "should suggest 'Option' for 'Optiom'"
+        );
         assert_eq!(suggestions[0].name, "Option");
     }
 

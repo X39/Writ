@@ -153,4 +153,3 @@ enum QuestStatus {
 `Option<T>` as a bare reference where `null` = `None` and non-null = `Some(value)`. This is a permitted runtime
 optimization, not mandated by the spec. IL code uses `WRAP_SOME` / `IS_NONE` / etc. regardless — the runtime may
 elide them internally.
-

@@ -26,9 +26,21 @@ fn round_trip_minimal_module() {
 }
 "#;
     let (m1, m2, _) = round_trip(src);
-    assert_eq!(m1.type_defs.len(), m2.type_defs.len(), "type_defs count must match");
-    assert_eq!(m1.method_defs.len(), m2.method_defs.len(), "method_defs count must match");
-    assert_eq!(m1.contract_defs.len(), m2.contract_defs.len(), "contract_defs count must match");
+    assert_eq!(
+        m1.type_defs.len(),
+        m2.type_defs.len(),
+        "type_defs count must match"
+    );
+    assert_eq!(
+        m1.method_defs.len(),
+        m2.method_defs.len(),
+        "method_defs count must match"
+    );
+    assert_eq!(
+        m1.contract_defs.len(),
+        m2.contract_defs.len(),
+        "contract_defs count must match"
+    );
 }
 
 #[test]
@@ -40,10 +52,19 @@ fn round_trip_type_with_fields() {
         .field "health" int pub
     }
 }
+
 "#;
     let (m1, m2, _) = round_trip(src);
-    assert_eq!(m1.type_defs.len(), m2.type_defs.len(), "type_defs count must match");
-    assert_eq!(m1.field_defs.len(), m2.field_defs.len(), "field_defs count must match");
+    assert_eq!(
+        m1.type_defs.len(),
+        m2.type_defs.len(),
+        "type_defs count must match"
+    );
+    assert_eq!(
+        m1.field_defs.len(),
+        m2.field_defs.len(),
+        "field_defs count must match"
+    );
 }
 
 #[test]
@@ -82,10 +103,17 @@ fn round_trip_method_with_body() {
 }
 "#;
     let (m1, m2, _) = round_trip(src);
-    assert_eq!(m1.method_defs.len(), m2.method_defs.len(), "method_defs count must match");
+    assert_eq!(
+        m1.method_defs.len(),
+        m2.method_defs.len(),
+        "method_defs count must match"
+    );
     // Verify the method body is also preserved
     assert!(!m2.method_bodies.is_empty(), "method bodies should exist");
-    assert!(!m2.method_bodies[0].code.is_empty(), "method body code should be non-empty");
+    assert!(
+        !m2.method_bodies[0].code.is_empty(),
+        "method body code should be non-empty"
+    );
 }
 
 #[test]
@@ -113,12 +141,36 @@ fn round_trip_complex_module() {
 }
 "#;
     let (m1, m2, _) = round_trip(src);
-    assert_eq!(m1.type_defs.len(), m2.type_defs.len(), "type_defs count must match");
-    assert_eq!(m1.field_defs.len(), m2.field_defs.len(), "field_defs count must match");
-    assert_eq!(m1.contract_defs.len(), m2.contract_defs.len(), "contract_defs count must match");
-    assert_eq!(m1.contract_methods.len(), m2.contract_methods.len(), "contract_methods count must match");
-    assert_eq!(m1.impl_defs.len(), m2.impl_defs.len(), "impl_defs count must match");
-    assert_eq!(m1.method_defs.len(), m2.method_defs.len(), "method_defs count must match");
+    assert_eq!(
+        m1.type_defs.len(),
+        m2.type_defs.len(),
+        "type_defs count must match"
+    );
+    assert_eq!(
+        m1.field_defs.len(),
+        m2.field_defs.len(),
+        "field_defs count must match"
+    );
+    assert_eq!(
+        m1.contract_defs.len(),
+        m2.contract_defs.len(),
+        "contract_defs count must match"
+    );
+    assert_eq!(
+        m1.contract_methods.len(),
+        m2.contract_methods.len(),
+        "contract_methods count must match"
+    );
+    assert_eq!(
+        m1.impl_defs.len(),
+        m2.impl_defs.len(),
+        "impl_defs count must match"
+    );
+    assert_eq!(
+        m1.method_defs.len(),
+        m2.method_defs.len(),
+        "method_defs count must match"
+    );
     assert_eq!(
         m1.impl_method_indices(0),
         m2.impl_method_indices(0),
@@ -141,9 +193,21 @@ fn round_trip_contract_with_generic() {
 }
 "#;
     let (m1, m2, _) = round_trip(src);
-    assert_eq!(m1.contract_defs.len(), m2.contract_defs.len(), "contract_defs must match");
-    assert_eq!(m1.contract_methods.len(), m2.contract_methods.len(), "contract_methods must match");
-    assert_eq!(m1.generic_params.len(), m2.generic_params.len(), "generic_params must match");
+    assert_eq!(
+        m1.contract_defs.len(),
+        m2.contract_defs.len(),
+        "contract_defs must match"
+    );
+    assert_eq!(
+        m1.contract_methods.len(),
+        m2.contract_methods.len(),
+        "contract_methods must match"
+    );
+    assert_eq!(
+        m1.generic_params.len(),
+        m2.generic_params.len(),
+        "generic_params must match"
+    );
 }
 
 #[test]
@@ -156,8 +220,16 @@ fn round_trip_entity_type() {
 }
 "#;
     let (m1, m2, _) = round_trip(src);
-    assert_eq!(m1.type_defs.len(), m2.type_defs.len(), "type_defs count must match");
-    assert_eq!(m1.field_defs.len(), m2.field_defs.len(), "field_defs count must match");
+    assert_eq!(
+        m1.type_defs.len(),
+        m2.type_defs.len(),
+        "type_defs count must match"
+    );
+    assert_eq!(
+        m1.field_defs.len(),
+        m2.field_defs.len(),
+        "field_defs count must match"
+    );
 }
 
 #[test]
@@ -168,7 +240,11 @@ fn round_trip_module_with_extern_ref() {
 }
 "#;
     let (m1, m2, _) = round_trip(src);
-    assert_eq!(m1.module_refs.len(), m2.module_refs.len(), "module_refs count must match");
+    assert_eq!(
+        m1.module_refs.len(),
+        m2.module_refs.len(),
+        "module_refs count must match"
+    );
 }
 
 #[test]
@@ -184,7 +260,11 @@ fn round_trip_branch_instructions() {
 }
 "#;
     let (m1, m2, text) = round_trip(src);
-    assert_eq!(m1.method_defs.len(), m2.method_defs.len(), "method_defs count must match");
+    assert_eq!(
+        m1.method_defs.len(),
+        m2.method_defs.len(),
+        "method_defs count must match"
+    );
     // Verify BR instruction is present in output
     assert!(text.contains("BR"), "disassembled text should contain BR");
 }
@@ -197,7 +277,11 @@ fn round_trip_global_def() {
 }
 "#;
     let (m1, m2, _) = round_trip(src);
-    assert_eq!(m1.global_defs.len(), m2.global_defs.len(), "global_defs count must match");
+    assert_eq!(
+        m1.global_defs.len(),
+        m2.global_defs.len(),
+        "global_defs count must match"
+    );
 }
 
 #[test]
@@ -226,11 +310,31 @@ fn round_trip_multiple_types_and_impls() {
 }
 "#;
     let (m1, m2, _) = round_trip(src);
-    assert_eq!(m1.type_defs.len(), m2.type_defs.len(), "type_defs count must match");
-    assert_eq!(m1.field_defs.len(), m2.field_defs.len(), "field_defs count must match");
-    assert_eq!(m1.contract_defs.len(), m2.contract_defs.len(), "contract_defs count must match");
-    assert_eq!(m1.impl_defs.len(), m2.impl_defs.len(), "impl_defs count must match");
-    assert_eq!(m1.method_defs.len(), m2.method_defs.len(), "method_defs count must match");
+    assert_eq!(
+        m1.type_defs.len(),
+        m2.type_defs.len(),
+        "type_defs count must match"
+    );
+    assert_eq!(
+        m1.field_defs.len(),
+        m2.field_defs.len(),
+        "field_defs count must match"
+    );
+    assert_eq!(
+        m1.contract_defs.len(),
+        m2.contract_defs.len(),
+        "contract_defs count must match"
+    );
+    assert_eq!(
+        m1.impl_defs.len(),
+        m2.impl_defs.len(),
+        "impl_defs count must match"
+    );
+    assert_eq!(
+        m1.method_defs.len(),
+        m2.method_defs.len(),
+        "method_defs count must match"
+    );
 }
 
 #[test]
@@ -246,7 +350,11 @@ fn test_typeof_disasm_round_trip() {
 "#;
     let module = writ_assembler::assemble(src).unwrap();
     let text = writ_assembler::disassemble(&module);
-    assert!(text.contains("TYPEOF"), "disassembly should contain TYPEOF mnemonic: {}", text);
+    assert!(
+        text.contains("TYPEOF"),
+        "disassembly should contain TYPEOF mnemonic: {}",
+        text
+    );
 }
 
 #[test]
@@ -310,11 +418,8 @@ fn round_trip_type_owned_method_preserves_owner_flags_signature_and_body_order()
     assert_eq!(reassembled.method_defs[0].owner, type_owner);
     assert_eq!(reassembled.method_defs[0].flags, flags);
     assert_eq!(
-        writ_module::heap::read_blob(
-            &reassembled.blob_heap,
-            reassembled.method_defs[0].signature,
-        )
-        .expect("reassembled signature"),
+        writ_module::heap::read_blob(&reassembled.blob_heap, reassembled.method_defs[0].signature,)
+            .expect("reassembled signature"),
         signature,
     );
 

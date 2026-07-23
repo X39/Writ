@@ -515,7 +515,10 @@ pub enum TypeExpr<'src> {
     /// Nullable type: `T?`
     Nullable(Box<Spanned<TypeExpr<'src>>>),
     /// Function type: `fn(int, string) -> bool`
-    Func(Vec<Spanned<TypeExpr<'src>>>, Option<Box<Spanned<TypeExpr<'src>>>>),
+    Func(
+        Vec<Spanned<TypeExpr<'src>>>,
+        Option<Box<Spanned<TypeExpr<'src>>>>,
+    ),
     /// Void type
     Void,
 }
@@ -581,7 +584,11 @@ pub enum Expr<'src> {
     /// Function call or construction: `foo(a, b)`, `Point(x: 1, y: 2)`
     Call(Box<Spanned<Expr<'src>>>, Vec<Spanned<Arg<'src>>>),
     /// Generic call: `f<T>(args)`
-    GenericCall(Box<Spanned<Expr<'src>>>, Vec<Spanned<TypeExpr<'src>>>, Vec<Spanned<Arg<'src>>>),
+    GenericCall(
+        Box<Spanned<Expr<'src>>>,
+        Vec<Spanned<TypeExpr<'src>>>,
+        Vec<Spanned<Arg<'src>>>,
+    ),
 
     /// New construction: `new Type { field: value, ... }`
     New {
@@ -613,7 +620,11 @@ pub enum Expr<'src> {
 
     // Range expressions
     /// Range expression: `a..b`, `a..=b`, `..b`, `a..`
-    Range(Option<Box<Spanned<Expr<'src>>>>, RangeKind, Option<Box<Spanned<Expr<'src>>>>),
+    Range(
+        Option<Box<Spanned<Expr<'src>>>>,
+        RangeKind,
+        Option<Box<Spanned<Expr<'src>>>>,
+    ),
     /// From-end index: `^expr`
     FromEnd(Box<Spanned<Expr<'src>>>),
 
@@ -801,7 +812,11 @@ pub enum Pattern<'src> {
     /// Or-pattern: `A | B | C`
     Or(Vec<Spanned<Pattern<'src>>>),
     /// Range pattern: `1..=5`
-    Range(Box<Spanned<Expr<'src>>>, RangeKind, Box<Spanned<Expr<'src>>>),
+    Range(
+        Box<Spanned<Expr<'src>>>,
+        RangeKind,
+        Box<Spanned<Expr<'src>>>,
+    ),
 }
 
 // =========================================================

@@ -191,7 +191,13 @@ impl ModuleBuilder {
     /// the builder records the current counts, so add a type's fields
     /// and methods immediately after adding the type. Empty child ranges still
     /// receive a valid 1-based start (the current child count plus one).
-    pub fn add_type_def(&mut self, name: &str, namespace: &str, kind: TypeDefKind, flags: u16) -> MetadataToken {
+    pub fn add_type_def(
+        &mut self,
+        name: &str,
+        namespace: &str,
+        kind: TypeDefKind,
+        flags: u16,
+    ) -> MetadataToken {
         let idx = self.type_defs.len() as u32 + 1;
         let field_list = self.field_defs.len() as u32 + 1;
         let method_list = self.method_defs.len() as u32 + 1;
@@ -301,7 +307,12 @@ impl ModuleBuilder {
     }
 
     /// Add a contract method slot.
-    pub fn add_contract_method(&mut self, name: &str, signature: &[u8], slot: u16) -> MetadataToken {
+    pub fn add_contract_method(
+        &mut self,
+        name: &str,
+        signature: &[u8],
+        slot: u16,
+    ) -> MetadataToken {
         let idx = self.contract_methods.len() as u32 + 1;
         self.contract_methods.push(ContractMethodBuilder {
             name: name.to_string(),
@@ -312,7 +323,11 @@ impl ModuleBuilder {
     }
 
     /// Add a contract implementation.
-    pub fn add_impl_def(&mut self, type_token: MetadataToken, contract: MetadataToken) -> MetadataToken {
+    pub fn add_impl_def(
+        &mut self,
+        type_token: MetadataToken,
+        contract: MetadataToken,
+    ) -> MetadataToken {
         let idx = self.impl_defs.len() as u32 + 1;
         let method_list = self.method_defs.len() as u32 + 1;
         self.impl_defs.push(ImplDefRow {
@@ -324,7 +339,13 @@ impl ModuleBuilder {
     }
 
     /// Add a generic parameter.
-    pub fn add_generic_param(&mut self, owner: MetadataToken, owner_kind: u8, ordinal: u16, name: &str) -> MetadataToken {
+    pub fn add_generic_param(
+        &mut self,
+        owner: MetadataToken,
+        owner_kind: u8,
+        ordinal: u16,
+        name: &str,
+    ) -> MetadataToken {
         let idx = self.generic_params.len() as u32 + 1;
         self.generic_params.push(GenericParamBuilder {
             owner,
@@ -336,14 +357,25 @@ impl ModuleBuilder {
     }
 
     /// Add a generic constraint.
-    pub fn add_generic_constraint(&mut self, param: u32, constraint: MetadataToken) -> MetadataToken {
+    pub fn add_generic_constraint(
+        &mut self,
+        param: u32,
+        constraint: MetadataToken,
+    ) -> MetadataToken {
         let idx = self.generic_constraints.len() as u32 + 1;
-        self.generic_constraints.push(GenericConstraintRow { param, constraint });
+        self.generic_constraints
+            .push(GenericConstraintRow { param, constraint });
         MetadataToken::new(TableId::GenericConstraint.as_u8(), idx)
     }
 
     /// Add a global definition.
-    pub fn add_global_def(&mut self, name: &str, type_sig: &[u8], flags: u16, init_value: &[u8]) -> MetadataToken {
+    pub fn add_global_def(
+        &mut self,
+        name: &str,
+        type_sig: &[u8],
+        flags: u16,
+        init_value: &[u8],
+    ) -> MetadataToken {
         let idx = self.global_defs.len() as u32 + 1;
         self.global_defs.push(GlobalDefBuilder {
             name: name.to_string(),
@@ -355,7 +387,13 @@ impl ModuleBuilder {
     }
 
     /// Add an extern definition.
-    pub fn add_extern_def(&mut self, name: &str, signature: &[u8], import_name: &str, flags: u16) -> MetadataToken {
+    pub fn add_extern_def(
+        &mut self,
+        name: &str,
+        signature: &[u8],
+        import_name: &str,
+        flags: u16,
+    ) -> MetadataToken {
         let idx = self.extern_defs.len() as u32 + 1;
         self.extern_defs.push(ExternDefBuilder {
             name: name.to_string(),
@@ -377,14 +415,26 @@ impl ModuleBuilder {
     }
 
     /// Add a component slot binding.
-    pub fn add_component_slot(&mut self, owner: MetadataToken, component_type: MetadataToken) -> MetadataToken {
+    pub fn add_component_slot(
+        &mut self,
+        owner: MetadataToken,
+        component_type: MetadataToken,
+    ) -> MetadataToken {
         let idx = self.component_slots.len() as u32 + 1;
-        self.component_slots.push(ComponentSlotRow { owner_entity: owner, component_type });
+        self.component_slots.push(ComponentSlotRow {
+            owner_entity: owner,
+            component_type,
+        });
         MetadataToken::new(TableId::ComponentSlot.as_u8(), idx)
     }
 
     /// Add a locale definition for dialogue dispatch.
-    pub fn add_locale_def(&mut self, dlg_method: MetadataToken, locale: &str, loc_method: MetadataToken) -> MetadataToken {
+    pub fn add_locale_def(
+        &mut self,
+        dlg_method: MetadataToken,
+        locale: &str,
+        loc_method: MetadataToken,
+    ) -> MetadataToken {
         let idx = self.locale_defs.len() as u32 + 1;
         self.locale_defs.push(LocaleDefBuilder {
             dlg_method,
@@ -395,7 +445,12 @@ impl ModuleBuilder {
     }
 
     /// Add an export definition.
-    pub fn add_export_def(&mut self, name: &str, item_kind: u8, item: MetadataToken) -> MetadataToken {
+    pub fn add_export_def(
+        &mut self,
+        name: &str,
+        item_kind: u8,
+        item: MetadataToken,
+    ) -> MetadataToken {
         let idx = self.export_defs.len() as u32 + 1;
         self.export_defs.push(ExportDefBuilder {
             name: name.to_string(),
@@ -406,7 +461,13 @@ impl ModuleBuilder {
     }
 
     /// Add an attribute definition.
-    pub fn add_attribute_def(&mut self, owner: MetadataToken, owner_kind: u8, name: &str, value: &[u8]) -> MetadataToken {
+    pub fn add_attribute_def(
+        &mut self,
+        owner: MetadataToken,
+        owner_kind: u8,
+        name: &str,
+        value: &[u8],
+    ) -> MetadataToken {
         let idx = self.attribute_defs.len() as u32 + 1;
         self.attribute_defs.push(AttributeDefBuilder {
             owner,
@@ -427,7 +488,12 @@ impl ModuleBuilder {
     }
 
     /// Add a cross-module field reference.
-    pub fn add_field_ref(&mut self, parent: MetadataToken, name: &str, type_sig: &[u8]) -> MetadataToken {
+    pub fn add_field_ref(
+        &mut self,
+        parent: MetadataToken,
+        name: &str,
+        type_sig: &[u8],
+    ) -> MetadataToken {
         let idx = self.field_refs.len() as u32 + 1;
         self.field_refs.push(FieldRefBuilder {
             parent,
@@ -442,7 +508,12 @@ impl ModuleBuilder {
     /// This compatibility helper defaults to an implicit receiver. Call
     /// [`Self::add_method_ref_with_flags`] for static methods and top-level
     /// functions, whose receiver flag must be clear.
-    pub fn add_method_ref(&mut self, parent: MetadataToken, name: &str, signature: &[u8]) -> MetadataToken {
+    pub fn add_method_ref(
+        &mut self,
+        parent: MetadataToken,
+        name: &str,
+        signature: &[u8],
+    ) -> MetadataToken {
         self.add_method_ref_with_flags(
             parent,
             name,
@@ -478,7 +549,12 @@ impl ModuleBuilder {
     }
 
     /// Add a cross-module type reference.
-    pub fn add_type_ref(&mut self, scope: MetadataToken, name: &str, namespace: &str) -> MetadataToken {
+    pub fn add_type_ref(
+        &mut self,
+        scope: MetadataToken,
+        name: &str,
+        namespace: &str,
+    ) -> MetadataToken {
         let idx = self.type_refs.len() as u32 + 1;
         self.type_refs.push(TypeRefBuilder {
             scope,
@@ -520,178 +596,215 @@ impl ModuleBuilder {
         }];
 
         // ModuleRef
-        let module_refs: Vec<ModuleRefRow> = self.module_refs.iter().map(|b| {
-            ModuleRefRow {
+        let module_refs: Vec<ModuleRefRow> = self
+            .module_refs
+            .iter()
+            .map(|b| ModuleRefRow {
                 name: intern_str(&b.name),
                 min_version: intern_str(&b.min_version),
-            }
-        }).collect();
+            })
+            .collect();
 
         // TypeDef
-        let type_defs: Vec<TypeDefRow> = self.type_defs.iter().map(|b| {
-            TypeDefRow {
+        let type_defs: Vec<TypeDefRow> = self
+            .type_defs
+            .iter()
+            .map(|b| TypeDefRow {
                 name: intern_str(&b.name),
                 namespace: intern_str(&b.namespace),
                 kind: b.kind.as_u8(),
                 flags: b.flags,
                 field_list: b.field_list,
                 method_list: b.method_list,
-            }
-        }).collect();
+            })
+            .collect();
 
         // TypeRef
-        let type_refs: Vec<TypeRefRow> = self.type_refs.iter().map(|b| {
-            TypeRefRow {
+        let type_refs: Vec<TypeRefRow> = self
+            .type_refs
+            .iter()
+            .map(|b| TypeRefRow {
                 scope: b.scope,
                 name: intern_str(&b.name),
                 namespace: intern_str(&b.namespace),
-            }
-        }).collect();
+            })
+            .collect();
 
         // TypeSpec
-        let type_specs: Vec<TypeSpecRow> = self.type_specs.iter().map(|b| {
-            TypeSpecRow {
+        let type_specs: Vec<TypeSpecRow> = self
+            .type_specs
+            .iter()
+            .map(|b| TypeSpecRow {
                 signature: intern_blob(&b.signature),
-            }
-        }).collect();
+            })
+            .collect();
 
         // FieldDef
-        let field_defs: Vec<FieldDefRow> = self.field_defs.iter().map(|b| {
-            FieldDefRow {
+        let field_defs: Vec<FieldDefRow> = self
+            .field_defs
+            .iter()
+            .map(|b| FieldDefRow {
                 name: intern_str(&b.name),
                 type_sig: intern_blob(&b.type_sig),
                 flags: b.flags,
-            }
-        }).collect();
+            })
+            .collect();
 
         // FieldRef
-        let field_refs: Vec<FieldRefRow> = self.field_refs.iter().map(|b| {
-            FieldRefRow {
+        let field_refs: Vec<FieldRefRow> = self
+            .field_refs
+            .iter()
+            .map(|b| FieldRefRow {
                 parent: b.parent,
                 name: intern_str(&b.name),
                 type_sig: intern_blob(&b.type_sig),
-            }
-        }).collect();
+            })
+            .collect();
 
         // MethodDef
-        let method_defs: Vec<MethodDefRow> = self.method_defs.iter().map(|b| {
-            let has_receiver = !b.owner.is_null() && b.flags & (1 << 1) == 0;
-            let param_count = b.signature
-                .get(..2)
-                .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
-                .map(|regular_param_count| {
-                    regular_param_count
-                        .checked_add(u16::from(has_receiver))
-                        .expect("method parameter count exceeds the module format limit")
-                })
-                .unwrap_or(0);
-            MethodDefRow {
-                name: intern_str(&b.name),
-                signature: intern_blob(&b.signature),
-                flags: b.flags,
-                body_offset: 0, // writer will compute
-                body_size: 1,   // non-zero to indicate body exists
-                reg_count: b.reg_count,
-                param_count,
-                owner: b.owner,
-            }
-        }).collect();
+        let method_defs: Vec<MethodDefRow> = self
+            .method_defs
+            .iter()
+            .map(|b| {
+                let has_receiver = !b.owner.is_null() && b.flags & (1 << 1) == 0;
+                let param_count = b
+                    .signature
+                    .get(..2)
+                    .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]))
+                    .map(|regular_param_count| {
+                        regular_param_count
+                            .checked_add(u16::from(has_receiver))
+                            .expect("method parameter count exceeds the module format limit")
+                    })
+                    .unwrap_or(0);
+                MethodDefRow {
+                    name: intern_str(&b.name),
+                    signature: intern_blob(&b.signature),
+                    flags: b.flags,
+                    body_offset: 0, // writer will compute
+                    body_size: 1,   // non-zero to indicate body exists
+                    reg_count: b.reg_count,
+                    param_count,
+                    owner: b.owner,
+                }
+            })
+            .collect();
 
         // MethodRef
-        let method_refs: Vec<MethodRefRow> = self.method_refs.iter().map(|b| {
-            MethodRefRow {
+        let method_refs: Vec<MethodRefRow> = self
+            .method_refs
+            .iter()
+            .map(|b| MethodRefRow {
                 parent: b.parent,
                 name: intern_str(&b.name),
                 signature: intern_blob(&b.signature),
                 flags: b.flags,
-            }
-        }).collect();
+            })
+            .collect();
 
         // ParamDef
-        let param_defs: Vec<ParamDefRow> = self.param_defs.iter().map(|b| {
-            ParamDefRow {
+        let param_defs: Vec<ParamDefRow> = self
+            .param_defs
+            .iter()
+            .map(|b| ParamDefRow {
                 name: intern_str(&b.name),
                 type_sig: intern_blob(&b.type_sig),
                 sequence: b.sequence,
-            }
-        }).collect();
+            })
+            .collect();
 
         // ContractDef
-        let contract_defs: Vec<ContractDefRow> = self.contract_defs.iter().map(|b| {
-            ContractDefRow {
+        let contract_defs: Vec<ContractDefRow> = self
+            .contract_defs
+            .iter()
+            .map(|b| ContractDefRow {
                 name: intern_str(&b.name),
                 namespace: intern_str(&b.namespace),
                 method_list: b.method_list,
                 generic_param_list: b.generic_param_list,
-            }
-        }).collect();
+            })
+            .collect();
 
         // ContractMethod
-        let contract_methods: Vec<ContractMethodRow> = self.contract_methods.iter().map(|b| {
-            ContractMethodRow {
+        let contract_methods: Vec<ContractMethodRow> = self
+            .contract_methods
+            .iter()
+            .map(|b| ContractMethodRow {
                 name: intern_str(&b.name),
                 signature: intern_blob(&b.signature),
                 slot: b.slot,
-            }
-        }).collect();
+            })
+            .collect();
 
         // GenericParam
-        let generic_params: Vec<GenericParamRow> = self.generic_params.iter().map(|b| {
-            GenericParamRow {
+        let generic_params: Vec<GenericParamRow> = self
+            .generic_params
+            .iter()
+            .map(|b| GenericParamRow {
                 owner: b.owner,
                 owner_kind: b.owner_kind,
                 ordinal: b.ordinal,
                 name: intern_str(&b.name),
-            }
-        }).collect();
+            })
+            .collect();
 
         // GlobalDef
-        let global_defs: Vec<GlobalDefRow> = self.global_defs.iter().map(|b| {
-            GlobalDefRow {
+        let global_defs: Vec<GlobalDefRow> = self
+            .global_defs
+            .iter()
+            .map(|b| GlobalDefRow {
                 name: intern_str(&b.name),
                 type_sig: intern_blob(&b.type_sig),
                 flags: b.flags,
                 init_value: intern_blob(&b.init_value),
-            }
-        }).collect();
+            })
+            .collect();
 
         // ExternDef
-        let extern_defs: Vec<ExternDefRow> = self.extern_defs.iter().map(|b| {
-            ExternDefRow {
+        let extern_defs: Vec<ExternDefRow> = self
+            .extern_defs
+            .iter()
+            .map(|b| ExternDefRow {
                 name: intern_str(&b.name),
                 signature: intern_blob(&b.signature),
                 import_name: intern_str(&b.import_name),
                 flags: b.flags,
-            }
-        }).collect();
+            })
+            .collect();
 
         // LocaleDef
-        let locale_defs: Vec<LocaleDefRow> = self.locale_defs.iter().map(|b| {
-            LocaleDefRow {
+        let locale_defs: Vec<LocaleDefRow> = self
+            .locale_defs
+            .iter()
+            .map(|b| LocaleDefRow {
                 dlg_method: b.dlg_method,
                 locale: intern_str(&b.locale),
                 loc_method: b.loc_method,
-            }
-        }).collect();
+            })
+            .collect();
 
         // ExportDef
-        let export_defs: Vec<ExportDefRow> = self.export_defs.iter().map(|b| {
-            ExportDefRow {
+        let export_defs: Vec<ExportDefRow> = self
+            .export_defs
+            .iter()
+            .map(|b| ExportDefRow {
                 name: intern_str(&b.name),
                 item_kind: b.item_kind,
                 item: b.item,
-            }
-        }).collect();
+            })
+            .collect();
 
         // AttributeDef
-        let attribute_defs: Vec<AttributeDefRow> = self.attribute_defs.iter().map(|b| {
-            AttributeDefRow {
+        let attribute_defs: Vec<AttributeDefRow> = self
+            .attribute_defs
+            .iter()
+            .map(|b| AttributeDefRow {
                 owner: b.owner,
                 owner_kind: b.owner_kind,
                 name: intern_str(&b.name),
                 value: intern_blob(&b.value),
-            }
-        }).collect();
+            })
+            .collect();
 
         Module {
             header: ModuleHeader {
@@ -699,10 +812,10 @@ impl ModuleBuilder {
                 flags: 0,
                 module_name: name_off,
                 module_version: version_off,
-                string_heap_offset: 0, // writer computes
-                string_heap_size: 0,   // writer computes
-                blob_heap_offset: 0,   // writer computes
-                blob_heap_size: 0,     // writer computes
+                string_heap_offset: 0,         // writer computes
+                string_heap_size: 0,           // writer computes
+                blob_heap_offset: 0,           // writer computes
+                blob_heap_size: 0,             // writer computes
                 table_directory: [(0, 0); 21], // writer computes
             },
             string_heap,

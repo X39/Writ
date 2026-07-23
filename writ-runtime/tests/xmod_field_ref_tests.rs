@@ -208,8 +208,14 @@ fn spawn_entity_rejects_a_non_entity_typedef() {
     let mut runtime = RuntimeBuilder::new(builder.build()).build().unwrap();
     let task = runtime.spawn_task(0, vec![]).unwrap();
     runtime.tick(0.0, ExecutionLimit::None);
-    let crash = runtime.crash_info(task).expect("SPAWN_ENTITY must reject a struct");
-    assert!(crash.message.contains("is not an entity"), "{}", crash.message);
+    let crash = runtime
+        .crash_info(task)
+        .expect("SPAWN_ENTITY must reject a struct");
+    assert!(
+        crash.message.contains("is not an entity"),
+        "{}",
+        crash.message
+    );
 }
 
 #[test]

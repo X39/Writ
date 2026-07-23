@@ -2,11 +2,11 @@
 
 use chumsky::span::SimpleSpan;
 
-use crate::resolve::def_map::DefKind;
-use super::CheckCtx;
 use super::super::error::TypeError;
 use super::super::ir::TypedExpr;
 use super::super::ty::TyKind;
+use super::CheckCtx;
+use crate::resolve::def_map::DefKind;
 use writ_diagnostics::{Diagnostic, code};
 
 pub(super) fn check_ident(ctx: &mut CheckCtx, name: &str, span: SimpleSpan) -> TypedExpr {
@@ -28,10 +28,9 @@ pub(super) fn check_ident(ctx: &mut CheckCtx, name: &str, span: SimpleSpan) -> T
                     // Emit W0006 for deprecated function-as-value references from different files.
                     // (Direct call sites are handled in check_call_with_sig; this covers fn values.)
                     emit_deprecated_warning_if_cross_file(ctx, def_id, name, span);
-                    let ty = ctx.interner.func(
-                        sig.params.iter().map(|(_, t)| *t).collect(),
-                        sig.ret,
-                    );
+                    let ty = ctx
+                        .interner
+                        .func(sig.params.iter().map(|(_, t)| *t).collect(), sig.ret);
                     return TypedExpr::Var {
                         ty,
                         span,
@@ -71,10 +70,9 @@ pub(super) fn check_ident(ctx: &mut CheckCtx, name: &str, span: SimpleSpan) -> T
                 DefKind::Fn | DefKind::ExternFn => {
                     if let Some(sig) = ctx.type_env.fn_sigs.get(&def_id) {
                         emit_deprecated_warning_if_cross_file(ctx, def_id, name, span);
-                        let ty = ctx.interner.func(
-                            sig.params.iter().map(|(_, t)| *t).collect(),
-                            sig.ret,
-                        );
+                        let ty = ctx
+                            .interner
+                            .func(sig.params.iter().map(|(_, t)| *t).collect(), sig.ret);
                         return TypedExpr::Var {
                             ty,
                             span,

@@ -3,15 +3,15 @@
 //! Consumes `TypedAst` + `TyInterner` + original ASTs and produces a populated
 //! `ModuleBuilder` with all 21 metadata tables filled.
 
-pub mod metadata;
-pub mod heaps;
-pub mod type_sig;
-pub mod error;
-pub mod module_builder;
-pub mod slots;
-pub mod collect;
 pub mod body;
+pub mod collect;
+pub mod error;
+pub mod heaps;
+pub mod metadata;
+pub mod module_builder;
 pub mod serialize;
+pub mod slots;
+pub mod type_sig;
 
 use writ_diagnostics::{Diagnostic, FileId};
 
@@ -156,11 +156,7 @@ pub fn emit_bodies_with_libraries(
     // Calls are checked against the fallback DefId regardless of build conditions.
     // Once metadata-dependent exports and attributes are stable, redirect that DefId
     // to the emitted conditional MethodDef when the condition is active.
-    collect::bind_active_conditional_call_targets(
-        typed_ast,
-        active_conditions,
-        &mut builder,
-    );
+    collect::bind_active_conditional_call_targets(typed_ast, active_conditions, &mut builder);
 
     // Emit all method bodies (including lambda bodies via lambda_infos and synthetic
     // Reflectable get_type() bodies via reflectable_infos).
@@ -195,7 +191,10 @@ pub fn emit_bodies_with_libraries(
         let pending = std::mem::take(&mut body.pending_strings);
         for (instr_idx, s) in pending {
             let string_idx = builder.string_heap.intern(&s);
-            if let Some(writ_module::instruction::Instruction::LoadString { string_idx: idx, .. }) = body.instructions.get_mut(instr_idx) {
+            if let Some(writ_module::instruction::Instruction::LoadString {
+                string_idx: idx, ..
+            }) = body.instructions.get_mut(instr_idx)
+            {
                 *idx = string_idx;
             }
         }
@@ -206,7 +205,11 @@ pub fn emit_bodies_with_libraries(
         Ok(bytes) => Ok(bytes),
         Err(e) => {
             diags.push(
-                writ_diagnostics::Diagnostic::error("E9001", format!("Serialization failed: {}", e)).build()
+                writ_diagnostics::Diagnostic::error(
+                    "E9001",
+                    format!("Serialization failed: {}", e),
+                )
+                .build(),
             );
             Err(diags)
         }

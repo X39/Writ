@@ -52,24 +52,17 @@ pub fn compile_and_disassemble(src: &str) -> String {
             }
 
             // Stage 3: Name resolution
-            let (resolved, resolve_diags) = writ_compiler::resolve::resolve(
-                &[(file_id, &ast)],
-                &[(file_id, "test.writ")],
-                &[],
-            );
-            let has_resolve_errors =
-                resolve_diags.iter().any(|d| d.severity == Severity::Error);
+            let (resolved, resolve_diags) =
+                writ_compiler::resolve::resolve(&[(file_id, &ast)], &[(file_id, "test.writ")], &[]);
+            let has_resolve_errors = resolve_diags.iter().any(|d| d.severity == Severity::Error);
             if has_resolve_errors {
                 let msgs: Vec<_> = resolve_diags.iter().map(|d| d.message.clone()).collect();
                 return Err(format!("resolution error(s): {}", msgs.join("; ")));
             }
 
             // Stage 4: Type checking
-            let (typed_ast, interner, _type_env, type_diags) = writ_compiler::check::typecheck(
-                resolved,
-                &[(file_id, &ast)],
-                &[],
-            );
+            let (typed_ast, interner, _type_env, type_diags) =
+                writ_compiler::check::typecheck(resolved, &[(file_id, &ast)], &[]);
             let has_type_errors = type_diags.iter().any(|d| d.severity == Severity::Error);
             if has_type_errors {
                 let msgs: Vec<_> = type_diags.iter().map(|d| d.message.clone()).collect();
@@ -78,12 +71,18 @@ pub fn compile_and_disassemble(src: &str) -> String {
 
             // Stage 5: IL codegen (includes metadata + bodies + serialization)
             let active_conditions = std::collections::HashSet::new();
-            writ_compiler::emit_bodies(&typed_ast, &interner, &[(file_id, &ast)], true, &[(file_id, src_static)], &active_conditions).map_err(
-                |diags| {
-                    let msgs: Vec<_> = diags.iter().map(|d| d.message.clone()).collect();
-                    format!("{} codegen error(s): {}", diags.len(), msgs.join("; "))
-                },
+            writ_compiler::emit_bodies(
+                &typed_ast,
+                &interner,
+                &[(file_id, &ast)],
+                true,
+                &[(file_id, src_static)],
+                &active_conditions,
             )
+            .map_err(|diags| {
+                let msgs: Vec<_> = diags.iter().map(|d| d.message.clone()).collect();
+                format!("{} codegen error(s): {}", diags.len(), msgs.join("; "))
+            })
         })
         .expect("thread spawn failed");
 
@@ -131,24 +130,17 @@ pub fn compile_and_disassemble_with_conditions(src: &str, conditions: &[&str]) -
             }
 
             // Stage 3: Name resolution
-            let (resolved, resolve_diags) = writ_compiler::resolve::resolve(
-                &[(file_id, &ast)],
-                &[(file_id, "test.writ")],
-                &[],
-            );
-            let has_resolve_errors =
-                resolve_diags.iter().any(|d| d.severity == Severity::Error);
+            let (resolved, resolve_diags) =
+                writ_compiler::resolve::resolve(&[(file_id, &ast)], &[(file_id, "test.writ")], &[]);
+            let has_resolve_errors = resolve_diags.iter().any(|d| d.severity == Severity::Error);
             if has_resolve_errors {
                 let msgs: Vec<_> = resolve_diags.iter().map(|d| d.message.clone()).collect();
                 return Err(format!("resolution error(s): {}", msgs.join("; ")));
             }
 
             // Stage 4: Type checking
-            let (typed_ast, interner, _type_env, type_diags) = writ_compiler::check::typecheck(
-                resolved,
-                &[(file_id, &ast)],
-                &[],
-            );
+            let (typed_ast, interner, _type_env, type_diags) =
+                writ_compiler::check::typecheck(resolved, &[(file_id, &ast)], &[]);
             let has_type_errors = type_diags.iter().any(|d| d.severity == Severity::Error);
             if has_type_errors {
                 let msgs: Vec<_> = type_diags.iter().map(|d| d.message.clone()).collect();
@@ -156,11 +148,18 @@ pub fn compile_and_disassemble_with_conditions(src: &str, conditions: &[&str]) -
             }
 
             // Stage 5: IL codegen with active conditions
-            writ_compiler::emit_bodies(&typed_ast, &interner, &[(file_id, &ast)], true, &[(file_id, src_static)], &active_conditions)
-                .map_err(|diags| {
-                    let msgs: Vec<_> = diags.iter().map(|d| d.message.clone()).collect();
-                    format!("{} codegen error(s): {}", diags.len(), msgs.join("; "))
-                })
+            writ_compiler::emit_bodies(
+                &typed_ast,
+                &interner,
+                &[(file_id, &ast)],
+                true,
+                &[(file_id, src_static)],
+                &active_conditions,
+            )
+            .map_err(|diags| {
+                let msgs: Vec<_> = diags.iter().map(|d| d.message.clone()).collect();
+                format!("{} codegen error(s): {}", diags.len(), msgs.join("; "))
+            })
         })
         .expect("thread spawn failed");
 
@@ -185,8 +184,9 @@ pub fn run_golden_test_with_conditions(name: &str, conditions: &[&str]) {
     let src_path = golden_dir.join(format!("{name}.writ"));
     let expected_path = golden_dir.join(format!("{name}.writil"));
 
-    let src = std::fs::read_to_string(&src_path)
-        .unwrap_or_else(|e| panic!("run_golden_test_with_conditions: could not read {src_path:?}: {e}"));
+    let src = std::fs::read_to_string(&src_path).unwrap_or_else(|e| {
+        panic!("run_golden_test_with_conditions: could not read {src_path:?}: {e}")
+    });
 
     let actual = compile_and_disassemble_with_conditions(&src, conditions);
 
@@ -244,31 +244,37 @@ fn compile_to_module(src: &str) -> Module {
             if !lower_errs.is_empty() {
                 return Err(format!("{} lowering error(s)", lower_errs.len()));
             }
-            let (resolved, resolve_diags) = writ_compiler::resolve::resolve(
-                &[(file_id, &ast)], &[(file_id, "test.writ")],
-                &[],
-            );
+            let (resolved, resolve_diags) =
+                writ_compiler::resolve::resolve(&[(file_id, &ast)], &[(file_id, "test.writ")], &[]);
             if resolve_diags.iter().any(|d| d.severity == Severity::Error) {
                 let msgs: Vec<_> = resolve_diags.iter().map(|d| d.message.clone()).collect();
                 return Err(format!("resolution error(s): {}", msgs.join("; ")));
             }
-            let (typed_ast, interner, _type_env, type_diags) = writ_compiler::check::typecheck(
-                resolved, &[(file_id, &ast)], &[],
-            );
+            let (typed_ast, interner, _type_env, type_diags) =
+                writ_compiler::check::typecheck(resolved, &[(file_id, &ast)], &[]);
             if type_diags.iter().any(|d| d.severity == Severity::Error) {
                 let msgs: Vec<_> = type_diags.iter().map(|d| d.message.clone()).collect();
                 return Err(format!("type error(s): {}", msgs.join("; ")));
             }
             let active_conditions = std::collections::HashSet::new();
-            writ_compiler::emit_bodies(&typed_ast, &interner, &[(file_id, &ast)], true, &[], &active_conditions).map_err(
-                |diags| {
-                    let msgs: Vec<_> = diags.iter().map(|d| d.message.clone()).collect();
-                    format!("{} codegen error(s): {}", diags.len(), msgs.join("; "))
-                },
+            writ_compiler::emit_bodies(
+                &typed_ast,
+                &interner,
+                &[(file_id, &ast)],
+                true,
+                &[],
+                &active_conditions,
             )
+            .map_err(|diags| {
+                let msgs: Vec<_> = diags.iter().map(|d| d.message.clone()).collect();
+                format!("{} codegen error(s): {}", diags.len(), msgs.join("; "))
+            })
         })
         .expect("thread spawn failed");
-    let bytes = handle.join().expect("compile thread panicked").expect("compilation failed");
+    let bytes = handle
+        .join()
+        .expect("compile thread panicked")
+        .expect("compilation failed");
     Module::from_bytes(&bytes).expect("Module::from_bytes failed")
 }
 
@@ -426,8 +432,7 @@ fn test_bless_writes_file() {
         "bless_golden should have created {written_path:?}"
     );
 
-    let contents =
-        std::fs::read_to_string(&written_path).expect("could not read blessed file");
+    let contents = std::fs::read_to_string(&written_path).expect("could not read blessed file");
     assert_eq!(
         contents, actual,
         "blessed file contents should match actual output"
@@ -646,8 +651,9 @@ fn test_type_class_new() {
 fn test_type_recursive_struct_error() {
     let src = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/golden/type_recursive_struct.writ")
-    ).expect("could not read type_recursive_struct.writ");
+            .join("tests/golden/type_recursive_struct.writ"),
+    )
+    .expect("could not read type_recursive_struct.writ");
 
     let src_static: &'static str = Box::leak(src.into_boxed_str());
 
@@ -656,22 +662,34 @@ fn test_type_recursive_struct_error() {
         .spawn(move || -> Result<(), String> {
             let file_id = writ_diagnostics::FileId(0);
             let (cst_opt, parse_errs) = writ_parser::parse(src_static);
-            assert!(parse_errs.is_empty(), "unexpected parse errors: {:?}", parse_errs);
+            assert!(
+                parse_errs.is_empty(),
+                "unexpected parse errors: {:?}",
+                parse_errs
+            );
             let cst = cst_opt.expect("parse failed: no CST output");
             let (ast, lower_errs) = writ_compiler::lower(cst);
-            assert!(lower_errs.is_empty(), "unexpected lowering errors: {:?}", lower_errs);
-            let (resolved, resolve_diags) = writ_compiler::resolve::resolve(
-                &[(file_id, &ast)], &[(file_id, "test.writ")],
-                &[],
+            assert!(
+                lower_errs.is_empty(),
+                "unexpected lowering errors: {:?}",
+                lower_errs
             );
-            let resolve_errors: Vec<_> = resolve_diags.iter()
+            let (resolved, resolve_diags) =
+                writ_compiler::resolve::resolve(&[(file_id, &ast)], &[(file_id, "test.writ")], &[]);
+            let resolve_errors: Vec<_> = resolve_diags
+                .iter()
                 .filter(|d| d.severity == writ_diagnostics::Severity::Error)
                 .collect();
-            assert!(resolve_errors.is_empty(), "unexpected resolve errors: {:?}", resolve_errors);
-            let (_typed_ast, _interner, _type_env, type_diags) = writ_compiler::check::typecheck(resolved, &[(file_id, &ast)], &[]);
-            let has_recursive_error = type_diags.iter().any(|d|
-                d.message.contains("recursive") || d.code == "E0121"
+            assert!(
+                resolve_errors.is_empty(),
+                "unexpected resolve errors: {:?}",
+                resolve_errors
             );
+            let (_typed_ast, _interner, _type_env, type_diags) =
+                writ_compiler::check::typecheck(resolved, &[(file_id, &ast)], &[]);
+            let has_recursive_error = type_diags
+                .iter()
+                .any(|d| d.message.contains("recursive") || d.code == "E0121");
             if has_recursive_error {
                 Ok(())
             } else {
@@ -684,7 +702,10 @@ fn test_type_recursive_struct_error() {
         })
         .expect("thread spawn failed");
 
-    handle.join().expect("thread panicked").expect("recursive struct test failed");
+    handle
+        .join()
+        .expect("thread panicked")
+        .expect("recursive struct test failed");
 }
 
 /// Golden test: enum definition + match expression.
@@ -854,7 +875,8 @@ fn collect_load_strings(module: &Module) -> Vec<String> {
 /// Verify that basic string literals have quotes stripped and escape sequences resolved.
 #[test]
 fn test_string_escape_basic() {
-    let module = compile_to_module(r#"
+    let module = compile_to_module(
+        r#"
         fn main() {
             let a: string = "hello";
             let b: string = "fancy\"string";
@@ -865,7 +887,8 @@ fn test_string_escape_basic() {
             let g: string = "cr\rhere";
             let h: string = "a\"b\\c\nd";
         }
-    "#);
+    "#,
+    );
     let strings = collect_load_strings(&module);
     assert_eq!(strings[0], "hello");
     assert_eq!(strings[1], "fancy\"string");
@@ -880,12 +903,14 @@ fn test_string_escape_basic() {
 /// Verify that formattable string text segments have escapes resolved.
 #[test]
 fn test_string_escape_formattable() {
-    let module = compile_to_module(r#"
+    let module = compile_to_module(
+        r#"
         fn main() {
             let x: int = 42;
             let s: string = $"tab\there {x.into<string>()} end\"done";
         }
-    "#);
+    "#,
+    );
     let strings = collect_load_strings(&module);
     // First LoadString is the "tab\there " text segment (escape resolved)
     assert_eq!(strings[0], "tab\there ");
@@ -897,11 +922,13 @@ fn test_string_escape_formattable() {
 /// Verify that string literals never contain surrounding quotes in the string heap.
 #[test]
 fn test_string_no_surrounding_quotes() {
-    let module = compile_to_module(r#"
+    let module = compile_to_module(
+        r#"
         fn main() {
             let s: string = "test";
         }
-    "#);
+    "#,
+    );
     let strings = collect_load_strings(&module);
     assert_eq!(strings[0], "test");
     assert!(!strings[0].starts_with('"'));
@@ -1081,7 +1108,8 @@ fn golden_lib_preload_stub() {
 #[test]
 fn lib_preload_cross_file_resolution() {
     // Library source: pub class Stub with one int field.
-    let lib_src: &'static str = Box::leak("pub class Stub { value: int }".to_string().into_boxed_str());
+    let lib_src: &'static str =
+        Box::leak("pub class Stub { value: int }".to_string().into_boxed_str());
     // User source: constructs and accesses a Stub.
     let user_src: &'static str = Box::leak(
         "fn main() {\n    let s: Stub = new Stub { value: 1 };\n    let v: int = s.value;\n}"
@@ -1101,13 +1129,21 @@ fn lib_preload_cross_file_resolution() {
             let (lib_cst, lib_errs) = writ_parser::parse(lib_src);
             assert!(lib_errs.is_empty(), "lib parse errors: {:?}", lib_errs);
             let (lib_ast, lib_lower_errs) = writ_compiler::lower(lib_cst.unwrap());
-            assert!(lib_lower_errs.is_empty(), "lib lower errors: {:?}", lib_lower_errs);
+            assert!(
+                lib_lower_errs.is_empty(),
+                "lib lower errors: {:?}",
+                lib_lower_errs
+            );
 
             // Parse + lower user
             let (user_cst, user_errs) = writ_parser::parse(user_src);
             assert!(user_errs.is_empty(), "user parse errors: {:?}", user_errs);
             let (user_ast, user_lower_errs) = writ_compiler::lower(user_cst.unwrap());
-            assert!(user_lower_errs.is_empty(), "user lower errors: {:?}", user_lower_errs);
+            assert!(
+                user_lower_errs.is_empty(),
+                "user lower errors: {:?}",
+                user_lower_errs
+            );
 
             // Resolve together: lib at FileId(0), user at FileId(1)
             let asts = vec![(lib_fid, &lib_ast), (user_fid, &user_ast)];
@@ -1240,8 +1276,9 @@ fn golden_iter_for_in_list() {
 fn test_array_removed_methods_produce_error() {
     let src = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/golden/array_removed_methods.writ")
-    ).expect("could not read array_removed_methods.writ");
+            .join("tests/golden/array_removed_methods.writ"),
+    )
+    .expect("could not read array_removed_methods.writ");
 
     let src_static: &'static str = Box::leak(src.into_boxed_str());
 
@@ -1250,23 +1287,35 @@ fn test_array_removed_methods_produce_error() {
         .spawn(move || -> Result<(), String> {
             let file_id = writ_diagnostics::FileId(0);
             let (cst_opt, parse_errs) = writ_parser::parse(src_static);
-            assert!(parse_errs.is_empty(), "unexpected parse errors: {:?}", parse_errs);
+            assert!(
+                parse_errs.is_empty(),
+                "unexpected parse errors: {:?}",
+                parse_errs
+            );
             let cst = cst_opt.expect("parse failed: no CST output");
             let (ast, lower_errs) = writ_compiler::lower(cst);
-            assert!(lower_errs.is_empty(), "unexpected lowering errors: {:?}", lower_errs);
-            let (resolved, resolve_diags) = writ_compiler::resolve::resolve(
-                &[(file_id, &ast)], &[(file_id, "test.writ")],
-                &[],
+            assert!(
+                lower_errs.is_empty(),
+                "unexpected lowering errors: {:?}",
+                lower_errs
             );
-            let resolve_errors: Vec<_> = resolve_diags.iter()
+            let (resolved, resolve_diags) =
+                writ_compiler::resolve::resolve(&[(file_id, &ast)], &[(file_id, "test.writ")], &[]);
+            let resolve_errors: Vec<_> = resolve_diags
+                .iter()
                 .filter(|d| d.severity == writ_diagnostics::Severity::Error)
                 .collect();
-            assert!(resolve_errors.is_empty(), "unexpected resolve errors: {:?}", resolve_errors);
-            let (_typed_ast, _interner, _type_env, type_diags) = writ_compiler::check::typecheck(resolved, &[(file_id, &ast)], &[]);
-            // Expect at least one type error — the unknown method `add` on int[]
-            let has_method_error = type_diags.iter().any(|d|
-                d.severity == writ_diagnostics::Severity::Error
+            assert!(
+                resolve_errors.is_empty(),
+                "unexpected resolve errors: {:?}",
+                resolve_errors
             );
+            let (_typed_ast, _interner, _type_env, type_diags) =
+                writ_compiler::check::typecheck(resolved, &[(file_id, &ast)], &[]);
+            // Expect at least one type error — the unknown method `add` on int[]
+            let has_method_error = type_diags
+                .iter()
+                .any(|d| d.severity == writ_diagnostics::Severity::Error);
             if has_method_error {
                 Ok(())
             } else {
@@ -1279,5 +1328,8 @@ fn test_array_removed_methods_produce_error() {
         })
         .expect("thread spawn failed");
 
-    handle.join().expect("thread panicked").expect("array_removed_methods test failed");
+    handle
+        .join()
+        .expect("thread panicked")
+        .expect("array_removed_methods test failed");
 }

@@ -114,8 +114,7 @@ impl BreakpointTable {
                 method_idx,
                 pc,
             };
-            self.pc_lookup
-                .insert((self.module_idx, method_idx, pc), id);
+            self.pc_lookup.insert((self.module_idx, method_idx, pc), id);
             self.active.insert(id, bp.clone());
             resolved.push(bp);
         }
@@ -206,7 +205,12 @@ mod tests {
     /// Build a minimal Module with the given (method_idx, line, pc) span entries.
     fn make_module(spans: &[(usize, u32, u32)]) -> Module {
         // Determine the number of method bodies needed.
-        let max_method = spans.iter().map(|(m, _, _)| *m).max().map(|m| m + 1).unwrap_or(0);
+        let max_method = spans
+            .iter()
+            .map(|(m, _, _)| *m)
+            .max()
+            .map(|m| m + 1)
+            .unwrap_or(0);
         let mut method_bodies: Vec<MethodBody> = (0..max_method)
             .map(|_| MethodBody {
                 register_types: vec![],
@@ -341,7 +345,10 @@ mod tests {
         let module = make_module(&[]);
         let mut table = BreakpointTable::new(&module);
         let resolved = table.set_breakpoints(&[10]);
-        assert!(resolved.is_empty(), "no breakpoints should be resolved for empty module");
+        assert!(
+            resolved.is_empty(),
+            "no breakpoints should be resolved for empty module"
+        );
     }
 
     #[test]

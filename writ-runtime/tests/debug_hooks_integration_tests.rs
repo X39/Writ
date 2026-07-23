@@ -7,13 +7,13 @@
 //! - resume_debug clears suspend_reason and resumes execution
 //! - SuspendReason::HostRequest is set on standard extern-call suspensions
 
-use writ_module::module::MethodBody;
-use writ_module::tables::TypeDefKind;
 use writ_module::Instruction;
 use writ_module::ModuleBuilder;
+use writ_module::module::MethodBody;
+use writ_module::tables::TypeDefKind;
 use writ_runtime::{
-    DebugAction, ExecutionLimit, HostRequest, HostResponse, LogLevel, NullHost, RequestId,
-    Runtime, RuntimeBuilder, RuntimeHost, SuspendReason, TaskId, TaskState, Value,
+    DebugAction, ExecutionLimit, HostRequest, HostResponse, LogLevel, NullHost, RequestId, Runtime,
+    RuntimeBuilder, RuntimeHost, SuspendReason, TaskId, TaskState, Value,
 };
 
 // ── Encoding helpers ──────────────────────────────────────────────
@@ -204,10 +204,7 @@ fn before_instruction_receives_correct_method_and_task_ids() {
     // module is 0)
     let (_, module_idx, method_idx, _) = calls[0];
     assert_eq!(module_idx, runtime.user_module_idx());
-    assert_eq!(
-        method_idx, 0,
-        "first call should be for method index 0"
-    );
+    assert_eq!(method_idx, 0, "first call should be for method index 0");
 }
 
 #[test]
@@ -247,8 +244,8 @@ fn cross_module_debug_locations_disambiguate_colliding_method_rows() {
         }
     }
 
-    let signature = encode_method_signature(&[], &TypeSignature::Void)
-        .expect("encode method signature");
+    let signature =
+        encode_method_signature(&[], &TypeSignature::Void).expect("encode method signature");
 
     let mut library = ModuleBuilder::new("debug-library");
     let exports = library.add_type_def("Exports", "lib", TypeDefKind::Struct, 0);
@@ -269,12 +266,8 @@ fn cross_module_debug_locations_disambiguate_colliding_method_rows() {
     let mut user = ModuleBuilder::new("debug-user");
     let library_ref = user.add_module_ref("debug-library", "1.0.0");
     let exports_ref = user.add_type_ref(library_ref, "Exports", "lib");
-    let target_ref = user.add_method_ref_with_flags(
-        exports_ref,
-        "library_method_zero",
-        &signature,
-        0,
-    );
+    let target_ref =
+        user.add_method_ref_with_flags(exports_ref, "library_method_zero", &signature, 0);
     user.add_method(
         "user_method_zero",
         &signature,
@@ -320,7 +313,9 @@ fn cross_module_debug_locations_disambiguate_colliding_method_rows() {
 
     runtime.tick(0.0, ExecutionLimit::None);
 
-    let reason = runtime.suspend_reason(task_id).expect("library method should suspend");
+    let reason = runtime
+        .suspend_reason(task_id)
+        .expect("library method should suspend");
     match reason {
         SuspendReason::Breakpoint {
             module_idx,
@@ -330,7 +325,10 @@ fn cross_module_debug_locations_disambiguate_colliding_method_rows() {
             assert_eq!(*module_idx, library_module_idx);
             assert_eq!(*method_idx, 0);
         }
-        other => panic!("expected breakpoint, got {:?}", std::mem::discriminant(other)),
+        other => panic!(
+            "expected breakpoint, got {:?}",
+            std::mem::discriminant(other)
+        ),
     }
 
     let frames = runtime.call_stack_frames(task_id).expect("live call stack");
@@ -348,7 +346,10 @@ fn cross_module_debug_locations_disambiguate_colliding_method_rows() {
 #[test]
 fn debug_break_suspends_task_with_breakpoint_reason() {
     let instrs = [
-        Instruction::LoadInt { r_dst: 0, value: 99 },
+        Instruction::LoadInt {
+            r_dst: 0,
+            value: 99,
+        },
         Instruction::Ret { r_src: 0 },
     ];
     let host = BreakOnFirstHost::new();
@@ -389,7 +390,10 @@ fn debug_break_suspends_task_with_breakpoint_reason() {
 #[test]
 fn resume_debug_clears_suspend_reason_and_continues_execution() {
     let instrs = [
-        Instruction::LoadInt { r_dst: 0, value: 42 },
+        Instruction::LoadInt {
+            r_dst: 0,
+            value: 42,
+        },
         Instruction::Ret { r_src: 0 },
     ];
     let host = BreakOnFirstHost::new();
@@ -401,7 +405,9 @@ fn resume_debug_clears_suspend_reason_and_continues_execution() {
     assert_eq!(runtime.task_state(task_id), Some(TaskState::Suspended));
 
     // Resume from debug suspension
-    runtime.resume_debug(task_id).expect("resume_debug should succeed");
+    runtime
+        .resume_debug(task_id)
+        .expect("resume_debug should succeed");
 
     // After resume, suspend_reason should be cleared
     assert!(
@@ -450,10 +456,7 @@ fn null_host_produces_no_debug_suspension_and_task_completes() {
         Some(TaskState::Completed),
         "NullHost task should complete without debug suspension"
     );
-    assert_eq!(
-        runtime.return_value(task_id),
-        Some(Value::Int(5))
-    );
+    assert_eq!(runtime.return_value(task_id), Some(Value::Int(5)));
     assert!(
         runtime.suspend_reason(task_id).is_none(),
         "NullHost task should have no suspend_reason"
@@ -472,13 +475,17 @@ fn null_host_produces_no_debug_suspension_and_task_completes() {
 /// by confirming that the Breakpoint path sets the correct variant.
 #[test]
 fn debug_step_over_suspends_task_with_debug_step_reason() {
-    struct StepOverHost { fired: bool }
+    struct StepOverHost {
+        fired: bool,
+    }
     impl RuntimeHost for StepOverHost {
         fn on_request(&mut self, _id: RequestId, _req: &HostRequest) -> HostResponse {
             HostResponse::Confirmed
         }
         fn on_log(&mut self, _level: LogLevel, _message: &str) {}
-        fn debug_enabled(&self) -> bool { true }
+        fn debug_enabled(&self) -> bool {
+            true
+        }
         fn before_instruction(
             &mut self,
             _task_id: TaskId,
@@ -513,6 +520,9 @@ fn debug_step_over_suspends_task_with_debug_step_reason() {
         Some(SuspendReason::DebugStep { mode, .. }) => {
             assert_eq!(*mode, DebugAction::StepOver);
         }
-        other => panic!("expected SuspendReason::DebugStep, got {:?}", other.map(std::mem::discriminant)),
+        other => panic!(
+            "expected SuspendReason::DebugStep, got {:?}",
+            other.map(std::mem::discriminant)
+        ),
     }
 }

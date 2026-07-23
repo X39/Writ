@@ -138,7 +138,9 @@ pub trait RuntimeHost: Send + Sync {
 
     /// Whether debug hooks should be called. Returns false by default.
     /// When false, the VM skips all debug hook calls for zero overhead.
-    fn debug_enabled(&self) -> bool { false }
+    fn debug_enabled(&self) -> bool {
+        false
+    }
 
     /// Called before each instruction executes (only when debug_enabled() is true).
     /// Receives task ID, loaded-module index, module-local method index,
@@ -152,7 +154,9 @@ pub trait RuntimeHost: Send + Sync {
         _pc: u32,
         _source_line: u32,
         _source_col: u16,
-    ) -> DebugAction { DebugAction::Continue }
+    ) -> DebugAction {
+        DebugAction::Continue
+    }
 
     /// Called when a function is entered (only when debug_enabled() is true).
     fn on_function_enter(&mut self, _task_id: TaskId, _module_idx: usize, _method_idx: u32) {}
@@ -223,8 +227,8 @@ impl<'a> ModuleAttributeView<'a> {
             .iter()
             .filter(|row| {
                 row.owner_kind != ATTR_OWNER_KIND_DECL
-                    && writ_module::heap::read_string(&self.module.string_heap, row.name)
-                        .ok() == Some(attr_name)
+                    && writ_module::heap::read_string(&self.module.string_heap, row.name).ok()
+                        == Some(attr_name)
             })
             .map(|row| self.build_match(row))
             .collect()
@@ -234,7 +238,7 @@ impl<'a> ModuleAttributeView<'a> {
     ///
     /// Declaration rows are excluded.
     pub fn query_attributes_on(&self, typedef_idx: usize) -> Vec<AttributeMatch> {
-        use writ_module::tables::{TableId, ATTR_OWNER_KIND_DECL};
+        use writ_module::tables::{ATTR_OWNER_KIND_DECL, TableId};
 
         let target_row = (typedef_idx + 1) as u32; // convert 0-based to 1-based
 
@@ -267,8 +271,8 @@ impl<'a> ModuleAttributeView<'a> {
             .find(|row| {
                 row.owner_kind != ATTR_OWNER_KIND_DECL
                     && row.owner == owner_token
-                    && writ_module::heap::read_string(&self.module.string_heap, row.name)
-                        .ok() == Some(attr_name)
+                    && writ_module::heap::read_string(&self.module.string_heap, row.name).ok()
+                        == Some(attr_name)
             })
             .map(|row| self.decode_args(row.value))
     }
@@ -295,9 +299,7 @@ impl<'a> ModuleAttributeView<'a> {
             return Vec::new();
         }
         match writ_module::heap::read_blob(&self.module.blob_heap, value_offset) {
-            Ok(blob) => {
-                writ_module::attr::decode_attr_args(blob).unwrap_or_default()
-            }
+            Ok(blob) => writ_module::attr::decode_attr_args(blob).unwrap_or_default(),
             Err(_) => Vec::new(),
         }
     }
@@ -338,9 +340,9 @@ mod tests {
 
     fn make_module_with_attrs() -> writ_module::Module {
         use writ_module::ModuleBuilder;
-        use writ_module::tables::{TableId, ATTR_OWNER_KIND_DECL, TypeDefKind};
+        use writ_module::attr::{AttrValue, encode_attr_args};
+        use writ_module::tables::{ATTR_OWNER_KIND_DECL, TableId, TypeDefKind};
         use writ_module::token::MetadataToken;
-        use writ_module::attr::{encode_attr_args, AttrValue};
 
         let mut b = ModuleBuilder::new("TestModule");
         // TypeDef "QuestGiver" at index 0 (row 1)
@@ -368,7 +370,12 @@ mod tests {
         let view = ModuleAttributeView::new(&module);
         let matches = view.query_attributes("Quest");
         // Only the application row should be returned, not the decl row
-        assert_eq!(matches.len(), 1, "expected 1 application match, got {}", matches.len());
+        assert_eq!(
+            matches.len(),
+            1,
+            "expected 1 application match, got {}",
+            matches.len()
+        );
         assert_eq!(matches[0].name, "Quest");
         assert_eq!(matches[0].args, vec![AttrValue::String("Chapter1".into())]);
     }

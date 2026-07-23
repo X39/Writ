@@ -137,7 +137,6 @@ All tables have **fixed-size rows**. References to heaps are u32 offsets. Refere
 child row, and the range extends to the next parent's `xxx_list` value (or end of table). MethodDef is the format-version
 6 exception: its explicit `owner` token is authoritative, because top-level functions share the same table and cannot be
 represented unambiguously by adjacent parent ranges.
-
 `TypeDef.field_list` is always a valid 1-based range start, including the one-past-end sentinel and types with no fields.
 An empty type repeats the next type's start; an empty type at the end stores `FieldDef row count + 1`. Thus a TypeDef
 with no fields has an empty range without using `field_list = 0`; zero is not a valid finalized `field_list` value.
@@ -202,7 +201,6 @@ return_type:         TypeRef
 `regular_param_count` is little-endian. Each parameter and the return value uses the recursive TypeRef encoding from §2.15.3, and the return TypeRef must end at the end of the blob; truncated or trailing data is invalid.
 
 The signature count covers regular source parameters only and excludes an explicit `self`. It is therefore distinct from `MethodDef.param_count`, which counts runtime parameter registers and includes `self` at `r0` for instance methods. For a free function the two counts are equal; for a method with `self`, the signature count is one less than `MethodDef.param_count`.
-
 ## 2.16.6 Method Body Layout
 
 Each method body starts at the MethodDef's `body_offset` and occupies `body_size` bytes:
@@ -319,11 +317,10 @@ it as part of its implementation. The spec mandates what types this module must 
 The runtime is free to implement them however it chooses internally.
 
 Every compiler frontend entry point MUST make exactly one `writ-runtime` module available during name resolution, type
-checking, and IL emission. If dependencies explicitly contain one or more modules whose ModuleDef name is
-`writ-runtime`, the first is authoritative and later duplicates are ignored. If none is supplied, the compiler appends
-its canonical in-memory `writ-runtime` module after all explicit dependencies. This is a compiler-pipeline guarantee and
-MUST NOT depend on a particular CLI command adding the module.
-
+checking, and IL emission. If a caller supplies one or more modules whose ModuleDef name is
+`writ-runtime`, the first supplied module is authoritative and later duplicates are ignored. If none is supplied, the
+compiler appends its canonical spec-conforming virtual module after the caller's explicit dependencies. This behavior is
+part of the compiler pipeline and MUST NOT depend on a particular CLI or build-system wrapper.
 
 Methods on `writ-runtime` types may carry an **intrinsic** flag on their MethodDef entries, indicating that the runtime
 provides a native implementation rather than IL bytecode. This allows core operations (such as contract implementations

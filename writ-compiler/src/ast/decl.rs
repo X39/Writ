@@ -1,7 +1,7 @@
-use chumsky::span::SimpleSpan;
 use crate::ast::expr::AstExpr;
 use crate::ast::stmt::AstStmt;
 use crate::ast::types::AstType;
+use chumsky::span::SimpleSpan;
 
 /// All top-level declaration forms that survive lowering into the AST.
 ///
@@ -65,7 +65,11 @@ pub enum AstAttributeArg {
     /// Positional argument: `expr`
     Positional(AstExpr),
     /// Named argument: `name: expr`
-    Named { name: String, name_span: SimpleSpan, value: AstExpr },
+    Named {
+        name: String,
+        name_span: SimpleSpan,
+        value: AstExpr,
+    },
 }
 
 /// A function/method parameter: `name: type`.
@@ -122,7 +126,11 @@ pub enum AstNamespaceDecl {
     /// Declarative form: `namespace a::b::c;`
     Declarative { path: Vec<String>, span: SimpleSpan },
     /// Block form: `namespace a::b { items }`
-    Block { path: Vec<String>, items: Vec<AstDecl>, span: SimpleSpan },
+    Block {
+        path: Vec<String>,
+        items: Vec<AstDecl>,
+        span: SimpleSpan,
+    },
 }
 
 /// Using import: `using [alias =] qualified::name;`

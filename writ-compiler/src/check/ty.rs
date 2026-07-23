@@ -39,7 +39,10 @@ pub enum TyKind {
         args: Vec<Ty>,
     },
     Array(Ty),
-    Func { params: Vec<Ty>, ret: Ty },
+    Func {
+        params: Vec<Ty>,
+        ret: Ty,
+    },
     Option(Ty),
     Result(Ty, Ty),
     TaskHandle(Ty),
@@ -290,9 +293,7 @@ impl TyInterner {
             | TyKind::Class(def_id)
             | TyKind::Entity(def_id)
             | TyKind::Enum(def_id)
-            | TyKind::Contract(def_id) => {
-                def_map.get_entry(*def_id).name.clone()
-            }
+            | TyKind::Contract(def_id) => def_map.get_entry(*def_id).name.clone(),
             TyKind::GenericInstance { name, args, .. } => {
                 let args = args
                     .iter()
@@ -313,7 +314,11 @@ impl TyInterner {
                     .iter()
                     .map(|p| self.display_named(*p, def_map))
                     .collect();
-                format!("fn({}) -> {}", ps.join(", "), self.display_named(*ret, def_map))
+                format!(
+                    "fn({}) -> {}",
+                    ps.join(", "),
+                    self.display_named(*ret, def_map)
+                )
             }
             TyKind::TaskHandle(inner) => {
                 format!("TaskHandle<{}>", self.display_named(*inner, def_map))

@@ -3,23 +3,24 @@
 use rustc_hash::FxHashMap;
 use writ_diagnostics::{Diagnostic, FileId};
 
-use crate::ast::decl::{AstContractMember, AstFnParam, AstComponentMember, AstVisibility};
 use crate::ast::Ast;
+use crate::ast::decl::{AstComponentMember, AstContractMember, AstFnParam, AstVisibility};
 use crate::check::ir::TypedExpr;
 use crate::check::ty::TyInterner;
 use crate::resolve::def_map::{DefId, DefMap, DefVis};
 
-use crate::emit::metadata::{TypeDefKind, HookKind, MetadataToken, TableId, field_flags, method_flags};
-use crate::emit::module_builder::{ModuleBuilder, TypeDefHandle, MethodDefHandle, ContractDefHandle, ImplDefHandle};
+use crate::emit::metadata::{
+    HookKind, MetadataToken, TableId, TypeDefKind, field_flags, method_flags,
+};
+use crate::emit::module_builder::{
+    ContractDefHandle, ImplDefHandle, MethodDefHandle, ModuleBuilder, TypeDefHandle,
+};
 
 use super::encoding::{
-    encode_fn_sig, encode_fn_sig_from_ast_sig, encode_op_sig, encode_type_from_ast,
-    emit_fn_params, resolve_type_handle, ast_type_to_ty_simple, method_param_register_count,
+    ast_type_to_ty_simple, emit_fn_params, encode_fn_sig, encode_fn_sig_from_ast_sig,
+    encode_op_sig, encode_type_from_ast, method_param_register_count, resolve_type_handle,
 };
-use super::lookup::{
-    find_contract_decl, find_impl_decl,
-    find_component_decl,
-};
+use super::lookup::{find_component_decl, find_contract_decl, find_impl_decl};
 
 /// Resolve a contract owned by writ-runtime through this module's TypeRef table.
 /// Cross-module ContractDef row numbers are not valid metadata tokens here.
@@ -50,7 +51,11 @@ pub(super) fn collect_contract(
             match member {
                 AstContractMember::FnSig(sig) => {
                     let sig_blob = encode_fn_sig_from_ast_sig(
-                        sig, interner, &entry.generics, def_map, builder,
+                        sig,
+                        interner,
+                        &entry.generics,
+                        def_map,
+                        builder,
                     );
                     builder.add_contract_method(contract_handle, &sig.name, sig_blob, 0);
                 }
@@ -92,16 +97,11 @@ pub(super) fn collect_impl(
         let impl_entry_generics = def_map.get_entry(impl_def_id).generics.clone();
 
         // Resolve target type.
-        let target_def_id = ast_type_constructor_name(&impl_decl.target)
-            .and_then(|name| def_map.get(name));
+        let target_def_id =
+            ast_type_constructor_name(&impl_decl.target).and_then(|name| def_map.get(name));
         let target_type_handle = resolve_type_handle(&impl_decl.target, def_map, typedef_handles);
-        let target_ty = ast_type_to_ty_simple(
-            &impl_decl.target,
-            &impl_entry_generics,
-            def_map,
-            interner,
-        )
-        .ok();
+        let target_ty =
+            ast_type_to_ty_simple(&impl_decl.target, &impl_entry_generics, def_map, interner).ok();
 
         // Resolve the contract constructor, independent of whether it has type
         // arguments. Generic applications such as `Iterable<T>` retain the
@@ -119,9 +119,16 @@ pub(super) fn collect_impl(
         // the same DefId. Because of this, `method_entry.name` resolves to "impl#N" (the impl
         // block name), not the method name. We recover the correct method name by iterating the
         // AST impl_decl.members in the same order as the typed `methods` vec.
-        let ast_fn_decls: Vec<&crate::ast::decl::AstFnDecl> = impl_decl.members
+        let ast_fn_decls: Vec<&crate::ast::decl::AstFnDecl> = impl_decl
+            .members
             .iter()
-            .filter_map(|m| if let crate::ast::decl::AstImplMember::Fn(f) = m { Some(f) } else { None })
+            .filter_map(|m| {
+                if let crate::ast::decl::AstImplMember::Fn(f) = m {
+                    Some(f)
+                } else {
+                    None
+                }
+            })
             .collect();
 
         let impl_is_pub = matches!(def_map.get_entry(impl_def_id).vis, DefVis::Pub);
@@ -135,20 +142,20 @@ pub(super) fn collect_impl(
 
             let is_pub = impl_is_pub;
             let mut method_scope_generics = impl_entry_generics.clone();
-            method_scope_generics.extend(
-                fn_decl
-                    .generics
-                    .iter()
-                    .map(|generic| generic.name.clone()),
-            );
+            method_scope_generics
+                .extend(fn_decl.generics.iter().map(|generic| generic.name.clone()));
 
             let (sig_blob, _) =
                 encode_fn_sig(fn_decl, interner, &method_scope_generics, def_map, builder);
 
-            let has_self = fn_decl.params.iter().any(|p| matches!(p, AstFnParam::SelfParam { .. }));
-            let is_mut_self = fn_decl.params.iter().any(|p| {
-                matches!(p, AstFnParam::SelfParam { mutable: true, .. })
-            });
+            let has_self = fn_decl
+                .params
+                .iter()
+                .any(|p| matches!(p, AstFnParam::SelfParam { .. }));
+            let is_mut_self = fn_decl
+                .params
+                .iter()
+                .any(|p| matches!(p, AstFnParam::SelfParam { mutable: true, .. }));
 
             let flags = method_flags(is_pub, !has_self, is_mut_self, HookKind::None);
 
@@ -209,33 +216,33 @@ pub(super) fn collect_impl(
             }
             fn_params.extend(fn_decl.params.iter().filter_map(|p| {
                 if let AstFnParam::Regular(p) = p {
-                    let ty = ast_type_to_ty_simple(
-                        &p.ty,
-                        &method_scope_generics,
-                        def_map,
-                        interner,
-                    )
-                    .unwrap_or_else(|message| {
-                        diags.push(
-                            Diagnostic::error("E2002", message)
-                                .with_primary(
-                                    entry.file_id,
-                                    p.name_span,
-                                    "failed to recover checked parameter type",
-                                )
-                                .build(),
-                        );
-                        crate::check::ty::Ty(5)
-                    });
+                    let ty =
+                        ast_type_to_ty_simple(&p.ty, &method_scope_generics, def_map, interner)
+                            .unwrap_or_else(|message| {
+                                diags.push(
+                                    Diagnostic::error("E2002", message)
+                                        .with_primary(
+                                            entry.file_id,
+                                            p.name_span,
+                                            "failed to recover checked parameter type",
+                                        )
+                                        .build(),
+                                );
+                                crate::check::ty::Ty(5)
+                            });
                     Some((p.name.clone(), ty))
                 } else {
                     None
                 }
             }));
-            builder.fn_param_map.insert(*_method_def_id, fn_params.clone());
+            builder
+                .fn_param_map
+                .insert(*_method_def_id, fn_params.clone());
             // Also store by MethodDefHandle for unambiguous per-method lookup
             // (all impl methods share the same DefId — fn_param_map gets overwritten).
-            builder.impl_method_param_map.insert(method_handle.0, fn_params);
+            builder
+                .impl_method_param_map
+                .insert(method_handle.0, fn_params);
 
             // GenericParam for method generics.
             for (ordinal, generic) in fn_decl.generics.iter().enumerate() {
@@ -257,11 +264,15 @@ pub(super) fn collect_impl(
 
         // ImplDef row linking type to contract.
         let type_token = target_ty
-            .filter(|ty| matches!(interner.full_kind(*ty), crate::check::ty::TyKind::GenericInstance { .. }))
+            .filter(|ty| {
+                matches!(
+                    interner.full_kind(*ty),
+                    crate::check::ty::TyKind::GenericInstance { .. }
+                )
+            })
             .map(|ty| super::intern_type_spec_for_ty(ty, interner, builder))
             .or_else(|| {
-                target_type_handle
-                    .map(|h| MetadataToken::new(TableId::TypeDef, (h.0 + 1) as u32))
+                target_type_handle.map(|h| MetadataToken::new(TableId::TypeDef, (h.0 + 1) as u32))
             })
             .or_else(|| target_def_id.and_then(|id| builder.token_for_def(id)))
             .unwrap_or(MetadataToken::NULL);
@@ -274,29 +285,27 @@ pub(super) fn collect_impl(
         //   them through the TypeRefs registered for writ-runtime.
         let base_contract_token = contract_def_id
             .and_then(|id| {
-                contractdef_handles.get(&id).map(|h| {
-                    MetadataToken::new(TableId::ContractDef, (h.0 + 1) as u32)
-                }).or_else(|| builder.token_for_def(id))
+                contractdef_handles
+                    .get(&id)
+                    .map(|h| MetadataToken::new(TableId::ContractDef, (h.0 + 1) as u32))
+                    .or_else(|| builder.token_for_def(id))
             })
-            .or_else(|| {
-                match contract_name {
-                    Some("Iterable") => Some(runtime_contract_token(builder, "Iterable")),
-                    Some("Iterator") => Some(runtime_contract_token(builder, "Iterator")),
-                    _ => None,
-                }
+            .or_else(|| match contract_name {
+                Some("Iterable") => Some(runtime_contract_token(builder, "Iterable")),
+                Some("Iterator") => Some(runtime_contract_token(builder, "Iterator")),
+                _ => None,
             })
             .unwrap_or(MetadataToken::NULL);
         let contract_ty = impl_decl.contract.as_ref().and_then(|contract| {
-            ast_type_to_ty_simple(
-                contract,
-                &impl_entry_generics,
-                def_map,
-                interner,
-            )
-            .ok()
+            ast_type_to_ty_simple(contract, &impl_entry_generics, def_map, interner).ok()
         });
         let contract_token = contract_ty
-            .filter(|ty| matches!(interner.full_kind(*ty), crate::check::ty::TyKind::GenericInstance { .. }))
+            .filter(|ty| {
+                matches!(
+                    interner.full_kind(*ty),
+                    crate::check::ty::TyKind::GenericInstance { .. }
+                )
+            })
             .map(|ty| super::intern_type_spec_for_ty(ty, interner, builder))
             .unwrap_or(base_contract_token);
 

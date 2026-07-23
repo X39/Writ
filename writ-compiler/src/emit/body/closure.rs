@@ -10,7 +10,7 @@
 
 use std::collections::HashSet;
 
-use crate::check::ir::{Capture, TypedDecl, TypedExpr, TypedAst};
+use crate::check::ir::{Capture, TypedAst, TypedDecl, TypedExpr};
 use crate::check::ty::{Ty, TyInterner};
 use crate::emit::metadata::{HookKind, MetadataToken, TypeDefKind, method_flags};
 use crate::emit::module_builder::ModuleBuilder;
@@ -114,16 +114,16 @@ fn scan_expr_for_lambdas(
             };
 
             // Register each capture as a FieldDef
-            let captures_info: Vec<(String, Ty)> = captures.iter().map(|cap| {
-                let type_bytes = crate::emit::type_sig::encode_type_bytes(
-                    cap.ty,
-                    interner,
-                    &token_for_def,
-                );
-                let type_sig = builder.blob_heap.intern(&type_bytes);
-                builder.add_fielddef(type_handle, &cap.name, type_sig, 0);
-                (cap.name.clone(), cap.ty)
-            }).collect();
+            let captures_info: Vec<(String, Ty)> = captures
+                .iter()
+                .map(|cap| {
+                    let type_bytes =
+                        crate::emit::type_sig::encode_type_bytes(cap.ty, interner, &token_for_def);
+                    let type_sig = builder.blob_heap.intern(&type_bytes);
+                    builder.add_fielddef(type_handle, &cap.name, type_sig, 0);
+                    (cap.name.clone(), cap.ty)
+                })
+                .collect();
 
             // A capturing closure body is an instance method: the delegate target
             // becomes r0. A zero-capture body is static, so its first explicit
@@ -151,11 +151,8 @@ fn scan_expr_for_lambdas(
                 param_count,
             );
             for (sequence, (name, ty)) in params.iter().enumerate() {
-                let type_bytes = crate::emit::type_sig::encode_type_bytes(
-                    *ty,
-                    interner,
-                    &token_for_def,
-                );
+                let type_bytes =
+                    crate::emit::type_sig::encode_type_bytes(*ty, interner, &token_for_def);
                 let type_sig = builder.blob_heap.intern(&type_bytes);
                 builder.add_paramdef(
                     method_handle,
@@ -184,7 +181,12 @@ fn scan_expr_for_lambdas(
                 scan_expr_for_lambdas(t, interner, builder, counter, infos);
             }
         }
-        TypedExpr::If { condition, then_branch, else_branch, .. } => {
+        TypedExpr::If {
+            condition,
+            then_branch,
+            else_branch,
+            ..
+        } => {
             scan_expr_for_lambdas(condition, interner, builder, counter, infos);
             scan_expr_for_lambdas(then_branch, interner, builder, counter, infos);
             if let Some(e) = else_branch {
@@ -207,7 +209,9 @@ fn scan_expr_for_lambdas(
         TypedExpr::Field { receiver, .. } | TypedExpr::ComponentAccess { receiver, .. } => {
             scan_expr_for_lambdas(receiver, interner, builder, counter, infos);
         }
-        TypedExpr::Index { receiver, index, .. } => {
+        TypedExpr::Index {
+            receiver, index, ..
+        } => {
             scan_expr_for_lambdas(receiver, interner, builder, counter, infos);
             scan_expr_for_lambdas(index, interner, builder, counter, infos);
         }
@@ -240,7 +244,9 @@ fn scan_expr_for_lambdas(
         | TypedExpr::Defer { expr: inner, .. } => {
             scan_expr_for_lambdas(inner, interner, builder, counter, infos);
         }
-        TypedExpr::Match { scrutinee, arms, .. } => {
+        TypedExpr::Match {
+            scrutinee, arms, ..
+        } => {
             scan_expr_for_lambdas(scrutinee, interner, builder, counter, infos);
             for arm in arms {
                 scan_expr_for_lambdas(&arm.body, interner, builder, counter, infos);
@@ -292,7 +298,9 @@ fn scan_stmt_for_lambdas(
                 scan_stmt_for_lambdas(s, interner, builder, counter, infos);
             }
         }
-        TypedStmt::While { condition, body, .. } => {
+        TypedStmt::While {
+            condition, body, ..
+        } => {
             scan_expr_for_lambdas(condition, interner, builder, counter, infos);
             for s in body {
                 scan_stmt_for_lambdas(s, interner, builder, counter, infos);
@@ -338,8 +346,14 @@ pub fn emit_lambda(
     let invoke_name = format!("__invoke_{}", closure_idx);
 
     // Look up the capture struct type token
-    let capture_type_token = emitter.builder.typedef_token_by_name(&closure_name).unwrap_or(0);
-    let invoke_method_token = emitter.builder.methoddef_token_by_name(&invoke_name).unwrap_or(0);
+    let capture_type_token = emitter
+        .builder
+        .typedef_token_by_name(&closure_name)
+        .unwrap_or(0);
+    let invoke_method_token = emitter
+        .builder
+        .methoddef_token_by_name(&invoke_name)
+        .unwrap_or(0);
 
     let r_dst = emitter.alloc_reg(ty);
 
@@ -357,13 +371,19 @@ pub fn emit_lambda(
     } else {
         // Capturing: NEW(capture_struct) + SET_FIELD per capture + NEW_DELEGATE
         let r_env = emitter.alloc_reg(ty); // capture struct register (typed as closure ty)
-        emitter.emit(Instruction::New { r_dst: r_env, type_idx: capture_type_token });
+        emitter.emit(Instruction::New {
+            r_dst: r_env,
+            type_idx: capture_type_token,
+        });
 
         for cap in captures {
             // Load capture from local or use 0 if not found
             let r_cap = emitter.locals.get(&cap.name).copied().unwrap_or(0);
             // Look up field token
-            let field_idx = emitter.builder.field_token_by_name_on_closure(&closure_name, &cap.name).unwrap_or(0);
+            let field_idx = emitter
+                .builder
+                .field_token_by_name_on_closure(&closure_name, &cap.name)
+                .unwrap_or(0);
             emitter.emit(Instruction::SetField {
                 r_obj: r_env,
                 field_idx,

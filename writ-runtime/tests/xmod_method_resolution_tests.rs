@@ -47,7 +47,10 @@ fn imported_inherent_method_wins_before_more_specific_contract_impl() {
     let mut cursor = std::io::Cursor::new(&user.method_bodies[main_idx].code);
     while (cursor.position() as usize) < user.method_bodies[main_idx].code.len() {
         if let Instruction::Call { method_idx, .. } = Instruction::decode(&mut cursor).unwrap() {
-            assert_ne!(method_idx, 0, "a checked direct call must never use the null token");
+            assert_ne!(
+                method_idx, 0,
+                "a checked direct call must never use the null token"
+            );
         }
     }
 

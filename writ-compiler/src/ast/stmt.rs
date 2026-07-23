@@ -1,6 +1,6 @@
-use chumsky::span::SimpleSpan;
 use crate::ast::expr::AstExpr;
 use crate::ast::types::AstType;
+use chumsky::span::SimpleSpan;
 
 /// All statement forms that survive lowering into the AST.
 ///
@@ -33,17 +33,30 @@ pub enum AstStmt {
         span: SimpleSpan,
     },
     /// While loop: `while condition { body }`
-    While { condition: AstExpr, body: Vec<AstStmt>, span: SimpleSpan },
+    While {
+        condition: AstExpr,
+        body: Vec<AstStmt>,
+        span: SimpleSpan,
+    },
     /// Break: `break [expr]`
-    Break { value: Option<AstExpr>, span: SimpleSpan },
+    Break {
+        value: Option<AstExpr>,
+        span: SimpleSpan,
+    },
     /// Continue
     Continue { span: SimpleSpan },
     /// Return: `return [expr]`
-    Return { value: Option<AstExpr>, span: SimpleSpan },
+    Return {
+        value: Option<AstExpr>,
+        span: SimpleSpan,
+    },
     /// Terminal dialogue transition: `-> target(args)`.
     Transition { call: AstExpr, span: SimpleSpan },
     /// Atomic block: `atomic { body }`
-    Atomic { body: Vec<AstStmt>, span: SimpleSpan },
+    Atomic {
+        body: Vec<AstStmt>,
+        span: SimpleSpan,
+    },
     /// Error recovery sentinel
     Error { span: SimpleSpan },
 }

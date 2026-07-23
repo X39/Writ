@@ -78,12 +78,12 @@ impl DefMap {
             DefVis::Pub => {
                 if let Some(&existing_id) = self.by_fqn.get(&fqn) {
                     let existing = &self.arena[existing_id];
-                    let existing_is_fn =
-                        matches!(existing.kind, DefKind::Fn | DefKind::ExternFn);
+                    let existing_is_fn = matches!(existing.kind, DefKind::Fn | DefKind::ExternFn);
 
                     if is_fn && existing_is_fn {
                         // Function overloading: add to overload set
-                        let overloads = self.fn_overloads
+                        let overloads = self
+                            .fn_overloads
                             .entry(fqn.clone())
                             .or_insert_with(|| vec![existing_id]);
                         overloads.push(id);
@@ -117,15 +117,14 @@ impl DefMap {
                 if is_fn {
                     // For private functions, also support overloading via fn_overloads.
                     // file_private stores one DefId per name; overloads go in fn_overloads.
-                    let privates = self.file_private
-                        .entry(entry.file_id)
-                        .or_default();
+                    let privates = self.file_private.entry(entry.file_id).or_default();
                     if let Some(&existing_id) = privates.get(&entry.name) {
                         let existing = &self.arena[existing_id];
                         if matches!(existing.kind, DefKind::Fn | DefKind::ExternFn) {
                             // Private function overload
                             let key = format!("{}@{}", entry.name, entry.file_id.0);
-                            let overloads = self.fn_overloads
+                            let overloads = self
+                                .fn_overloads
                                 .entry(key)
                                 .or_insert_with(|| vec![existing_id]);
                             overloads.push(id);
@@ -174,9 +173,7 @@ impl DefMap {
         }
         self.get_private_fn_candidates(file_id, name)
             .into_iter()
-            .find(|id| {
-                self.arena[*id].file_id == file_id && self.arena[*id].name_span == name_span
-            })
+            .find(|id| self.arena[*id].file_id == file_id && self.arena[*id].name_span == name_span)
     }
 
     /// Get the entry for a DefId.

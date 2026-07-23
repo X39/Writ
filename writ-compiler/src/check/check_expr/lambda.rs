@@ -3,13 +3,13 @@
 use chumsky::span::SimpleSpan;
 use std::collections::HashSet;
 
-use crate::ast::expr::AstLambdaParam;
-use crate::ast::types::AstType;
-use super::CheckCtx;
-use super::check_block_stmts;
 use super::super::env::Mutability;
 use super::super::ir::{Capture, CaptureMode, TypedExpr, TypedStmt};
 use super::super::ty::TyKind;
+use super::CheckCtx;
+use super::check_block_stmts;
+use crate::ast::expr::AstLambdaParam;
+use crate::ast::types::AstType;
 
 pub(super) fn check_lambda(
     ctx: &mut CheckCtx,
@@ -47,12 +47,8 @@ pub(super) fn check_lambda(
 
     // Define params in scope
     for (name, ty) in param_names.iter().zip(param_tys.iter()) {
-        ctx.local_env.define(
-            name.clone(),
-            *ty,
-            Mutability::Immutable,
-            span,
-        );
+        ctx.local_env
+            .define(name.clone(), *ty, Mutability::Immutable, span);
     }
 
     // Check body
@@ -69,15 +65,19 @@ pub(super) fn check_lambda(
     let param_set: HashSet<&str> = param_names.iter().map(|s| s.as_str()).collect();
     let mut seen_names: HashSet<String> = HashSet::new();
     let mut captures: Vec<Capture> = Vec::new();
-    collect_var_refs(&typed_body, &mut seen_names, &mut captures, &param_set, &ctx.local_env);
+    collect_var_refs(
+        &typed_body,
+        &mut seen_names,
+        &mut captures,
+        &param_set,
+        &ctx.local_env,
+    );
 
     // Build function type
     let func_ty = ctx.interner.func(param_tys.clone(), ret_ty);
 
-    let typed_params: Vec<(String, super::super::ty::Ty)> = param_names
-        .into_iter()
-        .zip(param_tys)
-        .collect();
+    let typed_params: Vec<(String, super::super::ty::Ty)> =
+        param_names.into_iter().zip(param_tys).collect();
 
     TypedExpr::Lambda {
         ty: func_ty,
@@ -131,7 +131,12 @@ fn collect_var_refs(
                 collect_var_refs(t, seen, captures, param_set, local_env);
             }
         }
-        TypedExpr::If { condition, then_branch, else_branch, .. } => {
+        TypedExpr::If {
+            condition,
+            then_branch,
+            else_branch,
+            ..
+        } => {
             collect_var_refs(condition, seen, captures, param_set, local_env);
             collect_var_refs(then_branch, seen, captures, param_set, local_env);
             if let Some(e) = else_branch {
@@ -154,7 +159,9 @@ fn collect_var_refs(
         TypedExpr::Field { receiver, .. } | TypedExpr::ComponentAccess { receiver, .. } => {
             collect_var_refs(receiver, seen, captures, param_set, local_env);
         }
-        TypedExpr::Index { receiver, index, .. } => {
+        TypedExpr::Index {
+            receiver, index, ..
+        } => {
             collect_var_refs(receiver, seen, captures, param_set, local_env);
             collect_var_refs(index, seen, captures, param_set, local_env);
         }
@@ -187,7 +194,9 @@ fn collect_var_refs(
         | TypedExpr::Defer { expr: inner, .. } => {
             collect_var_refs(inner, seen, captures, param_set, local_env);
         }
-        TypedExpr::Match { scrutinee, arms, .. } => {
+        TypedExpr::Match {
+            scrutinee, arms, ..
+        } => {
             collect_var_refs(scrutinee, seen, captures, param_set, local_env);
             for arm in arms {
                 collect_var_refs(&arm.body, seen, captures, param_set, local_env);
@@ -242,7 +251,9 @@ fn collect_var_refs_stmt(
                 collect_var_refs_stmt(s, seen, captures, param_set, local_env);
             }
         }
-        TypedStmt::While { condition, body, .. } => {
+        TypedStmt::While {
+            condition, body, ..
+        } => {
             collect_var_refs(condition, seen, captures, param_set, local_env);
             for s in body {
                 collect_var_refs_stmt(s, seen, captures, param_set, local_env);

@@ -2,7 +2,7 @@ use writ_module::error::DecodeError;
 use writ_module::heap;
 use writ_module::instruction::Instruction;
 use writ_module::module::{DebugLocal, MethodBody, Module};
-use writ_module::signature::{encode_type_signature, TypeSignature};
+use writ_module::signature::{TypeSignature, encode_type_signature};
 use writ_module::tables::*;
 use writ_module::{MetadataToken, ModuleBuilder};
 
@@ -88,9 +88,25 @@ fn test_module_with_method_body_round_trip() {
 
     // Create method body with some instructions
     let mut code = Vec::new();
-    Instruction::LoadInt { r_dst: 0, value: 42 }.encode(&mut code).unwrap();
-    Instruction::LoadString { r_dst: 1, string_idx: 100 }.encode(&mut code).unwrap();
-    Instruction::AddI { r_dst: 2, r_a: 0, r_b: 0 }.encode(&mut code).unwrap();
+    Instruction::LoadInt {
+        r_dst: 0,
+        value: 42,
+    }
+    .encode(&mut code)
+    .unwrap();
+    Instruction::LoadString {
+        r_dst: 1,
+        string_idx: 100,
+    }
+    .encode(&mut code)
+    .unwrap();
+    Instruction::AddI {
+        r_dst: 2,
+        r_a: 0,
+        r_b: 0,
+    }
+    .encode(&mut code)
+    .unwrap();
     Instruction::RetVoid.encode(&mut code).unwrap();
 
     let sig_off = heap::write_blob(&mut module.blob_heap, &[0x00]);
@@ -104,7 +120,7 @@ fn test_module_with_method_body_round_trip() {
         signature: sig_off,
         flags: 0,
         body_offset: 0, // writer will set
-        body_size: 1,    // non-zero to indicate body exists
+        body_size: 1,   // non-zero to indicate body exists
         reg_count: 3,
         param_count: 0,
         owner: MetadataToken::NULL,
@@ -181,7 +197,10 @@ fn test_module_with_multiple_tables_round_trip() {
     });
 
     // TypeSpecs used directly by ImplDef target and contract tokens.
-    for (name, argument) in [("Player", TypeSignature::Int), ("Updatable", TypeSignature::String)] {
+    for (name, argument) in [
+        ("Player", TypeSignature::Int),
+        ("Updatable", TypeSignature::String),
+    ] {
         let signature = encode_type_signature(&TypeSignature::Generic {
             namespace: "game".to_string(),
             name: name.to_string(),
@@ -203,8 +222,14 @@ fn test_module_with_multiple_tables_round_trip() {
     assert_round_trip(&module);
 
     let decoded = Module::from_bytes(&module.to_bytes().unwrap()).unwrap();
-    assert_eq!(decoded.impl_defs[0].type_token.table_id(), TableId::TypeSpec.as_u8());
-    assert_eq!(decoded.impl_defs[0].contract.table_id(), TableId::TypeSpec.as_u8());
+    assert_eq!(
+        decoded.impl_defs[0].type_token.table_id(),
+        TableId::TypeSpec.as_u8()
+    );
+    assert_eq!(
+        decoded.impl_defs[0].contract.table_id(),
+        TableId::TypeSpec.as_u8()
+    );
 }
 
 #[test]
@@ -271,7 +296,10 @@ fn test_class_typedef_round_trip() {
     let bytes = module.to_bytes().unwrap();
     let module2 = Module::from_bytes(&bytes).unwrap();
     assert_eq!(module2.type_defs.len(), 1);
-    assert_eq!(module2.type_defs[0].kind, 4, "Class kind must survive round-trip as 4");
+    assert_eq!(
+        module2.type_defs[0].kind, 4,
+        "Class kind must survive round-trip as 4"
+    );
 }
 
 #[test]
@@ -326,7 +354,9 @@ fn test_debug_local_v6_roundtrip() {
     let type_blob = heap::write_blob(&mut module.blob_heap, &[0x00]); // int type
 
     let mut code = Vec::new();
-    Instruction::LoadInt { r_dst: 0, value: 1 }.encode(&mut code).unwrap();
+    Instruction::LoadInt { r_dst: 0, value: 1 }
+        .encode(&mut code)
+        .unwrap();
     Instruction::RetVoid.encode(&mut code).unwrap();
 
     let sig_off = heap::write_blob(&mut module.blob_heap, &[0x00]);
@@ -349,7 +379,7 @@ fn test_debug_local_v6_roundtrip() {
         debug_locals: vec![DebugLocal {
             register: 0,
             name: name_off,
-            type_ref: type_blob,  // non-zero type_ref
+            type_ref: type_blob, // non-zero type_ref
             start_pc: 0,
             end_pc: 100,
         }],

@@ -40,10 +40,10 @@ pub fn inject_log_extern_defs(
                 continue;
             }
             builder.add_extern_def(
-                &fqn,     // name in ExternDef table (e.g. "log::info")
+                &fqn, // name in ExternDef table (e.g. "log::info")
                 sig_blob,
-                &fqn,     // import_name = same as name
-                1,        // flags: pub
+                &fqn, // import_name = same as name
+                1,    // flags: pub
                 Some(def_id),
             );
         }
@@ -76,7 +76,10 @@ pub fn inject_dialogue_extern_defs(
         ("choice", vec![0x01, 0x00, 0x20, 0x01, 0x01]),
         // ChoiceOption(label: string, key: string, body: fn() -> void) -> int:
         // 3 params, string, string, inline fn() -> void, int return
-        ("ChoiceOption", vec![0x03, 0x00, 0x04, 0x04, 0x30, 0x00, 0x00, 0x00, 0x01]),
+        (
+            "ChoiceOption",
+            vec![0x03, 0x00, 0x04, 0x04, 0x30, 0x00, 0x00, 0x00, 0x01],
+        ),
     ];
 
     for (name, sig_bytes) in builtins {

@@ -2,17 +2,17 @@
 
 use chumsky::span::SimpleSpan;
 
-use crate::ast::expr::{AstArg, AstExpr};
-use crate::ast::types::AstType;
-use crate::resolve::def_map::DefId;
-use super::CheckCtx;
-use super::check_expr;
-use super::{find_fn_def_id, find_fn_candidates};
 use super::super::env::FnSig;
 use super::super::error::TypeError;
 use super::super::infer::instantiate_generic_fn;
 use super::super::ir::TypedExpr;
 use super::super::ty::{InferVar, TyKind};
+use super::CheckCtx;
+use super::check_expr;
+use super::{find_fn_candidates, find_fn_def_id};
+use crate::ast::expr::{AstArg, AstExpr};
+use crate::ast::types::AstType;
+use crate::resolve::def_map::DefId;
 use writ_diagnostics::{Diagnostic, code};
 
 pub(super) fn check_call(
@@ -22,7 +22,11 @@ pub(super) fn check_call(
     span: SimpleSpan,
 ) -> TypedExpr {
     // Special case: callee is an Ident that resolves to a function in type_env
-    if let AstExpr::Ident { name, span: name_span } = callee {
+    if let AstExpr::Ident {
+        name,
+        span: name_span,
+    } = callee
+    {
         // Check if it's a known function by name (with overload resolution)
         if let Some(result) = resolve_overloaded_call(ctx, name, args, span, *name_span) {
             return result;
@@ -78,39 +82,42 @@ pub(super) fn check_call(
     // lower/expr.rs encodes `::log` as Path { segments: ["::log"] }, so after stripping
     // the leading `::` we can resolve it exactly like the Ident fast-path — this ensures
     // `callee_def_id` is set (enabling CALL_EXTERN for ExternFn callees instead of CALL_INDIRECT).
-    if let AstExpr::Path { segments, span: path_span } = callee
-        && segments.len() == 1 {
-            let raw = &segments[0];
-            let normalized = raw.strip_prefix("::").unwrap_or(raw.as_str());
-            if let Some(result) = resolve_overloaded_call(ctx, normalized, args, span, *path_span) {
-                return result;
-            }
+    if let AstExpr::Path {
+        segments,
+        span: path_span,
+    } = callee
+        && segments.len() == 1
+    {
+        let raw = &segments[0];
+        let normalized = raw.strip_prefix("::").unwrap_or(raw.as_str());
+        if let Some(result) = resolve_overloaded_call(ctx, normalized, args, span, *path_span) {
+            return result;
         }
+    }
 
     // Special case: two-segment log namespace call — `log::debug(msg)` or `::log::debug(msg)`.
     // lower/expr.rs encodes `::log::debug` as Path { segments: ["::log", "debug"] }
     // (leading "::" on first segment only).  Strip the prefix, join as FQN, look up the
     // synthetic ExternFn DefId injected by inject_log_namespace.
-    if let AstExpr::Path { segments, span: path_span } = callee
-        && segments.len() == 2 {
-            let first = segments[0].strip_prefix("::").unwrap_or(segments[0].as_str());
-            let second = segments[1].as_str();
-            if first == "log" {
-                let fqn = format!("log::{}", second);
-                if let Some(def_id) = ctx.def_map.get(&fqn)
-                    && let Some(sig) = ctx.type_env.fn_sigs.get(&def_id) {
-                        return check_call_with_sig(
-                            ctx,
-                            &fqn,
-                            def_id,
-                            sig.clone(),
-                            args,
-                            span,
-                            *path_span,
-                        );
-                    }
+    if let AstExpr::Path {
+        segments,
+        span: path_span,
+    } = callee
+        && segments.len() == 2
+    {
+        let first = segments[0]
+            .strip_prefix("::")
+            .unwrap_or(segments[0].as_str());
+        let second = segments[1].as_str();
+        if first == "log" {
+            let fqn = format!("log::{}", second);
+            if let Some(def_id) = ctx.def_map.get(&fqn)
+                && let Some(sig) = ctx.type_env.fn_sigs.get(&def_id)
+            {
+                return check_call_with_sig(ctx, &fqn, def_id, sig.clone(), args, span, *path_span);
             }
         }
+    }
 
     // General case: check callee expression. For an overloaded method, resolve
     // the candidate from the call arguments before collapsing member access to
@@ -301,37 +308,36 @@ fn resolve_overloaded_method_call(
         return None;
     }
 
-    let typed_args: Vec<TypedExpr> = args
-        .iter()
-        .map(|arg| check_expr(ctx, &arg.value))
-        .collect();
+    let typed_args: Vec<TypedExpr> = args.iter().map(|arg| check_expr(ctx, &arg.value)).collect();
     let matching: Vec<_> = candidates
         .iter()
-        .filter_map(|(is_inherent, _, impl_generic_count, receiver_bindings, signature)| {
-            let mut bindings = receiver_bindings.clone();
-            (signature.params.len() == typed_args.len()
-                && typed_args
-                    .iter()
-                    .zip(&signature.params)
-                    .all(|(arg, (_, param_ty))| {
-                        ctx.is_error(arg.ty())
-                            || ctx.is_error(*param_ty)
-                            || super::super::infer::match_type_pattern_with_bindings(
-                                *param_ty,
-                                arg.ty(),
-                                &ctx.interner,
-                                &mut bindings,
-                            )
-                    }))
-            .then(|| {
-                (
-                    *is_inherent,
-                    *impl_generic_count,
-                    bindings,
-                    signature.clone(),
-                )
-            })
-        })
+        .filter_map(
+            |(is_inherent, _, impl_generic_count, receiver_bindings, signature)| {
+                let mut bindings = receiver_bindings.clone();
+                (signature.params.len() == typed_args.len()
+                    && typed_args
+                        .iter()
+                        .zip(&signature.params)
+                        .all(|(arg, (_, param_ty))| {
+                            ctx.is_error(arg.ty())
+                                || ctx.is_error(*param_ty)
+                                || super::super::infer::match_type_pattern_with_bindings(
+                                    *param_ty,
+                                    arg.ty(),
+                                    &ctx.interner,
+                                    &mut bindings,
+                                )
+                        }))
+                .then(|| {
+                    (
+                        *is_inherent,
+                        *impl_generic_count,
+                        bindings,
+                        signature.clone(),
+                    )
+                })
+            },
+        )
         .collect();
 
     if matching.is_empty() {
@@ -340,19 +346,20 @@ fn resolve_overloaded_method_call(
             .find(|(_, _, _, _, signature)| signature.params.len() == typed_args.len())
         {
             let mut bindings = receiver_bindings.clone();
-            let mismatch = typed_args
-                .iter()
-                .zip(&same_arity.params)
-                .find(|(arg, (_, param_ty))| {
-                    !ctx.is_error(arg.ty())
-                        && !ctx.is_error(*param_ty)
-                        && !super::super::infer::match_type_pattern_with_bindings(
-                            *param_ty,
-                            arg.ty(),
-                            &ctx.interner,
-                            &mut bindings,
-                        )
-                });
+            let mismatch =
+                typed_args
+                    .iter()
+                    .zip(&same_arity.params)
+                    .find(|(arg, (_, param_ty))| {
+                        !ctx.is_error(arg.ty())
+                            && !ctx.is_error(*param_ty)
+                            && !super::super::infer::match_type_pattern_with_bindings(
+                                *param_ty,
+                                arg.ty(),
+                                &ctx.interner,
+                                &mut bindings,
+                            )
+                    });
             if let Some((arg, (_, param_ty))) = mismatch {
                 ctx.emit_error(TypeError::TypeMismatch {
                     expected: ctx.display_ty(*param_ty),
@@ -450,15 +457,10 @@ fn resolve_overloaded_method_call(
     let param_tys: Vec<_> = signature
         .params
         .iter()
-        .map(|(_, ty)| {
-            super::super::infer::substitute_bindings(*ty, &bindings, &mut ctx.interner)
-        })
+        .map(|(_, ty)| super::super::infer::substitute_bindings(*ty, &bindings, &mut ctx.interner))
         .collect();
-    let ret_ty = super::super::infer::substitute_bindings(
-        signature.ret,
-        &bindings,
-        &mut ctx.interner,
-    );
+    let ret_ty =
+        super::super::infer::substitute_bindings(signature.ret, &bindings, &mut ctx.interner);
     for (index, (arg, &param_ty)) in typed_args.iter().zip(&param_tys).enumerate() {
         ctx.check_assignable(
             param_ty,
@@ -479,11 +481,8 @@ fn resolve_overloaded_method_call(
             super::super::infer::substitute_bindings(*ty, &impl_bindings, &mut ctx.interner)
         })
         .collect();
-    let declaration_ret = super::super::infer::substitute_bindings(
-        signature.ret,
-        &impl_bindings,
-        &mut ctx.interner,
-    );
+    let declaration_ret =
+        super::super::infer::substitute_bindings(signature.ret, &impl_bindings, &mut ctx.interner);
     let callee_ty = ctx.interner.func(declaration_params, declaration_ret);
 
     Some(TypedExpr::Call {
@@ -521,7 +520,15 @@ fn resolve_overloaded_call(
     if candidates.len() == 1 {
         let def_id = candidates[0];
         if let Some(sig) = ctx.type_env.fn_sigs.get(&def_id) {
-            return Some(check_call_with_sig(ctx, name, def_id, sig.clone(), args, span, name_span));
+            return Some(check_call_with_sig(
+                ctx,
+                name,
+                def_id,
+                sig.clone(),
+                args,
+                span,
+                name_span,
+            ));
         }
         return None;
     }
@@ -570,19 +577,20 @@ fn resolve_overloaded_call(
                 .find(|(_, signature)| signature.params.len() == arg_count)
             {
                 let mut bindings = Vec::new();
-                let mismatch = typed_args
-                    .iter()
-                    .zip(&same_arity.params)
-                    .find(|(arg, (_, param_ty))| {
-                        !ctx.is_error(arg.ty())
-                            && !ctx.is_error(*param_ty)
-                            && !super::super::infer::match_type_pattern_with_bindings(
-                                *param_ty,
-                                arg.ty(),
-                                &ctx.interner,
-                                &mut bindings,
-                            )
-                    });
+                let mismatch =
+                    typed_args
+                        .iter()
+                        .zip(&same_arity.params)
+                        .find(|(arg, (_, param_ty))| {
+                            !ctx.is_error(arg.ty())
+                                && !ctx.is_error(*param_ty)
+                                && !super::super::infer::match_type_pattern_with_bindings(
+                                    *param_ty,
+                                    arg.ty(),
+                                    &ctx.interner,
+                                    &mut bindings,
+                                )
+                        });
                 if let Some((arg, (_, param_ty))) = mismatch {
                     let def_span = ctx.def_map.get_entry(*def_id).name_span;
                     ctx.emit_error(TypeError::TypeMismatch {
@@ -806,7 +814,11 @@ pub(super) fn check_contract_bounds(
         if let Some(concrete_ty) = resolved_ty {
             // Get the DefId of the concrete type to look up in impl_index
             let concrete_def_id = match ctx.interner.kind(concrete_ty).clone() {
-                TyKind::Struct(did) | TyKind::Class(did) | TyKind::Entity(did) | TyKind::Enum(did) | TyKind::Contract(did) => Some(did),
+                TyKind::Struct(did)
+                | TyKind::Class(did)
+                | TyKind::Entity(did)
+                | TyKind::Enum(did)
+                | TyKind::Contract(did) => Some(did),
                 _ => None,
             };
 
@@ -820,9 +832,9 @@ pub(super) fn check_contract_bounds(
                         .impl_index
                         .get(&did)
                         .map(|impls| {
-                            impls.iter().any(|entry| {
-                                entry.contract_def_id == Some(bound_contract_id)
-                            })
+                            impls
+                                .iter()
+                                .any(|entry| entry.contract_def_id == Some(bound_contract_id))
                         })
                         .unwrap_or(false)
                 } else {
@@ -866,7 +878,12 @@ pub(super) fn check_generic_call(
     // `field: "into_<T>"` sentinel pattern that the emitter already handles (builtins.rs).
     //
     // Supported pairs: int/float/bool/string -> string, int -> float, float -> int.
-    if let AstExpr::MemberAccess { object, field, field_span: _, span: member_span } = callee
+    if let AstExpr::MemberAccess {
+        object,
+        field,
+        field_span: _,
+        span: member_span,
+    } = callee
         && field == "into"
         && type_args.len() == 1
         && args.is_empty()
@@ -912,7 +929,12 @@ pub(super) fn check_generic_call(
     }
 
     // Special case: Entity.getOrCreate<T>() — returns T (specific entity type)
-    if let AstExpr::MemberAccess { object, field, field_span: _, span: member_span } = callee
+    if let AstExpr::MemberAccess {
+        object,
+        field,
+        field_span: _,
+        span: member_span,
+    } = callee
         && field == "getOrCreate"
         && type_args.len() == 1
         && args.is_empty()
@@ -940,79 +962,82 @@ pub(super) fn check_generic_call(
     }
 
     // For generic calls, resolve the callee to get its FnSig
-    if let AstExpr::Ident { name, span: name_span } = callee
+    if let AstExpr::Ident {
+        name,
+        span: name_span,
+    } = callee
         && let Some(def_id) = find_fn_def_id(ctx, name)
-            && let Some(sig) = ctx.type_env.fn_sigs.get(&def_id).cloned() {
-                // Resolve explicit type args
-                let explicit_tys: Vec<_> = type_args
-                    .iter()
-                    .map(|ta| ctx.resolve_ast_type(ta))
-                    .collect();
+        && let Some(sig) = ctx.type_env.fn_sigs.get(&def_id).cloned()
+    {
+        // Resolve explicit type args
+        let explicit_tys: Vec<_> = type_args
+            .iter()
+            .map(|ta| ctx.resolve_ast_type(ta))
+            .collect();
 
-                // Build substitution from explicit type args
-                let subst = explicit_tys;
+        // Build substitution from explicit type args
+        let subst = explicit_tys;
 
-                // Substitute into param types
-                let param_tys: Vec<_> = sig
-                    .params
-                    .iter()
-                    .map(|(_, ty)| super::super::infer::substitute(*ty, &subst, &mut ctx.interner))
-                    .collect();
-                let ret_ty = super::super::infer::substitute(sig.ret, &subst, &mut ctx.interner);
+        // Substitute into param types
+        let param_tys: Vec<_> = sig
+            .params
+            .iter()
+            .map(|(_, ty)| super::super::infer::substitute(*ty, &subst, &mut ctx.interner))
+            .collect();
+        let ret_ty = super::super::infer::substitute(sig.ret, &subst, &mut ctx.interner);
 
-                let typed_args: Vec<TypedExpr> =
-                    args.iter().map(|a| check_expr(ctx, &a.value)).collect();
+        let typed_args: Vec<TypedExpr> = args.iter().map(|a| check_expr(ctx, &a.value)).collect();
 
-                // Check arity
-                if typed_args.len() != param_tys.len() {
-                    let entry = ctx.def_map.get_entry(def_id);
-                    ctx.emit_error(TypeError::ArityMismatch {
-                        fn_name: name.to_string(),
-                        expected: param_tys.len(),
-                        found: typed_args.len(),
-                        call_span: span,
-                        def_span: entry.name_span,
-                        file: ctx.current_file,
-                    });
-                    return TypedExpr::Call {
-                        ty: ctx.interner.error(),
-                        span,
-                        callee: Box::new(TypedExpr::Var {
-                            ty: ctx.interner.error(),
-                            span: *name_span,
-                            name: name.to_string(),
-                        }),
-                        args: typed_args,
-                        callee_def_id: None,
-                        callee_has_receiver: None,
-                    };
-                }
+        // Check arity
+        if typed_args.len() != param_tys.len() {
+            let entry = ctx.def_map.get_entry(def_id);
+            ctx.emit_error(TypeError::ArityMismatch {
+                fn_name: name.to_string(),
+                expected: param_tys.len(),
+                found: typed_args.len(),
+                call_span: span,
+                def_span: entry.name_span,
+                file: ctx.current_file,
+            });
+            return TypedExpr::Call {
+                ty: ctx.interner.error(),
+                span,
+                callee: Box::new(TypedExpr::Var {
+                    ty: ctx.interner.error(),
+                    span: *name_span,
+                    name: name.to_string(),
+                }),
+                args: typed_args,
+                callee_def_id: None,
+                callee_has_receiver: None,
+            };
+        }
 
-                // Check each arg type
-                for (i, (arg, &param_ty)) in typed_args.iter().zip(param_tys.iter()).enumerate() {
-                    let arg_ty = arg.ty();
-                    ctx.check_assignable(
-                        param_ty,
-                        arg_ty,
-                        span,
-                        arg.span(),
-                        Some(format!("in argument {} of `{}`", i + 1, name)),
-                    );
-                }
+        // Check each arg type
+        for (i, (arg, &param_ty)) in typed_args.iter().zip(param_tys.iter()).enumerate() {
+            let arg_ty = arg.ty();
+            ctx.check_assignable(
+                param_ty,
+                arg_ty,
+                span,
+                arg.span(),
+                Some(format!("in argument {} of `{}`", i + 1, name)),
+            );
+        }
 
-                return TypedExpr::Call {
-                    ty: ret_ty,
-                    span,
-                    callee: Box::new(TypedExpr::Var {
-                        ty: ctx.interner.func(param_tys, ret_ty),
-                        span: *name_span,
-                        name: name.to_string(),
-                    }),
-                    args: typed_args,
-                    callee_def_id: Some(def_id),
-                    callee_has_receiver: Some(false),
-                };
-            }
+        return TypedExpr::Call {
+            ty: ret_ty,
+            span,
+            callee: Box::new(TypedExpr::Var {
+                ty: ctx.interner.func(param_tys, ret_ty),
+                span: *name_span,
+                name: name.to_string(),
+            }),
+            args: typed_args,
+            callee_def_id: Some(def_id),
+            callee_has_receiver: Some(false),
+        };
+    }
 
     // Fallback: check args but return error
     let typed_args: Vec<TypedExpr> = args.iter().map(|a| check_expr(ctx, &a.value)).collect();

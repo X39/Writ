@@ -7,13 +7,13 @@
 //! 4. Entities without Speaker fall back to type name
 
 use std::sync::{Arc, Mutex};
-use writ_module::module::MethodBody;
-use writ_module::tables::TypeDefKind;
 use writ_module::Instruction;
 use writ_module::ModuleBuilder;
+use writ_module::module::MethodBody;
+use writ_module::tables::TypeDefKind;
 use writ_runtime::{
-    ExecutionLimit, GcStats, HostRequest, HostResponse, LogLevel, RequestId,
-    RuntimeBuilder, RuntimeHost, TaskState, Value,
+    ExecutionLimit, GcStats, HostRequest, HostResponse, LogLevel, RequestId, RuntimeBuilder,
+    RuntimeHost, TaskState, Value,
 };
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -164,10 +164,7 @@ fn speaker_impl_populates_dispatch_table() {
     let speaker_impl = builder.add_impl_def(merchant_type, speaker_ref);
 
     // speaker_name method (placeholder: returns void since we just check dispatch table)
-    let speaker_body = make_body(
-        &[Instruction::RetVoid],
-        2,
-    );
+    let speaker_body = make_body(&[Instruction::RetVoid], 2);
     builder.add_impl_method(speaker_impl, "speaker_name", &[], 0, 2, speaker_body);
 
     // Sentinel type to bound Merchant's method list

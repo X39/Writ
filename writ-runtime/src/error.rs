@@ -137,17 +137,15 @@ mod tests {
     fn test_format_stacktrace_unknown_location() {
         let crash = CrashInfo {
             message: "error".to_string(),
-            stack_trace: vec![
-                StackFrame {
-                    module_idx: 0,
-                    method_idx: 0,
-                    method_name: "foo".to_string(),
-                    pc: 0,
-                    line: 0,
-                    column: 0,
-                    registers: vec![],
-                },
-            ],
+            stack_trace: vec![StackFrame {
+                module_idx: 0,
+                method_idx: 0,
+                method_name: "foo".to_string(),
+                pc: 0,
+                line: 0,
+                column: 0,
+                registers: vec![],
+            }],
         };
         let output = crash.format_stacktrace();
         assert!(output.contains("at foo"));
@@ -158,17 +156,15 @@ mod tests {
     fn test_format_stacktrace_empty_method_name_uses_fallback() {
         let crash = CrashInfo {
             message: "error".to_string(),
-            stack_trace: vec![
-                StackFrame {
-                    module_idx: 0,
-                    method_idx: 3,
-                    method_name: String::new(),
-                    pc: 0,
-                    line: 1,
-                    column: 1,
-                    registers: vec![],
-                },
-            ],
+            stack_trace: vec![StackFrame {
+                module_idx: 0,
+                method_idx: 3,
+                method_name: String::new(),
+                pc: 0,
+                line: 1,
+                column: 1,
+                registers: vec![],
+            }],
         };
         let output = crash.format_stacktrace();
         assert!(output.contains("at method_3"));

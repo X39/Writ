@@ -88,12 +88,15 @@ impl Iterable<int> for Counter {}
             if name == "GenericContract"
                 && matches!(args.as_slice(), [writ_module::signature::TypeSignature::GenericParam(0)])
     )), "generic user contract TypeSpec missing: {signatures:?}");
-    assert!(signatures.iter().any(|signature| matches!(
-        signature,
-        writ_module::signature::TypeSignature::Generic { name, args, .. }
-            if name == "Iterable"
-                && matches!(args.as_slice(), [writ_module::signature::TypeSignature::Int])
-    )), "concrete prelude contract TypeSpec missing: {signatures:?}");
+    assert!(
+        signatures.iter().any(|signature| matches!(
+            signature,
+            writ_module::signature::TypeSignature::Generic { name, args, .. }
+                if name == "Iterable"
+                    && matches!(args.as_slice(), [writ_module::signature::TypeSignature::Int])
+        )),
+        "concrete prelude contract TypeSpec missing: {signatures:?}"
+    );
     assert_eq!(
         contracts
             .iter()

@@ -18,11 +18,7 @@ pub fn instantiate_generic_fn(
     }
 
     // Create fresh InferVars for each generic param
-    let infer_vars: Vec<InferVar> = fn_sig
-        .generics
-        .iter()
-        .map(|_| unify.new_var())
-        .collect();
+    let infer_vars: Vec<InferVar> = fn_sig.generics.iter().map(|_| unify.new_var()).collect();
 
     // Build substitution map: GenericParam(i) -> Infer(var_i)
     let subst: Vec<Ty> = infer_vars
@@ -149,14 +145,17 @@ pub fn match_type_pattern_with_bindings(
         ) => {
             pattern_args.len() == concrete_args.len()
                 && types_equal_strict(*pattern_base, *concrete_base, interner)
-                && pattern_args.iter().zip(concrete_args).all(|(pattern_arg, concrete_arg)| {
-                    match_type_pattern_with_bindings(
-                        *pattern_arg,
-                        *concrete_arg,
-                        interner,
-                        bindings,
-                    )
-                })
+                && pattern_args
+                    .iter()
+                    .zip(concrete_args)
+                    .all(|(pattern_arg, concrete_arg)| {
+                        match_type_pattern_with_bindings(
+                            *pattern_arg,
+                            *concrete_arg,
+                            interner,
+                            bindings,
+                        )
+                    })
         }
         (TyKind::Array(pattern), TyKind::Array(concrete))
         | (TyKind::Option(pattern), TyKind::Option(concrete))
@@ -164,17 +163,9 @@ pub fn match_type_pattern_with_bindings(
         | (TyKind::ReflectionType(pattern), TyKind::ReflectionType(concrete)) => {
             match_type_pattern_with_bindings(*pattern, *concrete, interner, bindings)
         }
-        (
-            TyKind::Result(pattern_ok, pattern_err),
-            TyKind::Result(concrete_ok, concrete_err),
-        ) => {
+        (TyKind::Result(pattern_ok, pattern_err), TyKind::Result(concrete_ok, concrete_err)) => {
             match_type_pattern_with_bindings(*pattern_ok, *concrete_ok, interner, bindings)
-                && match_type_pattern_with_bindings(
-                    *pattern_err,
-                    *concrete_err,
-                    interner,
-                    bindings,
-                )
+                && match_type_pattern_with_bindings(*pattern_err, *concrete_err, interner, bindings)
         }
         (
             TyKind::Func {
@@ -197,23 +188,14 @@ pub fn match_type_pattern_with_bindings(
                         )
                     },
                 )
-                && match_type_pattern_with_bindings(
-                    *pattern_ret,
-                    *concrete_ret,
-                    interner,
-                    bindings,
-                )
+                && match_type_pattern_with_bindings(*pattern_ret, *concrete_ret, interner, bindings)
         }
         _ => false,
     }
 }
 
 /// Substitute only the generic ordinals bound while matching an impl pattern.
-pub fn substitute_bindings(
-    ty: Ty,
-    bindings: &[(u32, Ty)],
-    interner: &mut TyInterner,
-) -> Ty {
+pub fn substitute_bindings(ty: Ty, bindings: &[(u32, Ty)], interner: &mut TyInterner) -> Ty {
     match interner.full_kind(ty).clone() {
         TyKind::GenericParam(ordinal) => bindings
             .iter()
@@ -315,9 +297,7 @@ pub fn types_equal_strict(a: Ty, b: Ty, interner: &TyInterner) -> bool {
                 && a_params
                     .iter()
                     .zip(b_params)
-                    .all(|(a_param, b_param)| {
-                        types_equal_strict(*a_param, *b_param, interner)
-                    })
+                    .all(|(a_param, b_param)| types_equal_strict(*a_param, *b_param, interner))
                 && types_equal_strict(*a_ret, *b_ret, interner)
         }
         _ => false,

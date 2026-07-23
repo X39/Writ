@@ -1,4 +1,4 @@
-use writ_parser::{dedent_raw_string, lex, process_escapes, EscapeError, Token};
+use writ_parser::{EscapeError, Token, dedent_raw_string, lex, process_escapes};
 
 // =============================================================
 // Lossless Roundtrip Tests (LEX-02, INTG-02)

@@ -2,7 +2,7 @@ use crate::heap::HeapObject;
 use crate::value::Value;
 use writ_module::instruction::ArrayDefaultKind;
 
-use super::{helpers, ExecContext, ExecutionResult};
+use super::{ExecContext, ExecutionResult, helpers};
 
 // ── Struct Object Model ────────────────────────────────────────
 
@@ -12,20 +12,14 @@ pub(super) fn exec_new(ctx: &mut ExecContext<'_>, r_dst: u16, type_idx: u32) -> 
     let row = token.row_index().unwrap_or(0);
     let type_spec = (table_id == 4).then_some((ctx.current_module_idx, type_idx));
     if !matches!(table_id, 2 | 3 | 4) || row == 0 {
-        return ExecutionResult::Crash(format!(
-            "NEW: unsupported type token 0x{type_idx:08x}"
-        ));
+        return ExecutionResult::Crash(format!("NEW: unsupported type token 0x{type_idx:08x}"));
     }
 
     // Resolve the target module and typedef index.
     // TypeDef tokens (table 2) reference the current module directly.
     // TypeRef tokens (table 3) require cross-module resolution.
     let (target_module_idx, target_typedef_idx) = if table_id == 4 {
-        match crate::type_specs::resolve_type_location(
-            ctx.current_module_idx,
-            token,
-            ctx.modules,
-        ) {
+        match crate::type_specs::resolve_type_location(ctx.current_module_idx, token, ctx.modules) {
             Some(location) => location,
             None => {
                 return ExecutionResult::Crash(format!(
@@ -41,7 +35,8 @@ pub(super) fn exec_new(ctx: &mut ExecContext<'_>, r_dst: u16, type_idx: u32) -> 
             (resolved.module_idx, resolved.typedef_idx as usize)
         } else {
             return ExecutionResult::Crash(format!(
-                "NEW: TypeRef row {} not resolved", typeref_row_0based
+                "NEW: TypeRef row {} not resolved",
+                typeref_row_0based
             ));
         }
     } else {
@@ -59,7 +54,11 @@ pub(super) fn exec_new(ctx: &mut ExecContext<'_>, r_dst: u16, type_idx: u32) -> 
         type_idx
     };
     let field_count = helpers::get_type_field_count(&target_module.module, resolved_type_idx);
-    let kind_u8 = target_module.module.type_defs.get(target_typedef_idx).map(|t| t.kind);
+    let kind_u8 = target_module
+        .module
+        .type_defs
+        .get(target_typedef_idx)
+        .map(|t| t.kind);
     let runtime_type_key = ((target_module_idx as u32) << 16) | target_typedef_idx as u32;
 
     match kind_u8.and_then(writ_module::TypeDefKind::from_u8) {
@@ -87,10 +86,7 @@ pub(super) fn exec_new(ctx: &mut ExecContext<'_>, r_dst: u16, type_idx: u32) -> 
             "NEW: type_idx {} has kind {:?}, expected struct or class",
             type_idx, other
         )),
-        None => ExecutionResult::Crash(format!(
-            "NEW: type_idx {} is out of range",
-            type_idx
-        )),
+        None => ExecutionResult::Crash(format!("NEW: type_idx {} is out of range", type_idx)),
     }
 }
 
@@ -100,7 +96,9 @@ fn attach_type_spec(
     type_spec: Option<(usize, u32)>,
 ) {
     if let Some(type_spec) = type_spec
-        && let Ok(HeapObject::Struct { type_spec: stored, .. }) = heap.get_object_mut(href)
+        && let Ok(HeapObject::Struct {
+            type_spec: stored, ..
+        }) = heap.get_object_mut(href)
     {
         *stored = Some(type_spec);
     }
@@ -114,16 +112,22 @@ fn resolve_field_target(
     let (href, entity_identity) = match object {
         Value::Struct { href, .. } | Value::Ref(href) => (href, None),
         Value::Entity(entity) => {
-            let href = ctx.entity_registry.get_data_ref(entity)
+            let href = ctx
+                .entity_registry
+                .get_data_ref(entity)
                 .map_err(|error| format!("invalid entity receiver: {error}"))?
                 .ok_or_else(|| "entity receiver has no script-field storage".to_string())?;
-            let identity = ctx.entity_registry.get_type_identity(entity)
+            let identity = ctx
+                .entity_registry
+                .get_type_identity(entity)
                 .map_err(|error| format!("invalid entity receiver: {error}"))?;
             (href, identity)
         }
-        other => return Err(format!(
-            "expected struct, class, or entity receiver, got {other:?}"
-        )),
+        other => {
+            return Err(format!(
+                "expected struct, class, or entity receiver, got {other:?}"
+            ));
+        }
     };
 
     let token = writ_module::MetadataToken(field_operand);
@@ -131,10 +135,13 @@ fn resolve_field_target(
         return Ok((href, field_operand as usize));
     }
 
-    let row = token.row_index()
+    let row = token
+        .row_index()
         .and_then(|row| row.checked_sub(1))
         .ok_or_else(|| "null FieldRef token".to_string())?;
-    let resolved = ctx.modules[ctx.current_module_idx].resolved_refs.fields
+    let resolved = ctx.modules[ctx.current_module_idx]
+        .resolved_refs
+        .fields
         .get(&row)
         .ok_or_else(|| format!("unresolved FieldRef row {row}"))?;
 
@@ -164,9 +171,9 @@ fn resolve_field_target(
                 ));
             }
         }
-        Ok(HeapObject::Struct { .. }) => return Err(
-            "FieldRef receiver has no canonical type identity".into()
-        ),
+        Ok(HeapObject::Struct { .. }) => {
+            return Err("FieldRef receiver has no canonical type identity".into());
+        }
         Ok(_) => return Err("FieldRef receiver is not a struct or class object".into()),
         Err(error) => return Err(error.to_string()),
     }
@@ -216,7 +223,11 @@ pub(super) fn exec_set_field(
 
 // ── Arrays ─────────────────────────────────────────────────────
 
-pub(super) fn exec_new_array(ctx: &mut ExecContext<'_>, r_dst: u16, elem_type: u32) -> ExecutionResult {
+pub(super) fn exec_new_array(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    elem_type: u32,
+) -> ExecutionResult {
     if ArrayDefaultKind::from_operand(elem_type).is_none() {
         return ExecutionResult::Crash(format!("NewArray: invalid array default kind {elem_type}"));
     }
@@ -245,7 +256,10 @@ pub(super) fn exec_array_init(
         Err(message) => return ExecutionResult::Crash(format!("ArrayInit: {message}")),
     };
     let idx = ctx.heap.alloc_array(elem_type);
-    if let Ok(HeapObject::Array { elements: elems, .. }) = ctx.heap.get_object_mut(idx) {
+    if let Ok(HeapObject::Array {
+        elements: elems, ..
+    }) = ctx.heap.get_object_mut(idx)
+    {
         *elems = elements;
     }
     let frame = ctx.task.call_stack.last_mut().unwrap();
@@ -270,7 +284,11 @@ pub(super) fn exec_array_load(
                 frame.registers[r_dst as usize] = val;
                 ExecutionResult::Continue
             } else {
-                ExecutionResult::Crash(format!("array index {} out of bounds (len {})", idx, elements.len()))
+                ExecutionResult::Crash(format!(
+                    "array index {} out of bounds (len {})",
+                    idx,
+                    elements.len()
+                ))
             }
         }
         _ => ExecutionResult::Crash("ArrayLoad: not an array".into()),
@@ -293,7 +311,11 @@ pub(super) fn exec_array_store(
                 elements[idx] = val;
                 ExecutionResult::Continue
             } else {
-                ExecutionResult::Crash(format!("array index {} out of bounds (len {})", idx, elements.len()))
+                ExecutionResult::Crash(format!(
+                    "array index {} out of bounds (len {})",
+                    idx,
+                    elements.len()
+                ))
             }
         }
         _ => ExecutionResult::Crash("ArrayStore: not an array".into()),
@@ -301,7 +323,8 @@ pub(super) fn exec_array_store(
 }
 
 pub(super) fn exec_array_len(ctx: &mut ExecContext<'_>, r_dst: u16, r_arr: u16) -> ExecutionResult {
-    let arr_ref = helpers::extract_ref(&ctx.task.call_stack.last().unwrap().registers[r_arr as usize]);
+    let arr_ref =
+        helpers::extract_ref(&ctx.task.call_stack.last().unwrap().registers[r_arr as usize]);
     match ctx.heap.get_object(arr_ref) {
         Ok(HeapObject::Array { elements, .. }) => {
             let len = elements.len() as i64;
@@ -325,7 +348,10 @@ pub(super) fn exec_array_resize(
         return ExecutionResult::Crash("ArrayResize: negative length".into());
     }
     let (old_len, elem_type) = match ctx.heap.get_object(arr_ref) {
-        Ok(HeapObject::Array { elements, elem_type }) => (elements.len(), *elem_type),
+        Ok(HeapObject::Array {
+            elements,
+            elem_type,
+        }) => (elements.len(), *elem_type),
         _ => return ExecutionResult::Crash("ArrayResize: not an array".into()),
     };
     let new_len = new_len as usize;
@@ -474,7 +500,10 @@ pub(super) fn exec_new_array_sized(
     };
     let elements = default.map(|value| vec![value; len]).unwrap_or_default();
     let href = ctx.heap.alloc_array(elem_type);
-    if let Ok(HeapObject::Array { elements: elems, .. }) = ctx.heap.get_object_mut(href) {
+    if let Ok(HeapObject::Array {
+        elements: elems, ..
+    }) = ctx.heap.get_object_mut(href)
+    {
         *elems = elements;
     }
     let frame = ctx.task.call_stack.last_mut().unwrap();
@@ -502,7 +531,10 @@ pub(super) fn exec_new_array_filled(
     };
     let elements = vec![fill_val; len];
     let href = ctx.heap.alloc_array(elem_type);
-    if let Ok(HeapObject::Array { elements: elems, .. }) = ctx.heap.get_object_mut(href) {
+    if let Ok(HeapObject::Array {
+        elements: elems, ..
+    }) = ctx.heap.get_object_mut(href)
+    {
         *elems = elements;
     }
     let frame = ctx.task.call_stack.last_mut().unwrap();
@@ -522,19 +554,28 @@ pub(super) fn exec_array_slice(
     let start = helpers::extract_int(&frame.registers[r_start as usize]) as usize;
     let end = helpers::extract_int(&frame.registers[r_end as usize]) as usize;
     match ctx.heap.get_object(arr_ref) {
-        Ok(HeapObject::Array { elem_type, elements }) => {
+        Ok(HeapObject::Array {
+            elem_type,
+            elements,
+        }) => {
             let et = *elem_type;
             if start <= end && end <= elements.len() {
                 let slice = elements[start..end].to_vec();
                 let new_href = ctx.heap.alloc_array(et);
-                if let Ok(HeapObject::Array { elements: elems, .. }) = ctx.heap.get_object_mut(new_href) {
+                if let Ok(HeapObject::Array {
+                    elements: elems, ..
+                }) = ctx.heap.get_object_mut(new_href)
+                {
                     *elems = slice;
                 }
                 let frame = ctx.task.call_stack.last_mut().unwrap();
                 frame.registers[r_dst as usize] = Value::Ref(new_href);
                 ExecutionResult::Continue
             } else {
-                ExecutionResult::Crash(format!("ArraySlice: range {}..{} out of bounds", start, end))
+                ExecutionResult::Crash(format!(
+                    "ArraySlice: range {}..{} out of bounds",
+                    start, end
+                ))
             }
         }
         _ => ExecutionResult::Crash("ArraySlice: not an array".into()),
@@ -552,7 +593,8 @@ pub(super) fn exec_wrap_some(ctx: &mut ExecContext<'_>, r_dst: u16, r_val: u16) 
 }
 
 pub(super) fn exec_unwrap(ctx: &mut ExecContext<'_>, r_dst: u16, r_opt: u16) -> ExecutionResult {
-    let opt_ref = helpers::extract_ref(&ctx.task.call_stack.last().unwrap().registers[r_opt as usize]);
+    let opt_ref =
+        helpers::extract_ref(&ctx.task.call_stack.last().unwrap().registers[r_opt as usize]);
     match ctx.heap.get_object(opt_ref) {
         Ok(HeapObject::Enum { tag, fields, .. }) => {
             if *tag == 1 && !fields.is_empty() {
@@ -569,7 +611,8 @@ pub(super) fn exec_unwrap(ctx: &mut ExecContext<'_>, r_dst: u16, r_opt: u16) -> 
 }
 
 pub(super) fn exec_is_some(ctx: &mut ExecContext<'_>, r_dst: u16, r_opt: u16) -> ExecutionResult {
-    let opt_ref = helpers::extract_ref(&ctx.task.call_stack.last().unwrap().registers[r_opt as usize]);
+    let opt_ref =
+        helpers::extract_ref(&ctx.task.call_stack.last().unwrap().registers[r_opt as usize]);
     let is_some = match ctx.heap.get_object(opt_ref) {
         Ok(HeapObject::Enum { tag, .. }) => *tag == 1,
         _ => false,
@@ -580,7 +623,8 @@ pub(super) fn exec_is_some(ctx: &mut ExecContext<'_>, r_dst: u16, r_opt: u16) ->
 }
 
 pub(super) fn exec_is_none(ctx: &mut ExecContext<'_>, r_dst: u16, r_opt: u16) -> ExecutionResult {
-    let opt_ref = helpers::extract_ref(&ctx.task.call_stack.last().unwrap().registers[r_opt as usize]);
+    let opt_ref =
+        helpers::extract_ref(&ctx.task.call_stack.last().unwrap().registers[r_opt as usize]);
     let is_none = match ctx.heap.get_object(opt_ref) {
         Ok(HeapObject::Enum { tag, .. }) => *tag == 0,
         _ => true,
@@ -608,8 +652,13 @@ pub(super) fn exec_wrap_err(ctx: &mut ExecContext<'_>, r_dst: u16, r_err: u16) -
     ExecutionResult::Continue
 }
 
-pub(super) fn exec_unwrap_ok(ctx: &mut ExecContext<'_>, r_dst: u16, r_result: u16) -> ExecutionResult {
-    let res_ref = helpers::extract_ref(&ctx.task.call_stack.last().unwrap().registers[r_result as usize]);
+pub(super) fn exec_unwrap_ok(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    r_result: u16,
+) -> ExecutionResult {
+    let res_ref =
+        helpers::extract_ref(&ctx.task.call_stack.last().unwrap().registers[r_result as usize]);
     match ctx.heap.get_object(res_ref) {
         Ok(HeapObject::Enum { tag, fields, .. }) => {
             if *tag == 0 && !fields.is_empty() {
@@ -626,7 +675,8 @@ pub(super) fn exec_unwrap_ok(ctx: &mut ExecContext<'_>, r_dst: u16, r_result: u1
 }
 
 pub(super) fn exec_is_ok(ctx: &mut ExecContext<'_>, r_dst: u16, r_result: u16) -> ExecutionResult {
-    let res_ref = helpers::extract_ref(&ctx.task.call_stack.last().unwrap().registers[r_result as usize]);
+    let res_ref =
+        helpers::extract_ref(&ctx.task.call_stack.last().unwrap().registers[r_result as usize]);
     let is_ok = match ctx.heap.get_object(res_ref) {
         Ok(HeapObject::Enum { tag, .. }) => *tag == 0,
         _ => false,
@@ -637,7 +687,8 @@ pub(super) fn exec_is_ok(ctx: &mut ExecContext<'_>, r_dst: u16, r_result: u16) -
 }
 
 pub(super) fn exec_is_err(ctx: &mut ExecContext<'_>, r_dst: u16, r_result: u16) -> ExecutionResult {
-    let res_ref = helpers::extract_ref(&ctx.task.call_stack.last().unwrap().registers[r_result as usize]);
+    let res_ref =
+        helpers::extract_ref(&ctx.task.call_stack.last().unwrap().registers[r_result as usize]);
     let is_err = match ctx.heap.get_object(res_ref) {
         Ok(HeapObject::Enum { tag, .. }) => *tag == 1,
         _ => false,
@@ -647,8 +698,13 @@ pub(super) fn exec_is_err(ctx: &mut ExecContext<'_>, r_dst: u16, r_result: u16) 
     ExecutionResult::Continue
 }
 
-pub(super) fn exec_extract_err(ctx: &mut ExecContext<'_>, r_dst: u16, r_result: u16) -> ExecutionResult {
-    let res_ref = helpers::extract_ref(&ctx.task.call_stack.last().unwrap().registers[r_result as usize]);
+pub(super) fn exec_extract_err(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    r_result: u16,
+) -> ExecutionResult {
+    let res_ref =
+        helpers::extract_ref(&ctx.task.call_stack.last().unwrap().registers[r_result as usize]);
     match ctx.heap.get_object(res_ref) {
         Ok(HeapObject::Enum { tag, fields, .. }) => {
             if *tag == 1 && !fields.is_empty() {
@@ -688,7 +744,8 @@ pub(super) fn exec_new_enum(
 }
 
 pub(super) fn exec_get_tag(ctx: &mut ExecContext<'_>, r_dst: u16, r_enum: u16) -> ExecutionResult {
-    let enum_ref = helpers::extract_ref(&ctx.task.call_stack.last().unwrap().registers[r_enum as usize]);
+    let enum_ref =
+        helpers::extract_ref(&ctx.task.call_stack.last().unwrap().registers[r_enum as usize]);
     match ctx.heap.get_object(enum_ref) {
         Ok(HeapObject::Enum { tag, .. }) => {
             let tag_val = *tag as i64;
@@ -706,7 +763,8 @@ pub(super) fn exec_extract_field(
     r_enum: u16,
     field_idx: u16,
 ) -> ExecutionResult {
-    let enum_ref = helpers::extract_ref(&ctx.task.call_stack.last().unwrap().registers[r_enum as usize]);
+    let enum_ref =
+        helpers::extract_ref(&ctx.task.call_stack.last().unwrap().registers[r_enum as usize]);
     match ctx.heap.get_object(enum_ref) {
         Ok(HeapObject::Enum { fields, .. }) => {
             let idx = field_idx as usize;

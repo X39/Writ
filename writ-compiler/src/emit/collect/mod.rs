@@ -13,25 +13,30 @@ use crate::check::ty::{Ty, TyInterner};
 use crate::resolve::def_map::{DefId, DefMap};
 
 use super::metadata::{MetadataToken, TableId};
-use super::module_builder::{ModuleBuilder, TypeDefHandle, MethodDefHandle, ContractDefHandle};
+use super::module_builder::{ContractDefHandle, MethodDefHandle, ModuleBuilder, TypeDefHandle};
 
-mod types;
-mod functions;
-mod contracts;
 mod builtins;
-mod walker;
-mod globals;
+mod contracts;
 mod encoding;
+mod functions;
+mod globals;
 mod lookup;
+mod types;
+mod walker;
 
-use types::{collect_struct, collect_entity, collect_enum, collect_class};
-use functions::{collect_fn, collect_extern_fn, collect_component};
-use contracts::{collect_contract, collect_impl, collect_extern_component, emit_reflectable_auto_impl};
+use contracts::{
+    collect_contract, collect_extern_component, collect_impl, emit_reflectable_auto_impl,
+};
+use encoding::{
+    collect_attribute_decl_defs, collect_attributes, collect_component_slots, collect_exports,
+    collect_locale_defs,
+};
+use functions::{collect_component, collect_extern_fn, collect_fn};
 use globals::{collect_const, collect_global};
-use encoding::{collect_exports, collect_attributes, collect_attribute_decl_defs, collect_locale_defs, collect_component_slots};
+use types::{collect_class, collect_entity, collect_enum, collect_struct};
 use walker::{collect_addressable_generic_types, collect_called_def_ids};
 
-pub use builtins::{inject_log_extern_defs, inject_dialogue_extern_defs};
+pub use builtins::{inject_dialogue_extern_defs, inject_log_extern_defs};
 
 /// Collect all definitions from the TypedAst into the ModuleBuilder.
 ///
@@ -96,12 +101,7 @@ pub fn collect_defs(
 
     register_library_type_refs(library_modules, &library_module_refs, def_map, builder);
     register_library_field_refs(library_modules, def_map, builder);
-    register_library_method_refs(
-        library_modules,
-        &library_module_refs,
-        def_map,
-        builder,
-    );
+    register_library_method_refs(library_modules, &library_module_refs, def_map, builder);
     register_provisional_named_tokens(typed_ast, builder);
 
     // Pre-scan: compute the set of DefIds to skip at emit time.
@@ -117,7 +117,10 @@ pub fn collect_defs(
             // Active condition: emit the conditional variant, suppress the fallback.
             if let Some(&fb_id) = typed_ast.fallback_for_conditional.get(&cond_def_id) {
                 skipped_def_ids.insert(fb_id);
-                active_for_fallback.entry(fb_id).or_default().push(cond_def_id);
+                active_for_fallback
+                    .entry(fb_id)
+                    .or_default()
+                    .push(cond_def_id);
             }
         } else {
             // Inactive condition: suppress the conditional variant, emit the fallback.
@@ -163,28 +166,60 @@ pub fn collect_defs(
     for decl in &typed_ast.decls {
         match decl {
             TypedDecl::Struct { def_id } => {
-                collect_struct(*def_id, def_map, asts, interner, builder, &mut typedef_handles, diags);
+                collect_struct(
+                    *def_id,
+                    def_map,
+                    asts,
+                    interner,
+                    builder,
+                    &mut typedef_handles,
+                    diags,
+                );
                 if let Some(&handle) = typedef_handles.get(def_id) {
                     emit_reflectable_auto_impl(handle, *def_id, builder);
                     reflectable_infos.push(ReflectableInfo { def_id: *def_id });
                 }
             }
             TypedDecl::Class { def_id } => {
-                collect_class(*def_id, def_map, asts, interner, builder, &mut typedef_handles, diags);
+                collect_class(
+                    *def_id,
+                    def_map,
+                    asts,
+                    interner,
+                    builder,
+                    &mut typedef_handles,
+                    diags,
+                );
                 if let Some(&handle) = typedef_handles.get(def_id) {
                     emit_reflectable_auto_impl(handle, *def_id, builder);
                     reflectable_infos.push(ReflectableInfo { def_id: *def_id });
                 }
             }
             TypedDecl::Entity { def_id } => {
-                collect_entity(*def_id, def_map, asts, interner, builder, &mut typedef_handles, diags);
+                collect_entity(
+                    *def_id,
+                    def_map,
+                    asts,
+                    interner,
+                    builder,
+                    &mut typedef_handles,
+                    diags,
+                );
                 if let Some(&handle) = typedef_handles.get(def_id) {
                     emit_reflectable_auto_impl(handle, *def_id, builder);
                     reflectable_infos.push(ReflectableInfo { def_id: *def_id });
                 }
             }
             TypedDecl::Enum { def_id } => {
-                collect_enum(*def_id, def_map, asts, interner, builder, &mut typedef_handles, diags);
+                collect_enum(
+                    *def_id,
+                    def_map,
+                    asts,
+                    interner,
+                    builder,
+                    &mut typedef_handles,
+                    diags,
+                );
                 if let Some(&handle) = typedef_handles.get(def_id) {
                     emit_reflectable_auto_impl(handle, *def_id, builder);
                     reflectable_infos.push(ReflectableInfo { def_id: *def_id });
@@ -194,7 +229,15 @@ pub fn collect_defs(
                 if skipped_def_ids.contains(def_id) {
                     continue;
                 }
-                collect_fn(*def_id, def_map, asts, interner, builder, &mut methoddef_handles, diags);
+                collect_fn(
+                    *def_id,
+                    def_map,
+                    asts,
+                    interner,
+                    builder,
+                    &mut methoddef_handles,
+                    diags,
+                );
             }
             TypedDecl::Contract { def_id } => {
                 let handle = collect_contract(*def_id, def_map, asts, interner, builder, diags);
@@ -215,13 +258,29 @@ pub fn collect_defs(
                 );
             }
             TypedDecl::Component { def_id } => {
-                collect_component(*def_id, def_map, asts, interner, builder, &mut typedef_handles, diags);
+                collect_component(
+                    *def_id,
+                    def_map,
+                    asts,
+                    interner,
+                    builder,
+                    &mut typedef_handles,
+                    diags,
+                );
             }
             TypedDecl::ExternFn { def_id } => {
                 collect_extern_fn(*def_id, def_map, asts, interner, builder, diags);
             }
             TypedDecl::ExternComponent { def_id } => {
-                collect_extern_component(*def_id, def_map, asts, interner, builder, &mut typedef_handles, diags);
+                collect_extern_component(
+                    *def_id,
+                    def_map,
+                    asts,
+                    interner,
+                    builder,
+                    &mut typedef_handles,
+                    diags,
+                );
             }
             TypedDecl::Const { def_id, .. } => {
                 collect_const(*def_id, def_map, asts, interner, builder, diags);
@@ -320,7 +379,10 @@ fn register_provisional_named_tokens(typed_ast: &TypedAst, builder: &mut ModuleB
             }
             TypedDecl::Contract { def_id } => {
                 contract_row += 1;
-                (*def_id, MetadataToken::new(TableId::ContractDef, contract_row))
+                (
+                    *def_id,
+                    MetadataToken::new(TableId::ContractDef, contract_row),
+                )
             }
             _ => continue,
         };
@@ -337,15 +399,10 @@ fn register_library_module_refs(
         .map(|module| {
             let module_def = module.module_defs.first();
             let module_name = module_def
-                .and_then(|row| {
-                    writ_module::heap::read_string(&module.string_heap, row.name).ok()
-                })
+                .and_then(|row| writ_module::heap::read_string(&module.string_heap, row.name).ok())
                 .or_else(|| {
-                    writ_module::heap::read_string(
-                        &module.string_heap,
-                        module.header.module_name,
-                    )
-                    .ok()
+                    writ_module::heap::read_string(&module.string_heap, module.header.module_name)
+                        .ok()
                 })
                 .unwrap_or("library");
             let module_version = module_def
@@ -376,35 +433,19 @@ fn register_library_type_refs(
         let module_ref = library_module_refs[lib_index];
 
         for type_def in &module.type_defs {
-            let name = writ_module::heap::read_string(&module.string_heap, type_def.name)
-                .unwrap_or("");
+            let name =
+                writ_module::heap::read_string(&module.string_heap, type_def.name).unwrap_or("");
             let namespace = writ_module::heap::read_string(&module.string_heap, type_def.namespace)
                 .unwrap_or("");
-            register_library_type_ref(
-                module_ref,
-                name,
-                namespace,
-                lib_file_id,
-                def_map,
-                builder,
-            );
+            register_library_type_ref(module_ref, name, namespace, lib_file_id, def_map, builder);
         }
         for contract_def in &module.contract_defs {
             let name = writ_module::heap::read_string(&module.string_heap, contract_def.name)
                 .unwrap_or("");
-            let namespace = writ_module::heap::read_string(
-                &module.string_heap,
-                contract_def.namespace,
-            )
-            .unwrap_or("");
-            register_library_type_ref(
-                module_ref,
-                name,
-                namespace,
-                lib_file_id,
-                def_map,
-                builder,
-            );
+            let namespace =
+                writ_module::heap::read_string(&module.string_heap, contract_def.namespace)
+                    .unwrap_or("");
+            register_library_type_ref(module_ref, name, namespace, lib_file_id, def_map, builder);
         }
     }
 }
@@ -421,14 +462,11 @@ fn register_library_type_ref(
         return;
     }
     let scope = MetadataToken::new(TableId::ModuleRef, (module_ref + 1) as u32);
-    let existing_row = builder
-        .finalized_type_refs()
-        .iter()
-        .position(|type_ref| {
-            type_ref.scope == scope
-                && builder.string_heap.get_str(type_ref.name) == name
-                && builder.string_heap.get_str(type_ref.namespace) == namespace
-        });
+    let existing_row = builder.finalized_type_refs().iter().position(|type_ref| {
+        type_ref.scope == scope
+            && builder.string_heap.get_str(type_ref.name) == name
+            && builder.string_heap.get_str(type_ref.namespace) == namespace
+    });
     let row = match existing_row {
         Some(index) => index,
         None => builder.add_type_ref(module_ref, name, namespace),
@@ -460,13 +498,10 @@ fn register_library_method_refs(
 
         // Direct TypeDef methods keep a bare imported parent.
         for (type_index, type_def) in module.type_defs.iter().enumerate() {
-            let name = writ_module::heap::read_string(&module.string_heap, type_def.name)
+            let name =
+                writ_module::heap::read_string(&module.string_heap, type_def.name).unwrap_or("");
+            let namespace = writ_module::heap::read_string(&module.string_heap, type_def.namespace)
                 .unwrap_or("");
-            let namespace = writ_module::heap::read_string(
-                &module.string_heap,
-                type_def.namespace,
-            )
-            .unwrap_or("");
             let fqn = if namespace.is_empty() {
                 name.to_string()
             } else {
@@ -494,12 +529,9 @@ fn register_library_method_refs(
         // ImplDefs may target imported types or exact specializations, so walk
         // them independently rather than flattening them under a local TypeDef.
         for (impl_index, implementation) in module.impl_defs.iter().enumerate() {
-            let Some(parent) = remap_library_method_parent(
-                module,
-                implementation.type_token,
-                def_map,
-                builder,
-            ) else {
+            let Some(parent) =
+                remap_library_method_parent(module, implementation.type_token, def_map, builder)
+            else {
                 continue;
             };
             register_library_method_rows(
@@ -518,22 +550,31 @@ fn register_library_method_refs(
         );
         for method_index in module.top_level_method_indices() {
             let method = &module.method_defs[method_index];
-            let method_name = writ_module::heap::read_string(&module.string_heap, method.name)
-                .unwrap_or("");
+            let method_name =
+                writ_module::heap::read_string(&module.string_heap, method.name).unwrap_or("");
             let Some(def_id) = crate::resolve::inject_library::library_top_level_method_def_id(
                 def_map,
                 lib_file_id,
                 method_index,
                 method_name,
-            ) else { continue };
-            let Ok(signature) = writ_module::heap::read_blob(
-                &module.blob_heap, method.signature
-            ) else { continue };
-            let Some(signature) = remap_library_method_signature(
-                module, signature, def_map, builder
-            ) else { continue };
+            ) else {
+                continue;
+            };
+            let Ok(signature) = writ_module::heap::read_blob(&module.blob_heap, method.signature)
+            else {
+                continue;
+            };
+            let Some(signature) =
+                remap_library_method_signature(module, signature, def_map, builder)
+            else {
+                continue;
+            };
             let row = builder.add_method_ref_with_origin(
-                module_parent, method_name, &signature, true, false
+                module_parent,
+                method_name,
+                &signature,
+                true,
+                false,
             );
             builder.def_token_map.insert(
                 def_id,
@@ -552,8 +593,8 @@ fn register_library_field_refs(
         let lib_file_id = FileId(u32::MAX - 1 - lib_index as u32);
 
         for (type_index, type_def) in module.type_defs.iter().enumerate() {
-            let name = writ_module::heap::read_string(&module.string_heap, type_def.name)
-                .unwrap_or("");
+            let name =
+                writ_module::heap::read_string(&module.string_heap, type_def.name).unwrap_or("");
             let namespace = writ_module::heap::read_string(&module.string_heap, type_def.namespace)
                 .unwrap_or("");
             let fqn = if namespace.is_empty() {
@@ -578,7 +619,9 @@ fn register_library_field_refs(
             }
 
             let field_start = type_def.field_list.saturating_sub(1) as usize;
-            let field_end = module.type_defs.get(type_index + 1)
+            let field_end = module
+                .type_defs
+                .get(type_index + 1)
                 .map(|next| next.field_list.saturating_sub(1) as usize)
                 .unwrap_or(module.field_defs.len())
                 .min(module.field_defs.len());
@@ -587,8 +630,8 @@ fn register_library_field_refs(
             }
 
             for field in &module.field_defs[field_start..field_end] {
-                let field_name = writ_module::heap::read_string(&module.string_heap, field.name)
-                    .unwrap_or("");
+                let field_name =
+                    writ_module::heap::read_string(&module.string_heap, field.name).unwrap_or("");
                 if field_name.is_empty() {
                     continue;
                 }
@@ -599,9 +642,9 @@ fn register_library_field_refs(
                 let Ok(signature) = writ_module::signature::decode_type_signature(signature) else {
                     continue;
                 };
-                let Some(signature) = remap_library_type_signature(
-                    module, &signature, def_map, builder
-                ) else {
+                let Some(signature) =
+                    remap_library_type_signature(module, &signature, def_map, builder)
+                else {
                     continue;
                 };
                 let Ok(signature) = writ_module::signature::encode_type_signature(&signature)
@@ -624,8 +667,8 @@ fn register_library_method_rows(
 ) {
     for method_index in method_indices {
         let method = &module.method_defs[method_index];
-        let method_name = writ_module::heap::read_string(&module.string_heap, method.name)
-            .unwrap_or("");
+        let method_name =
+            writ_module::heap::read_string(&module.string_heap, method.name).unwrap_or("");
         if method_name.is_empty() {
             continue;
         }
@@ -638,13 +681,7 @@ fn register_library_method_rows(
             continue;
         };
         let has_receiver = !method.owner.is_null() && method.flags & (1 << 1) == 0;
-        builder.add_method_ref_with_origin(
-            parent,
-            method_name,
-            &signature,
-            inherent,
-            has_receiver,
-        );
+        builder.add_method_ref_with_origin(parent, method_name, &signature, inherent, has_receiver);
     }
 }
 
@@ -693,10 +730,15 @@ fn remap_library_type_signature(
         TypeSignature::Named(token) => TypeSignature::Named(writ_module::MetadataToken(
             consumer_token_for_library_named(module, *token, def_map, builder)?.0,
         )),
-        TypeSignature::Generic { namespace, name, args } => TypeSignature::Generic {
+        TypeSignature::Generic {
+            namespace,
+            name,
+            args,
+        } => TypeSignature::Generic {
             namespace: namespace.clone(),
             name: name.clone(),
-            args: args.iter()
+            args: args
+                .iter()
                 .map(|arg| remap_library_type_signature(module, arg, def_map, builder))
                 .collect::<Option<Vec<_>>>()?,
         },
@@ -704,7 +746,8 @@ fn remap_library_type_signature(
             remap_library_type_signature(module, element, def_map, builder)?,
         )),
         TypeSignature::Function { params, ret } => TypeSignature::Function {
-            params: params.iter()
+            params: params
+                .iter()
                 .map(|param| remap_library_type_signature(module, param, def_map, builder))
                 .collect::<Option<Vec<_>>>()?,
             ret: Box::new(remap_library_type_signature(module, ret, def_map, builder)?),
@@ -744,7 +787,11 @@ fn consumer_token_for_library_named(
         }
         _ => return None,
     };
-    let fqn = if namespace.is_empty() { name.to_string() } else { format!("{}::{}", namespace, name) };
+    let fqn = if namespace.is_empty() {
+        name.to_string()
+    } else {
+        format!("{}::{}", namespace, name)
+    };
     builder.token_for_def(def_map.get(&fqn)?)
 }
 

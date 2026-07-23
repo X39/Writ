@@ -2,13 +2,13 @@
 
 use chumsky::span::SimpleSpan;
 
-use crate::ast::expr::AstExpr;
-use crate::resolve::def_map::DefKind;
-use super::CheckCtx;
-use super::check_expr;
 use super::super::error::TypeError;
 use super::super::ir::TypedExpr;
 use super::super::ty::TyKind;
+use super::CheckCtx;
+use super::check_expr;
+use crate::ast::expr::AstExpr;
+use crate::resolve::def_map::DefKind;
 
 pub(super) fn check_member_access(
     ctx: &mut CheckCtx,
@@ -107,18 +107,11 @@ pub(super) fn check_typed_member_access(
                             param_tys = param_tys
                                 .into_iter()
                                 .map(|ty| {
-                                    super::super::infer::substitute(
-                                        ty,
-                                        args,
-                                        &mut ctx.interner,
-                                    )
+                                    super::super::infer::substitute(ty, args, &mut ctx.interner)
                                 })
                                 .collect();
-                            ret_ty = super::super::infer::substitute(
-                                ret_ty,
-                                args,
-                                &mut ctx.interner,
-                            );
+                            ret_ty =
+                                super::super::infer::substitute(ret_ty, args, &mut ctx.interner);
                         }
                         let fn_ty = ctx.interner.func(param_tys, ret_ty);
                         return TypedExpr::Field {
@@ -216,7 +209,8 @@ pub(super) fn check_typed_member_access(
                 "copy_from" => {
                     // copy_from(src: T[], src_idx: int, dst_idx: int, len: int) -> void
                     let arr_ty = ctx.interner.intern(TyKind::Array(elem_ty));
-                    ctx.interner.func(vec![arr_ty, int_ty, int_ty, int_ty], void_ty)
+                    ctx.interner
+                        .func(vec![arr_ty, int_ty, int_ty, int_ty], void_ty)
                 }
                 _ => {
                     let ty_name = ctx.display_ty(obj_ty);
@@ -504,10 +498,7 @@ fn matching_impl_method_type(
     // remain available when no inherent method exists, while two overlapping
     // specializations in the same tier are an error (the spec defines no
     // specialization-precedence rule).
-    if candidates
-        .iter()
-        .any(|(is_inherent, _, _, _)| *is_inherent)
-    {
+    if candidates.iter().any(|(is_inherent, _, _, _)| *is_inherent) {
         candidates.retain(|(is_inherent, _, _, _)| *is_inherent);
     }
 
@@ -530,15 +521,9 @@ fn matching_impl_method_type(
     let params = signature
         .params
         .into_iter()
-        .map(|(_, ty)| {
-            super::super::infer::substitute_bindings(ty, &bindings, &mut ctx.interner)
-        })
+        .map(|(_, ty)| super::super::infer::substitute_bindings(ty, &bindings, &mut ctx.interner))
         .collect();
-    let ret = super::super::infer::substitute_bindings(
-        signature.ret,
-        &bindings,
-        &mut ctx.interner,
-    );
+    let ret = super::super::infer::substitute_bindings(signature.ret, &bindings, &mut ctx.interner);
     Some(ctx.interner.func(params, ret))
 }
 
@@ -599,7 +584,9 @@ pub(super) fn check_bracket_access(
 
             if let Some(comp_name) = component_name {
                 // Check if the entity has this component declared (guaranteed access)
-                let has_component = ctx.type_env.entity_components
+                let has_component = ctx
+                    .type_env
+                    .entity_components
                     .get(&def_id)
                     .map(|comps| comps.iter().any(|c| c == comp_name))
                     .unwrap_or(false);

@@ -1,4 +1,4 @@
-use writ_compiler::{lower, Ast, LoweringError};
+use writ_compiler::{Ast, LoweringError, lower};
 
 // =========================================================
 // Test helpers
@@ -10,7 +10,11 @@ fn lower_src(src: &'static str) -> Ast {
     let error_msgs: Vec<String> = parse_errors.iter().map(|e| format!("{e:?}")).collect();
     assert!(error_msgs.is_empty(), "parse errors: {:?}", error_msgs);
     let (ast, lower_errors) = lower(items);
-    assert!(lower_errors.is_empty(), "lowering errors: {:?}", lower_errors);
+    assert!(
+        lower_errors.is_empty(),
+        "lowering errors: {:?}",
+        lower_errors
+    );
     ast
 }
 
@@ -322,7 +326,9 @@ fn dlg_code_escape_statement() {
 /// $ choice { "A" { text } "B" { text } } → choice([Option("A", fn() {...}), Option("B", fn() {...})])
 #[test]
 fn dlg_choice_basic() {
-    let ast = lower_src(r#"dlg ask() { @Narrator What do you think? $ choice { "Good" { @Narrator Great! } "Bad" { @Narrator Sorry. } } }"#);
+    let ast = lower_src(
+        r#"dlg ask() { @Narrator What do you think? $ choice { "Good" { @Narrator Great! } "Bad" { @Narrator Sorry. } } }"#,
+    );
     insta::assert_debug_snapshot!(ast);
 }
 
@@ -350,7 +356,8 @@ fn dlg_transition_with_args() {
 /// Multiple @Narrator and @Player lines → both hoisted at top, not repeated
 #[test]
 fn dlg_multiple_speakers_hoisting() {
-    let ast = lower_src("dlg chat() { @Narrator Hello.\n@Player Hi back.\n@Narrator How are you? }");
+    let ast =
+        lower_src("dlg chat() { @Narrator Hello.\n@Player Hi back.\n@Narrator How are you? }");
     insta::assert_debug_snapshot!(ast);
 }
 
@@ -393,7 +400,8 @@ fn dlg_loc_key_manual_override() {
 /// Duplicate #key within same dlg → LoweringError::DuplicateLocKey with both spans
 #[test]
 fn dlg_loc_key_duplicate_collision() {
-    let (ast, errors) = lower_src_with_errors("dlg intro() { @Narrator Hello. #greet\n@Narrator Bye. #greet }");
+    let (ast, errors) =
+        lower_src_with_errors("dlg intro() { @Narrator Hello. #greet\n@Narrator Bye. #greet }");
     insta::assert_debug_snapshot!((ast, errors));
 }
 
@@ -407,7 +415,8 @@ fn dlg_loc_key_duplicate_collision() {
 /// -> before end of block → LoweringError::NonTerminalTransition + lowering continues
 #[test]
 fn dlg_non_terminal_transition_error() {
-    let (ast, errors) = lower_src_with_errors("dlg intro() { -> farewell\n@Narrator This should not be here. }");
+    let (ast, errors) =
+        lower_src_with_errors("dlg intro() { -> farewell\n@Narrator This should not be here. }");
     insta::assert_debug_snapshot!((ast, errors));
 }
 
@@ -431,7 +440,9 @@ fn dlg_choice_speaker_scope_isolation() {
     // @Narrator before $ → SpeakerTag (no text between @ and $); Narrator pushed to stack
     // Arm A: @Player I choose A. → SpeakerLine for Player; does NOT push Player to stack
     // Arm B: Me too. → TextLine; current_speaker() = Narrator (stack intact from outer scope)
-    let ast = lower_src(r#"dlg test() { @Narrator $ choice { "A" { @Player I choose A. } "B" { Me too. } } }"#);
+    let ast = lower_src(
+        r#"dlg test() { @Narrator $ choice { "A" { @Player I choose A. } "B" { Me too. } } }"#,
+    );
     insta::assert_debug_snapshot!(ast);
 }
 
@@ -443,36 +454,28 @@ fn dlg_choice_speaker_scope_isolation() {
 /// Key should differ from the same dialogue without a namespace.
 #[test]
 fn dlg_namespace_in_loc_key() {
-    let ast = lower_src(
-        "namespace my_mod { dlg greet(player: Entity) { @player Hello there. } }"
-    );
+    let ast = lower_src("namespace my_mod { dlg greet(player: Entity) { @player Hello there. } }");
     insta::assert_debug_snapshot!(ast);
 }
 
 /// DLG-01: Multi-segment namespace (a::b) threaded into loc key generation.
 #[test]
 fn dlg_namespace_multi_segment_in_loc_key() {
-    let ast = lower_src(
-        "namespace a::b { dlg greet(player: Entity) { @player Hello there. } }"
-    );
+    let ast = lower_src("namespace a::b { dlg greet(player: Entity) { @player Hello there. } }");
     insta::assert_debug_snapshot!(ast);
 }
 
 /// DLG-02: Interpolation slot {name} preserved as-written, not replaced with {expr}.
 #[test]
 fn dlg_interpolation_slot_preserved() {
-    let ast = lower_src(
-        "dlg greet(player: Entity, name: string) { @player Hello, {name}! }"
-    );
+    let ast = lower_src("dlg greet(player: Entity, name: string) { @player Hello, {name}! }");
     insta::assert_debug_snapshot!(ast);
 }
 
 /// DLG-02: Interpolation with member access {player.name} preserved.
 #[test]
 fn dlg_interpolation_member_access_preserved() {
-    let ast = lower_src(
-        "dlg greet(player: Entity) { @player Hello, {player.name}! }"
-    );
+    let ast = lower_src("dlg greet(player: Entity) { @player Hello, {player.name}! }");
     insta::assert_debug_snapshot!(ast);
 }
 
@@ -482,7 +485,7 @@ fn dlg_interpolation_member_access_preserved() {
 fn dlg_choice_label_key_emitted() {
     // Choice arms: "label" [#key] { body } — no => separator
     let ast = lower_src(
-        r#"dlg convo(player: Entity) { @player Hi. $ choice { "Ask about weather" { @player How is the weather? } "Leave" { @player Goodbye. } } }"#
+        r#"dlg convo(player: Entity) { @player Hi. $ choice { "Ask about weather" { @player How is the weather? } "Leave" { @player Goodbye. } } }"#,
     );
     insta::assert_debug_snapshot!(ast);
 }
@@ -490,18 +493,14 @@ fn dlg_choice_label_key_emitted() {
 /// DLG-04: Line without #key -> say(speaker, text), NOT say_localized.
 #[test]
 fn dlg_say_without_key() {
-    let ast = lower_src(
-        "dlg greet(player: Entity) { @player Hello there. }"
-    );
+    let ast = lower_src("dlg greet(player: Entity) { @player Hello there. }");
     insta::assert_debug_snapshot!(ast);
 }
 
 /// DLG-04: Line with manual #key -> say_localized(speaker, key, fallback).
 #[test]
 fn dlg_say_localized_with_key() {
-    let ast = lower_src(
-        "dlg greet(player: Entity) { @player Hello there. #greeting_01 }"
-    );
+    let ast = lower_src("dlg greet(player: Entity) { @player Hello there. #greeting_01 }");
     insta::assert_debug_snapshot!(ast);
 }
 
@@ -509,7 +508,7 @@ fn dlg_say_localized_with_key() {
 #[test]
 fn dlg_say_mixed_key_dispatch() {
     let ast = lower_src(
-        r#"dlg convo(player: Entity) { @player Hello there. @player How are you? #how_are_you @player Goodbye. }"#
+        r#"dlg convo(player: Entity) { @player Hello there. @player How are you? #how_are_you @player Goodbye. }"#,
     );
     insta::assert_debug_snapshot!(ast);
 }
@@ -522,7 +521,7 @@ fn dlg_speaker_scope_isolation_if() {
     // $ if branch pushes @Narrator inside; DLG-05 restores after branch
     // "After branch." → TextLine, finds player on stack
     let ast = lower_src(
-        r#"dlg scene(player: Entity) { @player $ if true { @Narrator A narrator appears. } After branch. }"#
+        r#"dlg scene(player: Entity) { @player $ if true { @Narrator A narrator appears. } After branch. }"#,
     );
     insta::assert_debug_snapshot!(ast);
 }
@@ -535,7 +534,7 @@ fn dlg_speaker_scope_isolation_if_else() {
     // then-branch: @Narrator (SpeakerLine) doesn't leak to else-branch
     // else-branch: "Else text." → TextLine, finds player on stack (restored from before then-branch)
     let ast = lower_src(
-        r#"dlg scene(player: Entity) { @player $ if true { @Narrator Branch A. } else { Else text. } }"#
+        r#"dlg scene(player: Entity) { @player $ if true { @Narrator Branch A. } else { Else text. } }"#,
     );
     insta::assert_debug_snapshot!(ast);
 }
@@ -548,7 +547,7 @@ fn dlg_speaker_scope_isolation_match() {
     // Each match arm pushes @Narrator; DLG-05 restores after each arm
     // "After match." → TextLine, finds player on stack
     let ast = lower_src(
-        r#"dlg scene(player: Entity, mood: int) { @player $ match mood { 1 => { @Narrator The player is happy. } _ => { @Narrator The player is sad. } } After match. }"#
+        r#"dlg scene(player: Entity, mood: int) { @player $ match mood { 1 => { @Narrator The player is happy. } _ => { @Narrator The player is sad. } } After match. }"#,
     );
     insta::assert_debug_snapshot!(ast);
 }
@@ -591,7 +590,8 @@ fn entity_lifecycle_on_create() {
 /// on interact(who: Entity) { ... } → impl OnInteract for Guard { fn on_interact(who: Entity) { ... } }
 #[test]
 fn entity_lifecycle_on_interact_with_params() {
-    let ast = lower_src("entity Guard { on interact(who: Entity) { let msg: string = \"hello\"; } }");
+    let ast =
+        lower_src("entity Guard { on interact(who: Entity) { let msg: string = \"hello\"; } }");
     insta::assert_debug_snapshot!(ast);
 }
 
@@ -605,7 +605,8 @@ fn entity_lifecycle_on_destroy() {
 /// Entity method → inherent impl (contract: None); NOT in a contract impl
 #[test]
 fn entity_methods_inherent_impl() {
-    let ast = lower_src("entity Guard { name: string, fn greet() -> string { return \"hello\"; } }");
+    let ast =
+        lower_src("entity Guard { name: string, fn greet() -> string { return \"hello\"; } }");
     insta::assert_debug_snapshot!(ast);
 }
 
@@ -621,7 +622,7 @@ fn entity_singleton_attribute() {
 #[test]
 fn entity_full_declaration() {
     let ast = lower_src(
-        "entity Guard { name: string, use Health { current: 80, max: 80 }, fn greet() -> string { return \"hello\"; } on create { let ready: bool = true; } }"
+        "entity Guard { name: string, use Health { current: 80, max: 80 }, fn greet() -> string { return \"hello\"; } on create { let ready: bool = true; } }",
     );
     insta::assert_debug_snapshot!(ast);
 }
@@ -629,7 +630,9 @@ fn entity_full_declaration() {
 /// Two distinct AstComponentSlot entries in source order
 #[test]
 fn entity_multiple_use_clauses() {
-    let ast = lower_src("entity Guard { use Health { current: 80 }, use Sprite { image: \"guard.png\" } }");
+    let ast = lower_src(
+        "entity Guard { use Health { current: 80 }, use Sprite { image: \"guard.png\" } }",
+    );
     insta::assert_debug_snapshot!(ast);
 }
 
@@ -664,7 +667,9 @@ fn entity_component_no_override() {
 /// Duplicate use Health → LoweringError::DuplicateUseClause; first use clause still produces field and impl
 #[test]
 fn entity_duplicate_use_clause_error() {
-    let (ast, errors) = lower_src_with_errors("entity Guard { use Health { current: 80 }, use Health { max: 100 } }");
+    let (ast, errors) = lower_src_with_errors(
+        "entity Guard { use Health { current: 80 }, use Health { max: 100 } }",
+    );
     insta::assert_debug_snapshot!((ast, errors));
 }
 
@@ -685,7 +690,8 @@ fn entity_unknown_lifecycle_event_error() {
 /// Property `Health` collides with `use Health` → LoweringError::PropertyComponentCollision
 #[test]
 fn entity_property_component_collision_error() {
-    let (ast, errors) = lower_src_with_errors("entity Guard { Health: int, use Health { current: 80 } }");
+    let (ast, errors) =
+        lower_src_with_errors("entity Guard { Health: int, use Health { current: 80 } }");
     insta::assert_debug_snapshot!((ast, errors));
 }
 
@@ -731,7 +737,7 @@ fn entity_all_six_hooks() {
             on finalize { let d: int = 4; } \
             on serialize { let e: int = 5; } \
             on deserialize { let f: int = 6; } \
-        }"
+        }",
     );
     insta::assert_debug_snapshot!(ast);
 }
@@ -753,7 +759,9 @@ fn entity_component_slot_no_overrides() {
 /// Multiple component slots — each gets its own AstComponentSlot
 #[test]
 fn entity_multiple_component_slots() {
-    let ast = lower_src("entity Guard { use Health { current: 80 }, use Sprite { image: \"guard.png\" } }");
+    let ast = lower_src(
+        "entity Guard { use Health { current: 80 }, use Sprite { image: \"guard.png\" } }",
+    );
     insta::assert_debug_snapshot!(ast);
 }
 
@@ -795,7 +803,7 @@ fn entity_full_with_component_slots_and_all_hooks() {
             fn greet() -> string { return \"hello\"; } \
             on create { let ready: bool = true; } \
             on finalize { let done: bool = true; } \
-        }"
+        }",
     );
     insta::assert_debug_snapshot!(ast);
 }
@@ -823,38 +831,46 @@ fn fn_basic_with_params_and_return() {
 /// Struct and enum declarations pass through lowering correctly
 #[test]
 fn passthrough_struct_and_enum() {
-    let ast = lower_src(r#"struct Point { x: float, y: float }
-enum Color { Red, Green, Blue(intensity: int) }"#);
+    let ast = lower_src(
+        r#"struct Point { x: float, y: float }
+enum Color { Red, Green, Blue(intensity: int) }"#,
+    );
     insta::assert_debug_snapshot!(ast);
 }
 
 /// Contract and component declarations pass through lowering
 #[test]
 fn passthrough_contract_and_component() {
-    let ast = lower_src(r#"contract Drawable {
+    let ast = lower_src(
+        r#"contract Drawable {
     fn draw(x: int, y: int) -> bool;
 }
 extern component Health {
     current: int,
     max: int,
-}"#);
+}"#,
+    );
     insta::assert_debug_snapshot!(ast);
 }
 
 /// Extern, const, and global declarations pass through lowering
 #[test]
 fn passthrough_extern_const_global() {
-    let ast = lower_src(r#"extern fn print(msg: string);
+    let ast = lower_src(
+        r#"extern fn print(msg: string);
 const MAX_LEVEL: int = 99;
-global mut score: int = 0;"#);
+global mut score: int = 0;"#,
+    );
     insta::assert_debug_snapshot!(ast);
 }
 
 /// Namespace and using declarations pass through lowering
 #[test]
 fn passthrough_namespace_and_using() {
-    let ast = lower_src(r#"namespace game::core;
-using std::io;"#);
+    let ast = lower_src(
+        r#"namespace game::core;
+using std::io;"#,
+    );
     insta::assert_debug_snapshot!(ast);
 }
 
@@ -868,7 +884,8 @@ using std::io;"#);
 /// Integration test: all construct types lowered end-to-end in one program
 #[test]
 fn integration_all_constructs() {
-    let ast = lower_src(r#"fn describe(name: string?) -> string {
+    let ast = lower_src(
+        r#"fn describe(name: string?) -> string {
     return "unknown";
 }
 
@@ -891,7 +908,8 @@ entity Narrator {
     name: string = "Narrator",
     use Speaker {},
     on create { let ready: bool = true; }
-}"#);
+}"#,
+    );
     insta::assert_debug_snapshot!(ast);
 }
 
@@ -1047,7 +1065,9 @@ fn lower_shift_operators() {
 /// `operator &` and `operator |` in impl blocks lower to AstOpSymbol::BitAnd/BitOr
 #[test]
 fn lower_bitand_bitor_operators() {
-    let ast = lower_src("impl Flags { operator &(other: Flags) -> Flags { } operator |(other: Flags) -> Flags { } }");
+    let ast = lower_src(
+        "impl Flags { operator &(other: Flags) -> Flags { } operator |(other: Flags) -> Flags { } }",
+    );
     insta::assert_debug_snapshot!(ast);
 }
 

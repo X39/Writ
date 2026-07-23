@@ -46,9 +46,17 @@ pub(super) fn emit_struct_eq(
             });
 
         let r_fa = emitter.alloc_reg(*field_ty);
-        emitter.emit(Instruction::GetField { r_dst: r_fa, r_obj: r_a, field_idx });
+        emitter.emit(Instruction::GetField {
+            r_dst: r_fa,
+            r_obj: r_a,
+            field_idx,
+        });
         let r_fb = emitter.alloc_reg(*field_ty);
-        emitter.emit(Instruction::GetField { r_dst: r_fb, r_obj: r_b, field_idx });
+        emitter.emit(Instruction::GetField {
+            r_dst: r_fb,
+            r_obj: r_b,
+            field_idx,
+        });
 
         let r_field_eq = emit_field_eq(emitter, r_fa, r_fb, *field_ty);
 
@@ -56,7 +64,11 @@ pub(super) fn emit_struct_eq(
             None => r_field_eq,
             Some(r_prev) => {
                 let r_and = emitter.alloc_reg(bool_ty);
-                emitter.emit(Instruction::BitAnd { r_dst: r_and, r_a: r_prev, r_b: r_field_eq });
+                emitter.emit(Instruction::BitAnd {
+                    r_dst: r_and,
+                    r_a: r_prev,
+                    r_b: r_field_eq,
+                });
                 r_and
             }
         });
@@ -99,20 +111,35 @@ pub(super) fn emit_struct_neq(
             });
 
         let r_fa = emitter.alloc_reg(*field_ty);
-        emitter.emit(Instruction::GetField { r_dst: r_fa, r_obj: r_a, field_idx });
+        emitter.emit(Instruction::GetField {
+            r_dst: r_fa,
+            r_obj: r_a,
+            field_idx,
+        });
         let r_fb = emitter.alloc_reg(*field_ty);
-        emitter.emit(Instruction::GetField { r_dst: r_fb, r_obj: r_b, field_idx });
+        emitter.emit(Instruction::GetField {
+            r_dst: r_fb,
+            r_obj: r_b,
+            field_idx,
+        });
 
         // Compare equal, then NOT to get "this field differs"
         let r_field_eq = emit_field_eq(emitter, r_fa, r_fb, *field_ty);
         let r_field_neq = emitter.alloc_reg(bool_ty);
-        emitter.emit(Instruction::Not { r_dst: r_field_neq, r_src: r_field_eq });
+        emitter.emit(Instruction::Not {
+            r_dst: r_field_neq,
+            r_src: r_field_eq,
+        });
 
         r_result = Some(match r_result {
             None => r_field_neq,
             Some(r_prev) => {
                 let r_or = emitter.alloc_reg(bool_ty);
-                emitter.emit(Instruction::BitOr { r_dst: r_or, r_a: r_prev, r_b: r_field_neq });
+                emitter.emit(Instruction::BitOr {
+                    r_dst: r_or,
+                    r_a: r_prev,
+                    r_b: r_field_neq,
+                });
                 r_or
             }
         });
@@ -129,12 +156,7 @@ pub(super) fn emit_struct_neq(
 /// - Bool -> CmpEqB
 /// - String -> CmpEqS
 /// - All others (Int, Class, Entity, Delegate, Array, Enum, Option) -> CmpEqI
-fn emit_field_eq(
-    emitter: &mut BodyEmitter<'_>,
-    r_a: u16,
-    r_b: u16,
-    field_ty: Ty,
-) -> u16 {
+fn emit_field_eq(emitter: &mut BodyEmitter<'_>, r_a: u16, r_b: u16, field_ty: Ty) -> u16 {
     let bool_ty = Ty(2);
     let kind = emitter.interner.kind(field_ty).clone();
     match kind {

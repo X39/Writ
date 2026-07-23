@@ -1,16 +1,14 @@
-use chumsky::span::SimpleSpan;
-use writ_parser::cst::{ImplDecl, ImplMember, OpDecl, OpSymbol};
+use super::{lower_fn, lower_param, lower_vis};
 use crate::ast::AstDecl;
-use crate::ast::decl::{
-    AstFnDecl, AstFnParam, AstImplDecl, AstImplMember, AstParam,
-};
+use crate::ast::decl::{AstFnDecl, AstFnParam, AstImplDecl, AstImplMember, AstParam};
 use crate::ast::expr::{AstExpr, BinaryOp, PrefixOp};
 use crate::ast::stmt::AstStmt;
 use crate::ast::types::AstType;
 use crate::lower::context::LoweringContext;
 use crate::lower::optional::lower_type;
 use crate::lower::stmt::lower_stmt;
-use super::{lower_fn, lower_param, lower_vis};
+use chumsky::span::SimpleSpan;
+use writ_parser::cst::{ImplDecl, ImplMember, OpDecl, OpSymbol};
 
 /// Lowers an `impl` block's members by:
 /// 1. Keeping regular `Fn` members in the base impl (if any exist, or if the impl has a contract).
@@ -128,10 +126,14 @@ fn op_to_contract_impl(
     // IndexSet gets mut self; all other operators get immutable self
     let self_mutable = matches!(op_decl.symbol.0, OpSymbol::IndexSet);
     let mut params: Vec<AstFnParam> = Vec::new();
-    params.push(AstFnParam::SelfParam { mutable: self_mutable, span: op_span });
+    params.push(AstFnParam::SelfParam {
+        mutable: self_mutable,
+        span: op_span,
+    });
     params.extend(
-        op_decl.params.iter()
-            .map(|(param, param_span)| AstFnParam::Regular(lower_param(param.clone(), *param_span)))
+        op_decl.params.iter().map(|(param, param_span)| {
+            AstFnParam::Regular(lower_param(param.clone(), *param_span))
+        }),
     );
 
     // Lower return type
@@ -182,9 +184,7 @@ fn op_symbol_to_contract(
     op_span: SimpleSpan,
 ) -> (String, String, Vec<AstType>) {
     // Helper to get the lowered type of param at index i
-    let param_type = |i: usize| -> AstType {
-        lower_type(op_decl.params[i].0.ty.clone())
-    };
+    let param_type = |i: usize| -> AstType { lower_type(op_decl.params[i].0.ty.clone()) };
 
     // Helper to get the lowered return type
     let return_type = || -> AstType {
@@ -240,11 +240,7 @@ fn op_symbol_to_contract(
             "lt".to_string(),
             vec![param_type(0)],
         ),
-        OpSymbol::Not => (
-            "Not".to_string(),
-            "not".to_string(),
-            vec![return_type()],
-        ),
+        OpSymbol::Not => ("Not".to_string(), "not".to_string(), vec![return_type()]),
         OpSymbol::Index => (
             "Index".to_string(),
             "index".to_string(),
@@ -334,40 +330,38 @@ fn generate_derived_operators(
     };
 
     // Ne: !(self == other)
-    if has_eq
-        && let Some(param_ty) = eq_param_type {
-            let body = vec![AstStmt::Return {
-                value: Some(AstExpr::UnaryPrefix {
-                    op: PrefixOp::Not,
-                    expr: Box::new(AstExpr::Binary {
-                        left: Box::new(self_expr()),
-                        op: BinaryOp::Eq,
-                        right: Box::new(other_expr()),
-                        span: impl_span,
-                    }),
+    if has_eq && let Some(param_ty) = eq_param_type {
+        let body = vec![AstStmt::Return {
+            value: Some(AstExpr::UnaryPrefix {
+                op: PrefixOp::Not,
+                expr: Box::new(AstExpr::Binary {
+                    left: Box::new(self_expr()),
+                    op: BinaryOp::Eq,
+                    right: Box::new(other_expr()),
                     span: impl_span,
                 }),
                 span: impl_span,
-            }];
-            let fn_decl = make_fn("ne", make_param(param_ty), body);
-            derived.push(make_impl("Ne", param_ty.clone(), fn_decl));
-        }
+            }),
+            span: impl_span,
+        }];
+        let fn_decl = make_fn("ne", make_param(param_ty), body);
+        derived.push(make_impl("Ne", param_ty.clone(), fn_decl));
+    }
 
     // Gt: other < self
-    if has_ord
-        && let Some(param_ty) = ord_param_type {
-            let body = vec![AstStmt::Return {
-                value: Some(AstExpr::Binary {
-                    left: Box::new(other_expr()),
-                    op: BinaryOp::Lt,
-                    right: Box::new(self_expr()),
-                    span: impl_span,
-                }),
+    if has_ord && let Some(param_ty) = ord_param_type {
+        let body = vec![AstStmt::Return {
+            value: Some(AstExpr::Binary {
+                left: Box::new(other_expr()),
+                op: BinaryOp::Lt,
+                right: Box::new(self_expr()),
                 span: impl_span,
-            }];
-            let fn_decl = make_fn("gt", make_param(param_ty), body);
-            derived.push(make_impl("Gt", param_ty.clone(), fn_decl));
-        }
+            }),
+            span: impl_span,
+        }];
+        let fn_decl = make_fn("gt", make_param(param_ty), body);
+        derived.push(make_impl("Gt", param_ty.clone(), fn_decl));
+    }
 
     // LtEq and GtEq: only when both Eq and Ord are present
     if has_eq && has_ord {

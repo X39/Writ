@@ -51,7 +51,10 @@ impl LoadedModule {
 /// Returns `(instructions, byte_offsets)` where `byte_offsets[i]` is the byte offset
 /// in `raw_code` where instruction `i` starts. Used by `LoadedModule` to map instruction
 /// indices back to byte offsets for SourceSpan and breakpoint lookups.
-fn decode_and_reindex(raw_code: &[u8], method_idx: usize) -> Result<(Vec<Instruction>, Vec<u32>), RuntimeError> {
+fn decode_and_reindex(
+    raw_code: &[u8],
+    method_idx: usize,
+) -> Result<(Vec<Instruction>, Vec<u32>), RuntimeError> {
     if raw_code.is_empty() {
         return Ok((Vec::new(), Vec::new()));
     }
@@ -67,12 +70,10 @@ fn decode_and_reindex(raw_code: &[u8], method_idx: usize) -> Result<(Vec<Instruc
             break;
         }
         byte_offsets.push(pos);
-        let instr = Instruction::decode(&mut cursor).map_err(|e| {
-            RuntimeError::DecodeError {
-                method_idx,
-                offset: pos as usize,
-                detail: format!("{}", e),
-            }
+        let instr = Instruction::decode(&mut cursor).map_err(|e| RuntimeError::DecodeError {
+            method_idx,
+            offset: pos as usize,
+            detail: format!("{}", e),
         })?;
         instructions.push(instr);
     }
@@ -93,76 +94,84 @@ fn decode_and_reindex(raw_code: &[u8], method_idx: usize) -> Result<(Vec<Instruc
         match instr {
             Instruction::Br { offset } => {
                 let target_byte = (current_byte_offset as i64 + *offset as i64) as u32;
-                let target_idx = offset_map.get(&target_byte).ok_or_else(|| {
-                    RuntimeError::DecodeError {
-                        method_idx,
-                        offset: current_byte_offset as usize,
-                        detail: format!(
-                            "Br target byte offset {} not found in offset map",
-                            target_byte
-                        ),
-                    }
-                })?;
+                let target_idx =
+                    offset_map
+                        .get(&target_byte)
+                        .ok_or_else(|| RuntimeError::DecodeError {
+                            method_idx,
+                            offset: current_byte_offset as usize,
+                            detail: format!(
+                                "Br target byte offset {} not found in offset map",
+                                target_byte
+                            ),
+                        })?;
                 *offset = *target_idx as i32;
             }
             Instruction::BrTrue { offset, .. } => {
                 let target_byte = (current_byte_offset as i64 + *offset as i64) as u32;
-                let target_idx = offset_map.get(&target_byte).ok_or_else(|| {
-                    RuntimeError::DecodeError {
-                        method_idx,
-                        offset: current_byte_offset as usize,
-                        detail: format!(
-                            "BrTrue target byte offset {} not found in offset map",
-                            target_byte
-                        ),
-                    }
-                })?;
+                let target_idx =
+                    offset_map
+                        .get(&target_byte)
+                        .ok_or_else(|| RuntimeError::DecodeError {
+                            method_idx,
+                            offset: current_byte_offset as usize,
+                            detail: format!(
+                                "BrTrue target byte offset {} not found in offset map",
+                                target_byte
+                            ),
+                        })?;
                 *offset = *target_idx as i32;
             }
             Instruction::BrFalse { offset, .. } => {
                 let target_byte = (current_byte_offset as i64 + *offset as i64) as u32;
-                let target_idx = offset_map.get(&target_byte).ok_or_else(|| {
-                    RuntimeError::DecodeError {
-                        method_idx,
-                        offset: current_byte_offset as usize,
-                        detail: format!(
-                            "BrFalse target byte offset {} not found in offset map",
-                            target_byte
-                        ),
-                    }
-                })?;
+                let target_idx =
+                    offset_map
+                        .get(&target_byte)
+                        .ok_or_else(|| RuntimeError::DecodeError {
+                            method_idx,
+                            offset: current_byte_offset as usize,
+                            detail: format!(
+                                "BrFalse target byte offset {} not found in offset map",
+                                target_byte
+                            ),
+                        })?;
                 *offset = *target_idx as i32;
             }
             Instruction::Switch { offsets, .. } => {
                 for off in offsets.iter_mut() {
                     let target_byte = (current_byte_offset as i64 + *off as i64) as u32;
-                    let target_idx = offset_map.get(&target_byte).ok_or_else(|| {
-                        RuntimeError::DecodeError {
-                            method_idx,
-                            offset: current_byte_offset as usize,
-                            detail: format!(
-                                "Switch target byte offset {} not found in offset map",
-                                target_byte
-                            ),
-                        }
-                    })?;
+                    let target_idx =
+                        offset_map
+                            .get(&target_byte)
+                            .ok_or_else(|| RuntimeError::DecodeError {
+                                method_idx,
+                                offset: current_byte_offset as usize,
+                                detail: format!(
+                                    "Switch target byte offset {} not found in offset map",
+                                    target_byte
+                                ),
+                            })?;
                     *off = *target_idx as i32;
                 }
             }
-            Instruction::DeferPush { method_idx: handler_offset, .. } => {
+            Instruction::DeferPush {
+                method_idx: handler_offset,
+                ..
+            } => {
                 // DeferPush's method_idx field is actually a byte offset from method start
                 // (per spec §3.11). Convert to instruction index.
                 let byte_off = *handler_offset;
-                let target_idx = offset_map.get(&byte_off).ok_or_else(|| {
-                    RuntimeError::DecodeError {
-                        method_idx,
-                        offset: current_byte_offset as usize,
-                        detail: format!(
-                            "DeferPush handler byte offset {} not found in offset map",
-                            byte_off
-                        ),
-                    }
-                })?;
+                let target_idx =
+                    offset_map
+                        .get(&byte_off)
+                        .ok_or_else(|| RuntimeError::DecodeError {
+                            method_idx,
+                            offset: current_byte_offset as usize,
+                            detail: format!(
+                                "DeferPush handler byte offset {} not found in offset map",
+                                byte_off
+                            ),
+                        })?;
                 *handler_offset = *target_idx as u32;
             }
             _ => {}
@@ -195,13 +204,22 @@ mod tests {
     #[test]
     fn linear_body_no_branches() {
         let instrs = vec![
-            Instruction::LoadInt { r_dst: 0, value: 42 },
+            Instruction::LoadInt {
+                r_dst: 0,
+                value: 42,
+            },
             Instruction::Ret { r_src: 0 },
         ];
         let code = encode_instructions(&instrs);
         let (decoded, offsets) = decode_and_reindex(&code, 0).unwrap();
         assert_eq!(decoded.len(), 2);
-        assert_eq!(decoded[0], Instruction::LoadInt { r_dst: 0, value: 42 });
+        assert_eq!(
+            decoded[0],
+            Instruction::LoadInt {
+                r_dst: 0,
+                value: 42
+            }
+        );
         assert_eq!(decoded[1], Instruction::Ret { r_src: 0 });
         assert_eq!(offsets.len(), 2);
         assert_eq!(offsets[0], 0, "first instruction starts at byte 0");
@@ -251,7 +269,7 @@ mod tests {
 
         let mut buf = Vec::new();
         load.encode(&mut buf).unwrap(); // position 0, 12 bytes
-        br.encode(&mut buf).unwrap();   // position 12
+        br.encode(&mut buf).unwrap(); // position 12
 
         let (decoded, offsets) = decode_and_reindex(&buf, 0).unwrap();
         assert_eq!(decoded.len(), 2);
@@ -267,7 +285,10 @@ mod tests {
     fn conditional_branch_forward() {
         // [LoadTrue(4B)] [BrTrue(8B) forward past LoadInt to Ret] [LoadInt(12B)] [Ret(4B)]
         let load_true = Instruction::LoadTrue { r_dst: 0 };
-        let load_int = Instruction::LoadInt { r_dst: 1, value: 99 };
+        let load_int = Instruction::LoadInt {
+            r_dst: 1,
+            value: 99,
+        };
         let ret = Instruction::Ret { r_src: 0 };
 
         let mut buf = Vec::new();
@@ -275,7 +296,10 @@ mod tests {
         // BrTrue is 8 bytes
         // LoadInt is at 4+8=12, 12 bytes, so Ret is at 24
         // offset = 24 - 4 = 20
-        let br_true = Instruction::BrTrue { r_cond: 0, offset: 20 };
+        let br_true = Instruction::BrTrue {
+            r_cond: 0,
+            offset: 20,
+        };
         br_true.encode(&mut buf).unwrap();
         load_int.encode(&mut buf).unwrap();
         ret.encode(&mut buf).unwrap();
@@ -299,14 +323,20 @@ mod tests {
         // handler position 20 should map to instruction index 2
 
         // Actually: DeferPush is at byte 0 (8 bytes), LoadInt at byte 8 (12 bytes), Ret at byte 20 (4 bytes)
-        let defer_push = Instruction::DeferPush { r_dst: 0, method_idx: 20 }; // byte offset 20
-        let load_int = Instruction::LoadInt { r_dst: 0, value: 42 };
+        let defer_push = Instruction::DeferPush {
+            r_dst: 0,
+            method_idx: 20,
+        }; // byte offset 20
+        let load_int = Instruction::LoadInt {
+            r_dst: 0,
+            value: 42,
+        };
         let ret = Instruction::Ret { r_src: 0 };
 
         let mut buf = Vec::new();
         defer_push.encode(&mut buf).unwrap(); // 8 bytes
-        load_int.encode(&mut buf).unwrap();   // 12 bytes, at position 8
-        ret.encode(&mut buf).unwrap();        // 4 bytes, at position 20
+        load_int.encode(&mut buf).unwrap(); // 12 bytes, at position 8
+        ret.encode(&mut buf).unwrap(); // 4 bytes, at position 20
 
         let (decoded, offsets) = decode_and_reindex(&buf, 0).unwrap();
         assert_eq!(decoded.len(), 3);
@@ -366,7 +396,13 @@ mod tests {
         assert_eq!(loaded.byte_offsets.len(), 2);
         assert_eq!(loaded.byte_offsets[0].len(), 2);
         assert_eq!(loaded.byte_offsets[1].len(), 2);
-        assert_eq!(loaded.byte_offsets[0][0], 0, "first instruction of body 0 starts at byte 0");
-        assert_eq!(loaded.byte_offsets[1][0], 0, "first instruction of body 1 starts at byte 0");
+        assert_eq!(
+            loaded.byte_offsets[0][0], 0,
+            "first instruction of body 0 starts at byte 0"
+        );
+        assert_eq!(
+            loaded.byte_offsets[1][0], 0,
+            "first instruction of body 1 starts at byte 0"
+        );
     }
 }

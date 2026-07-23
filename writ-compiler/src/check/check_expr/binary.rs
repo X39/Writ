@@ -2,12 +2,12 @@
 
 use chumsky::span::SimpleSpan;
 
-use crate::ast::expr::{AstExpr, BinaryOp, PrefixOp};
-use super::CheckCtx;
-use super::check_expr;
 use super::super::error::TypeError;
 use super::super::ir::TypedExpr;
 use super::super::ty::TyKind;
+use super::CheckCtx;
+use super::check_expr;
+use crate::ast::expr::{AstExpr, BinaryOp, PrefixOp};
 
 pub(super) fn check_binary(
     ctx: &mut CheckCtx,
@@ -73,16 +73,27 @@ pub(super) fn check_binary(
                         expected_span: typed_left.span(),
                         found_span: typed_right.span(),
                         file: ctx.current_file,
-                        help: Some(format!("operator `{}` requires matching numeric types", op_str)),
+                        help: Some(format!(
+                            "operator `{}` requires matching numeric types",
+                            op_str
+                        )),
                     })
                 }
             }
         }
 
         // Comparison: same type, result bool
-        BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::Lt | BinaryOp::Gt
-        | BinaryOp::LtEq | BinaryOp::GtEq => {
-            if ctx.unify.unify(left_ty, right_ty, &mut ctx.interner).is_err() {
+        BinaryOp::Eq
+        | BinaryOp::NotEq
+        | BinaryOp::Lt
+        | BinaryOp::Gt
+        | BinaryOp::LtEq
+        | BinaryOp::GtEq => {
+            if ctx
+                .unify
+                .unify(left_ty, right_ty, &mut ctx.interner)
+                .is_err()
+            {
                 ctx.emit_error(TypeError::TypeMismatch {
                     expected: ctx.display_ty(left_ty),
                     found: ctx.display_ty(right_ty),
@@ -172,20 +183,18 @@ pub(super) fn check_unary_prefix(
     }
 
     let result_ty = match op {
-        PrefixOp::Neg => {
-            match ctx.interner.kind(inner_ty) {
-                TyKind::Int => ctx.interner.int(),
-                TyKind::Float => ctx.interner.float(),
-                _ => ctx.emit_error(TypeError::TypeMismatch {
-                    expected: "numeric type".to_string(),
-                    found: ctx.display_ty(inner_ty),
-                    expected_span: span,
-                    found_span: typed_expr.span(),
-                    file: ctx.current_file,
-                    help: Some("negation requires int or float".to_string()),
-                }),
-            }
-        }
+        PrefixOp::Neg => match ctx.interner.kind(inner_ty) {
+            TyKind::Int => ctx.interner.int(),
+            TyKind::Float => ctx.interner.float(),
+            _ => ctx.emit_error(TypeError::TypeMismatch {
+                expected: "numeric type".to_string(),
+                found: ctx.display_ty(inner_ty),
+                expected_span: span,
+                found_span: typed_expr.span(),
+                file: ctx.current_file,
+                help: Some("negation requires int or float".to_string()),
+            }),
+        },
         PrefixOp::Not => {
             let bool_ty = ctx.interner.bool_ty();
             if inner_ty != bool_ty {

@@ -1,5 +1,5 @@
-use crate::domain::Domain;
 use crate::dispatch::DispatchTable;
+use crate::domain::Domain;
 use crate::entity::EntityRegistry;
 use crate::error::{CrashInfo, RuntimeError};
 use crate::gc::{GcHeap, GcStats, MarkSweepHeap};
@@ -67,8 +67,7 @@ impl RuntimeBuilder<NullHost> {
     /// programs, consider spawning on a thread with 16 MB stack.
     #[cfg(feature = "compiler")]
     pub fn from_source(src: &'static str) -> Result<Self, RuntimeError> {
-        let bytes = writ_compiler::compile_source(src)
-            .map_err(RuntimeError::LoadError)?;
+        let bytes = writ_compiler::compile_source(src).map_err(RuntimeError::LoadError)?;
         let module = writ_module::Module::from_bytes(&bytes)
             .map_err(|e| RuntimeError::LoadError(format!("deserialize: {}", e)))?;
         Ok(Self::new(module))
@@ -102,8 +101,7 @@ impl<H: RuntimeHost> RuntimeBuilder<H> {
     /// Requires the `compiler` feature.
     #[cfg(feature = "compiler")]
     pub fn with_library_source(self, src: &'static str) -> Result<Self, RuntimeError> {
-        let bytes = writ_compiler::compile_source(src)
-            .map_err(RuntimeError::LoadError)?;
+        let bytes = writ_compiler::compile_source(src).map_err(RuntimeError::LoadError)?;
         let module = writ_module::Module::from_bytes(&bytes)
             .map_err(|e| RuntimeError::LoadError(format!("deserialize: {}", e)))?;
         Ok(self.with_library(module))
@@ -373,7 +371,10 @@ impl<H: RuntimeHost> Runtime<H> {
             );
 
             // Cancel scoped children, mirrors the non-debug crash path in scheduler.rs.
-            let children = self.scheduler.tasks.get(&task_id)
+            let children = self
+                .scheduler
+                .tasks
+                .get(&task_id)
                 .map(|t| t.scoped_children.clone())
                 .unwrap_or_default();
             for child_id in children {
@@ -390,7 +391,10 @@ impl<H: RuntimeHost> Runtime<H> {
             }
 
             // Release any global locks held by this task.
-            let locks: Vec<u32> = self.scheduler.tasks.get(&task_id)
+            let locks: Vec<u32> = self
+                .scheduler
+                .tasks
+                .get(&task_id)
                 .map(|t| t.atomic_locks.clone())
                 .unwrap_or_default();
             for global_idx in locks {
@@ -425,9 +429,9 @@ impl<H: RuntimeHost> Runtime<H> {
                 method_idx
             )));
         }
-        let task_id =
-            self.scheduler
-                .create_task(method_idx, args, None, user_module);
+        let task_id = self
+            .scheduler
+            .create_task(method_idx, args, None, user_module);
         Ok(task_id)
     }
 
@@ -495,11 +499,7 @@ impl<H: RuntimeHost> Runtime<H> {
 
     /// Run a method to completion synchronously, ignoring execution limits.
     /// Returns the return value on success, or CrashInfo on crash.
-    pub fn call_sync(
-        &mut self,
-        method_idx: usize,
-        args: Vec<Value>,
-    ) -> Result<Value, CrashInfo> {
+    pub fn call_sync(&mut self, method_idx: usize, args: Vec<Value>) -> Result<Value, CrashInfo> {
         let user_module = &self.domain.modules[self.user_module_idx];
         if method_idx >= user_module.decoded_bodies.len() {
             return Err(CrashInfo {
@@ -533,13 +533,19 @@ impl<H: RuntimeHost> Runtime<H> {
 
             match self.scheduler.task_state(task_id) {
                 Some(TaskState::Completed) => {
-                    let ret = self.scheduler.tasks.get(&task_id)
+                    let ret = self
+                        .scheduler
+                        .tasks
+                        .get(&task_id)
                         .and_then(|t| t.return_value.clone())
                         .unwrap_or(Value::Void);
                     return Ok(ret);
                 }
                 Some(TaskState::Cancelled) => {
-                    let crash = self.scheduler.tasks.get(&task_id)
+                    let crash = self
+                        .scheduler
+                        .tasks
+                        .get(&task_id)
                         .and_then(|t| t.crash_info.clone())
                         .unwrap_or(CrashInfo {
                             message: "task cancelled".into(),
@@ -642,7 +648,9 @@ impl<H: RuntimeHost> Runtime<H> {
 
     /// Get the crash info for a crashed/cancelled task.
     pub fn crash_info(&self, task_id: TaskId) -> Option<&CrashInfo> {
-        self.scheduler.tasks.get(&task_id)
+        self.scheduler
+            .tasks
+            .get(&task_id)
             .and_then(|t| t.crash_info.as_ref())
     }
 
@@ -696,7 +704,9 @@ impl<H: RuntimeHost> Runtime<H> {
     ///
     /// Returns `None` if the task does not exist or has no suspend reason set.
     pub fn suspend_reason(&self, task_id: TaskId) -> Option<&SuspendReason> {
-        self.scheduler.tasks.get(&task_id)
+        self.scheduler
+            .tasks
+            .get(&task_id)
             .and_then(|t| t.suspend_reason.as_ref())
     }
 
@@ -706,17 +716,16 @@ impl<H: RuntimeHost> Runtime<H> {
     /// top (newest frame).
     /// Returns `None` if the task does not exist.
     pub fn call_stack_frames(&self, task_id: TaskId) -> Option<Vec<crate::frame::FrameLocation>> {
-        self.scheduler.tasks.get(&task_id)
-            .map(|t| {
-                t.call_stack
-                    .iter()
-                    .map(|f| crate::frame::FrameLocation {
-                        module_idx: f.module_idx.unwrap_or(self.user_module_idx),
-                        method_idx: f.method_idx,
-                        pc: f.pc,
-                    })
-                    .collect()
-            })
+        self.scheduler.tasks.get(&task_id).map(|t| {
+            t.call_stack
+                .iter()
+                .map(|f| crate::frame::FrameLocation {
+                    module_idx: f.module_idx.unwrap_or(self.user_module_idx),
+                    method_idx: f.method_idx,
+                    pc: f.pc,
+                })
+                .collect()
+        })
     }
 
     /// Get a clone of all registers for a specific call frame of a task.
@@ -724,7 +733,9 @@ impl<H: RuntimeHost> Runtime<H> {
     /// `frame_index` 0 is the bottom (oldest) frame; `frame_index N-1` is the top (innermost).
     /// Returns `None` if the task does not exist or the frame index is out of range.
     pub fn frame_registers(&self, task_id: TaskId, frame_index: usize) -> Option<Vec<Value>> {
-        self.scheduler.tasks.get(&task_id)
+        self.scheduler
+            .tasks
+            .get(&task_id)
             .and_then(|t| t.call_stack.get(frame_index))
             .map(|f| f.registers.clone())
     }
@@ -733,7 +744,9 @@ impl<H: RuntimeHost> Runtime<H> {
     ///
     /// Excludes tasks in Completed or Cancelled states.
     pub fn all_task_ids(&self) -> Vec<TaskId> {
-        self.scheduler.tasks.values()
+        self.scheduler
+            .tasks
+            .values()
             .filter(|t| !matches!(t.state, TaskState::Completed | TaskState::Cancelled))
             .map(|t| t.id)
             .collect()
@@ -785,8 +798,7 @@ impl<H: RuntimeHost> Runtime<H> {
             }
         }
 
-        let type_idx = found_idx
-            .ok_or_else(|| format!("type '{}' not found", type_name))?;
+        let type_idx = found_idx.ok_or_else(|| format!("type '{}' not found", type_name))?;
 
         let type_def = &module.type_defs[type_idx];
 
@@ -827,13 +839,13 @@ impl<H: RuntimeHost> Runtime<H> {
                     if !sig_bytes.is_empty() {
                         let expected_kind = sig_bytes[0];
                         let ok = match (expected_kind, field_val) {
-                            (_, Value::Void) => true,             // Void accepted as uninitialized
-                            (0x08, Value::Int(_)) => true,        // int32
-                            (0x0D, Value::Float(_)) => true,      // float64
-                            (0x02, Value::Bool(_)) => true,       // bool
-                            (0x0E, Value::Ref(_)) => true,        // string (heap ref)
-                            (0x01, _) => true,                    // void sig: accept anything
-                            (_, Value::Ref(_)) => true,           // ref types: accept ref
+                            (_, Value::Void) => true,        // Void accepted as uninitialized
+                            (0x08, Value::Int(_)) => true,   // int32
+                            (0x0D, Value::Float(_)) => true, // float64
+                            (0x02, Value::Bool(_)) => true,  // bool
+                            (0x0E, Value::Ref(_)) => true,   // string (heap ref)
+                            (0x01, _) => true,               // void sig: accept anything
+                            (_, Value::Ref(_)) => true,      // ref types: accept ref
                             _ => false,
                         };
                         if !ok {
@@ -865,7 +877,7 @@ mod tests {
     use crate::host::NullHost;
     use crate::task::Task;
     use writ_module::module::MethodBody;
-    use writ_module::signature::{encode_method_signature, TypeSignature};
+    use writ_module::signature::{TypeSignature, encode_method_signature};
     use writ_module::tables::TypeDefKind;
     use writ_module::{Instruction, ModuleBuilder};
 
@@ -889,8 +901,7 @@ mod tests {
 
     #[test]
     fn library_method_uses_its_own_global_storage() {
-        let int_type = writ_module::signature::encode_type_signature(&TypeSignature::Int)
-            .unwrap();
+        let int_type = writ_module::signature::encode_type_signature(&TypeSignature::Int).unwrap();
         let method_signature = encode_method_signature(&[], &TypeSignature::Int).unwrap();
 
         let mut library = ModuleBuilder::new("global-library");
@@ -974,7 +985,10 @@ mod tests {
 
         assert_eq!(runtime.task_state(task_id), Some(TaskState::Completed));
         assert_eq!(runtime.return_value(task_id), Some(Value::Int(48)));
-        assert_eq!(runtime.scheduler.globals[runtime.user_module_idx][0], Value::Int(7));
+        assert_eq!(
+            runtime.scheduler.globals[runtime.user_module_idx][0],
+            Value::Int(7)
+        );
     }
 
     /// Insert a task directly into the scheduler, bypassing method index checks.

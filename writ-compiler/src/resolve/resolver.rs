@@ -17,9 +17,12 @@ use std::cell::Cell;
 use chumsky::span::SimpleSpan;
 use writ_diagnostics::{Diagnostic, FileId};
 
-use crate::ast::decl::{AstDecl, AstExternDecl, AstFnParam, AstNamespaceDecl, AstStructMember, AstContractMember, AstImplMember, AstComponentMember};
-use crate::ast::types::AstType;
 use crate::ast::Ast;
+use crate::ast::decl::{
+    AstComponentMember, AstContractMember, AstDecl, AstExternDecl, AstFnParam, AstImplMember,
+    AstNamespaceDecl, AstStructMember,
+};
+use crate::ast::types::AstType;
 use crate::resolve::def_map::{DefKind, DefMap};
 use crate::resolve::error::ResolutionError;
 use crate::resolve::ir::{ResolvedDecl, ResolvedType};
@@ -37,8 +40,7 @@ pub fn resolve_bodies(
     let mut all_diags = Vec::new();
 
     // Build file path lookup for namespace detection
-    let _path_map: std::collections::HashMap<FileId, &str> =
-        file_paths.iter().copied().collect();
+    let _path_map: std::collections::HashMap<FileId, &str> = file_paths.iter().copied().collect();
 
     for &(file_id, ast) in asts {
         // Determine current namespace from declarative namespace in this file
@@ -120,7 +122,9 @@ fn process_usings(items: &[AstDecl], scope: &mut ScopeChain<'_>, diags: &mut Vec
                         // doesn't walk function bodies, so we can't rely on use-site detection).
                         let conflict = scope.active_usings.iter().any(|existing| {
                             existing.alias == variant_name
-                                && existing.target_fqn.as_deref()
+                                && existing
+                                    .target_fqn
+                                    .as_deref()
                                     .map(|fqn| fqn.contains("::"))
                                     .unwrap_or(false)
                         });
@@ -166,7 +170,11 @@ fn process_usings(items: &[AstDecl], scope: &mut ScopeChain<'_>, diags: &mut Vec
                 // Namespace import: `using survival;`
                 let ns_name = &path[0];
                 // Verify namespace exists
-                if scope.def_map.namespace_members.contains_key(ns_name.as_str()) {
+                if scope
+                    .def_map
+                    .namespace_members
+                    .contains_key(ns_name.as_str())
+                {
                     scope.active_usings.push(UsingEntry {
                         alias: ns_name.clone(),
                         target_ns: Some(ns_name.clone()),
@@ -262,29 +270,37 @@ fn resolve_decl_list(
             AstDecl::Fn(f) => {
                 let fqn = make_fqn(&scope.current_ns, &f.name);
                 // Use span-based lookup to get the correct DefId for each overload
-                if let Some(def_id) = scope.def_map.get_fn_by_span(
-                    &fqn,
-                    scope.current_file,
-                    &f.name,
-                    f.name_span,
-                ) {
+                if let Some(def_id) =
+                    scope
+                        .def_map
+                        .get_fn_by_span(&fqn, scope.current_file, &f.name, f.name_span)
+                {
                     // Push generics
-                    let generic_names: Vec<(String, SimpleSpan)> =
-                        f.generics.iter().map(|g| (g.name.clone(), g.name_span)).collect();
+                    let generic_names: Vec<(String, SimpleSpan)> = f
+                        .generics
+                        .iter()
+                        .map(|g| (g.name.clone(), g.name_span))
+                        .collect();
                     if !generic_names.is_empty() {
                         check_generic_shadows(&generic_names, scope, diags);
                         scope.push_generics(generic_names);
                     }
 
                     // Resolve param types
-                    let params: Vec<ResolvedType> = f.params.iter().filter_map(|p| {
-                        match p {
-                            AstFnParam::Regular(param) => Some(resolve_ast_type(&param.ty, scope, diags)),
+                    let params: Vec<ResolvedType> = f
+                        .params
+                        .iter()
+                        .filter_map(|p| match p {
+                            AstFnParam::Regular(param) => {
+                                Some(resolve_ast_type(&param.ty, scope, diags))
+                            }
                             AstFnParam::SelfParam { .. } => None,
-                        }
-                    }).collect();
+                        })
+                        .collect();
 
-                    let return_type = f.return_type.as_ref()
+                    let return_type = f
+                        .return_type
+                        .as_ref()
                         .map(|t| resolve_ast_type(t, scope, diags))
                         .unwrap_or(ResolvedType::Void);
 
@@ -301,12 +317,17 @@ fn resolve_decl_list(
             AstDecl::Struct(s) => {
                 let fqn = make_fqn(&scope.current_ns, &s.name);
                 if let Some(def_id) = scope.def_map.get(&fqn).or_else(|| {
-                    scope.def_map.file_private
+                    scope
+                        .def_map
+                        .file_private
                         .get(&scope.current_file)
                         .and_then(|m| m.get(&s.name).copied())
                 }) {
-                    let generic_names: Vec<(String, SimpleSpan)> =
-                        s.generics.iter().map(|g| (g.name.clone(), g.name_span)).collect();
+                    let generic_names: Vec<(String, SimpleSpan)> = s
+                        .generics
+                        .iter()
+                        .map(|g| (g.name.clone(), g.name_span))
+                        .collect();
                     if !generic_names.is_empty() {
                         check_generic_shadows(&generic_names, scope, diags);
                         scope.push_generics(generic_names);
@@ -330,12 +351,17 @@ fn resolve_decl_list(
             AstDecl::Class(c) => {
                 let fqn = make_fqn(&scope.current_ns, &c.name);
                 if let Some(def_id) = scope.def_map.get(&fqn).or_else(|| {
-                    scope.def_map.file_private
+                    scope
+                        .def_map
+                        .file_private
                         .get(&scope.current_file)
                         .and_then(|m| m.get(&c.name).copied())
                 }) {
-                    let generic_names: Vec<(String, SimpleSpan)> =
-                        c.generics.iter().map(|g| (g.name.clone(), g.name_span)).collect();
+                    let generic_names: Vec<(String, SimpleSpan)> = c
+                        .generics
+                        .iter()
+                        .map(|g| (g.name.clone(), g.name_span))
+                        .collect();
                     if !generic_names.is_empty() {
                         check_generic_shadows(&generic_names, scope, diags);
                         scope.push_generics(generic_names);
@@ -359,7 +385,9 @@ fn resolve_decl_list(
             AstDecl::Entity(e) => {
                 let fqn = make_fqn(&scope.current_ns, &e.name);
                 if let Some(def_id) = scope.def_map.get(&fqn).or_else(|| {
-                    scope.def_map.file_private
+                    scope
+                        .def_map
+                        .file_private
                         .get(&scope.current_file)
                         .and_then(|m| m.get(&e.name).copied())
                 }) {
@@ -374,7 +402,10 @@ fn resolve_decl_list(
                         match slot_result {
                             LookupResult::Def(comp_id) => {
                                 let entry = scope.def_map.get_entry(comp_id);
-                                if !matches!(entry.kind, DefKind::Component | DefKind::ExternComponent) {
+                                if !matches!(
+                                    entry.kind,
+                                    DefKind::Component | DefKind::ExternComponent
+                                ) {
                                     diags.push(
                                         ResolutionError::NotAComponent {
                                             name: slot.component.clone(),
@@ -412,12 +443,17 @@ fn resolve_decl_list(
             AstDecl::Enum(e) => {
                 let fqn = make_fqn(&scope.current_ns, &e.name);
                 if let Some(def_id) = scope.def_map.get(&fqn).or_else(|| {
-                    scope.def_map.file_private
+                    scope
+                        .def_map
+                        .file_private
                         .get(&scope.current_file)
                         .and_then(|m| m.get(&e.name).copied())
                 }) {
-                    let generic_names: Vec<(String, SimpleSpan)> =
-                        e.generics.iter().map(|g| (g.name.clone(), g.name_span)).collect();
+                    let generic_names: Vec<(String, SimpleSpan)> = e
+                        .generics
+                        .iter()
+                        .map(|g| (g.name.clone(), g.name_span))
+                        .collect();
                     if !generic_names.is_empty() {
                         check_generic_shadows(&generic_names, scope, diags);
                         scope.push_generics(generic_names);
@@ -443,12 +479,17 @@ fn resolve_decl_list(
             AstDecl::Contract(c) => {
                 let fqn = make_fqn(&scope.current_ns, &c.name);
                 if let Some(def_id) = scope.def_map.get(&fqn).or_else(|| {
-                    scope.def_map.file_private
+                    scope
+                        .def_map
+                        .file_private
                         .get(&scope.current_file)
                         .and_then(|m| m.get(&c.name).copied())
                 }) {
-                    let generic_names: Vec<(String, SimpleSpan)> =
-                        c.generics.iter().map(|g| (g.name.clone(), g.name_span)).collect();
+                    let generic_names: Vec<(String, SimpleSpan)> = c
+                        .generics
+                        .iter()
+                        .map(|g| (g.name.clone(), g.name_span))
+                        .collect();
                     if !generic_names.is_empty() {
                         check_generic_shadows(&generic_names, scope, diags);
                         scope.push_generics(generic_names);
@@ -460,7 +501,9 @@ fn resolve_decl_list(
                             AstContractMember::FnSig(sig) => {
                                 for param in &sig.params {
                                     match param {
-                                        AstFnParam::Regular(p) => { resolve_ast_type(&p.ty, scope, diags); }
+                                        AstFnParam::Regular(p) => {
+                                            resolve_ast_type(&p.ty, scope, diags);
+                                        }
                                         AstFnParam::SelfParam { .. } => {}
                                     }
                                 }
@@ -490,8 +533,11 @@ fn resolve_decl_list(
             AstDecl::Impl(imp) => {
                 // Push impl-level generic params BEFORE resolving the target type so that
                 // `impl<T> Box<T>` resolves `T` in `Box<T>` correctly.
-                let generic_names: Vec<(String, SimpleSpan)> =
-                    imp.generics.iter().map(|g| (g.name.clone(), g.name_span)).collect();
+                let generic_names: Vec<(String, SimpleSpan)> = imp
+                    .generics
+                    .iter()
+                    .map(|g| (g.name.clone(), g.name_span))
+                    .collect();
                 if !generic_names.is_empty() {
                     check_generic_shadows(&generic_names, scope, diags);
                     scope.push_generics(generic_names);
@@ -501,13 +547,19 @@ fn resolve_decl_list(
                 let target_result = resolve_ast_type(&imp.target, scope, diags);
 
                 // Resolve contract type if present
-                let contract_type = imp.contract.as_ref().map(|c| resolve_ast_type(c, scope, diags));
+                let contract_type = imp
+                    .contract
+                    .as_ref()
+                    .map(|c| resolve_ast_type(c, scope, diags));
 
                 // Find the impl DefId from impl_blocks
                 // (Impls are tracked by index; find matching span)
-                let impl_def_id = scope.def_map.impl_blocks.iter().find(|&&id| {
-                    scope.def_map.get_entry(id).span == imp.span
-                }).copied();
+                let impl_def_id = scope
+                    .def_map
+                    .impl_blocks
+                    .iter()
+                    .find(|&&id| scope.def_map.get_entry(id).span == imp.span)
+                    .copied();
 
                 if let Some(impl_id) = impl_def_id {
                     // Set self type from target
@@ -522,9 +574,7 @@ fn resolve_decl_list(
                                 let method_generics: Vec<(String, SimpleSpan)> = f
                                     .generics
                                     .iter()
-                                    .map(|generic| {
-                                        (generic.name.clone(), generic.name_span)
-                                    })
+                                    .map(|generic| (generic.name.clone(), generic.name_span))
                                     .collect();
                                 if !method_generics.is_empty() {
                                     check_generic_shadows(&method_generics, scope, diags);
@@ -532,7 +582,9 @@ fn resolve_decl_list(
                                 }
                                 for param in &f.params {
                                     match param {
-                                        AstFnParam::Regular(p) => { resolve_ast_type(&p.ty, scope, diags); }
+                                        AstFnParam::Regular(p) => {
+                                            resolve_ast_type(&p.ty, scope, diags);
+                                        }
                                         AstFnParam::SelfParam { .. } => {}
                                     }
                                 }
@@ -568,7 +620,9 @@ fn resolve_decl_list(
             AstDecl::Component(c) => {
                 let fqn = make_fqn(&scope.current_ns, &c.name);
                 if let Some(def_id) = scope.def_map.get(&fqn).or_else(|| {
-                    scope.def_map.file_private
+                    scope
+                        .def_map
+                        .file_private
                         .get(&scope.current_file)
                         .and_then(|m| m.get(&c.name).copied())
                 }) {
@@ -593,7 +647,9 @@ fn resolve_decl_list(
                     ) {
                         for param in &sig.params {
                             match param {
-                                AstFnParam::Regular(p) => { resolve_ast_type(&p.ty, scope, diags); }
+                                AstFnParam::Regular(p) => {
+                                    resolve_ast_type(&p.ty, scope, diags);
+                                }
                                 AstFnParam::SelfParam { .. } => {}
                             }
                         }
@@ -606,7 +662,9 @@ fn resolve_decl_list(
                 AstExternDecl::Component(_, c) => {
                     let fqn = make_fqn(&scope.current_ns, &c.name);
                     if let Some(def_id) = scope.def_map.get(&fqn).or_else(|| {
-                        scope.def_map.file_private
+                        scope
+                            .def_map
+                            .file_private
                             .get(&scope.current_file)
                             .and_then(|m| m.get(&c.name).copied())
                     }) {
@@ -618,7 +676,9 @@ fn resolve_decl_list(
             AstDecl::Const(c) => {
                 let fqn = make_fqn(&scope.current_ns, &c.name);
                 if let Some(def_id) = scope.def_map.get(&fqn).or_else(|| {
-                    scope.def_map.file_private
+                    scope
+                        .def_map
+                        .file_private
                         .get(&scope.current_file)
                         .and_then(|m| m.get(&c.name).copied())
                 }) {
@@ -630,7 +690,9 @@ fn resolve_decl_list(
             AstDecl::Global(g) => {
                 let fqn = make_fqn(&scope.current_ns, &g.name);
                 if let Some(def_id) = scope.def_map.get(&fqn).or_else(|| {
-                    scope.def_map.file_private
+                    scope
+                        .def_map
+                        .file_private
                         .get(&scope.current_file)
                         .and_then(|m| m.get(&g.name).copied())
                 }) {
@@ -642,7 +704,9 @@ fn resolve_decl_list(
             AstDecl::Attribute(a) => {
                 let fqn = make_fqn(&scope.current_ns, &a.name);
                 if let Some(def_id) = scope.def_map.get(&fqn).or_else(|| {
-                    scope.def_map.file_private
+                    scope
+                        .def_map
+                        .file_private
                         .get(&scope.current_file)
                         .and_then(|m| m.get(&a.name).copied())
                 }) {
@@ -660,64 +724,62 @@ pub fn resolve_ast_type(
     diags: &mut Vec<Diagnostic>,
 ) -> ResolvedType {
     match ty {
-        AstType::Named { name, span } => {
-            match scope.resolve_type(name) {
-                LookupResult::Def(def_id) => ResolvedType::Named {
-                    def_id,
-                    type_args: Vec::new(),
-                },
-                LookupResult::Primitive(tag) => ResolvedType::Primitive(tag),
-                LookupResult::GenericParam(name) => ResolvedType::GenericParam(name),
-                LookupResult::PreludeType(name) => ResolvedType::PreludeType(name),
-                LookupResult::PreludeContract(name) => ResolvedType::PreludeContract(name),
-                LookupResult::Ambiguous(candidates) => {
-                    let cand_info: Vec<(FileId, SimpleSpan, String)> = candidates
-                        .iter()
-                        .map(|(id, fqn)| {
-                            let entry = scope.def_map.get_entry(*id);
-                            (entry.file_id, entry.name_span, fqn.clone())
-                        })
-                        .collect();
-                    diags.push(
-                        ResolutionError::AmbiguousName {
-                            name: name.clone(),
-                            file: scope.current_file,
-                            span: *span,
-                            candidates: cand_info,
-                        }
-                        .into(),
-                    );
-                    ResolvedType::Error
-                }
-                LookupResult::VisibilityError(def_id) => {
-                    let entry = scope.def_map.get_entry(def_id);
-                    diags.push(
-                        ResolutionError::VisibilityViolation {
-                            name: name.clone(),
-                            file: scope.current_file,
-                            span: *span,
-                            defined_in: entry.file_id,
-                            defined_span: entry.name_span,
-                        }
-                        .into(),
-                    );
-                    ResolvedType::Error
-                }
-                LookupResult::NotFound => {
-                    let suggestion = get_suggestion(name, scope);
-                    diags.push(
-                        ResolutionError::UnresolvedName {
-                            name: name.clone(),
-                            file: scope.current_file,
-                            span: *span,
-                            suggestion,
-                        }
-                        .into(),
-                    );
-                    ResolvedType::Error
-                }
+        AstType::Named { name, span } => match scope.resolve_type(name) {
+            LookupResult::Def(def_id) => ResolvedType::Named {
+                def_id,
+                type_args: Vec::new(),
+            },
+            LookupResult::Primitive(tag) => ResolvedType::Primitive(tag),
+            LookupResult::GenericParam(name) => ResolvedType::GenericParam(name),
+            LookupResult::PreludeType(name) => ResolvedType::PreludeType(name),
+            LookupResult::PreludeContract(name) => ResolvedType::PreludeContract(name),
+            LookupResult::Ambiguous(candidates) => {
+                let cand_info: Vec<(FileId, SimpleSpan, String)> = candidates
+                    .iter()
+                    .map(|(id, fqn)| {
+                        let entry = scope.def_map.get_entry(*id);
+                        (entry.file_id, entry.name_span, fqn.clone())
+                    })
+                    .collect();
+                diags.push(
+                    ResolutionError::AmbiguousName {
+                        name: name.clone(),
+                        file: scope.current_file,
+                        span: *span,
+                        candidates: cand_info,
+                    }
+                    .into(),
+                );
+                ResolvedType::Error
             }
-        }
+            LookupResult::VisibilityError(def_id) => {
+                let entry = scope.def_map.get_entry(def_id);
+                diags.push(
+                    ResolutionError::VisibilityViolation {
+                        name: name.clone(),
+                        file: scope.current_file,
+                        span: *span,
+                        defined_in: entry.file_id,
+                        defined_span: entry.name_span,
+                    }
+                    .into(),
+                );
+                ResolvedType::Error
+            }
+            LookupResult::NotFound => {
+                let suggestion = get_suggestion(name, scope);
+                diags.push(
+                    ResolutionError::UnresolvedName {
+                        name: name.clone(),
+                        file: scope.current_file,
+                        span: *span,
+                        suggestion,
+                    }
+                    .into(),
+                );
+                ResolvedType::Error
+            }
+        },
         AstType::Generic { name, args, span } => {
             let outer = match scope.resolve_type(name) {
                 LookupResult::Def(def_id) => Some(ResolvedType::Named {
@@ -742,8 +804,10 @@ pub fn resolve_ast_type(
                 _ => None,
             };
 
-            let resolved_args: Vec<ResolvedType> =
-                args.iter().map(|a| resolve_ast_type(a, scope, diags)).collect();
+            let resolved_args: Vec<ResolvedType> = args
+                .iter()
+                .map(|a| resolve_ast_type(a, scope, diags))
+                .collect();
 
             if let Some(ResolvedType::Named { def_id, .. }) = outer {
                 ResolvedType::Named {
@@ -760,8 +824,10 @@ pub fn resolve_ast_type(
             ResolvedType::Array(Box::new(resolved_elem))
         }
         AstType::Func { params, ret, .. } => {
-            let resolved_params: Vec<ResolvedType> =
-                params.iter().map(|p| resolve_ast_type(p, scope, diags)).collect();
+            let resolved_params: Vec<ResolvedType> = params
+                .iter()
+                .map(|p| resolve_ast_type(p, scope, diags))
+                .collect();
             let resolved_ret = ret
                 .as_ref()
                 .map(|r| resolve_ast_type(r, scope, diags))
@@ -796,7 +862,11 @@ fn find_enum_variants(items: &[AstDecl], enum_fqn: &str, current_ns: &str) -> Ve
                     return e.variants.iter().map(|v| v.name.clone()).collect();
                 }
             }
-            AstDecl::Namespace(AstNamespaceDecl::Block { path, items: block_items, .. }) => {
+            AstDecl::Namespace(AstNamespaceDecl::Block {
+                path,
+                items: block_items,
+                ..
+            }) => {
                 let block_ns = path.join("::");
                 let nested_ns = if current_ns.is_empty() {
                     block_ns

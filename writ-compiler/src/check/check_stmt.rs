@@ -5,7 +5,7 @@ use crate::ast::types::AstType;
 
 use crate::ast::expr::AstExpr;
 
-use super::check_expr::{check_expr, CheckCtx};
+use super::check_expr::{CheckCtx, check_expr};
 use super::env::Mutability;
 use super::error::TypeError;
 use super::ir::{TypedExpr, TypedStmt};
@@ -46,25 +46,31 @@ pub fn check_stmt(ctx: &mut CheckCtx, stmt: &AstStmt) -> TypedStmt {
                     | AstType::Void { span, .. } => Some(*span),
                 };
                 let def_id_of_ann = match annotation {
-                    AstType::Named { name: type_name, .. } => {
+                    AstType::Named {
+                        name: type_name, ..
+                    } => {
                         // Try public FQN first (works for non-namespaced projects and
                         // FQN type names already prefixed by the resolver).
-                        ctx.def_map.get(type_name).or_else(|| {
-                            // Try namespace-prefixed FQN (required for namespaced projects
-                            // where the type_name is a simple identifier like `MyStruct`
-                            // but the DefMap stores it as `mymod::MyStruct`).
-                            if !ctx.current_namespace.is_empty() {
-                                let fqn = format!("{}::{}", ctx.current_namespace, type_name);
-                                ctx.def_map.get(&fqn)
-                            } else {
-                                None
-                            }
-                        }).or_else(|| {
-                            // Try file-private definitions (struct/enum without `pub`).
-                            ctx.def_map.file_private
-                                .get(&ctx.current_file)
-                                .and_then(|privs| privs.get(type_name.as_str()).copied())
-                        })
+                        ctx.def_map
+                            .get(type_name)
+                            .or_else(|| {
+                                // Try namespace-prefixed FQN (required for namespaced projects
+                                // where the type_name is a simple identifier like `MyStruct`
+                                // but the DefMap stores it as `mymod::MyStruct`).
+                                if !ctx.current_namespace.is_empty() {
+                                    let fqn = format!("{}::{}", ctx.current_namespace, type_name);
+                                    ctx.def_map.get(&fqn)
+                                } else {
+                                    None
+                                }
+                            })
+                            .or_else(|| {
+                                // Try file-private definitions (struct/enum without `pub`).
+                                ctx.def_map
+                                    .file_private
+                                    .get(&ctx.current_file)
+                                    .and_then(|privs| privs.get(type_name.as_str()).copied())
+                            })
                     }
                     _ => None,
                 };
@@ -76,12 +82,13 @@ pub fn check_stmt(ctx: &mut CheckCtx, stmt: &AstStmt) -> TypedStmt {
                 // the infer var, it stays unresolved -- emit a specific error.
                 if let TyKind::Option(inner) = ctx.interner.kind(inferred_ty).clone()
                     && let TyKind::Infer(var) = ctx.interner.kind(inner).clone()
-                        && ctx.unify.resolve(var).is_none() {
-                            ctx.emit_error(TypeError::NoneWithoutAnnotation {
-                                span: typed_value.span(),
-                                file: ctx.current_file,
-                            });
-                        }
+                    && ctx.unify.resolve(var).is_none()
+                {
+                    ctx.emit_error(TypeError::NoneWithoutAnnotation {
+                        span: typed_value.span(),
+                        file: ctx.current_file,
+                    });
+                }
                 (inferred_ty, None, None)
             };
 
@@ -176,10 +183,15 @@ pub fn check_stmt(ctx: &mut CheckCtx, stmt: &AstStmt) -> TypedStmt {
                 TyKind::Class(class_def_id) => {
                     // Check if this class has an impl entry containing an "iterator" method.
                     // Iterable<T> is a prelude contract (no DefId), so we match by method name.
-                    let has_iterator_method = ctx.type_env.impl_index.get(&class_def_id)
-                        .map(|impls| impls.iter().any(|entry| {
-                            entry.methods.iter().any(|(name, _)| name == "iterator")
-                        }))
+                    let has_iterator_method = ctx
+                        .type_env
+                        .impl_index
+                        .get(&class_def_id)
+                        .map(|impls| {
+                            impls.iter().any(|entry| {
+                                entry.methods.iter().any(|(name, _)| name == "iterator")
+                            })
+                        })
                         .unwrap_or(false);
 
                     if has_iterator_method {
@@ -301,10 +313,16 @@ fn invalid_transition_reason(ctx: &CheckCtx<'_>, expr: &TypedExpr) -> Option<Str
     let entry = ctx.def_map.get_entry(*def_id);
     Some(match entry.kind {
         crate::resolve::def_map::DefKind::ExternFn => {
-            format!("extern function `{}` has no dialogue bytecode body", entry.name)
+            format!(
+                "extern function `{}` has no dialogue bytecode body",
+                entry.name
+            )
         }
         crate::resolve::def_map::DefKind::Fn => {
-            format!("function `{}` was declared with `fn`, not `dlg`", entry.name)
+            format!(
+                "function `{}` was declared with `fn`, not `dlg`",
+                entry.name
+            )
         }
         _ => format!("`{}` is not a dialogue declaration", entry.name),
     })

@@ -487,21 +487,32 @@ impl ModuleBuilder {
         name: &str,
         type_signature: &[u8],
     ) -> usize {
-        let row = self.field_refs.iter().position(|field_ref| {
-            field_ref.parent == parent
-                && self.string_heap.get_str(field_ref.name) == name
-                && writ_module::heap::read_blob(self.blob_heap.data(), field_ref.type_sig)
-                    .is_ok_and(|existing| existing == type_signature)
-        }).unwrap_or_else(|| {
-            let name = self.string_heap.intern(name);
-            let type_sig = self.blob_heap.intern(type_signature);
-            self.field_refs.push(FieldRefRow { parent, name, type_sig });
-            self.field_refs.len() - 1
-        });
+        let row = self
+            .field_refs
+            .iter()
+            .position(|field_ref| {
+                field_ref.parent == parent
+                    && self.string_heap.get_str(field_ref.name) == name
+                    && writ_module::heap::read_blob(self.blob_heap.data(), field_ref.type_sig)
+                        .is_ok_and(|existing| existing == type_signature)
+            })
+            .unwrap_or_else(|| {
+                let name = self.string_heap.intern(name);
+                let type_sig = self.blob_heap.intern(type_signature);
+                self.field_refs.push(FieldRefRow {
+                    parent,
+                    name,
+                    type_sig,
+                });
+                self.field_refs.len() - 1
+            });
 
         let identity = (owner_def_id, name.to_owned());
         if let Some(previous) = self.field_ref_by_owner_name.insert(identity, row) {
-            assert_eq!(previous, row, "ambiguous imported field identity for `{name}`");
+            assert_eq!(
+                previous, row,
+                "ambiguous imported field identity for `{name}`"
+            );
         }
         row
     }
@@ -1287,12 +1298,8 @@ impl ModuleBuilder {
         signature: &[u8],
         has_receiver: bool,
     ) -> Option<u32> {
-        let mut candidates = self.method_candidates_for_parent(
-            exact_parent,
-            method_name,
-            signature,
-            has_receiver,
-        );
+        let mut candidates =
+            self.method_candidates_for_parent(exact_parent, method_name, signature, has_receiver);
         candidates.extend(self.method_pattern_candidates(
             exact_parent,
             method_name,
@@ -1361,11 +1368,7 @@ impl ModuleBuilder {
             {
                 continue;
             }
-            candidates.push((
-                token.0,
-                inherent,
-                type_signature_specificity(&pattern),
-            ));
+            candidates.push((token.0, inherent, type_signature_specificity(&pattern)));
         }
         for (index, method) in self.method_refs.iter().enumerate() {
             let token = MetadataToken::new(TableId::MethodRef, (index + 1) as u32);
@@ -1713,8 +1716,13 @@ impl ModuleBuilder {
     /// FIX-02: Once the full pipeline registers all impl method → contract token
     /// mappings via this method, compiler-emitted CALL_VIRT instructions will carry
     /// the correct specialization contract token instead of the 0 placeholder.
-    pub fn register_impl_method_contract(&mut self, method_def_id: DefId, contract_token: MetadataToken) {
-        self.method_to_contract.insert(method_def_id, contract_token);
+    pub fn register_impl_method_contract(
+        &mut self,
+        method_def_id: DefId,
+        contract_token: MetadataToken,
+    ) {
+        self.method_to_contract
+            .insert(method_def_id, contract_token);
     }
 
     /// Look up the contract token for an impl method DefId.
@@ -1880,39 +1888,21 @@ mod tests {
             &writ_module::signature::TypeSignature::Int,
         )
         .unwrap();
-        let instance = builder.add_method_ref_with_origin(
-            parent,
-            "identity",
-            &signature,
-            true,
-            true,
-        );
-        let static_method = builder.add_method_ref_with_origin(
-            parent,
-            "identity",
-            &signature,
-            true,
-            false,
-        );
+        let instance =
+            builder.add_method_ref_with_origin(parent, "identity", &signature, true, true);
+        let static_method =
+            builder.add_method_ref_with_origin(parent, "identity", &signature, true, false);
 
         assert_ne!(instance, static_method);
         assert_eq!(
             builder.method_token_by_parent_name_and_signature(
-                parent,
-                None,
-                "identity",
-                &signature,
-                true,
+                parent, None, "identity", &signature, true,
             ),
             Some(MetadataToken::new(TableId::MethodRef, (instance + 1) as u32).0)
         );
         assert_eq!(
             builder.method_token_by_parent_name_and_signature(
-                parent,
-                None,
-                "identity",
-                &signature,
-                false,
+                parent, None, "identity", &signature, false,
             ),
             Some(MetadataToken::new(TableId::MethodRef, (static_method + 1) as u32).0)
         );

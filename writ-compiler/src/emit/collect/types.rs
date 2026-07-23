@@ -3,16 +3,19 @@
 use rustc_hash::FxHashMap;
 use writ_diagnostics::{Diagnostic, FileId};
 
-use crate::ast::decl::{AstStructMember, AstVisibility};
 use crate::ast::Ast;
+use crate::ast::decl::{AstStructMember, AstVisibility};
 use crate::check::ty::TyInterner;
 use crate::resolve::def_map::{DefId, DefMap, DefVis};
 
-use crate::emit::metadata::{TypeDefKind, HookKind, field_flags, method_flags};
+use crate::emit::metadata::{HookKind, TypeDefKind, field_flags, method_flags};
 use crate::emit::module_builder::{ModuleBuilder, TypeDefHandle};
 
-use super::encoding::{encode_type_from_ast, encode_empty_sig, emit_generics_for_typedef, encode_hook_sig, method_param_register_count};
-use super::lookup::{find_struct_decl, find_entity_decl, find_enum_decl, find_class_decl};
+use super::encoding::{
+    emit_generics_for_typedef, encode_empty_sig, encode_hook_sig, encode_type_from_ast,
+    method_param_register_count,
+};
+use super::lookup::{find_class_decl, find_entity_decl, find_enum_decl, find_struct_decl};
 
 pub(super) fn collect_struct(
     def_id: DefId,
@@ -49,12 +52,24 @@ pub(super) fn collect_struct(
                         encode_type_from_ast(&f.ty, interner, &entry.generics, def_map, builder);
                     builder.add_fielddef(handle, &f.name, type_blob, flags);
                 }
-                AstStructMember::OnHook { event, body: _, span: _, .. } => {
+                AstStructMember::OnHook {
+                    event,
+                    body: _,
+                    span: _,
+                    ..
+                } => {
                     let hook = HookKind::from_event_name(event);
                     let flags = method_flags(false, false, true, hook);
                     // Hook methods have no params and void return.
                     let sig_blob = encode_empty_sig(builder);
-                    builder.add_methoddef(Some(handle), &format!("on_{}", event), sig_blob, flags, None, 1);
+                    builder.add_methoddef(
+                        Some(handle),
+                        &format!("on_{}", event),
+                        sig_blob,
+                        flags,
+                        None,
+                        1,
+                    );
                 }
             }
         }
@@ -191,11 +206,23 @@ pub(super) fn collect_class(
                         encode_type_from_ast(&f.ty, interner, &entry.generics, def_map, builder);
                     builder.add_fielddef(handle, &f.name, type_blob, flags);
                 }
-                AstStructMember::OnHook { event, body: _, span: _, .. } => {
+                AstStructMember::OnHook {
+                    event,
+                    body: _,
+                    span: _,
+                    ..
+                } => {
                     let hook = HookKind::from_event_name(event);
                     let flags = method_flags(false, false, true, hook);
                     let sig_blob = encode_empty_sig(builder);
-                    builder.add_methoddef(Some(handle), &format!("on_{}", event), sig_blob, flags, None, 1);
+                    builder.add_methoddef(
+                        Some(handle),
+                        &format!("on_{}", event),
+                        sig_blob,
+                        flags,
+                        None,
+                        1,
+                    );
                 }
             }
         }
@@ -203,4 +230,3 @@ pub(super) fn collect_class(
         emit_generics_for_typedef(def_id, &entry.generics, handle, builder);
     }
 }
-

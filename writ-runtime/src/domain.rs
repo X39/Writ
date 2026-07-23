@@ -335,45 +335,56 @@ impl Domain {
 
         // ── FieldRef resolution ───────────────────────────────────
         for (ref_idx, field_ref) in src_module.field_refs.iter().enumerate() {
-            let (target_mod_idx, type_idx) = self.resolve_parent_type(
-                src_idx, field_ref.parent, &resolved
-            )?;
+            let (target_mod_idx, type_idx) =
+                self.resolve_parent_type(src_idx, field_ref.parent, &resolved)?;
 
             let field_name = read_string(&src_module.string_heap, field_ref.name)
                 .map_err(|_| RuntimeError::ExecutionError("invalid FieldRef name".into()))?;
-            let reference_blob = read_blob(&src_module.blob_heap, field_ref.type_sig)
-                .map_err(|_| RuntimeError::ExecutionError(
-                    "invalid FieldRef type signature blob offset".into()
-                ))?;
+            let reference_blob =
+                read_blob(&src_module.blob_heap, field_ref.type_sig).map_err(|_| {
+                    RuntimeError::ExecutionError(
+                        "invalid FieldRef type signature blob offset".into(),
+                    )
+                })?;
             let reference_signature = writ_module::signature::decode_type_signature(reference_blob)
-                .map_err(|_| RuntimeError::ExecutionError(
-                    "invalid FieldRef type signature".into()
-                ))?;
+                .map_err(|_| {
+                    RuntimeError::ExecutionError("invalid FieldRef type signature".into())
+                })?;
 
             let target_module = &self.modules[target_mod_idx].module;
             let (field_start, field_end) = Self::type_field_range(target_module, type_idx)
-                .ok_or_else(|| RuntimeError::ExecutionError(
-                    "FieldRef parent TypeDef is out of range".into()
-                ))?;
+                .ok_or_else(|| {
+                    RuntimeError::ExecutionError("FieldRef parent TypeDef is out of range".into())
+                })?;
             let mut candidates = Vec::new();
             for (field_offset, field_idx) in (field_start..field_end).enumerate() {
                 let definition = &target_module.field_defs[field_idx];
                 let definition_name = read_string(&target_module.string_heap, definition.name)
-                    .map_err(|_| RuntimeError::ExecutionError(format!(
-                        "invalid FieldDef name at row {}", field_idx + 1
-                    )))?;
+                    .map_err(|_| {
+                        RuntimeError::ExecutionError(format!(
+                            "invalid FieldDef name at row {}",
+                            field_idx + 1
+                        ))
+                    })?;
                 if definition_name != field_name {
                     continue;
                 }
                 let definition_blob = read_blob(&target_module.blob_heap, definition.type_sig)
-                    .map_err(|_| RuntimeError::ExecutionError(format!(
-                        "invalid FieldDef type signature blob offset at row {}", field_idx + 1
-                    )))?;
+                    .map_err(|_| {
+                        RuntimeError::ExecutionError(format!(
+                            "invalid FieldDef type signature blob offset at row {}",
+                            field_idx + 1
+                        ))
+                    })?;
                 let definition_signature = writ_module::signature::decode_type_signature(
-                    definition_blob
-                ).map_err(|_| RuntimeError::ExecutionError(format!(
-                    "invalid FieldDef type signature at row {}", field_idx + 1
-                )))?;
+                    definition_blob,
+                )
+                .map_err(|_| {
+                    RuntimeError::ExecutionError(format!(
+                        "invalid FieldDef type signature at row {}",
+                        field_idx + 1
+                    ))
+                })?;
                 if crate::type_specs::type_signatures_equal(
                     &reference_signature,
                     src_idx,
@@ -399,20 +410,22 @@ impl Domain {
                         field_name, type_name
                     )));
                 }
-                _ => return Err(RuntimeError::ExecutionError(format!(
-                    "ambiguous field reference: '{}' has {} matching definitions",
-                    field_name,
-                    candidates.len()
-                ))),
+                _ => {
+                    return Err(RuntimeError::ExecutionError(format!(
+                        "ambiguous field reference: '{}' has {} matching definitions",
+                        field_name,
+                        candidates.len()
+                    )));
+                }
             };
 
             resolved.fields.insert(
                 ref_idx as u32,
                 ResolvedField {
-                module_idx: target_mod_idx,
-                owner_type_idx: type_idx,
-                field_idx,
-                field_offset,
+                    module_idx: target_mod_idx,
+                    owner_type_idx: type_idx,
+                    field_idx,
+                    field_offset,
                 },
             );
         }
@@ -445,10 +458,12 @@ impl Domain {
             }
             3 => {
                 // TypeRef -- look up in already-resolved types map
-                let rt = resolved.types.get(&row_0based)
-                    .ok_or_else(|| RuntimeError::ExecutionError(format!(
-                        "parent TypeRef row {} not yet resolved", row_0based
-                    )))?;
+                let rt = resolved.types.get(&row_0based).ok_or_else(|| {
+                    RuntimeError::ExecutionError(format!(
+                        "parent TypeRef row {} not yet resolved",
+                        row_0based
+                    ))
+                })?;
                 Ok((rt.module_idx, rt.typedef_idx))
             }
             4 => Err(RuntimeError::ExecutionError(
@@ -456,8 +471,9 @@ impl Domain {
                     .into(),
             )),
             _ => Err(RuntimeError::ExecutionError(format!(
-                "unexpected parent token table ID: {}", table_id
-            )))
+                "unexpected parent token table ID: {}",
+                table_id
+            ))),
         }
     }
 
@@ -868,10 +884,7 @@ impl Domain {
     }
 
     /// Return the absolute FieldDef range owned by a TypeDef.
-    fn type_field_range(
-        module: &writ_module::Module,
-        type_idx: usize,
-    ) -> Option<(usize, usize)> {
+    fn type_field_range(module: &writ_module::Module, type_idx: usize) -> Option<(usize, usize)> {
         let td = module.type_defs.get(type_idx)?;
         let field_start = td.field_list.saturating_sub(1) as usize;
         let field_end = if type_idx + 1 < module.type_defs.len() {
@@ -882,7 +895,6 @@ impl Domain {
         (field_start <= field_end && field_end <= module.field_defs.len())
             .then_some((field_start, field_end))
     }
-
 }
 
 // ──── Attribute Query API ──────────────────────────────────────────────
@@ -1004,10 +1016,10 @@ impl Domain {
             .attribute_defs
             .iter()
             .find(|row| {
-            row.owner_kind != ATTR_OWNER_KIND_DECL
-                && row.owner == owner_token
-                && writ_module::heap::read_string(&module.string_heap, row.name).ok()
-                    == Some(attr_name)
+                row.owner_kind != ATTR_OWNER_KIND_DECL
+                    && row.owner == owner_token
+                    && writ_module::heap::read_string(&module.string_heap, row.name).ok()
+                        == Some(attr_name)
             })
             .map(|row| decode_row_args(module, row))
     }
@@ -1349,14 +1361,8 @@ mod tests {
         let mut library = ModuleBuilder::new("receiver-library");
         let utility = library.add_type_def("Utility", "lib", TypeDefKind::Class, 0);
         let implementation = library.add_impl_def(utility, MetadataToken::NULL);
-        let instance = library.add_impl_method(
-            implementation,
-            "identity",
-            &signature,
-            0,
-            1,
-            empty_body(),
-        );
+        let instance =
+            library.add_impl_method(implementation, "identity", &signature, 0, 1, empty_body());
         let static_method = library.add_impl_method(
             implementation,
             "identity",
@@ -1398,14 +1404,7 @@ mod tests {
         let mut library = ModuleBuilder::new("receiver-library");
         let utility = library.add_type_def("Utility", "lib", TypeDefKind::Class, 0);
         let implementation = library.add_impl_def(utility, MetadataToken::NULL);
-        library.add_impl_method(
-            implementation,
-            "identity",
-            &signature,
-            0,
-            1,
-            empty_body(),
-        );
+        library.add_impl_method(implementation, "identity", &signature, 0, 1, empty_body());
 
         let mut user = ModuleBuilder::new("receiver-user");
         let library_ref = user.add_module_ref("receiver-library", "1.0.0");
@@ -1416,7 +1415,10 @@ mod tests {
         domain.add_module(library.build()).unwrap();
         domain.add_module(user.build()).unwrap();
         let error = domain.resolve_refs().unwrap_err().to_string();
-        assert!(error.contains("unresolved method reference: 'identity'"), "{error}");
+        assert!(
+            error.contains("unresolved method reference: 'identity'"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -1426,14 +1428,7 @@ mod tests {
         let utility = library.add_type_def("Utility", "lib", TypeDefKind::Class, 0);
         for _ in 0..2 {
             let implementation = library.add_impl_def(utility, MetadataToken::NULL);
-            library.add_impl_method(
-                implementation,
-                "identity",
-                &signature,
-                0,
-                1,
-                empty_body(),
-            );
+            library.add_impl_method(implementation, "identity", &signature, 0, 1, empty_body());
         }
 
         let mut user = ModuleBuilder::new("ambiguous-user");
@@ -1550,7 +1545,10 @@ mod tests {
             args: vec![TypeSignature::Int],
         };
         let definition_signature = encode_method_signature(
-            &[TypeSignature::GenericParam(0), TypeSignature::GenericParam(1)],
+            &[
+                TypeSignature::GenericParam(0),
+                TypeSignature::GenericParam(1),
+            ],
             &TypeSignature::GenericParam(1),
         )
         .unwrap();
@@ -1576,8 +1574,7 @@ mod tests {
         let mut user = ModuleBuilder::new("generic-user");
         let module_ref = user.add_module_ref("generic-library", "1.0.0");
         user.add_type_ref(module_ref, "Crate", "lib");
-        let concrete_spec =
-            user.add_type_spec(&encode_type_signature(&concrete_parent).unwrap());
+        let concrete_spec = user.add_type_spec(&encode_type_signature(&concrete_parent).unwrap());
         user.add_method_ref(concrete_spec, "choose", &reference_signature);
 
         let mut domain = Domain::new();
@@ -1963,7 +1960,11 @@ mod tests {
         let err = domain.resolve_refs().unwrap_err();
         let msg = format!("{}", err);
         assert!(msg.contains("unresolved field reference"), "error: {}", msg);
-        assert!(msg.contains("y"), "error should mention field name: {}", msg);
+        assert!(
+            msg.contains("y"),
+            "error should mention field name: {}",
+            msg
+        );
     }
 
     // ── Dispatch table tests ──────────────────────────────────────

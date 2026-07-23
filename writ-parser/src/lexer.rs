@@ -77,7 +77,10 @@ fn raw_string<'src>(lex: &mut logos::Lexer<'src, Token<'src>>) -> bool {
                 }
                 // Everything from j..quote_start must be whitespace
                 let prefix = &bytes[j..quote_start];
-                if !prefix.iter().all(|&b| b == b' ' || b == b'\t' || b == b'\r') {
+                if !prefix
+                    .iter()
+                    .all(|&b| b == b' ' || b == b'\t' || b == b'\r')
+                {
                     return false; // closing delimiter not on its own line
                 }
 
@@ -200,7 +203,10 @@ fn formattable_raw_string<'src>(lex: &mut logos::Lexer<'src, Token<'src>>) -> bo
                     j -= 1;
                 }
                 let prefix = &bytes[j..quote_start];
-                if !prefix.iter().all(|&b| b == b' ' || b == b'\t' || b == b'\r') {
+                if !prefix
+                    .iter()
+                    .all(|&b| b == b' ' || b == b'\t' || b == b'\r')
+                {
                     return false; // closing delimiter not on its own line
                 }
 

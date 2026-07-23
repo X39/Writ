@@ -51,14 +51,12 @@ pub fn format_value(val: &Value, module: &Module, heap: &dyn GcHeap) -> String {
             Err(_) => "<invalid ref>".to_string(),
         },
         Value::Entity(eid) => format!("entity#{}", eid.index),
-        Value::Struct { type_idx, href } => {
-            match heap.get_object(*href) {
-                Ok(HeapObject::Struct { fields, .. }) => {
-                    format!("struct{}({})", type_idx, fields.len())
-                }
-                _ => format!("struct{}(<invalid>)", type_idx),
+        Value::Struct { type_idx, href } => match heap.get_object(*href) {
+            Ok(HeapObject::Struct { fields, .. }) => {
+                format!("struct{}({})", type_idx, fields.len())
             }
-        }
+            _ => format!("struct{}(<invalid>)", type_idx),
+        },
     }
 }
 
@@ -84,8 +82,7 @@ pub fn decode_type_blob(module: &Module, type_ref_offset: u32) -> String {
                 0x03 => "bool".to_string(),
                 0x04 => "string".to_string(),
                 0x10 if bytes.len() >= 5 => {
-                    let row_1based =
-                        u32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]);
+                    let row_1based = u32::from_le_bytes([bytes[1], bytes[2], bytes[3], bytes[4]]);
                     let idx = row_1based.saturating_sub(1) as usize;
                     module
                         .type_defs
@@ -125,7 +122,11 @@ mod tests {
     /// The +1 offset must not interfere with non-zero inputs.
     #[test]
     fn test_variables_ref_never_zero() {
-        assert_ne!(make_variables_ref(0, 0), 0, "variablesReference must never be 0");
+        assert_ne!(
+            make_variables_ref(0, 0),
+            0,
+            "variablesReference must never be 0"
+        );
         assert_ne!(make_variables_ref(0, 1), 0);
         assert_ne!(make_variables_ref(1, 0), 0);
         assert_ne!(make_variables_ref(5, 9), 0);

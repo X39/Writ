@@ -3,22 +3,33 @@
 use crate::bom_utils::strip_bom_and_decode;
 use crate::pipeline::run_pipeline;
 
-pub fn cmd_build(path: String, release: bool, name_override: Option<String>, condition: Vec<String>, deny_warnings: bool) -> Result<(), String> {
+pub fn cmd_build(
+    path: String,
+    release: bool,
+    name_override: Option<String>,
+    condition: Vec<String>,
+    deny_warnings: bool,
+) -> Result<(), String> {
     let project_root = std::path::Path::new(&path).to_path_buf();
 
     // Load writ.toml
-    let config = writ_compiler::config::load_config(&project_root).map_err(|e| {
-        match e {
-            writ_compiler::config::ConfigError::MissingToml(_) => {
-                format!("writ.toml not found in '{}'. Run `writ new <name>` to create a project.", path)
-            }
-            other => format!("{}", other),
+    let config = writ_compiler::config::load_config(&project_root).map_err(|e| match e {
+        writ_compiler::config::ConfigError::MissingToml(_) => {
+            format!(
+                "writ.toml not found in '{}'. Run `writ new <name>` to create a project.",
+                path
+            )
         }
+        other => format!("{}", other),
     })?;
 
     // Determine profile
     let profile_name = if release { "release" } else { "debug" };
-    let profile_cfg = if release { &config.profile.release } else { &config.profile.debug };
+    let profile_cfg = if release {
+        &config.profile.release
+    } else {
+        &config.profile.debug
+    };
     let emit_debug_info = profile_cfg.debug_info;
 
     // Determine module name: --name flag > project.name from writ.toml
@@ -62,9 +73,8 @@ pub fn cmd_build(path: String, release: bool, name_override: Option<String>, con
                 e
             )
         })?;
-        let module = writ_module::Module::from_bytes(&bytes).map_err(|e| {
-            format!("failed to decode dependency '{}': {:?}", name, e)
-        })?;
+        let module = writ_module::Module::from_bytes(&bytes)
+            .map_err(|e| format!("failed to decode dependency '{}': {:?}", name, e))?;
         lib_module_storage.push(module);
     }
     // Spawn compilation on a 16MB-stack thread
@@ -72,7 +82,8 @@ pub fn cmd_build(path: String, release: bool, name_override: Option<String>, con
         .stack_size(16 * 1024 * 1024)
         .spawn(move || -> Result<Vec<u8>, String> {
             // Read and leak all source files
-            let mut file_sources: Vec<(writ_diagnostics::FileId, String, &'static str)> = Vec::new();
+            let mut file_sources: Vec<(writ_diagnostics::FileId, String, &'static str)> =
+                Vec::new();
 
             for (n, file_path) in discovered.iter().enumerate() {
                 let file_id = writ_diagnostics::FileId(n as u32);
@@ -86,17 +97,31 @@ pub fn cmd_build(path: String, release: bool, name_override: Option<String>, con
             }
 
             let lib_refs: Vec<&writ_module::Module> = lib_module_storage.iter().collect();
-            run_pipeline(file_sources, None, emit_debug_info, &active_conditions, deny_warnings, &lib_refs)
+            run_pipeline(
+                file_sources,
+                None,
+                emit_debug_info,
+                &active_conditions,
+                deny_warnings,
+                &lib_refs,
+            )
         })
         .map_err(|e| format!("failed to spawn compile thread: {e}"))?;
 
-    let compiled_bytes = handle.join().unwrap_or_else(|_| Err("compilation panicked".to_string()))?;
+    let compiled_bytes = handle
+        .join()
+        .unwrap_or_else(|_| Err("compilation panicked".to_string()))?;
 
     // Determine output path: {output_base}/{profile}/{module_name}.writc
     let output_base = config.compiler.output.as_deref().unwrap_or("build");
     let out_dir = project_root.join(output_base).join(profile_name);
-    std::fs::create_dir_all(&out_dir)
-        .map_err(|e| format!("failed to create output directory '{}': {}", out_dir.display(), e))?;
+    std::fs::create_dir_all(&out_dir).map_err(|e| {
+        format!(
+            "failed to create output directory '{}': {}",
+            out_dir.display(),
+            e
+        )
+    })?;
     let out_path = out_dir.join(format!("{}.writc", module_name));
 
     std::fs::write(&out_path, &compiled_bytes)

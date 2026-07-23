@@ -1,9 +1,9 @@
-use writ_parser::cst::{Spanned, Stmt};
-use crate::ast::expr::{AstExpr, AstArg};
+use crate::ast::expr::{AstArg, AstExpr};
 use crate::ast::stmt::AstStmt;
 use crate::lower::context::LoweringContext;
 use crate::lower::expr::lower_expr;
 use crate::lower::optional::lower_type;
+use writ_parser::cst::{Spanned, Stmt};
 
 /// Folds a CST `Stmt` into a lowered `AstStmt`.
 ///

@@ -84,19 +84,24 @@ impl Domain {
                     let target = if method_def.flags & 0x80 != 0 {
                         // Intrinsic method -- resolve to IntrinsicId
                         let type_name = self.get_type_name(mod_idx, impl_def.type_token);
-                        let method_name = read_string(
-                            &module.string_heap, method_def.name
-                        ).unwrap_or("");
+                        let method_name =
+                            read_string(&module.string_heap, method_def.name).unwrap_or("");
                         match resolve_intrinsic_id(&type_name, method_name) {
                             Some(intrinsic) => DispatchTarget::Intrinsic(intrinsic),
                             None => {
                                 // Unknown intrinsic -- treat as IL method (shouldn't happen with
                                 // correct virtual module, but avoids panic)
-                                DispatchTarget::Method { module_idx: mod_idx, method_idx }
+                                DispatchTarget::Method {
+                                    module_idx: mod_idx,
+                                    method_idx,
+                                }
                             }
                         }
                     } else {
-                        DispatchTarget::Method { module_idx: mod_idx, method_idx }
+                        DispatchTarget::Method {
+                            module_idx: mod_idx,
+                            method_idx,
+                        }
                     };
 
                     let type_args_hash = crate::type_specs::specialization_hash(
@@ -104,7 +109,15 @@ impl Domain {
                         impl_def.contract,
                         &self.modules,
                     );
-                    table.insert(DispatchKey { type_key, contract_key, slot, type_args_hash }, target);
+                    table.insert(
+                        DispatchKey {
+                            type_key,
+                            contract_key,
+                            slot,
+                            type_args_hash,
+                        },
+                        target,
+                    );
                     table.insert_pattern(
                         type_key,
                         contract_key,
@@ -193,31 +206,31 @@ pub fn resolve_intrinsic_id(type_name: &str, method_name: &str) -> Option<Intrin
         ("Array", "array_index_range") => Some(IntrinsicId::ArraySlice),
         ("Array", "array_iterable") => Some(IntrinsicId::ArrayIterable),
         // Reflection get_type (4)
-        ("Int",    "int_get_type")    => Some(IntrinsicId::IntGetType),
-        ("Float",  "float_get_type")  => Some(IntrinsicId::FloatGetType),
-        ("Bool",   "bool_get_type")   => Some(IntrinsicId::BoolGetType),
+        ("Int", "int_get_type") => Some(IntrinsicId::IntGetType),
+        ("Float", "float_get_type") => Some(IntrinsicId::FloatGetType),
+        ("Bool", "bool_get_type") => Some(IntrinsicId::BoolGetType),
         ("String", "string_get_type") => Some(IntrinsicId::StringGetType),
         // Reflection — Type methods (Phase 103)
-        ("Type", "fields")               => Some(IntrinsicId::TypeFields),
-        ("Type", "methods")              => Some(IntrinsicId::TypeMethods),
-        ("Type", "attributes")           => Some(IntrinsicId::TypeAttributes),
-        ("Type", "contracts")            => Some(IntrinsicId::TypeContracts),
-        ("Type", "implements")           => Some(IntrinsicId::TypeImplements),
-        ("Type", "type_get_name")        => Some(IntrinsicId::TypeGetName),
-        ("Type", "type_get_namespace")   => Some(IntrinsicId::TypeGetNamespace),
-        ("Type", "type_get_kind")        => Some(IntrinsicId::TypeGetKind),
-        ("Type", "type_get_is_generic")  => Some(IntrinsicId::TypeGetIsGeneric),
+        ("Type", "fields") => Some(IntrinsicId::TypeFields),
+        ("Type", "methods") => Some(IntrinsicId::TypeMethods),
+        ("Type", "attributes") => Some(IntrinsicId::TypeAttributes),
+        ("Type", "contracts") => Some(IntrinsicId::TypeContracts),
+        ("Type", "implements") => Some(IntrinsicId::TypeImplements),
+        ("Type", "type_get_name") => Some(IntrinsicId::TypeGetName),
+        ("Type", "type_get_namespace") => Some(IntrinsicId::TypeGetNamespace),
+        ("Type", "type_get_kind") => Some(IntrinsicId::TypeGetKind),
+        ("Type", "type_get_is_generic") => Some(IntrinsicId::TypeGetIsGeneric),
         // Reflection — FieldInfo methods (Phase 103)
-        ("FieldInfo", "get")                          => Some(IntrinsicId::FieldInfoGet),
-        ("FieldInfo", "fieldinfo_get_name")           => Some(IntrinsicId::FieldInfoGetName),
-        ("FieldInfo", "fieldinfo_get_declared_type")  => Some(IntrinsicId::FieldInfoGetDeclaredType),
-        ("FieldInfo", "fieldinfo_get_is_mutable")     => Some(IntrinsicId::FieldInfoGetIsMutable),
-        ("FieldInfo", "set")                          => Some(IntrinsicId::FieldInfoSet),
+        ("FieldInfo", "get") => Some(IntrinsicId::FieldInfoGet),
+        ("FieldInfo", "fieldinfo_get_name") => Some(IntrinsicId::FieldInfoGetName),
+        ("FieldInfo", "fieldinfo_get_declared_type") => Some(IntrinsicId::FieldInfoGetDeclaredType),
+        ("FieldInfo", "fieldinfo_get_is_mutable") => Some(IntrinsicId::FieldInfoGetIsMutable),
+        ("FieldInfo", "set") => Some(IntrinsicId::FieldInfoSet),
         // Reflection — MethodInfo methods (Phase 103, Phase 107)
-        ("MethodInfo", "methodinfo_get_name")         => Some(IntrinsicId::MethodInfoGetName),
-        ("MethodInfo", "methodinfo_get_return_type")  => Some(IntrinsicId::MethodInfoGetReturnType),
-        ("MethodInfo", "methodinfo_get_parameters")   => Some(IntrinsicId::MethodInfoGetParameters),
-        ("MethodInfo", "invoke")                      => Some(IntrinsicId::MethodInfoInvoke),
+        ("MethodInfo", "methodinfo_get_name") => Some(IntrinsicId::MethodInfoGetName),
+        ("MethodInfo", "methodinfo_get_return_type") => Some(IntrinsicId::MethodInfoGetReturnType),
+        ("MethodInfo", "methodinfo_get_parameters") => Some(IntrinsicId::MethodInfoGetParameters),
+        ("MethodInfo", "invoke") => Some(IntrinsicId::MethodInfoInvoke),
         // Reflection — ParameterInfo methods (Phase 103)
         ("ParameterInfo", "paraminfo_get_name") => Some(IntrinsicId::ParameterInfoGetName),
         ("ParameterInfo", "paraminfo_get_type") => Some(IntrinsicId::ParameterInfoGetType),
@@ -228,14 +241,14 @@ pub fn resolve_intrinsic_id(type_name: &str, method_name: &str) -> Option<Intrin
         ("ContractInfo", "contractinfo_get_name") => Some(IntrinsicId::ContractInfoGetName),
         ("ContractInfo", "contractinfo_get_type") => Some(IntrinsicId::ContractInfoGetType),
         // Reflection — Generic type queries (Phase 108)
-        ("Type",       "type_args")             => Some(IntrinsicId::TypeTypeArgs),
+        ("Type", "type_args") => Some(IntrinsicId::TypeTypeArgs),
         // Reflection — Per-member attributes (Phase 108)
-        ("MethodInfo", "attributes")            => Some(IntrinsicId::MethodInfoAttributes),
-        ("FieldInfo",  "attributes")            => Some(IntrinsicId::FieldInfoAttributes),
+        ("MethodInfo", "attributes") => Some(IntrinsicId::MethodInfoAttributes),
+        ("FieldInfo", "attributes") => Some(IntrinsicId::FieldInfoAttributes),
         // Hashable (4) — Phase 116
-        ("Int",    "int_hash")    => Some(IntrinsicId::IntHash),
-        ("Float",  "float_hash")  => Some(IntrinsicId::FloatHash),
-        ("Bool",   "bool_hash")   => Some(IntrinsicId::BoolHash),
+        ("Int", "int_hash") => Some(IntrinsicId::IntHash),
+        ("Float", "float_hash") => Some(IntrinsicId::FloatHash),
+        ("Bool", "bool_hash") => Some(IntrinsicId::BoolHash),
         ("String", "string_hash") => Some(IntrinsicId::StringHash),
         _ => None,
     }
@@ -256,11 +269,7 @@ mod tests {
             ("Type", "type_args", IntrinsicId::TypeTypeArgs),
             ("FieldInfo", "get", IntrinsicId::FieldInfoGet),
             ("FieldInfo", "set", IntrinsicId::FieldInfoSet),
-            (
-                "FieldInfo",
-                "attributes",
-                IntrinsicId::FieldInfoAttributes,
-            ),
+            ("FieldInfo", "attributes", IntrinsicId::FieldInfoAttributes),
             ("MethodInfo", "invoke", IntrinsicId::MethodInfoInvoke),
             (
                 "MethodInfo",

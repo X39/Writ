@@ -4,13 +4,13 @@
 //! The `DebugHost` is used by the DAP server to intercept execution and
 //! notify the debug client when a breakpoint or step completes.
 
+use crate::breakpoints::BreakpointTable;
 use std::collections::HashMap;
 use writ_module::{heap::read_string, module::Module};
 use writ_runtime::{
     DebugAction, GcStats, HostRequest, HostResponse, LogLevel, RequestId, RuntimeHost, TaskId,
     Value,
 };
-use crate::breakpoints::BreakpointTable;
 
 /// Why the debugger stopped execution.
 #[derive(Debug, Clone)]
@@ -50,9 +50,7 @@ pub enum StepMode {
         origin_method: u32,
     },
     /// Stop when the call depth decreases below the origin depth (i.e., after return).
-    StepOut {
-        origin_depth: usize,
-    },
+    StepOut { origin_depth: usize },
 }
 
 /// RuntimeHost implementation for the DAP debug server.
@@ -116,7 +114,10 @@ impl DebugHost {
             return "?";
         }
         let idx = row_1based - 1; // convert to 0-based
-        self.extern_names.get(idx).map(|s| s.as_str()).unwrap_or("?")
+        self.extern_names
+            .get(idx)
+            .map(|s| s.as_str())
+            .unwrap_or("?")
     }
 
     /// Drain buffered log messages (to be sent as DAP Event::Output).
@@ -151,12 +152,7 @@ impl DebugHost {
     /// Set StepInto mode.
     ///
     /// The DAP server calls this when the user issues a "stepIn" command.
-    pub fn set_step_into(
-        &mut self,
-        current_line: u32,
-        current_module: usize,
-        current_method: u32,
-    ) {
+    pub fn set_step_into(&mut self, current_line: u32, current_module: usize, current_method: u32) {
         self.step_mode = StepMode::StepInto {
             origin_line: current_line,
             origin_module: current_module,
@@ -212,9 +208,9 @@ impl RuntimeHost for DebugHost {
         //    suppression the same breakpoint would re-fire immediately).
         if self.suppress_breakpoint_at == Some((module_idx, method_idx, pc)) {
             self.suppress_breakpoint_at = None;
-        } else if let Some(bp_id) = self
-            .breakpoints
-            .lookup_in_module(module_idx, method_idx as usize, pc)
+        } else if let Some(bp_id) =
+            self.breakpoints
+                .lookup_in_module(module_idx, method_idx as usize, pc)
         {
             self.suppress_breakpoint_at = Some((module_idx, method_idx, pc));
             self.pending_stop = Some(StopReason::Breakpoint(bp_id));
@@ -287,7 +283,11 @@ impl RuntimeHost for DebugHost {
         // Auto-confirm all game-host requests with default values.
         // The DAP server is not a real game host — it just needs execution to proceed.
         match req {
-            HostRequest::ExternCall { extern_idx, display_args, .. } => {
+            HostRequest::ExternCall {
+                extern_idx,
+                display_args,
+                ..
+            } => {
                 let name = self.resolve_extern_name(*extern_idx);
                 match name {
                     "say" | "say_localized" => HostResponse::Value(Value::Void),
@@ -350,7 +350,12 @@ mod tests {
     }
 
     fn make_module_with_spans(spans: &[(usize, u32, u32)]) -> Module {
-        let max_method = spans.iter().map(|(m, _, _)| *m).max().map(|m| m + 1).unwrap_or(0);
+        let max_method = spans
+            .iter()
+            .map(|(m, _, _)| *m)
+            .max()
+            .map(|m| m + 1)
+            .unwrap_or(0);
         let mut method_bodies: Vec<MethodBody> = (0..max_method)
             .map(|_| MethodBody {
                 register_types: vec![],
@@ -360,7 +365,11 @@ mod tests {
             })
             .collect();
         for &(method_idx, line, pc) in spans {
-            method_bodies[method_idx].source_spans.push(SourceSpan { pc, line, column: 0 });
+            method_bodies[method_idx].source_spans.push(SourceSpan {
+                pc,
+                line,
+                column: 0,
+            });
         }
         let mut module = Module::new();
         module.method_bodies = method_bodies;
@@ -378,7 +387,10 @@ mod tests {
     #[test]
     fn test_debug_enabled_returns_true() {
         let host = make_host(&[]);
-        assert!(host.debug_enabled(), "DebugHost.debug_enabled() must return true");
+        assert!(
+            host.debug_enabled(),
+            "DebugHost.debug_enabled() must return true"
+        );
     }
 
     // ─── Breakpoint tests ─────────────────────────────────────────────────────
@@ -404,7 +416,11 @@ mod tests {
 
         // Different pc — should not hit
         let action = host.before_instruction(task(0), 0, 0, 6, 10, 0);
-        assert_eq!(action, DebugAction::Continue, "should not break at wrong pc");
+        assert_eq!(
+            action,
+            DebugAction::Continue,
+            "should not break at wrong pc"
+        );
         assert!(host.pending_stop.is_none(), "no pending stop expected");
     }
 
@@ -435,7 +451,11 @@ mod tests {
 
         // Different line at same depth — should stop.
         let a = host.before_instruction(task(0), 0, 0, 0, 20, 0);
-        assert_eq!(a, DebugAction::Break, "should stop at different line, same depth");
+        assert_eq!(
+            a,
+            DebugAction::Break,
+            "should stop at different line, same depth"
+        );
     }
 
     #[test]
@@ -473,7 +493,11 @@ mod tests {
 
         // Back at origin depth, different line — should stop.
         let a = host.before_instruction(task(0), 0, 0, 5, 15, 0);
-        assert_eq!(a, DebugAction::Break, "should stop after returning from callee");
+        assert_eq!(
+            a,
+            DebugAction::Break,
+            "should stop after returning from callee"
+        );
     }
 
     // ─── StepInto tests ───────────────────────────────────────────────────────
@@ -522,14 +546,22 @@ mod tests {
 
         // Still inside — should not stop.
         let a = host.before_instruction(task(0), 0, 0, 0, 10, 0);
-        assert_eq!(a, DebugAction::Continue, "should not stop while still in callee");
+        assert_eq!(
+            a,
+            DebugAction::Continue,
+            "should not stop while still in callee"
+        );
 
         // Return from function.
         host.on_function_exit(task(0), 0, 0);
 
         // Depth is now 0, origin was 1 — should stop.
         let a = host.before_instruction(task(0), 0, 0, 0, 5, 0);
-        assert_eq!(a, DebugAction::Break, "should stop after returning from frame");
+        assert_eq!(
+            a,
+            DebugAction::Break,
+            "should stop after returning from frame"
+        );
     }
 
     // ─── Call depth tracking ──────────────────────────────────────────────────
@@ -573,7 +605,11 @@ mod tests {
         host.on_function_enter(t0, 0, 0);
 
         assert_eq!(host.current_depth(t0), 2);
-        assert_eq!(host.current_depth(t1), 0, "tasks should have independent depths");
+        assert_eq!(
+            host.current_depth(t1),
+            0,
+            "tasks should have independent depths"
+        );
     }
 
     // ─── Exception variant ────────────────────────────────────────────────────

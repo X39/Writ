@@ -3,17 +3,20 @@
 use rustc_hash::FxHashMap;
 use writ_diagnostics::{Diagnostic, FileId};
 
+use crate::ast::Ast;
 use crate::ast::decl::{AstComponentMember, AstFnParam, AstVisibility};
 use crate::ast::types::AstType;
-use crate::ast::Ast;
 use crate::check::ty::TyInterner;
 use crate::resolve::def_map::{DefId, DefMap, DefVis};
 
-use crate::emit::metadata::{TypeDefKind, HookKind, field_flags, method_flags, TableId};
-use crate::emit::module_builder::{ModuleBuilder, TypeDefHandle, MethodDefHandle};
+use crate::emit::metadata::{HookKind, TableId, TypeDefKind, field_flags, method_flags};
+use crate::emit::module_builder::{MethodDefHandle, ModuleBuilder, TypeDefHandle};
 
-use super::encoding::{encode_fn_sig, encode_fn_sig_from_ast_sig, encode_type_from_ast, emit_fn_params, ast_type_to_ty_simple, method_param_register_count};
-use super::lookup::{find_fn_decl, find_extern_fn_sig, find_component_decl};
+use super::encoding::{
+    ast_type_to_ty_simple, emit_fn_params, encode_fn_sig, encode_fn_sig_from_ast_sig,
+    encode_type_from_ast, method_param_register_count,
+};
+use super::lookup::{find_component_decl, find_extern_fn_sig, find_fn_decl};
 
 pub(super) fn collect_fn(
     def_id: DefId,
@@ -39,11 +42,25 @@ pub(super) fn collect_fn(
         // parameter register.
         let param_count = method_param_register_count(fn_decl);
 
-        let method_handle = builder.add_methoddef(None, &entry.name, sig_blob, flags, Some(def_id), param_count);
+        let method_handle = builder.add_methoddef(
+            None,
+            &entry.name,
+            sig_blob,
+            flags,
+            Some(def_id),
+            param_count,
+        );
         methoddef_handles.insert(def_id, method_handle);
 
         // ParamDef for each parameter.
-        emit_fn_params(fn_decl, interner, &entry.generics, def_map, builder, method_handle);
+        emit_fn_params(
+            fn_decl,
+            interner,
+            &entry.generics,
+            def_map,
+            builder,
+            method_handle,
+        );
 
         // Populate fn_param_map: (name, Ty) list in declaration order, excluding self.
         let fn_params: Vec<(String, crate::check::ty::Ty)> = fn_decl
@@ -73,8 +90,14 @@ pub(super) fn collect_fn(
         builder.fn_param_map.insert(def_id, fn_params);
 
         // GenericParam + GenericConstraint
-        for (i, (g, ast_gp)) in entry.generics.iter().zip(fn_decl.generics.iter()).enumerate() {
-            let param_idx = builder.add_generic_param(TableId::MethodDef, method_handle.0, i as u16, g);
+        for (i, (g, ast_gp)) in entry
+            .generics
+            .iter()
+            .zip(fn_decl.generics.iter())
+            .enumerate()
+        {
+            let param_idx =
+                builder.add_generic_param(TableId::MethodDef, method_handle.0, i as u16, g);
             // Emit GenericConstraint rows for each bound on this param.
             for bound_ast_ty in &ast_gp.bounds {
                 if let AstType::Named { name, .. } = bound_ast_ty {
@@ -99,8 +122,7 @@ pub(super) fn collect_extern_fn(
     let is_pub = matches!(entry.vis, DefVis::Pub);
 
     if let Some(sig) = find_extern_fn_sig(asts, entry) {
-        let sig_blob =
-            encode_fn_sig_from_ast_sig(sig, interner, &entry.generics, def_map, builder);
+        let sig_blob = encode_fn_sig_from_ast_sig(sig, interner, &entry.generics, def_map, builder);
 
         // Build import name: qualifier.name if present, else just name.
         let import_name = if let Some(ref q) = sig.qualifier {

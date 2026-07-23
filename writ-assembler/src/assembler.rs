@@ -2,13 +2,13 @@ use std::collections::HashMap;
 
 use writ_module::module::MethodBody;
 use writ_module::tables::TypeDefKind;
-use writ_module::{Instruction, MetadataToken, ModuleBuilder, Module};
+use writ_module::{Instruction, MetadataToken, Module, ModuleBuilder};
 
 use writ_module::heap::write_blob;
 
 use crate::ast::{
-    AsmModule, AsmMethod, AsmMethodSig, AsmParam, AsmStatement,
-    AsmOperand, AsmTypeRef, AsmMethodRef, AsmFieldRef, AsmTypeKind,
+    AsmFieldRef, AsmMethod, AsmMethodRef, AsmMethodSig, AsmModule, AsmOperand, AsmParam,
+    AsmStatement, AsmTypeKind, AsmTypeRef,
 };
 use crate::error::AssembleError;
 
@@ -118,20 +118,30 @@ pub fn assemble_module(ast: AsmModule) -> Result<Module, Vec<AssembleError>> {
 
     // 4. Impl blocks: add_impl_def and pre-register methods with placeholder bodies
     for imp in &ast.impls {
-        let type_tok = ctx.type_map.get(&imp.type_name).copied().unwrap_or_else(|| {
-            ctx.errors.push(AssembleError::new(
-                format!("undefined type '{}' in .impl", imp.type_name),
-                0, 0,
-            ));
-            MetadataToken::NULL
-        });
-        let contract_tok = ctx.contract_map.get(&imp.contract_name).copied().unwrap_or_else(|| {
-            ctx.errors.push(AssembleError::new(
-                format!("undefined contract '{}' in .impl", imp.contract_name),
-                0, 0,
-            ));
-            MetadataToken::NULL
-        });
+        let type_tok = ctx
+            .type_map
+            .get(&imp.type_name)
+            .copied()
+            .unwrap_or_else(|| {
+                ctx.errors.push(AssembleError::new(
+                    format!("undefined type '{}' in .impl", imp.type_name),
+                    0,
+                    0,
+                ));
+                MetadataToken::NULL
+            });
+        let contract_tok = ctx
+            .contract_map
+            .get(&imp.contract_name)
+            .copied()
+            .unwrap_or_else(|| {
+                ctx.errors.push(AssembleError::new(
+                    format!("undefined contract '{}' in .impl", imp.contract_name),
+                    0,
+                    0,
+                ));
+                MetadataToken::NULL
+            });
         let impl_tok = builder.add_impl_def(type_tok, contract_tok);
 
         // Pre-register impl methods with placeholder bodies
@@ -177,12 +187,19 @@ pub fn assemble_module(ast: AsmModule) -> Result<Module, Vec<AssembleError>> {
 
     // 9. Component slots
     for cs in &ast.component_slots {
-        builder.add_component_slot(MetadataToken(cs.owner_entity), MetadataToken(cs.component_type));
+        builder.add_component_slot(
+            MetadataToken(cs.owner_entity),
+            MetadataToken(cs.component_type),
+        );
     }
 
     // 10. Locale definitions
     for ld in &ast.locale_defs {
-        builder.add_locale_def(MetadataToken(ld.dlg_method), &ld.locale, MetadataToken(ld.loc_method));
+        builder.add_locale_def(
+            MetadataToken(ld.dlg_method),
+            &ld.locale,
+            MetadataToken(ld.loc_method),
+        );
     }
 
     // 11. Attribute definitions
@@ -200,7 +217,13 @@ pub fn assemble_module(ast: AsmModule) -> Result<Module, Vec<AssembleError>> {
             source_spans: Vec::new(),
         };
         let reg_count = method.registers.len() as u16;
-        let tok = builder.add_method(&method.name, &sig, method.flags, reg_count, placeholder_body);
+        let tok = builder.add_method(
+            &method.name,
+            &sig,
+            method.flags,
+            reg_count,
+            placeholder_body,
+        );
         ctx.method_map.insert(method.name.clone(), tok);
     }
 
@@ -241,11 +264,17 @@ pub fn assemble_module(ast: AsmModule) -> Result<Module, Vec<AssembleError>> {
 
     // Replace placeholder method bodies with assembled ones and intern register types.
     // The method_bodies vec in Module corresponds 1:1 to method_defs.
-    for (i, (method_and_owner, body)) in all_methods.iter().zip(assembled_bodies.into_iter()).enumerate() {
+    for (i, (method_and_owner, body)) in all_methods
+        .iter()
+        .zip(assembled_bodies.into_iter())
+        .enumerate()
+    {
         let (method, _owner) = method_and_owner;
         if i < module.method_bodies.len() {
             // Intern register types into the blob heap (ASM-02: real offsets, not 0)
-            let register_types: Vec<u32> = method.registers.iter()
+            let register_types: Vec<u32> = method
+                .registers
+                .iter()
                 .map(|reg| {
                     let encoded = encode_type_ref(&reg.type_ref, &ctx);
                     write_blob(&mut module.blob_heap, &encoded)
@@ -288,15 +317,20 @@ fn assemble_method_body(
             }
             AsmStatement::Instruction(instr) => {
                 // Collect label names from operands for branch patching
-                let label_names: Vec<String> = instr.operands.iter().filter_map(|op| {
-                    if let AsmOperand::LabelRef(name) = op {
-                        Some(name.clone())
-                    } else {
-                        None
-                    }
-                }).collect();
+                let label_names: Vec<String> = instr
+                    .operands
+                    .iter()
+                    .filter_map(|op| {
+                        if let AsmOperand::LabelRef(name) = op {
+                            Some(name.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
 
-                match map_instruction(&instr.mnemonic, &instr.operands, ctx, instr.line, instr.col) {
+                match map_instruction(&instr.mnemonic, &instr.operands, ctx, instr.line, instr.col)
+                {
                     Ok(instruction) => {
                         let size = instruction_size(&instruction);
                         entries.push(InstrEntry {
@@ -322,7 +356,13 @@ fn assemble_method_body(
     let mut code = Vec::new();
     for entry in &entries {
         let patched = if !entry.label_patches.is_empty() {
-            patch_branch(&entry.instr, entry.offset, &entry.label_patches, &label_offsets, &mut errors)
+            patch_branch(
+                &entry.instr,
+                entry.offset,
+                &entry.label_patches,
+                &label_offsets,
+                &mut errors,
+            )
         } else {
             entry.instr.clone()
         };
@@ -330,7 +370,8 @@ fn assemble_method_body(
         if let Err(e) = patched.encode(&mut code) {
             errors.push(AssembleError::new(
                 format!("instruction encode error: {}", e),
-                0, 0,
+                0,
+                0,
             ));
         }
     }
@@ -370,7 +411,8 @@ fn patch_branch(
         } else {
             errors.push(AssembleError::new(
                 format!("undefined label '.{}'", name),
-                0, 0,
+                0,
+                0,
             ));
             0
         }
@@ -379,21 +421,29 @@ fn patch_branch(
     match instr {
         Instruction::Br { .. } => {
             if let Some(name) = label_names.first() {
-                Instruction::Br { offset: resolve(name) }
+                Instruction::Br {
+                    offset: resolve(name),
+                }
             } else {
                 instr.clone()
             }
         }
         Instruction::BrTrue { r_cond, .. } => {
             if let Some(name) = label_names.first() {
-                Instruction::BrTrue { r_cond: *r_cond, offset: resolve(name) }
+                Instruction::BrTrue {
+                    r_cond: *r_cond,
+                    offset: resolve(name),
+                }
             } else {
                 instr.clone()
             }
         }
         Instruction::BrFalse { r_cond, .. } => {
             if let Some(name) = label_names.first() {
-                Instruction::BrFalse { r_cond: *r_cond, offset: resolve(name) }
+                Instruction::BrFalse {
+                    r_cond: *r_cond,
+                    offset: resolve(name),
+                }
             } else {
                 instr.clone()
             }
@@ -408,7 +458,10 @@ fn patch_branch(
                     new_offsets.push(0);
                 }
             }
-            Instruction::Switch { r_tag: *r_tag, offsets: new_offsets }
+            Instruction::Switch {
+                r_tag: *r_tag,
+                offsets: new_offsets,
+            }
         }
         _ => instr.clone(),
     }
@@ -514,7 +567,8 @@ fn map_instruction(
             Some(AsmOperand::Register(r)) => Ok(*r),
             _ => Err(AssembleError::new(
                 format!("{}: expected register at operand {}", upper, idx + 1),
-                line, col,
+                line,
+                col,
             )),
         }
     };
@@ -524,7 +578,8 @@ fn map_instruction(
             Some(AsmOperand::IntLit(v)) => Ok(*v),
             _ => Err(AssembleError::new(
                 format!("{}: expected integer at operand {}", upper, idx + 1),
-                line, col,
+                line,
+                col,
             )),
         }
     };
@@ -534,7 +589,8 @@ fn map_instruction(
             Some(AsmOperand::FloatLit(v)) => Ok(*v),
             _ => Err(AssembleError::new(
                 format!("{}: expected float at operand {}", upper, idx + 1),
-                line, col,
+                line,
+                col,
             )),
         }
     };
@@ -545,7 +601,8 @@ fn map_instruction(
             Some(AsmOperand::StringLit(_)) => Ok(0), // placeholder
             _ => Err(AssembleError::new(
                 format!("{}: expected string index at operand {}", upper, idx + 1),
-                line, col,
+                line,
+                col,
             )),
         }
     };
@@ -556,20 +613,18 @@ fn map_instruction(
             Some(AsmOperand::Token(t)) => Ok(*t),
             Some(AsmOperand::TypeRef(tr)) => {
                 if let AsmTypeRef::Named(name) = tr
-                    && let Some(tok) = ctx.type_map.get(name) {
-                        return Ok(tok.0);
-                    }
+                    && let Some(tok) = ctx.type_map.get(name)
+                {
+                    return Ok(tok.0);
+                }
                 Ok(0)
             }
-            Some(AsmOperand::MethodRef(mr)) => {
-                resolve_method_ref(mr, ctx, line, col)
-            }
-            Some(AsmOperand::FieldRef(fr)) => {
-                resolve_field_ref(fr, ctx, line, col)
-            }
+            Some(AsmOperand::MethodRef(mr)) => resolve_method_ref(mr, ctx, line, col),
+            Some(AsmOperand::FieldRef(fr)) => resolve_field_ref(fr, ctx, line, col),
             _ => Err(AssembleError::new(
                 format!("{}: expected token/index at operand {}", upper, idx + 1),
-                line, col,
+                line,
+                col,
             )),
         }
     };
@@ -581,7 +636,8 @@ fn map_instruction(
             Some(AsmOperand::IntLit(v)) => Ok(*v as i32),
             _ => Err(AssembleError::new(
                 format!("{}: expected label reference at operand {}", upper, idx + 1),
-                line, col,
+                line,
+                col,
             )),
         }
     };
@@ -592,49 +648,158 @@ fn map_instruction(
         "CRASH" => Ok(Instruction::Crash { r_msg: reg(0)? }),
 
         // ── 0x01 Data Movement ──
-        "MOV" => Ok(Instruction::Mov { r_dst: reg(0)?, r_src: reg(1)? }),
-        "LOAD_INT" => Ok(Instruction::LoadInt { r_dst: reg(0)?, value: int_lit(1)? }),
-        "LOAD_FLOAT" => Ok(Instruction::LoadFloat { r_dst: reg(0)?, value: float_lit(1)? }),
+        "MOV" => Ok(Instruction::Mov {
+            r_dst: reg(0)?,
+            r_src: reg(1)?,
+        }),
+        "LOAD_INT" => Ok(Instruction::LoadInt {
+            r_dst: reg(0)?,
+            value: int_lit(1)?,
+        }),
+        "LOAD_FLOAT" => Ok(Instruction::LoadFloat {
+            r_dst: reg(0)?,
+            value: float_lit(1)?,
+        }),
         "LOAD_TRUE" => Ok(Instruction::LoadTrue { r_dst: reg(0)? }),
         "LOAD_FALSE" => Ok(Instruction::LoadFalse { r_dst: reg(0)? }),
-        "LOAD_STRING" => Ok(Instruction::LoadString { r_dst: reg(0)?, string_idx: string_idx(1)? }),
+        "LOAD_STRING" => Ok(Instruction::LoadString {
+            r_dst: reg(0)?,
+            string_idx: string_idx(1)?,
+        }),
         "LOAD_NULL" => Ok(Instruction::LoadNull { r_dst: reg(0)? }),
 
         // ── 0x02 Integer Arithmetic ──
-        "ADD_I" => Ok(Instruction::AddI { r_dst: reg(0)?, r_a: reg(1)?, r_b: reg(2)? }),
-        "SUB_I" => Ok(Instruction::SubI { r_dst: reg(0)?, r_a: reg(1)?, r_b: reg(2)? }),
-        "MUL_I" => Ok(Instruction::MulI { r_dst: reg(0)?, r_a: reg(1)?, r_b: reg(2)? }),
-        "DIV_I" => Ok(Instruction::DivI { r_dst: reg(0)?, r_a: reg(1)?, r_b: reg(2)? }),
-        "MOD_I" => Ok(Instruction::ModI { r_dst: reg(0)?, r_a: reg(1)?, r_b: reg(2)? }),
-        "NEG_I" => Ok(Instruction::NegI { r_dst: reg(0)?, r_src: reg(1)? }),
+        "ADD_I" => Ok(Instruction::AddI {
+            r_dst: reg(0)?,
+            r_a: reg(1)?,
+            r_b: reg(2)?,
+        }),
+        "SUB_I" => Ok(Instruction::SubI {
+            r_dst: reg(0)?,
+            r_a: reg(1)?,
+            r_b: reg(2)?,
+        }),
+        "MUL_I" => Ok(Instruction::MulI {
+            r_dst: reg(0)?,
+            r_a: reg(1)?,
+            r_b: reg(2)?,
+        }),
+        "DIV_I" => Ok(Instruction::DivI {
+            r_dst: reg(0)?,
+            r_a: reg(1)?,
+            r_b: reg(2)?,
+        }),
+        "MOD_I" => Ok(Instruction::ModI {
+            r_dst: reg(0)?,
+            r_a: reg(1)?,
+            r_b: reg(2)?,
+        }),
+        "NEG_I" => Ok(Instruction::NegI {
+            r_dst: reg(0)?,
+            r_src: reg(1)?,
+        }),
 
         // ── 0x03 Float Arithmetic ──
-        "ADD_F" => Ok(Instruction::AddF { r_dst: reg(0)?, r_a: reg(1)?, r_b: reg(2)? }),
-        "SUB_F" => Ok(Instruction::SubF { r_dst: reg(0)?, r_a: reg(1)?, r_b: reg(2)? }),
-        "MUL_F" => Ok(Instruction::MulF { r_dst: reg(0)?, r_a: reg(1)?, r_b: reg(2)? }),
-        "DIV_F" => Ok(Instruction::DivF { r_dst: reg(0)?, r_a: reg(1)?, r_b: reg(2)? }),
-        "MOD_F" => Ok(Instruction::ModF { r_dst: reg(0)?, r_a: reg(1)?, r_b: reg(2)? }),
-        "NEG_F" => Ok(Instruction::NegF { r_dst: reg(0)?, r_src: reg(1)? }),
+        "ADD_F" => Ok(Instruction::AddF {
+            r_dst: reg(0)?,
+            r_a: reg(1)?,
+            r_b: reg(2)?,
+        }),
+        "SUB_F" => Ok(Instruction::SubF {
+            r_dst: reg(0)?,
+            r_a: reg(1)?,
+            r_b: reg(2)?,
+        }),
+        "MUL_F" => Ok(Instruction::MulF {
+            r_dst: reg(0)?,
+            r_a: reg(1)?,
+            r_b: reg(2)?,
+        }),
+        "DIV_F" => Ok(Instruction::DivF {
+            r_dst: reg(0)?,
+            r_a: reg(1)?,
+            r_b: reg(2)?,
+        }),
+        "MOD_F" => Ok(Instruction::ModF {
+            r_dst: reg(0)?,
+            r_a: reg(1)?,
+            r_b: reg(2)?,
+        }),
+        "NEG_F" => Ok(Instruction::NegF {
+            r_dst: reg(0)?,
+            r_src: reg(1)?,
+        }),
 
         // ── 0x04 Bitwise & Logical ──
-        "BIT_AND" => Ok(Instruction::BitAnd { r_dst: reg(0)?, r_a: reg(1)?, r_b: reg(2)? }),
-        "BIT_OR" => Ok(Instruction::BitOr { r_dst: reg(0)?, r_a: reg(1)?, r_b: reg(2)? }),
-        "SHL" => Ok(Instruction::Shl { r_dst: reg(0)?, r_a: reg(1)?, r_b: reg(2)? }),
-        "SHR" => Ok(Instruction::Shr { r_dst: reg(0)?, r_a: reg(1)?, r_b: reg(2)? }),
-        "NOT" => Ok(Instruction::Not { r_dst: reg(0)?, r_src: reg(1)? }),
+        "BIT_AND" => Ok(Instruction::BitAnd {
+            r_dst: reg(0)?,
+            r_a: reg(1)?,
+            r_b: reg(2)?,
+        }),
+        "BIT_OR" => Ok(Instruction::BitOr {
+            r_dst: reg(0)?,
+            r_a: reg(1)?,
+            r_b: reg(2)?,
+        }),
+        "SHL" => Ok(Instruction::Shl {
+            r_dst: reg(0)?,
+            r_a: reg(1)?,
+            r_b: reg(2)?,
+        }),
+        "SHR" => Ok(Instruction::Shr {
+            r_dst: reg(0)?,
+            r_a: reg(1)?,
+            r_b: reg(2)?,
+        }),
+        "NOT" => Ok(Instruction::Not {
+            r_dst: reg(0)?,
+            r_src: reg(1)?,
+        }),
 
         // ── 0x05 Comparison ──
-        "CMP_EQ_I" => Ok(Instruction::CmpEqI { r_dst: reg(0)?, r_a: reg(1)?, r_b: reg(2)? }),
-        "CMP_EQ_F" => Ok(Instruction::CmpEqF { r_dst: reg(0)?, r_a: reg(1)?, r_b: reg(2)? }),
-        "CMP_EQ_B" => Ok(Instruction::CmpEqB { r_dst: reg(0)?, r_a: reg(1)?, r_b: reg(2)? }),
-        "CMP_EQ_S" => Ok(Instruction::CmpEqS { r_dst: reg(0)?, r_a: reg(1)?, r_b: reg(2)? }),
-        "CMP_LT_I" => Ok(Instruction::CmpLtI { r_dst: reg(0)?, r_a: reg(1)?, r_b: reg(2)? }),
-        "CMP_LT_F" => Ok(Instruction::CmpLtF { r_dst: reg(0)?, r_a: reg(1)?, r_b: reg(2)? }),
+        "CMP_EQ_I" => Ok(Instruction::CmpEqI {
+            r_dst: reg(0)?,
+            r_a: reg(1)?,
+            r_b: reg(2)?,
+        }),
+        "CMP_EQ_F" => Ok(Instruction::CmpEqF {
+            r_dst: reg(0)?,
+            r_a: reg(1)?,
+            r_b: reg(2)?,
+        }),
+        "CMP_EQ_B" => Ok(Instruction::CmpEqB {
+            r_dst: reg(0)?,
+            r_a: reg(1)?,
+            r_b: reg(2)?,
+        }),
+        "CMP_EQ_S" => Ok(Instruction::CmpEqS {
+            r_dst: reg(0)?,
+            r_a: reg(1)?,
+            r_b: reg(2)?,
+        }),
+        "CMP_LT_I" => Ok(Instruction::CmpLtI {
+            r_dst: reg(0)?,
+            r_a: reg(1)?,
+            r_b: reg(2)?,
+        }),
+        "CMP_LT_F" => Ok(Instruction::CmpLtF {
+            r_dst: reg(0)?,
+            r_a: reg(1)?,
+            r_b: reg(2)?,
+        }),
 
         // ── 0x06 Control Flow ──
-        "BR" => Ok(Instruction::Br { offset: label_offset(0)? }),
-        "BR_TRUE" => Ok(Instruction::BrTrue { r_cond: reg(0)?, offset: label_offset(1)? }),
-        "BR_FALSE" => Ok(Instruction::BrFalse { r_cond: reg(0)?, offset: label_offset(1)? }),
+        "BR" => Ok(Instruction::Br {
+            offset: label_offset(0)?,
+        }),
+        "BR_TRUE" => Ok(Instruction::BrTrue {
+            r_cond: reg(0)?,
+            offset: label_offset(1)?,
+        }),
+        "BR_FALSE" => Ok(Instruction::BrFalse {
+            r_cond: reg(0)?,
+            offset: label_offset(1)?,
+        }),
         "SWITCH" => {
             let r_tag = reg(0)?;
             let mut offsets = Vec::new();
@@ -685,7 +850,10 @@ fn map_instruction(
         }),
 
         // ── 0x08 Object Model ──
-        "NEW" => Ok(Instruction::New { r_dst: reg(0)?, type_idx: token_val(1)? }),
+        "NEW" => Ok(Instruction::New {
+            r_dst: reg(0)?,
+            type_idx: token_val(1)?,
+        }),
         "GET_FIELD" => Ok(Instruction::GetField {
             r_dst: reg(0)?,
             r_obj: reg(1)?,
@@ -696,30 +864,59 @@ fn map_instruction(
             field_idx: int_lit(1)? as u32,
             r_val: reg(2)?,
         }),
-        "SPAWN_ENTITY" => Ok(Instruction::SpawnEntity { r_dst: reg(0)?, type_idx: token_val(1)? }),
+        "SPAWN_ENTITY" => Ok(Instruction::SpawnEntity {
+            r_dst: reg(0)?,
+            type_idx: token_val(1)?,
+        }),
         "INIT_ENTITY" => Ok(Instruction::InitEntity { r_entity: reg(0)? }),
         "GET_COMPONENT" => Ok(Instruction::GetComponent {
             r_dst: reg(0)?,
             r_entity: reg(1)?,
             comp_type_idx: token_val(2)?,
         }),
-        "GET_OR_CREATE" => Ok(Instruction::GetOrCreate { r_dst: reg(0)?, type_idx: token_val(1)? }),
-        "FIND_ALL" => Ok(Instruction::FindAll { r_dst: reg(0)?, type_idx: token_val(1)? }),
+        "GET_OR_CREATE" => Ok(Instruction::GetOrCreate {
+            r_dst: reg(0)?,
+            type_idx: token_val(1)?,
+        }),
+        "FIND_ALL" => Ok(Instruction::FindAll {
+            r_dst: reg(0)?,
+            type_idx: token_val(1)?,
+        }),
         "DESTROY_ENTITY" => Ok(Instruction::DestroyEntity { r_entity: reg(0)? }),
-        "ENTITY_IS_ALIVE" => Ok(Instruction::EntityIsAlive { r_dst: reg(0)?, r_entity: reg(1)? }),
+        "ENTITY_IS_ALIVE" => Ok(Instruction::EntityIsAlive {
+            r_dst: reg(0)?,
+            r_entity: reg(1)?,
+        }),
 
         // ── 0x09 Arrays ──
-        "NEW_ARRAY" => Ok(Instruction::NewArray { r_dst: reg(0)?, elem_type: token_val(1)? }),
+        "NEW_ARRAY" => Ok(Instruction::NewArray {
+            r_dst: reg(0)?,
+            elem_type: token_val(1)?,
+        }),
         "ARRAY_INIT" => Ok(Instruction::ArrayInit {
             r_dst: reg(0)?,
             elem_type: token_val(1)?,
             count: int_lit(2)? as u16,
             r_base: reg(3)?,
         }),
-        "ARRAY_LOAD" => Ok(Instruction::ArrayLoad { r_dst: reg(0)?, r_arr: reg(1)?, r_idx: reg(2)? }),
-        "ARRAY_STORE" => Ok(Instruction::ArrayStore { r_arr: reg(0)?, r_idx: reg(1)?, r_val: reg(2)? }),
-        "ARRAY_LEN" => Ok(Instruction::ArrayLen { r_dst: reg(0)?, r_arr: reg(1)? }),
-        "ARRAY_RESIZE" => Ok(Instruction::ArrayResize { r_arr: reg(0)?, r_new_len: reg(1)? }),
+        "ARRAY_LOAD" => Ok(Instruction::ArrayLoad {
+            r_dst: reg(0)?,
+            r_arr: reg(1)?,
+            r_idx: reg(2)?,
+        }),
+        "ARRAY_STORE" => Ok(Instruction::ArrayStore {
+            r_arr: reg(0)?,
+            r_idx: reg(1)?,
+            r_val: reg(2)?,
+        }),
+        "ARRAY_LEN" => Ok(Instruction::ArrayLen {
+            r_dst: reg(0)?,
+            r_arr: reg(1)?,
+        }),
+        "ARRAY_RESIZE" => Ok(Instruction::ArrayResize {
+            r_arr: reg(0)?,
+            r_new_len: reg(1)?,
+        }),
         "ARRAY_COPY" => Ok(Instruction::ArrayCopy {
             r_dst_arr: reg(0)?,
             r_dst_idx: reg(1)?,
@@ -733,22 +930,61 @@ fn map_instruction(
             r_start: reg(2)?,
             r_end: reg(3)?,
         }),
-        "NEW_ARRAY_SIZED" => Ok(Instruction::NewArraySized { r_dst: reg(0)?, elem_type: token_val(1)?, r_len: reg(2)? }),
-        "NEW_ARRAY_FILLED" => Ok(Instruction::NewArrayFilled { r_dst: reg(0)?, elem_type: token_val(1)?, r_len: reg(2)?, r_fill: reg(3)? }),
+        "NEW_ARRAY_SIZED" => Ok(Instruction::NewArraySized {
+            r_dst: reg(0)?,
+            elem_type: token_val(1)?,
+            r_len: reg(2)?,
+        }),
+        "NEW_ARRAY_FILLED" => Ok(Instruction::NewArrayFilled {
+            r_dst: reg(0)?,
+            elem_type: token_val(1)?,
+            r_len: reg(2)?,
+            r_fill: reg(3)?,
+        }),
 
         // ── 0x0A Type Operations — Option ──
-        "WRAP_SOME" => Ok(Instruction::WrapSome { r_dst: reg(0)?, r_val: reg(1)? }),
-        "UNWRAP" => Ok(Instruction::Unwrap { r_dst: reg(0)?, r_opt: reg(1)? }),
-        "IS_SOME" => Ok(Instruction::IsSome { r_dst: reg(0)?, r_opt: reg(1)? }),
-        "IS_NONE" => Ok(Instruction::IsNone { r_dst: reg(0)?, r_opt: reg(1)? }),
+        "WRAP_SOME" => Ok(Instruction::WrapSome {
+            r_dst: reg(0)?,
+            r_val: reg(1)?,
+        }),
+        "UNWRAP" => Ok(Instruction::Unwrap {
+            r_dst: reg(0)?,
+            r_opt: reg(1)?,
+        }),
+        "IS_SOME" => Ok(Instruction::IsSome {
+            r_dst: reg(0)?,
+            r_opt: reg(1)?,
+        }),
+        "IS_NONE" => Ok(Instruction::IsNone {
+            r_dst: reg(0)?,
+            r_opt: reg(1)?,
+        }),
 
         // ── 0x0A Type Operations — Result ──
-        "WRAP_OK" => Ok(Instruction::WrapOk { r_dst: reg(0)?, r_val: reg(1)? }),
-        "WRAP_ERR" => Ok(Instruction::WrapErr { r_dst: reg(0)?, r_err: reg(1)? }),
-        "UNWRAP_OK" => Ok(Instruction::UnwrapOk { r_dst: reg(0)?, r_result: reg(1)? }),
-        "IS_OK" => Ok(Instruction::IsOk { r_dst: reg(0)?, r_result: reg(1)? }),
-        "IS_ERR" => Ok(Instruction::IsErr { r_dst: reg(0)?, r_result: reg(1)? }),
-        "EXTRACT_ERR" => Ok(Instruction::ExtractErr { r_dst: reg(0)?, r_result: reg(1)? }),
+        "WRAP_OK" => Ok(Instruction::WrapOk {
+            r_dst: reg(0)?,
+            r_val: reg(1)?,
+        }),
+        "WRAP_ERR" => Ok(Instruction::WrapErr {
+            r_dst: reg(0)?,
+            r_err: reg(1)?,
+        }),
+        "UNWRAP_OK" => Ok(Instruction::UnwrapOk {
+            r_dst: reg(0)?,
+            r_result: reg(1)?,
+        }),
+        "IS_OK" => Ok(Instruction::IsOk {
+            r_dst: reg(0)?,
+            r_result: reg(1)?,
+        }),
+        "IS_ERR" => Ok(Instruction::IsErr {
+            r_dst: reg(0)?,
+            r_result: reg(1)?,
+        }),
+        "EXTRACT_ERR" => Ok(Instruction::ExtractErr {
+            r_dst: reg(0)?,
+            r_result: reg(1)?,
+        }),
 
         // ── 0x0A Type Operations — Enum ──
         "NEW_ENUM" => Ok(Instruction::NewEnum {
@@ -758,7 +994,10 @@ fn map_instruction(
             field_count: int_lit(3)? as u16,
             r_base: reg(4)?,
         }),
-        "GET_TAG" => Ok(Instruction::GetTag { r_dst: reg(0)?, r_enum: reg(1)? }),
+        "GET_TAG" => Ok(Instruction::GetTag {
+            r_dst: reg(0)?,
+            r_enum: reg(1)?,
+        }),
         "EXTRACT_FIELD" => Ok(Instruction::ExtractField {
             r_dst: reg(0)?,
             r_enum: reg(1)?,
@@ -766,7 +1005,10 @@ fn map_instruction(
         }),
 
         // ── 0x0A Type Operations — Reflection ──
-        "TYPEOF" => Ok(Instruction::TypeOf { r_dst: reg(0)?, type_idx: token_val(1)? }),
+        "TYPEOF" => Ok(Instruction::TypeOf {
+            r_dst: reg(0)?,
+            type_idx: token_val(1)?,
+        }),
 
         // ── 0x0B Concurrency ──
         "SPAWN_TASK" => Ok(Instruction::SpawnTask {
@@ -781,49 +1023,99 @@ fn map_instruction(
             r_base: reg(2)?,
             argc: int_lit(3)? as u16,
         }),
-        "JOIN" => Ok(Instruction::Join { r_dst: reg(0)?, r_task: reg(1)? }),
+        "JOIN" => Ok(Instruction::Join {
+            r_dst: reg(0)?,
+            r_task: reg(1)?,
+        }),
         "CANCEL" => Ok(Instruction::Cancel { r_task: reg(0)? }),
-        "DEFER_PUSH" => Ok(Instruction::DeferPush { r_dst: reg(0)?, method_idx: token_val(1)? }),
+        "DEFER_PUSH" => Ok(Instruction::DeferPush {
+            r_dst: reg(0)?,
+            method_idx: token_val(1)?,
+        }),
         "DEFER_POP" => Ok(Instruction::DeferPop),
         "DEFER_END" => Ok(Instruction::DeferEnd),
 
         // ── 0x0C Globals & Atomics ──
-        "LOAD_GLOBAL" => Ok(Instruction::LoadGlobal { r_dst: reg(0)?, global_idx: token_val(1)? }),
-        "STORE_GLOBAL" => Ok(Instruction::StoreGlobal { global_idx: token_val(0)?, r_src: reg(1)? }),
+        "LOAD_GLOBAL" => Ok(Instruction::LoadGlobal {
+            r_dst: reg(0)?,
+            global_idx: token_val(1)?,
+        }),
+        "STORE_GLOBAL" => Ok(Instruction::StoreGlobal {
+            global_idx: token_val(0)?,
+            r_src: reg(1)?,
+        }),
         "ATOMIC_BEGIN" => Ok(Instruction::AtomicBegin),
         "ATOMIC_END" => Ok(Instruction::AtomicEnd),
 
         // ── 0x0D Conversion ──
-        "I2F" => Ok(Instruction::I2f { r_dst: reg(0)?, r_src: reg(1)? }),
-        "F2I" => Ok(Instruction::F2i { r_dst: reg(0)?, r_src: reg(1)? }),
-        "I2S" => Ok(Instruction::I2s { r_dst: reg(0)?, r_src: reg(1)? }),
-        "F2S" => Ok(Instruction::F2s { r_dst: reg(0)?, r_src: reg(1)? }),
-        "B2S" => Ok(Instruction::B2s { r_dst: reg(0)?, r_src: reg(1)? }),
+        "I2F" => Ok(Instruction::I2f {
+            r_dst: reg(0)?,
+            r_src: reg(1)?,
+        }),
+        "F2I" => Ok(Instruction::F2i {
+            r_dst: reg(0)?,
+            r_src: reg(1)?,
+        }),
+        "I2S" => Ok(Instruction::I2s {
+            r_dst: reg(0)?,
+            r_src: reg(1)?,
+        }),
+        "F2S" => Ok(Instruction::F2s {
+            r_dst: reg(0)?,
+            r_src: reg(1)?,
+        }),
+        "B2S" => Ok(Instruction::B2s {
+            r_dst: reg(0)?,
+            r_src: reg(1)?,
+        }),
         "CONVERT" => Ok(Instruction::Convert {
             r_dst: reg(0)?,
             r_src: reg(1)?,
             target_type: token_val(2)?,
         }),
-        "S2I" => Ok(Instruction::S2i { r_dst: reg(0)?, r_src: reg(1)? }),
-        "S2F" => Ok(Instruction::S2f { r_dst: reg(0)?, r_src: reg(1)? }),
-        "S2B" => Ok(Instruction::S2b { r_dst: reg(0)?, r_src: reg(1)? }),
+        "S2I" => Ok(Instruction::S2i {
+            r_dst: reg(0)?,
+            r_src: reg(1)?,
+        }),
+        "S2F" => Ok(Instruction::S2f {
+            r_dst: reg(0)?,
+            r_src: reg(1)?,
+        }),
+        "S2B" => Ok(Instruction::S2b {
+            r_dst: reg(0)?,
+            r_src: reg(1)?,
+        }),
 
         // ── 0x0E Strings ──
-        "STR_CONCAT" => Ok(Instruction::StrConcat { r_dst: reg(0)?, r_a: reg(1)?, r_b: reg(2)? }),
+        "STR_CONCAT" => Ok(Instruction::StrConcat {
+            r_dst: reg(0)?,
+            r_a: reg(1)?,
+            r_b: reg(2)?,
+        }),
         "STR_BUILD" => Ok(Instruction::StrBuild {
             r_dst: reg(0)?,
             count: int_lit(1)? as u16,
             r_base: reg(2)?,
         }),
-        "STR_LEN" => Ok(Instruction::StrLen { r_dst: reg(0)?, r_str: reg(1)? }),
+        "STR_LEN" => Ok(Instruction::StrLen {
+            r_dst: reg(0)?,
+            r_str: reg(1)?,
+        }),
 
         // ── 0x0F Boxing ──
-        "BOX" => Ok(Instruction::Box { r_dst: reg(0)?, r_val: reg(1)? }),
-        "UNBOX" => Ok(Instruction::Unbox { r_dst: reg(0)?, r_boxed: reg(1)? }),
+        "BOX" => Ok(Instruction::Box {
+            r_dst: reg(0)?,
+            r_val: reg(1)?,
+        }),
+        "UNBOX" => Ok(Instruction::Unbox {
+            r_dst: reg(0)?,
+            r_boxed: reg(1)?,
+        }),
 
         _ => Err(AssembleError::new(
             format!("unknown instruction mnemonic '{}'", mnemonic),
-            line, col,
+            line,
+            col,
         )),
     }
 }
@@ -846,7 +1138,8 @@ fn resolve_method_ref(
     } else {
         Err(AssembleError::new(
             format!("undefined method reference '{}'", key),
-            line, col,
+            line,
+            col,
         ))
     }
 }
@@ -864,7 +1157,8 @@ fn resolve_field_ref(
     } else {
         Err(AssembleError::new(
             format!("undefined field reference '{}'", key),
-            line, col,
+            line,
+            col,
         ))
     }
 }

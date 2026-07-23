@@ -1,9 +1,9 @@
-use chumsky::span::SimpleSpan;
-use writ_parser::cst::{Spanned, StringSegment};
 use crate::ast::expr::{AstExpr, BinaryOp};
 use crate::ast::types::AstType;
 use crate::lower::context::LoweringContext;
 use crate::lower::expr::lower_expr;
+use chumsky::span::SimpleSpan;
+use writ_parser::cst::{Spanned, StringSegment};
 
 /// Lowers a formattable string's segment list into a left-associative
 /// `AstExpr::Binary { op: BinaryOp::Add, ... }` chain.
@@ -38,10 +38,12 @@ pub(crate) fn lower_fmt_string(
                 let value = if is_raw {
                     s.to_string()
                 } else {
-                    writ_parser::process_escapes(s)
-                        .unwrap_or_else(|_| s.to_string())
+                    writ_parser::process_escapes(s).unwrap_or_else(|_| s.to_string())
                 };
-                AstExpr::StringLit { value, span: seg_span }
+                AstExpr::StringLit {
+                    value,
+                    span: seg_span,
+                }
             }
             StringSegment::Expr(inner_expr) => {
                 // Recursively lower the interpolated expression so any nested

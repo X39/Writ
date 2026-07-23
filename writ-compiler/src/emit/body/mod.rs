@@ -6,15 +6,15 @@
 
 use std::collections::HashSet;
 
-pub mod reg_alloc;
-pub mod labels;
-pub mod expr;
-pub mod stmt;
 pub mod call;
 pub mod closure;
-pub mod patterns;
 pub mod const_fold;
 pub mod debug;
+pub mod expr;
+pub mod labels;
+pub mod patterns;
+pub mod reg_alloc;
+pub mod stmt;
 
 use chumsky::span::SimpleSpan;
 use rustc_hash::FxHashMap;
@@ -250,18 +250,25 @@ fn expr_has_error(expr: &TypedExpr) -> bool {
                 }
             }
             if let Some(t) = tail
-                && expr_has_error(t) {
-                    return true;
-                }
+                && expr_has_error(t)
+            {
+                return true;
+            }
         }
-        TypedExpr::If { condition, then_branch, else_branch, .. } => {
+        TypedExpr::If {
+            condition,
+            then_branch,
+            else_branch,
+            ..
+        } => {
             if expr_has_error(condition) || expr_has_error(then_branch) {
                 return true;
             }
             if let Some(e) = else_branch
-                && expr_has_error(e) {
-                    return true;
-                }
+                && expr_has_error(e)
+            {
+                return true;
+            }
         }
         TypedExpr::Binary { left, right, .. } => {
             if expr_has_error(left) || expr_has_error(right) {
@@ -283,13 +290,14 @@ fn expr_has_error(expr: &TypedExpr) -> bool {
                 }
             }
         }
-        TypedExpr::Field { receiver, .. }
-        | TypedExpr::ComponentAccess { receiver, .. } => {
+        TypedExpr::Field { receiver, .. } | TypedExpr::ComponentAccess { receiver, .. } => {
             if expr_has_error(receiver) {
                 return true;
             }
         }
-        TypedExpr::Index { receiver, index, .. } => {
+        TypedExpr::Index {
+            receiver, index, ..
+        } => {
             if expr_has_error(receiver) || expr_has_error(index) {
                 return true;
             }
@@ -315,13 +323,15 @@ fn expr_has_error(expr: &TypedExpr) -> bool {
         }
         TypedExpr::Range { start, end, .. } => {
             if let Some(s) = start
-                && expr_has_error(s) {
-                    return true;
-                }
+                && expr_has_error(s)
+            {
+                return true;
+            }
             if let Some(e) = end
-                && expr_has_error(e) {
-                    return true;
-                }
+                && expr_has_error(e)
+            {
+                return true;
+            }
         }
         TypedExpr::Spawn { expr: inner, .. }
         | TypedExpr::SpawnDetached { expr: inner, .. }
@@ -337,7 +347,9 @@ fn expr_has_error(expr: &TypedExpr) -> bool {
                 return true;
             }
         }
-        TypedExpr::Match { scrutinee, arms, .. } => {
+        TypedExpr::Match {
+            scrutinee, arms, ..
+        } => {
             if expr_has_error(scrutinee) {
                 return true;
             }
@@ -349,9 +361,10 @@ fn expr_has_error(expr: &TypedExpr) -> bool {
         }
         TypedExpr::Return { value, .. } => {
             if let Some(v) = value
-                && expr_has_error(v) {
-                    return true;
-                }
+                && expr_has_error(v)
+            {
+                return true;
+            }
         }
         // Leaf nodes with no children to recurse into
         TypedExpr::Literal { .. }
@@ -378,7 +391,9 @@ fn stmt_has_error(stmt: &TypedStmt) -> bool {
             }
             body.iter().any(stmt_has_error)
         }
-        TypedStmt::While { condition, body, .. } => {
+        TypedStmt::While {
+            condition, body, ..
+        } => {
             if expr_has_error(condition) {
                 return true;
             }
@@ -452,15 +467,21 @@ pub(in crate::emit) fn emit_all_bodies_excluding(
                 // Per-function error check: skip broken bodies instead of aborting all.
                 if expr_has_error(body) {
                     // Look up a human-readable name for the diagnostic.
-                    let fn_name = typed_ast.def_map.arena
+                    let fn_name = typed_ast
+                        .def_map
+                        .arena
                         .get(*def_id)
                         .map(|e| e.name.as_str())
                         .unwrap_or("<unknown>");
                     diags.push(
                         writ_diagnostics::Diagnostic::error(
                             "E9001",
-                            format!("Skipping function '{}' due to syntax errors in body", fn_name),
-                        ).build()
+                            format!(
+                                "Skipping function '{}' due to syntax errors in body",
+                                fn_name
+                            ),
+                        )
+                        .build(),
                     );
                     continue;
                 }
@@ -503,18 +524,27 @@ pub(in crate::emit) fn emit_all_bodies_excluding(
                     label_allocator: emitter.labels,
                 });
             }
-            TypedDecl::Impl { def_id: impl_def_id, methods } => {
+            TypedDecl::Impl {
+                def_id: impl_def_id,
+                methods,
+            } => {
                 for (method_idx, (def_id, body)) in methods.iter().enumerate() {
                     if expr_has_error(body) {
-                        let method_name = typed_ast.def_map.arena
+                        let method_name = typed_ast
+                            .def_map
+                            .arena
                             .get(*def_id)
                             .map(|e| e.name.as_str())
                             .unwrap_or("<unknown>");
                         diags.push(
                             writ_diagnostics::Diagnostic::error(
                                 "E9001",
-                                format!("Skipping method '{}' due to syntax errors in body", method_name),
-                            ).build()
+                                format!(
+                                    "Skipping method '{}' due to syntax errors in body",
+                                    method_name
+                                ),
+                            )
+                            .build(),
                         );
                         continue;
                     }
@@ -527,7 +557,8 @@ pub(in crate::emit) fn emit_all_bodies_excluding(
                     // so fn_param_map only retains the LAST method's params. Use the handle-based
                     // impl_method_param_map which is indexed by MethodDefHandle for unambiguous
                     // per-method param lookup. Fall back to fn_param_map for non-impl methods.
-                    let method_handle_idx = builder.find_impl_method_handle(*impl_def_id, method_idx);
+                    let method_handle_idx =
+                        builder.find_impl_method_handle(*impl_def_id, method_idx);
                     emitter.returns_option = method_handle_idx
                         .is_some_and(|handle| builder.method_returns_option(handle));
                     let params_opt = method_handle_idx
@@ -565,7 +596,9 @@ pub(in crate::emit) fn emit_all_bodies_excluding(
             }
             TypedDecl::Const { def_id, value } => {
                 if expr_has_error(value) {
-                    let name = typed_ast.def_map.arena
+                    let name = typed_ast
+                        .def_map
+                        .arena
                         .get(*def_id)
                         .map(|e| e.name.as_str())
                         .unwrap_or("<unknown>");
@@ -573,7 +606,8 @@ pub(in crate::emit) fn emit_all_bodies_excluding(
                         writ_diagnostics::Diagnostic::error(
                             "E9001",
                             format!("Skipping const '{}' due to syntax errors in value", name),
-                        ).build()
+                        )
+                        .build(),
                     );
                     continue;
                 }
@@ -586,12 +620,18 @@ pub(in crate::emit) fn emit_all_bodies_excluding(
                     match &folded {
                         TypedLiteral::Int(v) => {
                             let r = emitter.alloc_reg(Ty(0)); // Int
-                            emitter.emit(Instruction::LoadInt { r_dst: r, value: *v });
+                            emitter.emit(Instruction::LoadInt {
+                                r_dst: r,
+                                value: *v,
+                            });
                             r
                         }
                         TypedLiteral::Float(v) => {
                             let r = emitter.alloc_reg(Ty(1)); // Float
-                            emitter.emit(Instruction::LoadFloat { r_dst: r, value: *v });
+                            emitter.emit(Instruction::LoadFloat {
+                                r_dst: r,
+                                value: *v,
+                            });
                             r
                         }
                         TypedLiteral::Bool(true) => {
@@ -631,7 +671,9 @@ pub(in crate::emit) fn emit_all_bodies_excluding(
             }
             TypedDecl::Global { def_id, value } => {
                 if expr_has_error(value) {
-                    let name = typed_ast.def_map.arena
+                    let name = typed_ast
+                        .def_map
+                        .arena
                         .get(*def_id)
                         .map(|e| e.name.as_str())
                         .unwrap_or("<unknown>");
@@ -639,7 +681,8 @@ pub(in crate::emit) fn emit_all_bodies_excluding(
                         writ_diagnostics::Diagnostic::error(
                             "E9001",
                             format!("Skipping global '{}' due to syntax errors in value", name),
-                        ).build()
+                        )
+                        .build(),
                     );
                     continue;
                 }
@@ -679,14 +722,12 @@ pub(in crate::emit) fn emit_all_bodies_excluding(
     for info in reflectable_infos {
         // Resolve the type_idx: use the TypeDef's finalized MetadataToken for TYPEOF.
         // This is the same token returned by token_for_def(def_id) post-finalize.
-        let type_idx = builder.token_for_def(info.def_id)
-            .map(|t| t.0)
-            .unwrap_or(0);
+        let type_idx = builder.token_for_def(info.def_id).map(|t| t.0).unwrap_or(0);
 
         // r0 = self (Ty placeholder — self type is not used for IL execution correctness)
         // r1 = TYPEOF result (also Ty placeholder — only reg index matters for TYPEOF dst)
-        let self_ty = Ty(0);  // Int placeholder — type doesn't affect IL execution
-        let type_ty = Ty(0);  // Int placeholder — Type return type
+        let self_ty = Ty(0); // Int placeholder — type doesn't affect IL execution
+        let type_ty = Ty(0); // Int placeholder — Type return type
 
         let instructions = vec![
             Instruction::TypeOf { r_dst: 1, type_idx },
@@ -694,9 +735,9 @@ pub(in crate::emit) fn emit_all_bodies_excluding(
         ];
 
         bodies.push(EmittedBody {
-            method_def_id: None,  // synthetic method — no source DefId
+            method_def_id: None, // synthetic method — no source DefId
             instructions,
-            reg_count: 2,         // r0 = self, r1 = TYPEOF result
+            reg_count: 2, // r0 = self, r1 = TYPEOF result
             reg_types: vec![self_ty, type_ty],
             source_spans: Vec::new(),
             debug_locals: Vec::new(),
@@ -752,7 +793,9 @@ pub(in crate::emit) fn emit_all_bodies_excluding(
             let r_self = 0;
             for (cap_name, cap_ty) in &info.captures_info {
                 let r_cap = emitter.alloc_reg(*cap_ty);
-                let field_idx = builder.field_token_by_name_on_closure(&closure_name, cap_name).unwrap_or(0);
+                let field_idx = builder
+                    .field_token_by_name_on_closure(&closure_name, cap_name)
+                    .unwrap_or(0);
                 emitter.emit(Instruction::GetField {
                     r_dst: r_cap,
                     r_obj: r_self,
@@ -832,7 +875,12 @@ fn collect_lambda_exprs_from_expr<'a>(expr: &'a TypedExpr, out: &mut Vec<&'a Typ
                 collect_lambda_exprs_from_expr(t, out);
             }
         }
-        TypedExpr::If { condition, then_branch, else_branch, .. } => {
+        TypedExpr::If {
+            condition,
+            then_branch,
+            else_branch,
+            ..
+        } => {
             collect_lambda_exprs_from_expr(condition, out);
             collect_lambda_exprs_from_expr(then_branch, out);
             if let Some(e) = else_branch {
@@ -855,7 +903,9 @@ fn collect_lambda_exprs_from_expr<'a>(expr: &'a TypedExpr, out: &mut Vec<&'a Typ
         TypedExpr::Field { receiver, .. } | TypedExpr::ComponentAccess { receiver, .. } => {
             collect_lambda_exprs_from_expr(receiver, out);
         }
-        TypedExpr::Index { receiver, index, .. } => {
+        TypedExpr::Index {
+            receiver, index, ..
+        } => {
             collect_lambda_exprs_from_expr(receiver, out);
             collect_lambda_exprs_from_expr(index, out);
         }
@@ -888,7 +938,9 @@ fn collect_lambda_exprs_from_expr<'a>(expr: &'a TypedExpr, out: &mut Vec<&'a Typ
         | TypedExpr::Defer { expr: inner, .. } => {
             collect_lambda_exprs_from_expr(inner, out);
         }
-        TypedExpr::Match { scrutinee, arms, .. } => {
+        TypedExpr::Match {
+            scrutinee, arms, ..
+        } => {
             collect_lambda_exprs_from_expr(scrutinee, out);
             for arm in arms {
                 collect_lambda_exprs_from_expr(&arm.body, out);
@@ -927,7 +979,9 @@ fn collect_lambda_exprs_from_stmt<'a>(stmt: &'a TypedStmt, out: &mut Vec<&'a Typ
                 collect_lambda_exprs_from_stmt(s, out);
             }
         }
-        TypedStmt::While { condition, body, .. } => {
+        TypedStmt::While {
+            condition, body, ..
+        } => {
             collect_lambda_exprs_from_expr(condition, out);
             for s in body {
                 collect_lambda_exprs_from_stmt(s, out);

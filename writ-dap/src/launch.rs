@@ -57,7 +57,14 @@ pub fn compile_and_load(
 /// or any pipeline stage fails.
 pub fn compile_and_load_project(
     project_root: &std::path::Path,
-) -> Result<(Module, Vec<(writ_diagnostics::FileId, String)>, Vec<Option<writ_diagnostics::FileId>>), String> {
+) -> Result<
+    (
+        Module,
+        Vec<(writ_diagnostics::FileId, String)>,
+        Vec<Option<writ_diagnostics::FileId>>,
+    ),
+    String,
+> {
     let config = writ_compiler::config::load_config(project_root)
         .map_err(|e| format!("failed to load writ.toml: {}", e))?;
 
@@ -94,8 +101,7 @@ pub fn compile_and_load_project(
         .method_defs
         .iter()
         .map(|def| {
-            let name = writ_module::heap::read_string(&module.string_heap, def.name)
-                .unwrap_or("");
+            let name = writ_module::heap::read_string(&module.string_heap, def.name).unwrap_or("");
             name_file_pairs
                 .iter()
                 .find(|(n, _)| n == name)
@@ -136,8 +142,7 @@ fn run_pipeline(
             }
             return Err(format!("{} parse error(s)", err_count));
         }
-        let cst = cst_opt
-            .ok_or_else(|| format!("parse failed: no output for {}", display_path))?;
+        let cst = cst_opt.ok_or_else(|| format!("parse failed: no output for {}", display_path))?;
 
         // Stage 2: Lower CST -> AST
         let (ast, lower_errs) = writ_compiler::lower(cst);
@@ -165,18 +170,15 @@ fn run_pipeline(
     }
 
     // Build reference slices for stages 3-5
-    let asts_refs: Vec<(writ_diagnostics::FileId, &writ_compiler::Ast)> = per_file_asts
-        .iter()
-        .map(|(fid, ast)| (*fid, ast))
-        .collect();
+    let asts_refs: Vec<(writ_diagnostics::FileId, &writ_compiler::Ast)> =
+        per_file_asts.iter().map(|(fid, ast)| (*fid, ast)).collect();
     let path_refs: Vec<(writ_diagnostics::FileId, &str)> = file_sources
         .iter()
         .map(|(fid, path, _)| (*fid, path.as_str()))
         .collect();
 
     // Stage 3: Name resolution
-    let (resolved, resolve_diags) =
-        writ_compiler::resolve::resolve(&asts_refs, &path_refs, &[]);
+    let (resolved, resolve_diags) = writ_compiler::resolve::resolve(&asts_refs, &path_refs, &[]);
     let has_resolve_errors = resolve_diags
         .iter()
         .any(|d| d.severity == writ_diagnostics::Severity::Error);
@@ -215,15 +217,21 @@ fn run_pipeline(
     // DAP always compiles with no active conditions (debug/release conditions are
     // not yet supported in DAP launch; use writ build for conditional compilation).
     let active_conditions = std::collections::HashSet::new();
-    let bytes =
-        writ_compiler::emit_bodies(&typed_ast, &interner, &asts_refs, emit_debug_info, &sources, &active_conditions)
-            .map_err(|diags| {
-                eprint!(
-                    "{}",
-                    writ_diagnostics::render_diagnostics(&diags, &sources_for_render)
-                );
-                format!("{} codegen error(s)", diags.len())
-            })?;
+    let bytes = writ_compiler::emit_bodies(
+        &typed_ast,
+        &interner,
+        &asts_refs,
+        emit_debug_info,
+        &sources,
+        &active_conditions,
+    )
+    .map_err(|diags| {
+        eprint!(
+            "{}",
+            writ_diagnostics::render_diagnostics(&diags, &sources_for_render)
+        );
+        format!("{} codegen error(s)", diags.len())
+    })?;
 
     Ok((bytes, name_file_pairs))
 }

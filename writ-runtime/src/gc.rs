@@ -494,12 +494,7 @@ mod tests {
     fn ms_collect_traces_delegate_target() {
         let mut heap = MarkSweepHeap::new();
         let target = GcHeap::alloc_string(&mut heap, "target");
-        let delegate = GcHeap::alloc_delegate(
-            &mut heap,
-            2,
-            5,
-            Some(Value::Ref(target)),
-        );
+        let delegate = GcHeap::alloc_delegate(&mut heap, 2, 5, Some(Value::Ref(target)));
 
         let stats = heap.collect(&[delegate]);
 

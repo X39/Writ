@@ -1,9 +1,8 @@
 use crate::ast::{
-    AsmModule, AsmExtern, AsmType, AsmTypeKind, AsmField,
-    AsmContract, AsmContractMethod, AsmImpl, AsmMethod, AsmParam,
-    AsmRegDecl, AsmStatement, AsmInstruction, AsmOperand, AsmTypeRef,
-    AsmMethodRef, AsmMethodSig, AsmGlobal, AsmExternFn,
-    AsmExport, AsmComponentSlot, AsmLocaleDef, AsmAttributeDef,
+    AsmAttributeDef, AsmComponentSlot, AsmContract, AsmContractMethod, AsmExport, AsmExtern,
+    AsmExternFn, AsmField, AsmGlobal, AsmImpl, AsmInstruction, AsmLocaleDef, AsmMethod,
+    AsmMethodRef, AsmMethodSig, AsmModule, AsmOperand, AsmParam, AsmRegDecl, AsmStatement, AsmType,
+    AsmTypeKind, AsmTypeRef,
 };
 use crate::error::AssembleError;
 use crate::lexer::{Token, TokenKind};
@@ -30,7 +29,9 @@ impl<'a> Parser<'a> {
     // ── Core navigation ─────────────────────────────────────────
 
     fn peek(&self) -> &Token {
-        self.tokens.get(self.pos).unwrap_or(self.tokens.last().unwrap())
+        self.tokens
+            .get(self.pos)
+            .unwrap_or(self.tokens.last().unwrap())
     }
 
     fn peek_kind(&self) -> &TokenKind {
@@ -50,10 +51,11 @@ impl<'a> Parser<'a> {
     fn expect_directive(&mut self, name: &str) -> bool {
         self.skip_newlines();
         if let TokenKind::Directive(d) = self.peek_kind()
-            && d == name {
-                self.pos += 1;
-                return true;
-            }
+            && d == name
+        {
+            self.pos += 1;
+            return true;
+        }
         let tok = self.peek();
         self.errors.push(AssembleError::new(
             format!("expected '.{}' directive", name),
@@ -71,7 +73,11 @@ impl<'a> Parser<'a> {
             return Some(s);
         }
         let tok = self.peek();
-        self.errors.push(AssembleError::new("expected string literal", tok.line, tok.col));
+        self.errors.push(AssembleError::new(
+            "expected string literal",
+            tok.line,
+            tok.col,
+        ));
         None
     }
 
@@ -83,7 +89,8 @@ impl<'a> Parser<'a> {
             return Some(s);
         }
         let tok = self.peek();
-        self.errors.push(AssembleError::new("expected identifier", tok.line, tok.col));
+        self.errors
+            .push(AssembleError::new("expected identifier", tok.line, tok.col));
         None
     }
 
@@ -95,7 +102,11 @@ impl<'a> Parser<'a> {
             return Some(v);
         }
         let tok = self.peek();
-        self.errors.push(AssembleError::new("expected integer literal", tok.line, tok.col));
+        self.errors.push(AssembleError::new(
+            "expected integer literal",
+            tok.line,
+            tok.col,
+        ));
         None
     }
 
@@ -121,7 +132,9 @@ impl<'a> Parser<'a> {
             match self.peek_kind() {
                 TokenKind::CloseBrace | TokenKind::Eof => break,
                 TokenKind::Directive(_) => break,
-                _ => { self.pos += 1; }
+                _ => {
+                    self.pos += 1;
+                }
             }
         }
     }
@@ -313,7 +326,11 @@ impl<'a> Parser<'a> {
                 }
             } else if is_directive {
                 let tok = self.peek();
-                let d = if let TokenKind::Directive(d) = self.peek_kind() { d.clone() } else { String::new() };
+                let d = if let TokenKind::Directive(d) = self.peek_kind() {
+                    d.clone()
+                } else {
+                    String::new()
+                };
                 self.errors.push(AssembleError::new(
                     format!("expected '.field' or '.method' inside .type, got '.{}'", d),
                     tok.line,
@@ -346,7 +363,11 @@ impl<'a> Parser<'a> {
         let name = self.expect_string()?;
         let type_ref = self.parse_type_ref()?;
         let flags = self.parse_flags();
-        Some(AsmField { name, type_ref, flags })
+        Some(AsmField {
+            name,
+            type_ref,
+            flags,
+        })
     }
 
     fn parse_contract(&mut self) -> Option<AsmContract> {
@@ -376,7 +397,11 @@ impl<'a> Parser<'a> {
 
         if !self.expect_token(&TokenKind::OpenBrace) {
             self.synchronize();
-            return Some(AsmContract { name, methods: Vec::new(), generic_params });
+            return Some(AsmContract {
+                name,
+                methods: Vec::new(),
+                generic_params,
+            });
         }
 
         let mut methods = Vec::new();
@@ -394,7 +419,11 @@ impl<'a> Parser<'a> {
                 }
             } else if is_directive {
                 let tok = self.peek();
-                let d = if let TokenKind::Directive(d) = self.peek_kind() { d.clone() } else { String::new() };
+                let d = if let TokenKind::Directive(d) = self.peek_kind() {
+                    d.clone()
+                } else {
+                    String::new()
+                };
                 self.errors.push(AssembleError::new(
                     format!("expected '.method' inside .contract, got '.{}'", d),
                     tok.line,
@@ -413,7 +442,11 @@ impl<'a> Parser<'a> {
         }
 
         self.expect_token(&TokenKind::CloseBrace);
-        Some(AsmContract { name, methods, generic_params })
+        Some(AsmContract {
+            name,
+            methods,
+            generic_params,
+        })
     }
 
     fn parse_contract_method(&mut self) -> Option<AsmContractMethod> {
@@ -426,12 +459,17 @@ impl<'a> Parser<'a> {
         // Parse slot keyword and number
         self.skip_newlines();
         if let TokenKind::Ident(s) = self.peek_kind()
-            && s.to_lowercase() == "slot" {
-                self.pos += 1;
-            }
+            && s.to_lowercase() == "slot"
+        {
+            self.pos += 1;
+        }
         let slot = self.expect_int()? as u16;
 
-        Some(AsmContractMethod { name, signature, slot })
+        Some(AsmContractMethod {
+            name,
+            signature,
+            slot,
+        })
     }
 
     fn parse_method_sig(&mut self) -> Option<AsmMethodSig> {
@@ -464,7 +502,10 @@ impl<'a> Parser<'a> {
             AsmTypeRef::Void
         };
 
-        Some(AsmMethodSig { params, return_type })
+        Some(AsmMethodSig {
+            params,
+            return_type,
+        })
     }
 
     fn parse_impl(&mut self) -> Option<AsmImpl> {
@@ -476,7 +517,11 @@ impl<'a> Parser<'a> {
 
         if !self.expect_token(&TokenKind::OpenBrace) {
             self.synchronize();
-            return Some(AsmImpl { type_name, contract_name, methods: Vec::new() });
+            return Some(AsmImpl {
+                type_name,
+                contract_name,
+                methods: Vec::new(),
+            });
         }
 
         let mut methods = Vec::new();
@@ -494,7 +539,11 @@ impl<'a> Parser<'a> {
                 }
             } else if is_directive {
                 let tok = self.peek();
-                let d = if let TokenKind::Directive(d) = self.peek_kind() { d.clone() } else { String::new() };
+                let d = if let TokenKind::Directive(d) = self.peek_kind() {
+                    d.clone()
+                } else {
+                    String::new()
+                };
                 self.errors.push(AssembleError::new(
                     format!("expected '.method' inside .impl, got '.{}'", d),
                     tok.line,
@@ -513,7 +562,11 @@ impl<'a> Parser<'a> {
         }
 
         self.expect_token(&TokenKind::CloseBrace);
-        Some(AsmImpl { type_name, contract_name, methods })
+        Some(AsmImpl {
+            type_name,
+            contract_name,
+            methods,
+        })
     }
 
     fn parse_method(&mut self) -> Option<AsmMethod> {
@@ -636,7 +689,10 @@ impl<'a> Parser<'a> {
             // If this identifier is a type keyword, it's probably a type-only param
             if is_type_keyword(&id_clone) {
                 let type_ref = self.parse_type_ref()?;
-                return Some(AsmParam { name: String::new(), type_ref });
+                return Some(AsmParam {
+                    name: String::new(),
+                    type_ref,
+                });
             }
             // Otherwise peek ahead: if followed by another type-like token, it's a named param
             if self.pos + 1 < self.tokens.len() {
@@ -646,18 +702,27 @@ impl<'a> Parser<'a> {
                         // Named param
                         self.pos += 1;
                         let type_ref = self.parse_type_ref()?;
-                        return Some(AsmParam { name: id_clone, type_ref });
+                        return Some(AsmParam {
+                            name: id_clone,
+                            type_ref,
+                        });
                     }
                     _ => {}
                 }
             }
             // Just a type
             let type_ref = self.parse_type_ref()?;
-            return Some(AsmParam { name: String::new(), type_ref });
+            return Some(AsmParam {
+                name: String::new(),
+                type_ref,
+            });
         }
 
         let type_ref = self.parse_type_ref()?;
-        Some(AsmParam { name: String::new(), type_ref })
+        Some(AsmParam {
+            name: String::new(),
+            type_ref,
+        })
     }
 
     fn parse_reg_decl(&mut self) -> Option<AsmRegDecl> {
@@ -670,7 +735,11 @@ impl<'a> Parser<'a> {
             n
         } else {
             let tok = self.peek();
-            self.errors.push(AssembleError::new("expected register (e.g., r0)", tok.line, tok.col));
+            self.errors.push(AssembleError::new(
+                "expected register (e.g., r0)",
+                tok.line,
+                tok.col,
+            ));
             return None;
         };
 
@@ -710,14 +779,22 @@ impl<'a> Parser<'a> {
                 operands.push(op);
             } else {
                 // Failed to parse operand, skip to next line
-                while !matches!(self.peek_kind(), TokenKind::Newline | TokenKind::Eof | TokenKind::CloseBrace) {
+                while !matches!(
+                    self.peek_kind(),
+                    TokenKind::Newline | TokenKind::Eof | TokenKind::CloseBrace
+                ) {
                     self.pos += 1;
                 }
                 break;
             }
         }
 
-        Some(AsmInstruction { mnemonic, operands, line, col })
+        Some(AsmInstruction {
+            mnemonic,
+            operands,
+            line,
+            col,
+        })
     }
 
     fn parse_operand(&mut self) -> Option<AsmOperand> {
@@ -751,7 +828,8 @@ impl<'a> Parser<'a> {
                 let s_clone = s.clone();
 
                 // Check for token(...) syntax
-                if s_clone == "token" && self.pos + 1 < self.tokens.len()
+                if s_clone == "token"
+                    && self.pos + 1 < self.tokens.len()
                     && matches!(self.tokens[self.pos + 1].kind, TokenKind::OpenParen)
                 {
                     self.pos += 1; // consume "token"
@@ -797,7 +875,11 @@ impl<'a> Parser<'a> {
                     s
                 } else {
                     let tok = self.peek();
-                    self.errors.push(AssembleError::new("expected module name", tok.line, tok.col));
+                    self.errors.push(AssembleError::new(
+                        "expected module name",
+                        tok.line,
+                        tok.col,
+                    ));
                     return None;
                 };
                 self.expect_token(&TokenKind::CloseBracket);
@@ -808,7 +890,8 @@ impl<'a> Parser<'a> {
                     s
                 } else {
                     let tok = self.peek();
-                    self.errors.push(AssembleError::new("expected type name", tok.line, tok.col));
+                    self.errors
+                        .push(AssembleError::new("expected type name", tok.line, tok.col));
                     return None;
                 };
 
@@ -820,7 +903,11 @@ impl<'a> Parser<'a> {
                     s
                 } else {
                     let tok = self.peek();
-                    self.errors.push(AssembleError::new("expected method name", tok.line, tok.col));
+                    self.errors.push(AssembleError::new(
+                        "expected method name",
+                        tok.line,
+                        tok.col,
+                    ));
                     return None;
                 };
 
@@ -885,7 +972,9 @@ impl<'a> Parser<'a> {
                     // Array<T> is a special case
                     let lower = s_clone.to_lowercase();
                     if lower == "array" && args.len() == 1 {
-                        return Some(AsmTypeRef::Array(Box::new(args.into_iter().next().unwrap())));
+                        return Some(AsmTypeRef::Array(Box::new(
+                            args.into_iter().next().unwrap(),
+                        )));
                     }
                     return Some(AsmTypeRef::Generic(s_clone, args));
                 }
@@ -903,7 +992,11 @@ impl<'a> Parser<'a> {
             }
             _ => {
                 let tok = self.peek();
-                self.errors.push(AssembleError::new("expected type reference", tok.line, tok.col));
+                self.errors.push(AssembleError::new(
+                    "expected type reference",
+                    tok.line,
+                    tok.col,
+                ));
                 None
             }
         }
@@ -925,7 +1018,11 @@ impl<'a> Parser<'a> {
                 self.pos += 1;
             } else {
                 let tok = self.peek();
-                self.errors.push(AssembleError::new("expected byte value in blob literal", tok.line, tok.col));
+                self.errors.push(AssembleError::new(
+                    "expected byte value in blob literal",
+                    tok.line,
+                    tok.col,
+                ));
                 break;
             }
         }
@@ -944,9 +1041,18 @@ impl<'a> Parser<'a> {
 
             if let Some(word) = flag_word {
                 match word.as_str() {
-                    "pub" => { flags |= 0x0001; self.pos += 1; }
-                    "mut" => { flags |= 0x0002; self.pos += 1; }
-                    "static" => { flags |= 0x0004; self.pos += 1; }
+                    "pub" => {
+                        flags |= 0x0001;
+                        self.pos += 1;
+                    }
+                    "mut" => {
+                        flags |= 0x0002;
+                        self.pos += 1;
+                    }
+                    "static" => {
+                        flags |= 0x0004;
+                        self.pos += 1;
+                    }
                     _ => break,
                 }
             } else if let TokenKind::IntLit(v) = self.peek_kind() {
@@ -973,7 +1079,12 @@ impl<'a> Parser<'a> {
         let name = self.expect_string()?;
         let type_ref = self.parse_type_ref()?;
         let flags = self.parse_flags();
-        Some(AsmGlobal { name, type_ref, flags, init_value: None })
+        Some(AsmGlobal {
+            name,
+            type_ref,
+            flags,
+            init_value: None,
+        })
     }
 
     fn parse_extern_fn(&mut self) -> Option<AsmExternFn> {
@@ -982,7 +1093,12 @@ impl<'a> Parser<'a> {
         let signature = self.parse_method_sig()?;
         let import_name = self.expect_string()?;
         let flags = self.parse_flags();
-        Some(AsmExternFn { name, signature, import_name, flags })
+        Some(AsmExternFn {
+            name,
+            signature,
+            import_name,
+            flags,
+        })
     }
 
     fn parse_export(&mut self) -> Option<AsmExport> {
@@ -996,7 +1112,10 @@ impl<'a> Parser<'a> {
             _ => {
                 let tok = &self.tokens[self.pos - 1];
                 self.errors.push(AssembleError::new(
-                    format!("unknown export kind '{}', expected method|type|global", kind_str),
+                    format!(
+                        "unknown export kind '{}', expected method|type|global",
+                        kind_str
+                    ),
                     tok.line,
                     tok.col,
                 ));
@@ -1004,14 +1123,21 @@ impl<'a> Parser<'a> {
             }
         };
         let item_token = self.expect_int()? as u32;
-        Some(AsmExport { name, item_kind, item_token })
+        Some(AsmExport {
+            name,
+            item_kind,
+            item_token,
+        })
     }
 
     fn parse_component_slot(&mut self) -> Option<AsmComponentSlot> {
         self.pos += 1; // consume .component_slot
         let owner_entity = self.expect_int()? as u32;
         let component_type = self.expect_int()? as u32;
-        Some(AsmComponentSlot { owner_entity, component_type })
+        Some(AsmComponentSlot {
+            owner_entity,
+            component_type,
+        })
     }
 
     fn parse_locale(&mut self) -> Option<AsmLocaleDef> {
@@ -1019,7 +1145,11 @@ impl<'a> Parser<'a> {
         let dlg_method = self.expect_int()? as u32;
         let locale = self.expect_string()?;
         let loc_method = self.expect_int()? as u32;
-        Some(AsmLocaleDef { dlg_method, locale, loc_method })
+        Some(AsmLocaleDef {
+            dlg_method,
+            locale,
+            loc_method,
+        })
     }
 
     fn parse_attribute(&mut self) -> Option<AsmAttributeDef> {
@@ -1027,7 +1157,11 @@ impl<'a> Parser<'a> {
         let owner = self.expect_int()? as u32;
         let owner_kind = self.expect_int()? as u8;
         let name = self.expect_string()?;
-        Some(AsmAttributeDef { owner, owner_kind, name })
+        Some(AsmAttributeDef {
+            owner,
+            owner_kind,
+            name,
+        })
     }
 }
 
@@ -1044,7 +1178,10 @@ pub fn parse(tokens: &[Token]) -> Result<AsmModule, Vec<AssembleError>> {
 
 /// Check if an identifier is a primitive type keyword.
 fn is_type_keyword(s: &str) -> bool {
-    matches!(s.to_lowercase().as_str(), "int" | "float" | "bool" | "string" | "void")
+    matches!(
+        s.to_lowercase().as_str(),
+        "int" | "float" | "bool" | "string" | "void"
+    )
 }
 
 /// Convert a type keyword to the corresponding AsmTypeRef.

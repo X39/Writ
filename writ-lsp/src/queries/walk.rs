@@ -145,25 +145,22 @@ fn find_in_expr(expr: &TypedExpr, offset: usize) -> Option<&TypedExpr> {
 /// Search the children of `expr` for a narrower containing expression.
 fn find_in_expr_children(expr: &TypedExpr, offset: usize) -> Option<&TypedExpr> {
     match expr {
-        TypedExpr::Call { callee, args, .. } => {
-            find_in_expr(callee, offset)
-                .or_else(|| args.iter().find_map(|a| find_in_expr(a, offset)))
-        }
+        TypedExpr::Call { callee, args, .. } => find_in_expr(callee, offset)
+            .or_else(|| args.iter().find_map(|a| find_in_expr(a, offset))),
         TypedExpr::Field { receiver, .. } | TypedExpr::ComponentAccess { receiver, .. } => {
             find_in_expr(receiver, offset)
         }
-        TypedExpr::Index { receiver, index, .. } => {
-            find_in_expr(receiver, offset).or_else(|| find_in_expr(index, offset))
-        }
+        TypedExpr::Index {
+            receiver, index, ..
+        } => find_in_expr(receiver, offset).or_else(|| find_in_expr(index, offset)),
         TypedExpr::Binary { left, right, .. } => {
             find_in_expr(left, offset).or_else(|| find_in_expr(right, offset))
         }
         TypedExpr::UnaryPrefix { expr: inner, .. } => find_in_expr(inner, offset),
-        TypedExpr::Match { scrutinee, arms, .. } => {
-            find_in_expr(scrutinee, offset).or_else(|| {
-                arms.iter().find_map(|arm| find_in_expr(&arm.body, offset))
-            })
-        }
+        TypedExpr::Match {
+            scrutinee, arms, ..
+        } => find_in_expr(scrutinee, offset)
+            .or_else(|| arms.iter().find_map(|arm| find_in_expr(&arm.body, offset))),
         TypedExpr::If {
             condition,
             then_branch,
@@ -172,34 +169,26 @@ fn find_in_expr_children(expr: &TypedExpr, offset: usize) -> Option<&TypedExpr> 
         } => find_in_expr(condition, offset)
             .or_else(|| find_in_expr(then_branch, offset))
             .or_else(|| else_branch.as_ref().and_then(|e| find_in_expr(e, offset))),
-        TypedExpr::Block { stmts, tail, .. } => {
-            find_in_stmts(stmts, offset)
-                .or_else(|| tail.as_ref().and_then(|t| find_in_expr(t, offset)))
-        }
+        TypedExpr::Block { stmts, tail, .. } => find_in_stmts(stmts, offset)
+            .or_else(|| tail.as_ref().and_then(|t| find_in_expr(t, offset))),
         TypedExpr::Lambda { body, .. } => find_in_expr(body, offset),
         TypedExpr::Assign { target, value, .. } => {
             find_in_expr(target, offset).or_else(|| find_in_expr(value, offset))
         }
-        TypedExpr::New { fields, .. } => {
-            fields.iter().find_map(|(_, v)| find_in_expr(v, offset))
-        }
+        TypedExpr::New { fields, .. } => fields.iter().find_map(|(_, v)| find_in_expr(v, offset)),
         TypedExpr::ArrayLit { elements, .. } => {
             elements.iter().find_map(|e| find_in_expr(e, offset))
         }
-        TypedExpr::Range { start, end, .. } => {
-            start
-                .as_ref()
-                .and_then(|s| find_in_expr(s, offset))
-                .or_else(|| end.as_ref().and_then(|e| find_in_expr(e, offset)))
-        }
+        TypedExpr::Range { start, end, .. } => start
+            .as_ref()
+            .and_then(|s| find_in_expr(s, offset))
+            .or_else(|| end.as_ref().and_then(|e| find_in_expr(e, offset))),
         TypedExpr::Spawn { expr: inner, .. }
         | TypedExpr::SpawnDetached { expr: inner, .. }
         | TypedExpr::Join { expr: inner, .. }
         | TypedExpr::Cancel { expr: inner, .. }
         | TypedExpr::Defer { expr: inner, .. } => find_in_expr(inner, offset),
-        TypedExpr::Return { value, .. } => {
-            value.as_ref().and_then(|v| find_in_expr(v, offset))
-        }
+        TypedExpr::Return { value, .. } => value.as_ref().and_then(|v| find_in_expr(v, offset)),
         // Leaf nodes: Literal, Var, SelfRef, Path, Error — no children
         _ => None,
     }
@@ -218,9 +207,9 @@ fn find_in_stmt(stmt: &TypedStmt, offset: usize) -> Option<&TypedExpr> {
         TypedStmt::For { iterable, body, .. } => {
             find_in_expr(iterable, offset).or_else(|| find_in_stmts(body, offset))
         }
-        TypedStmt::While { condition, body, .. } => {
-            find_in_expr(condition, offset).or_else(|| find_in_stmts(body, offset))
-        }
+        TypedStmt::While {
+            condition, body, ..
+        } => find_in_expr(condition, offset).or_else(|| find_in_stmts(body, offset)),
         TypedStmt::Atomic { body, .. } => find_in_stmts(body, offset),
         TypedStmt::Return { value, .. } => value.as_ref().and_then(|v| find_in_expr(v, offset)),
         TypedStmt::Transition { call, .. } => find_in_expr(call, offset),
@@ -284,16 +273,17 @@ mod tests {
         let (ast, lower_errs) = writ_compiler::lower(cst);
         assert!(lower_errs.is_empty(), "lower errors: {:?}", lower_errs);
 
-        let (resolved, resolve_diags) = writ_compiler::resolve::resolve(
-            &[(file_id, &ast)],
-            &[(file_id, "test.writ")],
-            &[],
-        );
+        let (resolved, resolve_diags) =
+            writ_compiler::resolve::resolve(&[(file_id, &ast)], &[(file_id, "test.writ")], &[]);
         let resolve_errors: Vec<_> = resolve_diags
             .iter()
             .filter(|d| d.severity == writ_diagnostics::Severity::Error)
             .collect();
-        assert!(resolve_errors.is_empty(), "resolve errors: {:?}", resolve_errors);
+        assert!(
+            resolve_errors.is_empty(),
+            "resolve errors: {:?}",
+            resolve_errors
+        );
 
         let (typed_ast, _interner, _type_env, type_diags) =
             writ_compiler::check::typecheck(resolved, &[(file_id, &ast)], &[]);
@@ -311,14 +301,20 @@ mod tests {
     #[test]
     fn test_position_to_byte_offset_start() {
         let src = "hello world";
-        let pos = Position { line: 0, character: 0 };
+        let pos = Position {
+            line: 0,
+            character: 0,
+        };
         assert_eq!(position_to_byte_offset(src, pos), Some(0));
     }
 
     #[test]
     fn test_position_to_byte_offset_second_line() {
         let src = "hello\nworld";
-        let pos = Position { line: 1, character: 0 };
+        let pos = Position {
+            line: 1,
+            character: 0,
+        };
         // "hello\n" is 6 bytes; the 'w' of "world" is at byte 6
         assert_eq!(position_to_byte_offset(src, pos), Some(6));
     }
@@ -328,7 +324,10 @@ mod tests {
         // U+1F600 (GRINNING FACE) encodes as 4 bytes in UTF-8 but 2 UTF-16 code units.
         let src = "\u{1F600}x";
         // character=2 should land on 'x', which starts at byte 4
-        let pos = Position { line: 0, character: 2 };
+        let pos = Position {
+            line: 0,
+            character: 2,
+        };
         assert_eq!(position_to_byte_offset(src, pos), Some(4));
     }
 
@@ -336,7 +335,10 @@ mod tests {
     fn test_position_to_byte_offset_out_of_bounds() {
         let src = "hi";
         // Line 1 doesn't exist
-        let pos = Position { line: 1, character: 0 };
+        let pos = Position {
+            line: 1,
+            character: 0,
+        };
         assert_eq!(position_to_byte_offset(src, pos), None);
     }
 
@@ -378,7 +380,10 @@ mod tests {
         // Find the literal '42' inside the impl method body
         let lit_offset = src.find("42").unwrap();
         let expr = expr_at_offset(&ast, lit_offset, FileId(0));
-        assert!(expr.is_some(), "expected to find expression at '42' in impl method");
+        assert!(
+            expr.is_some(),
+            "expected to find expression at '42' in impl method"
+        );
     }
 
     #[test]
@@ -393,7 +398,11 @@ mod tests {
         // The pattern "; p " gives us the semicolon before the tail "p"
         let p_offset = src.rfind("; p }").unwrap() + 2; // byte offset of 'p' (skip "; ")
         let expr = expr_at_offset(&ast, p_offset, FileId(0));
-        assert!(expr.is_some(), "should find p expression at offset {}", p_offset);
+        assert!(
+            expr.is_some(),
+            "should find p expression at offset {}",
+            p_offset
+        );
         // Verify it's the Var("p") node
         match expr.unwrap() {
             TypedExpr::Var { name, .. } => assert_eq!(name.as_str(), "p"),

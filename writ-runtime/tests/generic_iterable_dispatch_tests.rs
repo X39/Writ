@@ -1,7 +1,5 @@
 use writ_module::module::MethodBody;
-use writ_module::signature::{
-    TypeSignature, encode_method_signature, encode_type_signature,
-};
+use writ_module::signature::{TypeSignature, encode_method_signature, encode_type_signature};
 use writ_module::tables::TypeDefKind;
 use writ_module::{Instruction, MetadataToken, ModuleBuilder};
 use writ_runtime::{ExecutionLimit, RuntimeBuilder, TaskState, Value};

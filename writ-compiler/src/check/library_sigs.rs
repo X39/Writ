@@ -113,20 +113,18 @@ fn type_signature_to_ty(
                 ("writ" | "", "Result", [ok, err]) => interner.result(*ok, *err),
                 ("writ" | "", "TaskHandle", [inner]) => interner.task_handle(*inner),
                 ("writ" | "", "Type", [inner]) => interner.reflection_type(*inner),
-                _ => {
-                    lookup_constructor(lib_type_name_map, namespace, name)
-                        .copied()
-                        .map(|named| {
-                            let base = nominal_ty(named, interner);
-                            interner.generic_instance(
-                                base,
-                                namespace.clone(),
-                                name.clone(),
-                                decoded_args,
-                            )
-                        })
-                        .unwrap_or_else(|| interner.error())
-                }
+                _ => lookup_constructor(lib_type_name_map, namespace, name)
+                    .copied()
+                    .map(|named| {
+                        let base = nominal_ty(named, interner);
+                        interner.generic_instance(
+                            base,
+                            namespace.clone(),
+                            name.clone(),
+                            decoded_args,
+                        )
+                    })
+                    .unwrap_or_else(|| interner.error()),
             }
         }
         TypeSignature::GenericParam(ordinal) => {
@@ -214,10 +212,8 @@ mod tests {
         let mut module = two_method_module();
         let signature = module.method_defs[0].signature as usize;
         module.blob_heap[signature + 4 + 2] = 0xff;
-        let blob = writ_module::heap::read_blob(
-            &module.blob_heap,
-            module.method_defs[0].signature,
-        ).unwrap();
+        let blob = writ_module::heap::read_blob(&module.blob_heap, module.method_defs[0].signature)
+            .unwrap();
         assert!(writ_module::signature::decode_method_signature(blob).is_err());
 
         let ranges = method_param_ranges(&module);
@@ -334,10 +330,9 @@ fn impl_generic_param_count(
 fn max_generic_param_ordinal(signature: &TypeSignature) -> Option<u16> {
     match signature {
         TypeSignature::GenericParam(ordinal) => Some(*ordinal),
-        TypeSignature::Generic { args, .. } => args
-            .iter()
-            .filter_map(max_generic_param_ordinal)
-            .max(),
+        TypeSignature::Generic { args, .. } => {
+            args.iter().filter_map(max_generic_param_ordinal).max()
+        }
         TypeSignature::Array(element) => max_generic_param_ordinal(element),
         TypeSignature::Function { params, ret } => params
             .iter()
@@ -392,13 +387,18 @@ fn build_fn_sig_from_binary(
     lib_file_id: FileId,
     method_generics: Vec<String>,
 ) -> FnSig {
-    let synthetic_span = SimpleSpan { start: 0, end: 0, context: () };
+    let synthetic_span = SimpleSpan {
+        start: 0,
+        end: 0,
+        context: (),
+    };
 
     // Decode the method signature blob
-    let (param_tys, ret_ty) = match writ_module::heap::read_blob(&module.blob_heap, method.signature) {
-        Ok(blob) => decode_method_sig(blob, lib_type_token_map, lib_type_name_map, interner),
-        Err(_) => (Vec::new(), interner.void()),
-    };
+    let (param_tys, ret_ty) =
+        match writ_module::heap::read_blob(&module.blob_heap, method.signature) {
+            Ok(blob) => decode_method_sig(blob, lib_type_token_map, lib_type_name_map, interner),
+            Err(_) => (Vec::new(), interner.void()),
+        };
 
     // Build (name, ty) pairs from ParamDef rows
     let mut params: Vec<(String, Ty)> = Vec::new();
@@ -519,7 +519,11 @@ pub fn inject_library_sigs(
     type_env: &mut TypeEnv,
     interner: &mut TyInterner,
 ) {
-    let synthetic_span = SimpleSpan { start: 0, end: 0, context: () };
+    let synthetic_span = SimpleSpan {
+        start: 0,
+        end: 0,
+        context: (),
+    };
 
     for (lib_index, module) in library_modules.iter().enumerate() {
         let lib_file_id = FileId(u32::MAX - 1 - lib_index as u32);
@@ -548,8 +552,7 @@ pub fn inject_library_sigs(
             };
 
             if let Some(def_id) = def_map.get(&fqn) {
-                let kind = TypeDefKind::from_u8(type_def.kind)
-                    .unwrap_or(TypeDefKind::Struct);
+                let kind = TypeDefKind::from_u8(type_def.kind).unwrap_or(TypeDefKind::Struct);
                 let named = LibraryType::from_type_def(def_id, kind);
                 let token = writ_module::MetadataToken::new(2, row_1based);
                 lib_type_token_map.insert(token.0, named);
@@ -588,9 +591,10 @@ pub fn inject_library_sigs(
             let name = writ_module::heap::read_string(&module.string_heap, contract_def.name)
                 .unwrap_or("")
                 .to_string();
-            let namespace = writ_module::heap::read_string(&module.string_heap, contract_def.namespace)
-                .unwrap_or("")
-                .to_string();
+            let namespace =
+                writ_module::heap::read_string(&module.string_heap, contract_def.namespace)
+                    .unwrap_or("")
+                    .to_string();
 
             if name.is_empty() {
                 continue;
@@ -631,7 +635,9 @@ pub fn inject_library_sigs(
                 let param_name = writ_module::heap::read_string(&module.string_heap, param.name)
                     .unwrap_or("")
                     .to_string();
-                map.entry(method_idx).or_default().push((param.ordinal, param_name));
+                map.entry(method_idx)
+                    .or_default()
+                    .push((param.ordinal, param_name));
             }
             map.into_iter()
                 .map(|(k, mut v)| {
@@ -654,7 +660,10 @@ pub fn inject_library_sigs(
             let kind = TypeDefKind::from_u8(type_def.kind).unwrap_or(TypeDefKind::Struct);
 
             // Only Struct and Class have fields (Entity has properties but that's separate)
-            if !matches!(kind, TypeDefKind::Struct | TypeDefKind::Class | TypeDefKind::Entity) {
+            if !matches!(
+                kind,
+                TypeDefKind::Struct | TypeDefKind::Class | TypeDefKind::Entity
+            ) {
                 continue;
             }
 
@@ -665,7 +674,9 @@ pub fn inject_library_sigs(
             };
 
             // Already has fields from user AST? Skip (library overrides user is wrong)
-            if type_env.struct_fields.contains_key(&def_id) || type_env.entity_fields.contains_key(&def_id) {
+            if type_env.struct_fields.contains_key(&def_id)
+                || type_env.entity_fields.contains_key(&def_id)
+            {
                 continue;
             }
 
@@ -687,24 +698,27 @@ pub fn inject_library_sigs(
             };
 
             let mut fields: Vec<(String, Ty, SimpleSpan)> = Vec::new();
-            for field_def in &module.field_defs[field_start..field_end.min(module.field_defs.len())] {
-                let field_name = writ_module::heap::read_string(&module.string_heap, field_def.name)
-                    .unwrap_or("_")
-                    .to_string();
+            for field_def in &module.field_defs[field_start..field_end.min(module.field_defs.len())]
+            {
+                let field_name =
+                    writ_module::heap::read_string(&module.string_heap, field_def.name)
+                        .unwrap_or("_")
+                        .to_string();
 
-                let field_ty = match writ_module::heap::read_blob(&module.blob_heap, field_def.type_sig) {
-                    Ok(blob) => {
-                        let mut cursor = 0;
-                        decode_type_from_blob(
-                            blob,
-                            &mut cursor,
-                            &lib_type_token_map,
-                            &lib_type_name_map,
-                            interner,
-                        )
-                    }
-                    Err(_) => interner.error(),
-                };
+                let field_ty =
+                    match writ_module::heap::read_blob(&module.blob_heap, field_def.type_sig) {
+                        Ok(blob) => {
+                            let mut cursor = 0;
+                            decode_type_from_blob(
+                                blob,
+                                &mut cursor,
+                                &lib_type_token_map,
+                                &lib_type_name_map,
+                                interner,
+                            )
+                        }
+                        Err(_) => interner.error(),
+                    };
 
                 fields.push((field_name, field_ty, synthetic_span));
             }
@@ -736,15 +750,17 @@ pub fn inject_library_sigs(
                 _ => continue,
             };
 
-            let contract_ty = (!impl_def.contract.is_null()).then(|| {
-                decode_impl_type_token(
-                    impl_def.contract,
-                    module,
-                    &lib_type_token_map,
-                    &lib_type_name_map,
-                    interner,
-                )
-            }).flatten();
+            let contract_ty = (!impl_def.contract.is_null())
+                .then(|| {
+                    decode_impl_type_token(
+                        impl_def.contract,
+                        module,
+                        &lib_type_token_map,
+                        &lib_type_name_map,
+                        interner,
+                    )
+                })
+                .flatten();
             let contract_def_id = contract_ty.and_then(|ty| match interner.kind(ty) {
                 TyKind::Contract(def_id) => Some(*def_id),
                 _ => None,
@@ -818,7 +834,8 @@ pub fn inject_library_sigs(
                 methods,
             };
 
-            type_env.impl_index
+            type_env
+                .impl_index
                 .entry(type_def_id)
                 .or_default()
                 .push(impl_entry);
@@ -834,7 +851,9 @@ pub fn inject_library_sigs(
             let method_name = writ_module::heap::read_string(&module.string_heap, method.name)
                 .unwrap_or("")
                 .to_string();
-            if method_name.is_empty() { continue; }
+            if method_name.is_empty() {
+                continue;
+            }
 
             // Resolve this exact MethodDef row. A name-only lookup would bind
             // every overload to the first declaration and leave later
@@ -850,7 +869,9 @@ pub fn inject_library_sigs(
             };
 
             // Skip if we already have a sig (user code shadows or multiple loads)
-            if type_env.fn_sigs.contains_key(&def_id) { continue; }
+            if type_env.fn_sigs.contains_key(&def_id) {
+                continue;
+            }
 
             let (param_start, param_end) = if method_idx < method_param_ranges.len() {
                 method_param_ranges[method_idx]
@@ -913,15 +934,16 @@ pub fn inject_library_sigs(
                 let cm_name = writ_module::heap::read_string(&module.string_heap, cm.name)
                     .unwrap_or("_")
                     .to_string();
-                let (param_tys, ret_ty) = match writ_module::heap::read_blob(&module.blob_heap, cm.signature) {
-                    Ok(blob) => decode_method_sig(
-                        blob,
-                        &lib_type_token_map,
-                        &lib_type_name_map,
-                        interner,
-                    ),
-                    Err(_) => (Vec::new(), interner.void()),
-                };
+                let (param_tys, ret_ty) =
+                    match writ_module::heap::read_blob(&module.blob_heap, cm.signature) {
+                        Ok(blob) => decode_method_sig(
+                            blob,
+                            &lib_type_token_map,
+                            &lib_type_name_map,
+                            interner,
+                        ),
+                        Err(_) => (Vec::new(), interner.void()),
+                    };
                 let params: Vec<(String, Ty)> = param_tys
                     .into_iter()
                     .enumerate()

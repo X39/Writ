@@ -1,22 +1,20 @@
 //! Declaration type checking.
 
-use crate::ast::decl::{AstDecl, AstFnDecl, AstFnParam, AstImplDecl, AstImplMember, AstConstDecl, AstGlobalDecl};
 use crate::ast::Ast;
+use crate::ast::decl::{
+    AstConstDecl, AstDecl, AstFnDecl, AstFnParam, AstGlobalDecl, AstImplDecl, AstImplMember,
+};
 use crate::resolve::def_map::DefId;
 use crate::resolve::ir::ResolvedDecl;
 
-use super::check_expr::{check_block_stmts, check_expr, CheckCtx};
+use super::check_expr::{CheckCtx, check_block_stmts, check_expr};
 use super::env::Mutability;
 use super::ir::{TypedDecl, TypedExpr};
-use writ_diagnostics::{Diagnostic, FileId};
 use writ_diagnostics::code;
+use writ_diagnostics::{Diagnostic, FileId};
 
 /// Type-check a resolved declaration, returning a TypedDecl.
-pub fn check_decl(
-    ctx: &mut CheckCtx,
-    decl: &ResolvedDecl,
-    asts: &[(FileId, &Ast)],
-) -> TypedDecl {
+pub fn check_decl(ctx: &mut CheckCtx, decl: &ResolvedDecl, asts: &[(FileId, &Ast)]) -> TypedDecl {
     match decl {
         ResolvedDecl::Fn { def_id } => check_fn_decl(ctx, *def_id, asts),
         ResolvedDecl::Struct { def_id } => TypedDecl::Struct { def_id: *def_id },
@@ -56,7 +54,10 @@ fn check_fn_decl(ctx: &mut CheckCtx, def_id: DefId, asts: &[(FileId, &Ast)]) -> 
 
     // Get fn signature from TypeEnv
     let sig = ctx.type_env.fn_sigs.get(&def_id).cloned();
-    let ret_ty = sig.as_ref().map(|s| s.ret).unwrap_or_else(|| ctx.interner.void());
+    let ret_ty = sig
+        .as_ref()
+        .map(|s| s.ret)
+        .unwrap_or_else(|| ctx.interner.void());
 
     // Set up context for checking the body
     let old_ret = ctx.current_fn_ret;
@@ -73,12 +74,8 @@ fn check_fn_decl(ctx: &mut CheckCtx, def_id: DefId, asts: &[(FileId, &Ast)]) -> 
     // Define parameters in local env
     if let Some(ref sig) = sig {
         for (param_name, param_ty) in &sig.params {
-            ctx.local_env.define(
-                param_name.clone(),
-                *param_ty,
-                Mutability::Immutable,
-                span,
-            );
+            ctx.local_env
+                .define(param_name.clone(), *param_ty, Mutability::Immutable, span);
         }
     }
 
@@ -94,14 +91,22 @@ fn check_fn_decl(ctx: &mut CheckCtx, def_id: DefId, asts: &[(FileId, &Ast)]) -> 
     ctx.current_generics = old_generics;
 
     // Collect param name spans for LSP hover support
-    let param_name_spans: Vec<chumsky::span::SimpleSpan> = fn_decl.params.iter().map(|p| {
-        match p {
+    let param_name_spans: Vec<chumsky::span::SimpleSpan> = fn_decl
+        .params
+        .iter()
+        .map(|p| match p {
             AstFnParam::Regular(param) => param.name_span,
-            AstFnParam::SelfParam { span: self_span, .. } => *self_span,
-        }
-    }).collect();
+            AstFnParam::SelfParam {
+                span: self_span, ..
+            } => *self_span,
+        })
+        .collect();
 
-    TypedDecl::Fn { def_id, body, param_name_spans }
+    TypedDecl::Fn {
+        def_id,
+        body,
+        param_name_spans,
+    }
 }
 
 fn check_impl_decl(ctx: &mut CheckCtx, def_id: DefId, asts: &[(FileId, &Ast)]) -> TypedDecl {
@@ -149,10 +154,8 @@ fn check_impl_decl(ctx: &mut CheckCtx, def_id: DefId, asts: &[(FileId, &Ast)]) -
             ctx.current_generics = impl_generics.clone();
             let first_method_ordinal = entry.generics.len() as u32;
             for (index, generic) in fn_decl.generics.iter().enumerate() {
-                ctx.current_generics.insert(
-                    generic.name.clone(),
-                    first_method_ordinal + index as u32,
-                );
+                ctx.current_generics
+                    .insert(generic.name.clone(), first_method_ordinal + index as u32);
             }
 
             // Find the method signature from impl_index
@@ -165,28 +168,25 @@ fn check_impl_decl(ctx: &mut CheckCtx, def_id: DefId, asts: &[(FileId, &Ast)]) -
             if let Some(self_ty) = self_type {
                 for param in &fn_decl.params {
                     if let AstFnParam::SelfParam { mutable, .. } = param {
-                        let self_mut = if *mutable { Mutability::Mutable } else { Mutability::Immutable };
-                        ctx.local_env.define(
-                            "self".to_string(),
-                            self_ty,
-                            self_mut,
-                            span,
-                        );
+                        let self_mut = if *mutable {
+                            Mutability::Mutable
+                        } else {
+                            Mutability::Immutable
+                        };
+                        ctx.local_env
+                            .define("self".to_string(), self_ty, self_mut, span);
                     }
                 }
             }
 
             // Define regular params - clone to avoid borrow conflict
-            let params: Vec<(String, super::ty::Ty)> = find_impl_method_sig(ctx, def_id, &fn_decl.name)
-                .map(|sig| sig.params.clone())
-                .unwrap_or_default();
+            let params: Vec<(String, super::ty::Ty)> =
+                find_impl_method_sig(ctx, def_id, &fn_decl.name)
+                    .map(|sig| sig.params.clone())
+                    .unwrap_or_default();
             for (param_name, param_ty) in &params {
-                ctx.local_env.define(
-                    param_name.clone(),
-                    *param_ty,
-                    Mutability::Immutable,
-                    span,
-                );
+                ctx.local_env
+                    .define(param_name.clone(), *param_ty, Mutability::Immutable, span);
             }
 
             let body = check_block_stmts(ctx, &fn_decl.body, span);
@@ -319,9 +319,11 @@ fn find_fn_ast<'a>(
         }
         for decl in &ast.items {
             if let AstDecl::Fn(fn_decl) = decl
-                && fn_decl.name == entry.name && fn_decl.name_span == entry.name_span {
-                    return Some(fn_decl);
-                }
+                && fn_decl.name == entry.name
+                && fn_decl.name_span == entry.name_span
+            {
+                return Some(fn_decl);
+            }
         }
     }
     None
@@ -337,9 +339,10 @@ fn find_impl_ast<'a>(
         }
         for decl in &ast.items {
             if let AstDecl::Impl(impl_decl) = decl
-                && impl_decl.span == entry.span {
-                    return Some(impl_decl);
-                }
+                && impl_decl.span == entry.span
+            {
+                return Some(impl_decl);
+            }
         }
     }
     None
@@ -355,9 +358,11 @@ fn find_const_ast<'a>(
         }
         for decl in &ast.items {
             if let AstDecl::Const(c) = decl
-                && c.name == entry.name && c.name_span == entry.name_span {
-                    return Some(c);
-                }
+                && c.name == entry.name
+                && c.name_span == entry.name_span
+            {
+                return Some(c);
+            }
         }
     }
     None
@@ -373,15 +378,21 @@ fn find_global_ast<'a>(
         }
         for decl in &ast.items {
             if let AstDecl::Global(g) = decl
-                && g.name == entry.name && g.name_span == entry.name_span {
-                    return Some(g);
-                }
+                && g.name == entry.name
+                && g.name_span == entry.name_span
+            {
+                return Some(g);
+            }
         }
     }
     None
 }
 
-fn find_impl_method_ret(ctx: &CheckCtx, impl_def_id: DefId, method_name: &str) -> Option<super::ty::Ty> {
+fn find_impl_method_ret(
+    ctx: &CheckCtx,
+    impl_def_id: DefId,
+    method_name: &str,
+) -> Option<super::ty::Ty> {
     // Look through the impl_index for the impl_def_id
     for impls in ctx.type_env.impl_index.values() {
         for impl_entry in impls {

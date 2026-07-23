@@ -1,7 +1,7 @@
 use writ_module::heap;
 use writ_module::instruction::Instruction;
 use writ_module::module::{MethodBody, Module};
-use writ_module::tables::{TypeDefKind, METHOD_REF_FLAG_HAS_RECEIVER};
+use writ_module::tables::{METHOD_REF_FLAG_HAS_RECEIVER, TypeDefKind};
 use writ_module::{FORMAT_VERSION, MetadataToken, ModuleBuilder};
 
 #[test]
@@ -47,7 +47,12 @@ fn test_builder_with_method_body() {
 
     // Create a method body
     let mut code = Vec::new();
-    Instruction::LoadInt { r_dst: 0, value: 42 }.encode(&mut code).unwrap();
+    Instruction::LoadInt {
+        r_dst: 0,
+        value: 42,
+    }
+    .encode(&mut code)
+    .unwrap();
     Instruction::RetVoid.encode(&mut code).unwrap();
 
     let body = MethodBody {
@@ -105,7 +110,12 @@ fn test_builder_round_trip_through_serialization() {
 
     // Add a method with body
     let mut code = Vec::new();
-    Instruction::LoadInt { r_dst: 0, value: 42 }.encode(&mut code).unwrap();
+    Instruction::LoadInt {
+        r_dst: 0,
+        value: 42,
+    }
+    .encode(&mut code)
+    .unwrap();
     Instruction::RetVoid.encode(&mut code).unwrap();
 
     let body = MethodBody {
@@ -143,7 +153,10 @@ fn method_ref_receiver_abi_is_part_of_identity_and_round_trips() {
         METHOD_REF_FLAG_HAS_RECEIVER,
     );
     let static_method = builder.add_method_ref_with_flags(parent, "identity", &signature, 0);
-    assert_ne!(instance, static_method, "receiver ABI distinguishes MethodRef rows");
+    assert_ne!(
+        instance, static_method,
+        "receiver ABI distinguishes MethodRef rows"
+    );
 
     let bytes = builder.build().to_bytes().unwrap();
     let decoded = Module::from_bytes(&bytes).unwrap();
@@ -217,9 +230,15 @@ fn test_builder_module_name_in_header() {
 fn test_builder_serialization_no_error() {
     let module = ModuleBuilder::new("basic").build();
     let bytes = module.to_bytes();
-    assert!(bytes.is_ok(), "Builder-produced module should serialize without error");
+    assert!(
+        bytes.is_ok(),
+        "Builder-produced module should serialize without error"
+    );
     let bytes = bytes.unwrap();
-    assert!(bytes.len() >= 200, "Output should have at least a 200-byte header");
+    assert!(
+        bytes.len() >= 200,
+        "Output should have at least a 200-byte header"
+    );
     assert_eq!(&bytes[0..4], b"WRIT");
 }
 

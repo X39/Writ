@@ -51,8 +51,14 @@ pub fn run_pipeline(
         // Stage 2: Lower CST -> AST
         let (ast, lower_errs) = writ_compiler::lower(cst);
         if !lower_errs.is_empty() {
-            let diags: Vec<_> = lower_errs.iter().map(|e| e.to_diagnostic(*file_id)).collect();
-            eprint!("{}", writ_diagnostics::render_diagnostics(&diags, &sources_for_render));
+            let diags: Vec<_> = lower_errs
+                .iter()
+                .map(|e| e.to_diagnostic(*file_id))
+                .collect();
+            eprint!(
+                "{}",
+                writ_diagnostics::render_diagnostics(&diags, &sources_for_render)
+            );
             return Err(format!("{} lowering error(s)", lower_errs.len()));
         }
 
@@ -60,38 +66,56 @@ pub fn run_pipeline(
     }
 
     // Build reference slices for stages 3-5
-    let asts_refs: Vec<(writ_diagnostics::FileId, &writ_compiler::Ast)> = per_file_asts
-        .iter()
-        .map(|(fid, ast)| (*fid, ast))
-        .collect();
+    let asts_refs: Vec<(writ_diagnostics::FileId, &writ_compiler::Ast)> =
+        per_file_asts.iter().map(|(fid, ast)| (*fid, ast)).collect();
     let path_refs: Vec<(writ_diagnostics::FileId, &str)> = file_sources
         .iter()
         .map(|(fid, path, _)| (*fid, path.as_str()))
         .collect();
 
     // Stage 3: Name resolution
-    let (resolved, resolve_diags) = writ_compiler::resolve::resolve(&asts_refs, &path_refs, library_modules);
-    let has_resolve_errors = resolve_diags.iter().any(|d| d.severity == writ_diagnostics::Severity::Error);
+    let (resolved, resolve_diags) =
+        writ_compiler::resolve::resolve(&asts_refs, &path_refs, library_modules);
+    let has_resolve_errors = resolve_diags
+        .iter()
+        .any(|d| d.severity == writ_diagnostics::Severity::Error);
     if !resolve_diags.is_empty() {
-        eprint!("{}", writ_diagnostics::render_diagnostics(&resolve_diags, &sources_for_render));
+        eprint!(
+            "{}",
+            writ_diagnostics::render_diagnostics(&resolve_diags, &sources_for_render)
+        );
     }
     if has_resolve_errors {
         return Err("resolution failed".to_string());
     }
-    if deny_warnings && resolve_diags.iter().any(|d| d.severity == writ_diagnostics::Severity::Warning) {
+    if deny_warnings
+        && resolve_diags
+            .iter()
+            .any(|d| d.severity == writ_diagnostics::Severity::Warning)
+    {
         return Err("compilation failed: warnings treated as errors (--deny-warnings)".to_string());
     }
 
     // Stage 4: Type checking
-    let (typed_ast, interner, _type_env, type_diags) = writ_compiler::check::typecheck(resolved, &asts_refs, library_modules);
-    let has_type_errors = type_diags.iter().any(|d| d.severity == writ_diagnostics::Severity::Error);
+    let (typed_ast, interner, _type_env, type_diags) =
+        writ_compiler::check::typecheck(resolved, &asts_refs, library_modules);
+    let has_type_errors = type_diags
+        .iter()
+        .any(|d| d.severity == writ_diagnostics::Severity::Error);
     if !type_diags.is_empty() {
-        eprint!("{}", writ_diagnostics::render_diagnostics(&type_diags, &sources_for_render));
+        eprint!(
+            "{}",
+            writ_diagnostics::render_diagnostics(&type_diags, &sources_for_render)
+        );
     }
     if has_type_errors {
         return Err("type checking failed".to_string());
     }
-    if deny_warnings && type_diags.iter().any(|d| d.severity == writ_diagnostics::Severity::Warning) {
+    if deny_warnings
+        && type_diags
+            .iter()
+            .any(|d| d.severity == writ_diagnostics::Severity::Warning)
+    {
         return Err("compilation failed: warnings treated as errors (--deny-warnings)".to_string());
     }
 
@@ -112,7 +136,10 @@ pub fn run_pipeline(
         library_modules,
     )
     .map_err(|diags| {
-        eprint!("{}", writ_diagnostics::render_diagnostics(&diags, &sources_for_render));
+        eprint!(
+            "{}",
+            writ_diagnostics::render_diagnostics(&diags, &sources_for_render)
+        );
         format!("{} codegen error(s)", diags.len())
     })?;
 
@@ -170,7 +197,9 @@ mod tests {
             "expected deny_warnings=true to fail on W0004 warning, got Ok"
         );
         assert!(
-            result_deny.unwrap_err().contains("warnings treated as errors"),
+            result_deny
+                .unwrap_err()
+                .contains("warnings treated as errors"),
             "expected error message to mention 'warnings treated as errors'"
         );
     }
@@ -182,6 +211,10 @@ mod tests {
         let src = r#"namespace other; pub fn main() -> int { 42 }"#;
         let result = compile(src, false);
         // Should succeed (warning rendered to stderr but not a failure)
-        assert!(result.is_ok(), "expected Ok with deny_warnings=false, got: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "expected Ok with deny_warnings=false, got: {:?}",
+            result.err()
+        );
     }
 }

@@ -226,10 +226,7 @@ fn call_virt_rejects_callee_register_capacity_overflow() {
                 r_dst: 0,
                 type_idx: 0x0200_0001,
             },
-            Instruction::LoadInt {
-                r_dst: 1,
-                value: 7,
-            },
+            Instruction::LoadInt { r_dst: 1, value: 7 },
             Instruction::CallVirt {
                 r_dst: 2,
                 r_obj: 0,
@@ -269,7 +266,11 @@ fn call_virt_rejects_receiver_outside_argument_block() {
         1,
     );
 
-    assert_crash(module, 1, "receiver register r0 must equal argument base r1");
+    assert_crash(
+        module,
+        1,
+        "receiver register r0 must equal argument base r1",
+    );
 }
 
 #[test]
@@ -310,10 +311,7 @@ fn call_virt_rejects_intrinsic_argument_count_mismatch() {
         2,
         body(
             &[
-                Instruction::LoadInt {
-                    r_dst: 0,
-                    value: 7,
-                },
+                Instruction::LoadInt { r_dst: 0, value: 7 },
                 Instruction::CallVirt {
                     r_dst: 1,
                     r_obj: 0,
@@ -400,11 +398,7 @@ fn call_indirect_rejects_delegate_register_out_of_bounds() {
         ),
     );
 
-    assert_crash(
-        builder.build(),
-        0,
-        "CALL_INDIRECT: delegate register r1",
-    );
+    assert_crash(builder.build(), 0, "CALL_INDIRECT: delegate register r1");
 }
 
 #[test]
@@ -571,10 +565,7 @@ fn tail_call_rejects_argument_count_mismatching_method_metadata() {
         1,
         body(
             &[
-                Instruction::LoadInt {
-                    r_dst: 0,
-                    value: 7,
-                },
+                Instruction::LoadInt { r_dst: 0, value: 7 },
                 Instruction::TailCall {
                     method_idx: 0x0700_0002,
                     r_base: 0,

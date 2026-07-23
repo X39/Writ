@@ -50,11 +50,12 @@ pub(crate) fn library_top_level_method_def_id(
 /// This must be called BEFORE `collect_declarations` so that library types are
 /// in the DefMap when user-source Pass 1 and Pass 2 run. User code re-declaring
 /// a library type will produce a duplicate-definition error (expected behavior).
-pub fn inject_module_types(
-    library_modules: &[&writ_module::Module],
-    def_map: &mut DefMap,
-) {
-    let synthetic_span = SimpleSpan { start: 0, end: 0, context: () };
+pub fn inject_module_types(library_modules: &[&writ_module::Module], def_map: &mut DefMap) {
+    let synthetic_span = SimpleSpan {
+        start: 0,
+        end: 0,
+        context: (),
+    };
 
     for (lib_index, module) in library_modules.iter().enumerate() {
         let lib_file_id = FileId(u32::MAX - 1 - lib_index as u32);
@@ -65,7 +66,8 @@ pub fn inject_module_types(
 
         // Collect generic params for type defs (owner_kind == 0)
         let type_generics: rustc_hash::FxHashMap<u32, Vec<String>> = {
-            let mut map: rustc_hash::FxHashMap<u32, Vec<(u16, String)>> = rustc_hash::FxHashMap::default();
+            let mut map: rustc_hash::FxHashMap<u32, Vec<(u16, String)>> =
+                rustc_hash::FxHashMap::default();
             for param in &module.generic_params {
                 if param.owner_kind != 0 {
                     continue;
@@ -78,7 +80,9 @@ pub fn inject_module_types(
                 let param_name = writ_module::heap::read_string(&module.string_heap, param.name)
                     .unwrap_or("")
                     .to_string();
-                map.entry(type_idx).or_default().push((param.ordinal, param_name));
+                map.entry(type_idx)
+                    .or_default()
+                    .push((param.ordinal, param_name));
             }
             map.into_iter()
                 .map(|(k, mut v)| {
@@ -90,7 +94,8 @@ pub fn inject_module_types(
 
         // Collect generic params for contract defs (owner_kind == 2)
         let contract_generics: rustc_hash::FxHashMap<u32, Vec<String>> = {
-            let mut map: rustc_hash::FxHashMap<u32, Vec<(u16, String)>> = rustc_hash::FxHashMap::default();
+            let mut map: rustc_hash::FxHashMap<u32, Vec<(u16, String)>> =
+                rustc_hash::FxHashMap::default();
             for param in &module.generic_params {
                 if param.owner_kind != 2 {
                     continue;
@@ -103,7 +108,9 @@ pub fn inject_module_types(
                 let param_name = writ_module::heap::read_string(&module.string_heap, param.name)
                     .unwrap_or("")
                     .to_string();
-                map.entry(contract_idx).or_default().push((param.ordinal, param_name));
+                map.entry(contract_idx)
+                    .or_default()
+                    .push((param.ordinal, param_name));
             }
             map.into_iter()
                 .map(|(k, mut v)| {
@@ -165,7 +172,8 @@ pub fn inject_module_types(
 
             let id = def_map.arena.alloc(entry);
             def_map.by_fqn.insert(fqn, id);
-            def_map.namespace_members
+            def_map
+                .namespace_members
                 .entry(namespace)
                 .or_default()
                 .push(id);
@@ -176,9 +184,10 @@ pub fn inject_module_types(
             let name = writ_module::heap::read_string(&module.string_heap, contract_def.name)
                 .unwrap_or("")
                 .to_string();
-            let namespace = writ_module::heap::read_string(&module.string_heap, contract_def.namespace)
-                .unwrap_or("")
-                .to_string();
+            let namespace =
+                writ_module::heap::read_string(&module.string_heap, contract_def.namespace)
+                    .unwrap_or("")
+                    .to_string();
 
             if name.is_empty() {
                 continue;
@@ -213,7 +222,8 @@ pub fn inject_module_types(
 
             let id = def_map.arena.alloc(entry);
             def_map.by_fqn.insert(fqn, id);
-            def_map.namespace_members
+            def_map
+                .namespace_members
                 .entry(namespace)
                 .or_default()
                 .push(id);
@@ -242,22 +252,12 @@ pub fn inject_module_types(
             // `typecheck` defensively injects libraries again at its public
             // boundary. Keep that second pass idempotent at MethodDef-row
             // granularity rather than collapsing overloads by name.
-            if library_top_level_method_def_id(
-                def_map,
-                lib_file_id,
-                method_idx,
-                &name,
-            )
-            .is_some()
-            {
+            if library_top_level_method_def_id(def_map, lib_file_id, method_idx, &name).is_some() {
                 continue;
             }
 
             let existing_fn = def_map.by_fqn.get(&fqn).copied().filter(|id| {
-                matches!(
-                    def_map.get_entry(*id).kind,
-                    DefKind::Fn | DefKind::ExternFn
-                )
+                matches!(def_map.get_entry(*id).kind, DefKind::Fn | DefKind::ExternFn)
             });
             if def_map.by_fqn.contains_key(&fqn) && existing_fn.is_none() {
                 continue;
@@ -288,7 +288,8 @@ pub fn inject_module_types(
             } else {
                 def_map.by_fqn.insert(fqn, id);
             }
-            def_map.namespace_members
+            def_map
+                .namespace_members
                 .entry(String::new())
                 .or_default()
                 .push(id);

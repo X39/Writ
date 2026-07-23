@@ -60,7 +60,9 @@ fn assert_crash_with_libraries(
     runtime.tick(0.0, ExecutionLimit::None);
 
     assert_eq!(runtime.task_state(task), Some(TaskState::Cancelled));
-    let crash = runtime.crash_info(task).expect("delegate operation must crash");
+    let crash = runtime
+        .crash_info(task)
+        .expect("delegate operation must crash");
     assert!(
         crash.message.contains(expected),
         "expected crash containing {expected:?}, got {:?}",
@@ -284,8 +286,7 @@ fn new_delegate_rejects_bound_static_method_ref() {
     let mut user = ModuleBuilder::new("delegate-static-user");
     let library_ref = user.add_module_ref("delegate-static-library", "1.0.0");
     let exports_ref = user.add_type_ref(library_ref, "Exports", "lib");
-    let consume_ref =
-        user.add_method_ref_with_flags(exports_ref, "consume", &method_signature, 0);
+    let consume_ref = user.add_method_ref_with_flags(exports_ref, "consume", &method_signature, 0);
     let main = user.add_method(
         "main",
         &signature(&[], TypeSignature::Void),
@@ -401,9 +402,10 @@ fn call_indirect_rejects_bound_static_delegate_allocated_via_heap() {
         .build()
         .expect("build runtime");
     let user_module_idx = runtime.user_module_idx();
-    let delegate = runtime
-        .heap_mut()
-        .alloc_delegate(user_module_idx, row_index(invoke), Some(Value::Int(42)));
+    let delegate =
+        runtime
+            .heap_mut()
+            .alloc_delegate(user_module_idx, row_index(invoke), Some(Value::Int(42)));
     let task = runtime
         .spawn_task(row_index(main), vec![Value::Ref(delegate)])
         .expect("spawn main");
@@ -460,10 +462,7 @@ fn call_indirect_rejects_unbound_instance_delegate_allocated_via_heap() {
         .heap_mut()
         .alloc_delegate(user_module_idx, row_index(invoke), None);
     let task = runtime
-        .spawn_task(
-            row_index(main),
-            vec![Value::Ref(delegate), Value::Int(7)],
-        )
+        .spawn_task(row_index(main), vec![Value::Ref(delegate), Value::Int(7)])
         .expect("spawn main");
     runtime.tick(0.0, ExecutionLimit::None);
 

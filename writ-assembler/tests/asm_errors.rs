@@ -14,7 +14,11 @@ fn undefined_label_error() {
     assert!(result.is_err(), "should fail on undefined label");
     let errors = result.unwrap_err();
     let has_label_error = errors.iter().any(|e| e.message.contains("nonexistent"));
-    assert!(has_label_error, "error should mention the undefined label name; errors: {:?}", errors);
+    assert!(
+        has_label_error,
+        "error should mention the undefined label name; errors: {:?}",
+        errors
+    );
 }
 
 #[test]
@@ -31,7 +35,11 @@ fn unknown_mnemonic_error() {
     assert!(result.is_err(), "should fail on unknown mnemonic");
     let errors = result.unwrap_err();
     let has_mnemonic_error = errors.iter().any(|e| e.message.contains("FAKE_OP"));
-    assert!(has_mnemonic_error, "error should mention unknown mnemonic; errors: {:?}", errors);
+    assert!(
+        has_mnemonic_error,
+        "error should mention unknown mnemonic; errors: {:?}",
+        errors
+    );
 }
 
 #[test]
@@ -65,7 +73,11 @@ fn multiple_errors_collected() {
     let result = writ_assembler::assemble(src);
     assert!(result.is_err(), "should fail with multiple errors");
     let errors = result.unwrap_err();
-    assert!(errors.len() >= 3, "should collect at least 3 errors, got {}", errors.len());
+    assert!(
+        errors.len() >= 3,
+        "should collect at least 3 errors, got {}",
+        errors.len()
+    );
 }
 
 #[test]
@@ -82,9 +94,21 @@ fn error_format_matches_spec() {
     let errors = result.unwrap_err();
     let formatted = format!("{}", errors[0]);
     // Format should be: error: <message> at line <N>, column <M>
-    assert!(formatted.contains("error:"), "should start with 'error:'; got: {}", formatted);
-    assert!(formatted.contains("at line"), "should contain 'at line'; got: {}", formatted);
-    assert!(formatted.contains("column"), "should contain 'column'; got: {}", formatted);
+    assert!(
+        formatted.contains("error:"),
+        "should start with 'error:'; got: {}",
+        formatted
+    );
+    assert!(
+        formatted.contains("at line"),
+        "should contain 'at line'; got: {}",
+        formatted
+    );
+    assert!(
+        formatted.contains("column"),
+        "should contain 'column'; got: {}",
+        formatted
+    );
 }
 
 #[test]
@@ -105,5 +129,9 @@ fn undefined_type_in_impl_error() {
     assert!(result.is_err(), "should fail on undefined type in impl");
     let errors = result.unwrap_err();
     let has_type_error = errors.iter().any(|e| e.message.contains("NonExistentType"));
-    assert!(has_type_error, "error should mention undefined type; errors: {:?}", errors);
+    assert!(
+        has_type_error,
+        "error should mention undefined type; errors: {:?}",
+        errors
+    );
 }

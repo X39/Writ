@@ -206,7 +206,10 @@ pub fn emit_box_if_needed(
     let needs_box = is_value_type(emitter, arg_ty) && is_generic_param(emitter, param_ty);
     if needs_box {
         let r_boxed = emitter.alloc_reg(param_ty);
-        emitter.emit(Instruction::Box { r_dst: r_boxed, r_val });
+        emitter.emit(Instruction::Box {
+            r_dst: r_boxed,
+            r_val,
+        });
         r_boxed
     } else {
         r_val
@@ -223,10 +226,14 @@ pub fn emit_unbox_if_needed(
     declared_ret_ty: Ty,
     expected_ty: Ty,
 ) -> u16 {
-    let needs_unbox = is_generic_param(emitter, declared_ret_ty) && is_value_type(emitter, expected_ty);
+    let needs_unbox =
+        is_generic_param(emitter, declared_ret_ty) && is_value_type(emitter, expected_ty);
     if needs_unbox {
         let r_unboxed = emitter.alloc_reg(expected_ty);
-        emitter.emit(Instruction::Unbox { r_dst: r_unboxed, r_boxed });
+        emitter.emit(Instruction::Unbox {
+            r_dst: r_unboxed,
+            r_boxed,
+        });
         r_unboxed
     } else {
         r_boxed
@@ -330,7 +337,10 @@ pub fn pack_args_consecutive(emitter: &mut BodyEmitter<'_>, arg_regs: &[u16]) ->
             allocated, slot_reg,
             "consecutive register allocation should produce r_block_start + i"
         );
-        emitter.emit(Instruction::Mov { r_dst: allocated, r_src: arg_reg });
+        emitter.emit(Instruction::Mov {
+            r_dst: allocated,
+            r_src: arg_reg,
+        });
     }
     r_block_start
 }

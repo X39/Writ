@@ -3,11 +3,11 @@
 //! These functions are testable without a live DapServer instance.
 
 use dap::prelude::*;
-use writ_module::module::Module;
 use writ_module::heap::read_string;
-use writ_runtime::{TaskId, Value, GcHeap, FrameLocation};
+use writ_module::module::Module;
+use writ_runtime::{FrameLocation, GcHeap, TaskId, Value};
 
-use crate::variables::{format_value, decode_type_blob};
+use crate::variables::{decode_type_blob, format_value};
 
 /// Decode a globally-unique DAP frame_id back to (task_idx, display_frame_idx).
 /// Encoding: frame_id = task_idx * 10000 + display_frame_idx
@@ -25,15 +25,24 @@ pub(super) fn build_thread_list(
     method_name_fn: impl Fn(usize, usize) -> Option<String>,
 ) -> Vec<types::Thread> {
     if task_ids.is_empty() {
-        return vec![types::Thread { id: 0, name: "terminated".to_string() }];
+        return vec![types::Thread {
+            id: 0,
+            name: "terminated".to_string(),
+        }];
     }
-    task_ids.iter().map(|tid| {
-        let name = call_stack_fn(*tid)
-            .and_then(|frames| frames.first().copied())
-            .and_then(|frame| method_name_fn(frame.module_idx, frame.method_idx))
-            .unwrap_or_else(|| format!("task-{}", tid.index));
-        types::Thread { id: tid.index as i64, name }
-    }).collect()
+    task_ids
+        .iter()
+        .map(|tid| {
+            let name = call_stack_fn(*tid)
+                .and_then(|frames| frames.first().copied())
+                .and_then(|frame| method_name_fn(frame.module_idx, frame.method_idx))
+                .unwrap_or_else(|| format!("task-{}", tid.index));
+            types::Thread {
+                id: tid.index as i64,
+                name,
+            }
+        })
+        .collect()
 }
 
 /// Collect named local variables for a given frame.
@@ -58,16 +67,20 @@ pub(crate) fn collect_frame_variables(
         None => return vec![],
     };
 
-    debug_locals.iter()
+    debug_locals
+        .iter()
         // Filter out unnamed temporaries: name offset 0 means the empty string (no name).
         // Only named variables (params and let bindings) should appear in the DAP variables panel.
         .filter(|dl| dl.name != 0)
         .filter(|dl| dl.start_pc <= pc as u32 && (pc as u32) < dl.end_pc)
         .map(|dl| {
             let name = read_string(&module.string_heap, dl.name)
-                .unwrap_or("?").to_string();
-            let reg_val = registers.get(dl.register as usize)
-                .cloned().unwrap_or(Value::Void);
+                .unwrap_or("?")
+                .to_string();
+            let reg_val = registers
+                .get(dl.register as usize)
+                .cloned()
+                .unwrap_or(Value::Void);
             let value_str = format_value(&reg_val, module, heap);
             let type_str = decode_type_blob(module, dl.type_ref);
             types::Variable {
@@ -92,7 +105,10 @@ pub(crate) fn instr_to_byte_pc(
     method_idx: usize,
     instr_pc: usize,
 ) -> u32 {
-    runtime.domain().modules.get(module_idx)
+    runtime
+        .domain()
+        .modules
+        .get(module_idx)
         .and_then(|m| m.byte_offsets.get(method_idx))
         .and_then(|offsets| offsets.get(instr_pc))
         .copied()
@@ -113,22 +129,34 @@ pub(super) fn evaluate_local(
 ) -> (String, Option<String>) {
     let debug_locals = match module.method_bodies.get(method_idx) {
         Some(body) => &body.debug_locals,
-        None => return (format!("'{}' is not a local variable in the current frame", expr), None),
+        None => {
+            return (
+                format!("'{}' is not a local variable in the current frame", expr),
+                None,
+            );
+        }
     };
 
     for dl in debug_locals {
-        if dl.start_pc <= pc as u32 && (pc as u32) < dl.end_pc
+        if dl.start_pc <= pc as u32
+            && (pc as u32) < dl.end_pc
             && let Ok(name) = read_string(&module.string_heap, dl.name)
-                && name == expr {
-                    let reg_val = registers.get(dl.register as usize)
-                        .cloned().unwrap_or(Value::Void);
-                    let value_str = format_value(&reg_val, module, heap);
-                    let type_str = decode_type_blob(module, dl.type_ref);
-                    return (value_str, Some(type_str));
-                }
+            && name == expr
+        {
+            let reg_val = registers
+                .get(dl.register as usize)
+                .cloned()
+                .unwrap_or(Value::Void);
+            let value_str = format_value(&reg_val, module, heap);
+            let type_str = decode_type_blob(module, dl.type_ref);
+            return (value_str, Some(type_str));
+        }
     }
 
-    (format!("'{}' is not a local variable in the current frame", expr), None)
+    (
+        format!("'{}' is not a local variable in the current frame", expr),
+        None,
+    )
 }
 
 #[cfg(test)]
@@ -144,7 +172,9 @@ mod tests {
         for name in method_names {
             let name_bytes = name.as_bytes();
             let offset = module.string_heap.len() as u32;
-            module.string_heap.extend_from_slice(&(name_bytes.len() as u32).to_le_bytes());
+            module
+                .string_heap
+                .extend_from_slice(&(name_bytes.len() as u32).to_le_bytes());
             module.string_heap.extend_from_slice(name_bytes);
             module.method_defs.push(MethodDefRow {
                 name: offset,
@@ -190,19 +220,29 @@ mod tests {
         let task_ids = vec![task0, task1];
 
         // Simulate call_stack_frames: task0 has method 0 at bottom, task1 has method 1
-        let threads = build_thread_list(&task_ids, |tid| {
-            match tid.index {
-                0 => Some(vec![FrameLocation { module_idx: 0, method_idx: 0, pc: 0 }]),
-                1 => Some(vec![FrameLocation { module_idx: 0, method_idx: 1, pc: 0 }]),
+        let threads = build_thread_list(
+            &task_ids,
+            |tid| match tid.index {
+                0 => Some(vec![FrameLocation {
+                    module_idx: 0,
+                    method_idx: 0,
+                    pc: 0,
+                }]),
+                1 => Some(vec![FrameLocation {
+                    module_idx: 0,
+                    method_idx: 1,
+                    pc: 0,
+                }]),
                 _ => None,
-            }
-        }, |module_idx, method_idx| {
-            (module_idx == 0)
-                .then(|| module.method_defs.get(method_idx))
-                .flatten()
-                .and_then(|def| read_string(&module.string_heap, def.name).ok())
-                .map(str::to_owned)
-        });
+            },
+            |module_idx, method_idx| {
+                (module_idx == 0)
+                    .then(|| module.method_defs.get(method_idx))
+                    .flatten()
+                    .and_then(|def| read_string(&module.string_heap, def.name).ok())
+                    .map(str::to_owned)
+            },
+        );
 
         assert_eq!(threads.len(), 2);
         assert_eq!(threads[0].id, 0);
@@ -231,7 +271,9 @@ mod tests {
             // Write name to string heap (length-prefixed)
             let name_offset = module.string_heap.len() as u32;
             let name_bytes = name.as_bytes();
-            module.string_heap.extend_from_slice(&(name_bytes.len() as u32).to_le_bytes());
+            module
+                .string_heap
+                .extend_from_slice(&(name_bytes.len() as u32).to_le_bytes());
             module.string_heap.extend_from_slice(name_bytes);
 
             // Write type blob (4-byte length prefix + 1-byte tag)
@@ -255,8 +297,13 @@ mod tests {
             source_spans: vec![],
         }];
         module.method_defs = vec![MethodDefRow {
-            name: 0, signature: 0, flags: 0,
-            body_offset: 0, body_size: 0, reg_count: 0, param_count: 0,
+            name: 0,
+            signature: 0,
+            flags: 0,
+            body_offset: 0,
+            body_size: 0,
+            reg_count: 0,
+            param_count: 0,
             owner: writ_module::MetadataToken::NULL,
         }];
         module
@@ -280,13 +327,13 @@ mod tests {
 
     #[test]
     fn test_variables_handler() {
-        use writ_runtime::Value;
         use writ_runtime::BumpHeap;
+        use writ_runtime::Value;
 
         // type_tag 0x01 = int, 0x02 = float
         let module = make_module_with_locals(&[
-            ("x", 0, 0, 10, 0x01),  // active at pc 0..10
-            ("y", 1, 5, 15, 0x02),  // active at pc 5..15 (float)
+            ("x", 0, 0, 10, 0x01), // active at pc 0..10
+            ("y", 1, 5, 15, 0x02), // active at pc 5..15 (float)
         ]);
         let heap = BumpHeap::new();
         let registers = vec![Value::Int(42), Value::Float(3.14)];
@@ -315,8 +362,8 @@ mod tests {
 
     #[test]
     fn test_evaluate_local_name() {
-        use writ_runtime::Value;
         use writ_runtime::BumpHeap;
+        use writ_runtime::Value;
 
         let module = make_module_with_locals(&[("x", 0, 0, 10, 0x01)]);
         let heap = BumpHeap::new();
@@ -330,8 +377,8 @@ mod tests {
 
     #[test]
     fn test_evaluate_unknown() {
-        use writ_runtime::Value;
         use writ_runtime::BumpHeap;
+        use writ_runtime::Value;
 
         let module = make_module_with_locals(&[("x", 0, 0, 10, 0x01)]);
         let heap = BumpHeap::new();

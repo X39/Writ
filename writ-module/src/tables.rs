@@ -145,9 +145,9 @@ pub struct ModuleRefRow {
 /// Table 2: Types defined in this module.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeDefRow {
-    pub name: u32,        // string heap offset
-    pub namespace: u32,   // string heap offset
-    pub kind: u8,         // TypeDefKind discriminant
+    pub name: u32,      // string heap offset
+    pub namespace: u32, // string heap offset
+    pub kind: u8,       // TypeDefKind discriminant
     pub flags: u16,
     pub field_list: u32,  // next-index start in FieldDef (1-based; 0 is invalid)
     pub method_list: u32, // index of first MethodDef row (1-based)
@@ -186,8 +186,8 @@ pub struct FieldRefRow {
 /// Table 7: Methods/functions defined here.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MethodDefRow {
-    pub name: u32,        // string heap offset
-    pub signature: u32,   // blob heap offset
+    pub name: u32,      // string heap offset
+    pub signature: u32, // blob heap offset
     pub flags: u16,
     pub body_offset: u32,
     pub body_size: u32,
@@ -218,9 +218,9 @@ pub struct ParamDefRow {
 /// Table 10: Contract declarations.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ContractDefRow {
-    pub name: u32,              // string heap offset
-    pub namespace: u32,         // string heap offset
-    pub method_list: u32,       // index of first ContractMethod row
+    pub name: u32,               // string heap offset
+    pub namespace: u32,          // string heap offset
+    pub method_list: u32,        // index of first ContractMethod row
     pub generic_param_list: u32, // index of first GenericParam row
 }
 
@@ -259,8 +259,8 @@ pub struct GenericConstraintRow {
 /// Table 15: Constants and `global mut` variables.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GlobalDefRow {
-    pub name: u32,       // string heap offset
-    pub type_sig: u32,   // blob heap offset
+    pub name: u32,     // string heap offset
+    pub type_sig: u32, // blob heap offset
     pub flags: u16,
     pub init_value: u32, // blob heap offset
 }

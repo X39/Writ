@@ -111,12 +111,9 @@ fn decode_one(blob: &[u8], pos: usize) -> Result<(AttrValue, usize), DecodeError
             if pos + 5 > blob.len() {
                 return Err(DecodeError::BufferTooSmall);
             }
-            let len = u32::from_le_bytes([
-                blob[pos + 1],
-                blob[pos + 2],
-                blob[pos + 3],
-                blob[pos + 4],
-            ]) as usize;
+            let len =
+                u32::from_le_bytes([blob[pos + 1], blob[pos + 2], blob[pos + 3], blob[pos + 4]])
+                    as usize;
             let start = pos + 5;
             if start + len > blob.len() {
                 return Err(DecodeError::BufferTooSmall);
@@ -156,12 +153,9 @@ fn decode_one(blob: &[u8], pos: usize) -> Result<(AttrValue, usize), DecodeError
             if pos + 5 > blob.len() {
                 return Err(DecodeError::BufferTooSmall);
             }
-            let name_len = u32::from_le_bytes([
-                blob[pos + 1],
-                blob[pos + 2],
-                blob[pos + 3],
-                blob[pos + 4],
-            ]) as usize;
+            let name_len =
+                u32::from_le_bytes([blob[pos + 1], blob[pos + 2], blob[pos + 3], blob[pos + 4]])
+                    as usize;
             let name_start = pos + 5;
             if name_start + name_len > blob.len() {
                 return Err(DecodeError::BufferTooSmall);

@@ -38,7 +38,9 @@ pub fn emit_stmt(emitter: &mut BodyEmitter<'_>, stmt: &TypedStmt) {
 
     match stmt {
         // ── Let binding ───────────────────────────────────────────────────────
-        TypedStmt::Let { name, ty: _, value, .. } => {
+        TypedStmt::Let {
+            name, ty: _, value, ..
+        } => {
             // Emit the value expression into a register.
             let r_val = emit_expr(emitter, value);
             // The value register IS the local's register — no MOV needed.
@@ -48,7 +50,9 @@ pub fn emit_stmt(emitter: &mut BodyEmitter<'_>, stmt: &TypedStmt) {
             // start_pc = instruction count at this point (byte offset computed in serialize.rs).
             // end_pc = u32::MAX sentinel meaning "live until end of body" (clamped in serialize.rs).
             let start_pc = emitter.instructions.len() as u32;
-            emitter.debug_locals.push((r_val, name.clone(), start_pc, u32::MAX));
+            emitter
+                .debug_locals
+                .push((r_val, name.clone(), start_pc, u32::MAX));
         }
 
         // ── Bare expression ───────────────────────────────────────────────────
@@ -58,7 +62,9 @@ pub fn emit_stmt(emitter: &mut BodyEmitter<'_>, stmt: &TypedStmt) {
         }
 
         // ── While loop ────────────────────────────────────────────────────────
-        TypedStmt::While { condition, body, .. } => {
+        TypedStmt::While {
+            condition, body, ..
+        } => {
             // Allocate labels
             let loop_start = emitter.new_label();
             let loop_end = emitter.new_label();
@@ -94,7 +100,13 @@ pub fn emit_stmt(emitter: &mut BodyEmitter<'_>, stmt: &TypedStmt) {
         }
 
         // ── For loop ──────────────────────────────────────────────────────────
-        TypedStmt::For { binding, binding_ty, iterable, body, .. } => {
+        TypedStmt::For {
+            binding,
+            binding_ty,
+            iterable,
+            body,
+            ..
+        } => {
             emit_for_loop(emitter, binding, *binding_ty, iterable, body);
         }
 
@@ -217,8 +229,22 @@ fn emit_for_loop(
     // Check for Range iterable FIRST (before type-based dispatch).
     // Range expressions have ty=int (no TyKind::Range exists), so we must
     // match on the expression variant, not the type.
-    if let TypedExpr::Range { start, end, inclusive, .. } = iterable {
-        emit_for_range(emitter, binding, binding_ty, start.as_deref(), end.as_deref(), *inclusive, body);
+    if let TypedExpr::Range {
+        start,
+        end,
+        inclusive,
+        ..
+    } = iterable
+    {
+        emit_for_range(
+            emitter,
+            binding,
+            binding_ty,
+            start.as_deref(),
+            end.as_deref(),
+            *inclusive,
+            body,
+        );
         return;
     }
 
@@ -233,11 +259,17 @@ fn emit_for_loop(
             // Array iteration via index counter loop
             let r_arr = emit_expr(emitter, iterable);
             let r_len = emitter.alloc_reg(int_ty);
-            emitter.emit(Instruction::ArrayLen { r_dst: r_len, r_arr });
+            emitter.emit(Instruction::ArrayLen {
+                r_dst: r_len,
+                r_arr,
+            });
 
             // Initialize counter to 0
             let r_iter = emitter.alloc_reg(int_ty);
-            emitter.emit(Instruction::LoadInt { r_dst: r_iter, value: 0 });
+            emitter.emit(Instruction::LoadInt {
+                r_dst: r_iter,
+                value: 0,
+            });
 
             // Labels
             let loop_start = emitter.new_label();
@@ -248,7 +280,11 @@ fn emit_for_loop(
 
             // CmpLtI r_cond, r_iter, r_len
             let r_cond = emitter.alloc_reg(bool_ty);
-            emitter.emit(Instruction::CmpLtI { r_dst: r_cond, r_a: r_iter, r_b: r_len });
+            emitter.emit(Instruction::CmpLtI {
+                r_dst: r_cond,
+                r_a: r_iter,
+                r_b: r_len,
+            });
 
             // BrFalse r_cond, loop_end
             let brf_idx = emitter.instructions.len();
@@ -257,7 +293,11 @@ fn emit_for_loop(
 
             // Load element: ARRAY_LOAD r_elem, r_arr, r_iter
             let r_elem = emitter.alloc_reg(binding_ty);
-            emitter.emit(Instruction::ArrayLoad { r_dst: r_elem, r_arr, r_idx: r_iter });
+            emitter.emit(Instruction::ArrayLoad {
+                r_dst: r_elem,
+                r_arr,
+                r_idx: r_iter,
+            });
 
             // Bind element to loop variable
             emitter.locals.insert(binding.to_string(), r_elem);
@@ -269,8 +309,15 @@ fn emit_for_loop(
 
             // Increment counter: r_one = 1, r_iter = AddI(r_iter, r_one)
             let r_one = emitter.alloc_reg(int_ty);
-            emitter.emit(Instruction::LoadInt { r_dst: r_one, value: 1 });
-            emitter.emit(Instruction::AddI { r_dst: r_iter, r_a: r_iter, r_b: r_one });
+            emitter.emit(Instruction::LoadInt {
+                r_dst: r_one,
+                value: 1,
+            });
+            emitter.emit(Instruction::AddI {
+                r_dst: r_iter,
+                r_a: r_iter,
+                r_b: r_one,
+            });
 
             // Br loop_start
             let br_idx = emitter.instructions.len();
@@ -355,16 +402,25 @@ fn emit_for_loop(
 
             // 5. IS_NONE: check if next() returned null.
             let r_is_none = emitter.alloc_reg(bool_ty);
-            emitter.emit(Instruction::IsNone { r_dst: r_is_none, r_opt: r_next });
+            emitter.emit(Instruction::IsNone {
+                r_dst: r_is_none,
+                r_opt: r_next,
+            });
 
             // 6. BR_TRUE r_is_none, loop_end
             let brt_idx = emitter.instructions.len();
-            emitter.emit(Instruction::BrTrue { r_cond: r_is_none, offset: 0 });
+            emitter.emit(Instruction::BrTrue {
+                r_cond: r_is_none,
+                offset: 0,
+            });
             emitter.add_fixup(brt_idx, loop_end);
 
             // 7. UNWRAP: r_elem = unwrap r_next
             let r_elem = emitter.alloc_reg(binding_ty);
-            emitter.emit(Instruction::Unwrap { r_dst: r_elem, r_opt: r_next });
+            emitter.emit(Instruction::Unwrap {
+                r_dst: r_elem,
+                r_opt: r_next,
+            });
 
             // 8. Bind element to loop variable.
             emitter.locals.insert(binding.to_string(), r_elem);
@@ -444,9 +500,16 @@ fn emit_for_range(
     // Exclusive: i < end. Inclusive: i < end+1 (equivalent to i <= end).
     let r_limit = if inclusive {
         let r_one = emitter.alloc_reg(int_ty);
-        emitter.emit(Instruction::LoadInt { r_dst: r_one, value: 1 });
+        emitter.emit(Instruction::LoadInt {
+            r_dst: r_one,
+            value: 1,
+        });
         let r_lim = emitter.alloc_reg(int_ty);
-        emitter.emit(Instruction::AddI { r_dst: r_lim, r_a: r_end, r_b: r_one });
+        emitter.emit(Instruction::AddI {
+            r_dst: r_lim,
+            r_a: r_end,
+            r_b: r_one,
+        });
         r_lim
     } else {
         r_end
@@ -461,7 +524,11 @@ fn emit_for_range(
 
     // Condition: r_iter < r_limit
     let r_cond = emitter.alloc_reg(bool_ty);
-    emitter.emit(Instruction::CmpLtI { r_dst: r_cond, r_a: r_iter, r_b: r_limit });
+    emitter.emit(Instruction::CmpLtI {
+        r_dst: r_cond,
+        r_a: r_iter,
+        r_b: r_limit,
+    });
 
     // BrFalse to loop_end
     let brf_idx = emitter.instructions.len();
@@ -478,8 +545,15 @@ fn emit_for_range(
 
     // Increment: r_iter = r_iter + 1
     let r_one = emitter.alloc_reg(int_ty);
-    emitter.emit(Instruction::LoadInt { r_dst: r_one, value: 1 });
-    emitter.emit(Instruction::AddI { r_dst: r_iter, r_a: r_iter, r_b: r_one });
+    emitter.emit(Instruction::LoadInt {
+        r_dst: r_one,
+        value: 1,
+    });
+    emitter.emit(Instruction::AddI {
+        r_dst: r_iter,
+        r_a: r_iter,
+        r_b: r_one,
+    });
 
     // Branch back to loop_start
     let br_idx = emitter.instructions.len();

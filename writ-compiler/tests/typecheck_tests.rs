@@ -19,7 +19,11 @@ fn typecheck_src(src: &'static str) -> (TypedAst, Vec<Diagnostic>) {
     let error_msgs: Vec<String> = parse_errors.iter().map(|e| format!("{e:?}")).collect();
     assert!(error_msgs.is_empty(), "parse errors: {:?}", error_msgs);
     let (ast, lower_errors) = lower(items);
-    assert!(lower_errors.is_empty(), "lowering errors: {:?}", lower_errors);
+    assert!(
+        lower_errors.is_empty(),
+        "lowering errors: {:?}",
+        lower_errors
+    );
 
     let file_id = FileId(0);
     let asts: Vec<(FileId, &Ast)> = vec![(file_id, &ast)];
@@ -698,25 +702,19 @@ fn overlapping_inherent_impl_specializations_are_ambiguous() {
 
 #[test]
 fn binary_add_int() {
-    let (_ast, diags) = typecheck_src(
-        "pub fn test() -> int { 1 + 2 }",
-    );
+    let (_ast, diags) = typecheck_src("pub fn test() -> int { 1 + 2 }");
     assert!(has_no_errors(&diags), "errors: {:?}", diags);
 }
 
 #[test]
 fn binary_comparison_produces_bool() {
-    let (_ast, diags) = typecheck_src(
-        "pub fn test() -> bool { 1 == 2 }",
-    );
+    let (_ast, diags) = typecheck_src("pub fn test() -> bool { 1 == 2 }");
     assert!(has_no_errors(&diags), "errors: {:?}", diags);
 }
 
 #[test]
 fn binary_mismatched_types() {
-    let (_ast, diags) = typecheck_src(
-        r#"pub fn test() { let x = 1 + "hello"; }"#,
-    );
+    let (_ast, diags) = typecheck_src(r#"pub fn test() { let x = 1 + "hello"; }"#);
     assert!(
         has_error(&diags, "E0100"),
         "expected E0100 type mismatch for int + string, got: {:?}",
@@ -730,9 +728,7 @@ fn binary_mismatched_types() {
 
 #[test]
 fn if_condition_must_be_bool() {
-    let (_ast, diags) = typecheck_src(
-        "pub fn test() { if 42 { } }",
-    );
+    let (_ast, diags) = typecheck_src("pub fn test() { if 42 { } }");
     assert!(
         has_error(&diags, "E0100"),
         "expected E0100 for non-bool condition, got: {:?}",
@@ -746,9 +742,7 @@ fn if_condition_must_be_bool() {
 
 #[test]
 fn poison_type_suppresses_cascading() {
-    let (_ast, diags) = typecheck_src(
-        "pub fn test() { let x = undeclared_var; let y = x; }",
-    );
+    let (_ast, diags) = typecheck_src("pub fn test() { let x = undeclared_var; let y = x; }");
     // Should have exactly 1 error for undeclared_var, not 2 cascading errors
     assert_eq!(
         count_errors(&diags, "E0102"),
@@ -774,17 +768,13 @@ fn empty_program_no_errors() {
 
 #[test]
 fn return_type_match() {
-    let (_ast, diags) = typecheck_src(
-        "pub fn test() -> int { return 42; }",
-    );
+    let (_ast, diags) = typecheck_src("pub fn test() -> int { return 42; }");
     assert!(has_no_errors(&diags), "errors: {:?}", diags);
 }
 
 #[test]
 fn return_type_mismatch() {
-    let (_ast, diags) = typecheck_src(
-        r#"pub fn test() -> int { return "hello"; }"#,
-    );
+    let (_ast, diags) = typecheck_src(r#"pub fn test() -> int { return "hello"; }"#);
     assert!(
         has_error(&diags, "E0100"),
         "expected E0100 return type mismatch, got: {:?}",
@@ -839,9 +829,7 @@ fn struct_field_access_valid() {
 
 #[test]
 fn no_field_on_primitive() {
-    let (_ast, diags) = typecheck_src(
-        "pub fn test() { let x = 42; let y = x.foo; }",
-    );
+    let (_ast, diags) = typecheck_src("pub fn test() { let x = 42; let y = x.foo; }");
     assert!(
         has_error(&diags, "E0106"),
         "expected E0106 unknown field on primitive, got: {:?}",
@@ -866,9 +854,7 @@ fn self_in_method_resolves() {
 
 #[test]
 fn self_outside_method_is_error() {
-    let (_ast, diags) = typecheck_src(
-        "pub fn test() { let x = self; }",
-    );
+    let (_ast, diags) = typecheck_src("pub fn test() { let x = self; }");
     assert!(
         has_error(&diags, "E0102"),
         "expected E0102 undefined self outside method, got: {:?}",
@@ -957,17 +943,13 @@ fn if_else_incompatible_types() {
 
 #[test]
 fn assignment_type_match() {
-    let (_ast, diags) = typecheck_src(
-        "pub fn test() { let mut x = 1; x = 2; }",
-    );
+    let (_ast, diags) = typecheck_src("pub fn test() { let mut x = 1; x = 2; }");
     assert!(has_no_errors(&diags), "errors: {:?}", diags);
 }
 
 #[test]
 fn assignment_type_mismatch() {
-    let (_ast, diags) = typecheck_src(
-        r#"pub fn test() { let mut x = 1; x = "hello"; }"#,
-    );
+    let (_ast, diags) = typecheck_src(r#"pub fn test() { let mut x = 1; x = "hello"; }"#);
     assert!(
         has_error(&diags, "E0100"),
         "expected E0100 assignment type mismatch, got: {:?}",
@@ -981,9 +963,7 @@ fn assignment_type_mismatch() {
 
 #[test]
 fn immutable_reassignment_error() {
-    let (_ast, diags) = typecheck_src(
-        "pub fn test() { let x = 1; x = 2; }",
-    );
+    let (_ast, diags) = typecheck_src("pub fn test() { let x = 1; x = 2; }");
     assert!(
         has_error(&diags, "E0108"),
         "expected E0108 immutable reassignment, got: {:?}",
@@ -993,9 +973,7 @@ fn immutable_reassignment_error() {
 
 #[test]
 fn mutable_reassignment_ok() {
-    let (_ast, diags) = typecheck_src(
-        "pub fn test() { let mut x = 1; x = 2; }",
-    );
+    let (_ast, diags) = typecheck_src("pub fn test() { let mut x = 1; x = 2; }");
     assert!(has_no_errors(&diags), "errors: {:?}", diags);
 }
 
@@ -1032,17 +1010,13 @@ fn mutable_field_mutation_ok() {
 
 #[test]
 fn array_index_with_int() {
-    let (_ast, diags) = typecheck_src(
-        "pub fn test(arr: int[]) -> int { arr[0] }",
-    );
+    let (_ast, diags) = typecheck_src("pub fn test(arr: int[]) -> int { arr[0] }");
     assert!(has_no_errors(&diags), "errors: {:?}", diags);
 }
 
 #[test]
 fn array_index_with_wrong_type() {
-    let (_ast, diags) = typecheck_src(
-        r#"pub fn test(arr: int[]) { let x = arr["hello"]; }"#,
-    );
+    let (_ast, diags) = typecheck_src(r#"pub fn test(arr: int[]) { let x = arr["hello"]; }"#);
     assert!(
         has_error(&diags, "E0100"),
         "expected E0100 non-int array index, got: {:?}",
@@ -1056,9 +1030,7 @@ fn array_index_with_wrong_type() {
 
 #[test]
 fn void_fn_with_return_value_error() {
-    let (_ast, diags) = typecheck_src(
-        "pub fn test() { return 42; }",
-    );
+    let (_ast, diags) = typecheck_src("pub fn test() { return 42; }");
     assert!(
         has_error(&diags, "E0100"),
         "expected E0100 for returning value from void fn, got: {:?}",
@@ -1138,17 +1110,13 @@ fn new_struct_unknown_field() {
 
 #[test]
 fn array_literal_homogeneous() {
-    let (_ast, diags) = typecheck_src(
-        "pub fn test() { let a = [1, 2, 3]; }",
-    );
+    let (_ast, diags) = typecheck_src("pub fn test() { let a = [1, 2, 3]; }");
     assert!(has_no_errors(&diags), "errors: {:?}", diags);
 }
 
 #[test]
 fn array_literal_mixed_types() {
-    let (_ast, diags) = typecheck_src(
-        r#"pub fn test() { let a = [1, "hello"]; }"#,
-    );
+    let (_ast, diags) = typecheck_src(r#"pub fn test() { let a = [1, "hello"]; }"#);
     assert!(
         has_error(&diags, "E0100"),
         "expected E0100 mixed array types, got: {:?}",
@@ -1158,9 +1126,7 @@ fn array_literal_mixed_types() {
 
 #[test]
 fn array_literal_empty() {
-    let (_ast, diags) = typecheck_src(
-        "pub fn test() { let a = []; }",
-    );
+    let (_ast, diags) = typecheck_src("pub fn test() { let a = []; }");
     assert!(has_no_errors(&diags), "errors: {:?}", diags);
 }
 
@@ -1259,7 +1225,10 @@ fn dialogue_transition_accepts_only_dialogue_declarations() {
         "dlg destination {}
          dlg start { -> destination }",
     );
-    assert!(has_no_errors(&valid_diags), "valid dialogue transition: {valid_diags:?}");
+    assert!(
+        has_no_errors(&valid_diags),
+        "valid dialogue transition: {valid_diags:?}"
+    );
 
     let cases = [
         (
@@ -1310,17 +1279,13 @@ fn unresolved_dialogue_transition_stops_before_codegen() {
 
 #[test]
 fn lambda_with_typed_params() {
-    let (_ast, diags) = typecheck_src(
-        "pub fn test() { let f = fn(x: int) -> int { x }; }",
-    );
+    let (_ast, diags) = typecheck_src("pub fn test() { let f = fn(x: int) -> int { x }; }");
     assert!(has_no_errors(&diags), "errors: {:?}", diags);
 }
 
 #[test]
 fn lambda_void_return() {
-    let (_ast, diags) = typecheck_src(
-        "pub fn test() { let f = fn(x: int) { let y = x; }; }",
-    );
+    let (_ast, diags) = typecheck_src("pub fn test() { let f = fn(x: int) { let y = x; }; }");
     assert!(has_no_errors(&diags), "errors: {:?}", diags);
 }
 
@@ -1329,39 +1294,78 @@ fn lambda_void_return() {
 // =========================================================
 
 /// Helper: collect all Call node types from a TypedExpr (depth-first).
-fn collect_call_types(expr: &TypedExpr, out: &mut Vec<(Ty, Option<writ_compiler::resolve::def_map::DefId>)>) {
+fn collect_call_types(
+    expr: &TypedExpr,
+    out: &mut Vec<(Ty, Option<writ_compiler::resolve::def_map::DefId>)>,
+) {
     match expr {
-        TypedExpr::Call { ty, args, callee, callee_def_id, .. } => {
+        TypedExpr::Call {
+            ty,
+            args,
+            callee,
+            callee_def_id,
+            ..
+        } => {
             out.push((*ty, *callee_def_id));
             collect_call_types(callee, out);
-            for a in args { collect_call_types(a, out); }
+            for a in args {
+                collect_call_types(a, out);
+            }
         }
         TypedExpr::Block { stmts, tail, .. } => {
-            for s in stmts { collect_stmt_call_types(s, out); }
-            if let Some(t) = tail { collect_call_types(t, out); }
+            for s in stmts {
+                collect_stmt_call_types(s, out);
+            }
+            if let Some(t) = tail {
+                collect_call_types(t, out);
+            }
         }
-        TypedExpr::If { condition, then_branch, else_branch, .. } => {
+        TypedExpr::If {
+            condition,
+            then_branch,
+            else_branch,
+            ..
+        } => {
             collect_call_types(condition, out);
             collect_call_types(then_branch, out);
-            if let Some(e) = else_branch { collect_call_types(e, out); }
+            if let Some(e) = else_branch {
+                collect_call_types(e, out);
+            }
         }
         TypedExpr::Binary { left, right, .. } => {
             collect_call_types(left, out);
             collect_call_types(right, out);
         }
-        TypedExpr::UnaryPrefix { expr, .. } => { collect_call_types(expr, out); }
-        TypedExpr::Field { receiver, .. } => { collect_call_types(receiver, out); }
-        TypedExpr::Lambda { body, .. } => { collect_call_types(body, out); }
+        TypedExpr::UnaryPrefix { expr, .. } => {
+            collect_call_types(expr, out);
+        }
+        TypedExpr::Field { receiver, .. } => {
+            collect_call_types(receiver, out);
+        }
+        TypedExpr::Lambda { body, .. } => {
+            collect_call_types(body, out);
+        }
         _ => {}
     }
 }
 
-fn collect_stmt_call_types(stmt: &writ_compiler::check::ir::TypedStmt, out: &mut Vec<(Ty, Option<writ_compiler::resolve::def_map::DefId>)>) {
+fn collect_stmt_call_types(
+    stmt: &writ_compiler::check::ir::TypedStmt,
+    out: &mut Vec<(Ty, Option<writ_compiler::resolve::def_map::DefId>)>,
+) {
     use writ_compiler::check::ir::TypedStmt;
     match stmt {
-        TypedStmt::Let { value, .. } => { collect_call_types(value, out); }
-        TypedStmt::Expr { expr, .. } => { collect_call_types(expr, out); }
-        TypedStmt::Return { value, .. } => { if let Some(v) = value { collect_call_types(v, out); } }
+        TypedStmt::Let { value, .. } => {
+            collect_call_types(value, out);
+        }
+        TypedStmt::Expr { expr, .. } => {
+            collect_call_types(expr, out);
+        }
+        TypedStmt::Return { value, .. } => {
+            if let Some(v) = value {
+                collect_call_types(v, out);
+            }
+        }
         _ => {}
     }
 }
@@ -1386,7 +1390,10 @@ fn root_qualified_log_resolves_to_non_error_call() {
         }
     }
 
-    assert!(!call_types.is_empty(), "should have at least one call in test body");
+    assert!(
+        !call_types.is_empty(),
+        "should have at least one call in test body"
+    );
     let (call_ty, _callee_def_id) = call_types[0];
     let mut interner = writ_compiler::check::ty::TyInterner::new();
     assert!(
@@ -1439,7 +1446,8 @@ fn root_qualified_choice_resolves_with_return_type() {
     let mut interner = writ_compiler::check::ty::TyInterner::new();
     let expected_int = interner.int();
     assert_eq!(
-        call_ty, expected_int,
+        call_ty,
+        expected_int,
         "::choice() must return int (the extern fn's declared return type), not error — got {:?}",
         interner.kind(call_ty)
     );
@@ -1468,7 +1476,11 @@ fn unqualified_log_still_resolves() {
 #[test]
 fn none_unqualified_with_annotation() {
     let (_ast, diags) = typecheck_src("pub fn f() { let x: bool? = None; }");
-    assert!(has_no_errors(&diags), "LANG-02-A: unqualified None with annotation should compile, errors: {:?}", diags);
+    assert!(
+        has_no_errors(&diags),
+        "LANG-02-A: unqualified None with annotation should compile, errors: {:?}",
+        diags
+    );
 }
 
 /// LANG-02-B: `let y = Some(true);` compiles with no errors (type inferred from arg).
@@ -1476,15 +1488,24 @@ fn none_unqualified_with_annotation() {
 #[test]
 fn some_unqualified_infers_type() {
     let (_ast, diags) = typecheck_src("pub fn f() { let y = Some(true); }");
-    assert!(has_no_errors(&diags), "LANG-02-B: unqualified Some(true) should compile, errors: {:?}", diags);
+    assert!(
+        has_no_errors(&diags),
+        "LANG-02-B: unqualified Some(true) should compile, errors: {:?}",
+        diags
+    );
 }
 
 /// LANG-02-H: `match x { None => {}, Some(v) => {} }` compiles with no errors.
 /// GREEN after plan 43-03: parser accepts single-segment Some(v), check_pattern handles Option arms.
 #[test]
 fn none_some_in_pattern_position() {
-    let (_ast, diags) = typecheck_src("pub fn f(x: bool?) { match x { None => {}, Some(v) => {} } }");
-    assert!(has_no_errors(&diags), "LANG-02-H: None/Some pattern arms on Option should compile, errors: {:?}", diags);
+    let (_ast, diags) =
+        typecheck_src("pub fn f(x: bool?) { match x { None => {}, Some(v) => {} } }");
+    assert!(
+        has_no_errors(&diags),
+        "LANG-02-H: None/Some pattern arms on Option should compile, errors: {:?}",
+        diags
+    );
 }
 
 /// LANG-02-C: user-defined function named `None` shadows the builtin — no error.
@@ -1492,7 +1513,11 @@ fn none_some_in_pattern_position() {
 #[test]
 fn user_none_shadows_builtin() {
     let (_ast, diags) = typecheck_src("pub fn None() -> int { 0 } pub fn f() -> int { None() }");
-    assert!(has_no_errors(&diags), "LANG-02-C: user-defined None() should shadow builtin without error, got: {:?}", diags);
+    assert!(
+        has_no_errors(&diags),
+        "LANG-02-C: user-defined None() should shadow builtin without error, got: {:?}",
+        diags
+    );
 }
 
 /// LANG-02-E: `let x = None;` with no type annotation must produce an error.
@@ -1500,7 +1525,10 @@ fn user_none_shadows_builtin() {
 #[test]
 fn bare_none_no_annotation_error() {
     let (_ast, diags) = typecheck_src("pub fn f() { let x = None; }");
-    assert!(!has_no_errors(&diags), "LANG-02-E: bare None without type annotation must produce at least one error");
+    assert!(
+        !has_no_errors(&diags),
+        "LANG-02-E: bare None without type annotation must produce at least one error"
+    );
 }
 
 // =========================================================
@@ -1510,7 +1538,11 @@ fn bare_none_no_annotation_error() {
 #[test]
 fn log_namespace_info_compiles() {
     let (_ast, diags) = typecheck_src(r#"pub fn f() { log::info("msg"); }"#);
-    assert!(has_no_errors(&diags), "log::info should compile without error: {:?}", diags);
+    assert!(
+        has_no_errors(&diags),
+        "log::info should compile without error: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -1524,19 +1556,30 @@ fn log_all_levels_compile() {
             log::error("e");
         }"#,
     );
-    assert!(has_no_errors(&diags), "all log levels should compile without error: {:?}", diags);
+    assert!(
+        has_no_errors(&diags),
+        "all log levels should compile without error: {:?}",
+        diags
+    );
 }
 
 #[test]
 fn log_root_qualified_compiles() {
     let (_ast, diags) = typecheck_src(r#"pub fn f() { ::log::debug("msg"); }"#);
-    assert!(has_no_errors(&diags), "::log::debug should compile without error: {:?}", diags);
+    assert!(
+        has_no_errors(&diags),
+        "::log::debug should compile without error: {:?}",
+        diags
+    );
 }
 
 #[test]
 fn log_bare_fails() {
     let (_ast, diags) = typecheck_src(r#"pub fn f() { log("msg"); }"#);
-    assert!(!has_no_errors(&diags), "bare log(msg) without extern decl should fail");
+    assert!(
+        !has_no_errors(&diags),
+        "bare log(msg) without extern decl should fail"
+    );
 }
 
 #[test]
@@ -1560,7 +1603,11 @@ fn force_unwrap_option_no_errors() {
             let b = n!;
         }"#,
     );
-    assert!(has_no_errors(&diags), "force-unwrap should not produce errors: {:?}", diags);
+    assert!(
+        has_no_errors(&diags),
+        "force-unwrap should not produce errors: {:?}",
+        diags
+    );
 }
 
 /// Force-unwrap on Result<T, E> must not produce any type errors.
@@ -1572,7 +1619,11 @@ fn force_unwrap_result_no_errors() {
             let v = r!;
         }"#,
     );
-    assert!(has_no_errors(&diags), "force-unwrap on Result should not produce errors: {:?}", diags);
+    assert!(
+        has_no_errors(&diags),
+        "force-unwrap on Result should not produce errors: {:?}",
+        diags
+    );
 }
 
 // =========================================================
@@ -1593,7 +1644,11 @@ fn test_incomplete_contract_impl_error() {
         pub fn main() {}
     "#;
     let (_ast, diags) = typecheck_src(src);
-    assert!(has_error(&diags, "E0123"), "expected E0123 for incomplete impl, got: {:?}", diags);
+    assert!(
+        has_error(&diags, "E0123"),
+        "expected E0123 for incomplete impl, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -1629,7 +1684,11 @@ fn test_contract_as_type_valid() {
         }
     "#;
     let (_ast, diags) = typecheck_src(src);
-    assert!(has_no_errors(&diags), "expected no errors for valid contract assignment, got: {:?}", diags);
+    assert!(
+        has_no_errors(&diags),
+        "expected no errors for valid contract assignment, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -1670,7 +1729,11 @@ fn test_contract_as_type_valid_assignment() {
         }
     "#;
     let (_ast, diags) = typecheck_src(src);
-    assert!(has_no_errors(&diags), "expected no errors for valid contract assignment, got: {:?}", diags);
+    assert!(
+        has_no_errors(&diags),
+        "expected no errors for valid contract assignment, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -1685,7 +1748,11 @@ fn test_contract_as_type_invalid_assignment() {
         }
     "#;
     let (_ast, diags) = typecheck_src(src);
-    assert!(has_error(&diags, "E0112"), "expected E0112 for type not implementing contract, got: {:?}", diags);
+    assert!(
+        has_error(&diags, "E0112"),
+        "expected E0112 for type not implementing contract, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -1703,7 +1770,11 @@ fn test_contract_as_param_type() {
         }
     "#;
     let (_ast, diags) = typecheck_src(src);
-    assert!(has_no_errors(&diags), "expected no errors for contract param type, got: {:?}", diags);
+    assert!(
+        has_no_errors(&diags),
+        "expected no errors for contract param type, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -1721,7 +1792,11 @@ fn test_contract_as_return_type() {
         }
     "#;
     let (_ast, diags) = typecheck_src(src);
-    assert!(has_no_errors(&diags), "expected no errors for contract return type, got: {:?}", diags);
+    assert!(
+        has_no_errors(&diags),
+        "expected no errors for contract return type, got: {:?}",
+        diags
+    );
 }
 
 // =========================================================
@@ -1747,7 +1822,11 @@ fn test_contract_method_call_on_receiver() {
         }
     "#;
     let (_ast, diags) = typecheck_src(src);
-    assert!(has_no_errors(&diags), "expected no errors for contract method call, got: {:?}", diags);
+    assert!(
+        has_no_errors(&diags),
+        "expected no errors for contract method call, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -1766,7 +1845,11 @@ fn test_contract_method_call_unknown_method() {
         }
     "#;
     let (_ast, diags) = typecheck_src(src);
-    assert!(has_error(&diags, "E0106"), "expected E0106 for unknown method on contract, got: {:?}", diags);
+    assert!(
+        has_error(&diags, "E0106"),
+        "expected E0106 for unknown method on contract, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -1785,7 +1868,11 @@ fn test_contract_method_call_with_args() {
         }
     "#;
     let (_ast, diags) = typecheck_src(src);
-    assert!(has_no_errors(&diags), "expected no errors for contract method with args, got: {:?}", diags);
+    assert!(
+        has_no_errors(&diags),
+        "expected no errors for contract method with args, got: {:?}",
+        diags
+    );
 }
 
 // =========================================================
@@ -1811,8 +1898,11 @@ fn test_contract_receiver_repro_complete_impl() {
         }
     "#;
     let (_ast, diags) = typecheck_src(src);
-    assert!(has_no_errors(&diags),
-        "complete impl repro script should compile without errors, got: {:?}", diags);
+    assert!(
+        has_no_errors(&diags),
+        "complete impl repro script should compile without errors, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -1835,8 +1925,11 @@ fn test_contract_receiver_repro_incomplete_impl() {
         }
     "#;
     let (_ast, diags) = typecheck_src(src);
-    assert!(has_error(&diags, "E0123"),
-        "incomplete impl repro script should produce E0123, got: {:?}", diags);
+    assert!(
+        has_error(&diags, "E0123"),
+        "incomplete impl repro script should produce E0123, got: {:?}",
+        diags
+    );
 }
 
 // =========================================================
@@ -1853,9 +1946,7 @@ fn typeof_primitive_type() {
 /// typeof(f) on a struct variable type-checks without errors
 #[test]
 fn typeof_struct_type() {
-    let (_ast, diags) = typecheck_src(
-        "struct Foo { x: int } fn test(f: Foo) { typeof(f); }"
-    );
+    let (_ast, diags) = typecheck_src("struct Foo { x: int } fn test(f: Foo) { typeof(f); }");
     assert!(has_no_errors(&diags), "errors: {:?}", diags);
 }
 
@@ -1864,7 +1955,9 @@ fn typeof_struct_type() {
 fn typeof_type_error_on_arithmetic() {
     let (_ast, diags) = typecheck_src("fn test(x: int) { let t = typeof(x) + 1; }");
     assert!(
-        diags.iter().any(|d| d.severity == writ_diagnostics::Severity::Error),
+        diags
+            .iter()
+            .any(|d| d.severity == writ_diagnostics::Severity::Error),
         "expected a type error for typeof(x) + 1, got: {:?}",
         diags
     );
@@ -1883,7 +1976,8 @@ fn typeof_result_is_reflection_type() {
     let asts: Vec<(writ_diagnostics::FileId, &writ_compiler::ast::Ast)> = vec![(file_id, &ast)];
     let file_paths: Vec<(writ_diagnostics::FileId, &str)> = vec![(file_id, "src/test.writ")];
     let (resolved, _) = writ_compiler::resolve::resolve(&asts, &file_paths, &[]);
-    let (typed_ast, interner, _type_env, diags) = writ_compiler::check::typecheck(resolved, &asts, &[]);
+    let (typed_ast, interner, _type_env, diags) =
+        writ_compiler::check::typecheck(resolved, &asts, &[]);
 
     assert!(has_no_errors(&diags), "errors: {:?}", diags);
 
@@ -1893,12 +1987,13 @@ fn typeof_result_is_reflection_type() {
         .decls
         .iter()
         .find_map(|decl| match decl {
-            TypedDecl::Fn { body: TypedExpr::Block { stmts, .. }, .. } => {
-                stmts.iter().find_map(|stmt| match stmt {
-                    TypedStmt::Expr { expr, .. } => Some(expr.ty()),
-                    _ => None,
-                })
-            }
+            TypedDecl::Fn {
+                body: TypedExpr::Block { stmts, .. },
+                ..
+            } => stmts.iter().find_map(|stmt| match stmt {
+                TypedStmt::Expr { expr, .. } => Some(expr.ty()),
+                _ => None,
+            }),
             _ => None,
         })
         .expect("typeof expression must be present in typed IR");
@@ -1964,7 +2059,11 @@ fn generic_bound_not_satisfied_emits_e0103() {
            pub fn check_eq<T: EqBound>(a: T, b: T) -> bool { true }
            pub fn test() { check_eq(new Foo { x: 1 }, new Foo { x: 2 }); }"#,
     );
-    assert!(has_error(&diags, "E0103"), "expected E0103, got: {:?}", diags);
+    assert!(
+        has_error(&diags, "E0103"),
+        "expected E0103, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -1976,7 +2075,11 @@ fn generic_single_bound_satisfied() {
            pub fn check_eq<T: EqBound>(a: T, b: T) -> bool { true }
            pub fn test() { check_eq(new Bar { x: 1 }, new Bar { x: 2 }); }"#,
     );
-    assert!(has_no_errors(&diags), "expected no errors, got: {:?}", diags);
+    assert!(
+        has_no_errors(&diags),
+        "expected no errors, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -1990,7 +2093,11 @@ fn generic_multi_bound_both_satisfied() {
            pub fn do_compare<T: EqBound + OrdBound>(a: T, b: T) -> bool { true }
            pub fn test() { do_compare(new Pair { x: 1 }, new Pair { x: 2 }); }"#,
     );
-    assert!(has_no_errors(&diags), "expected no errors, got: {:?}", diags);
+    assert!(
+        has_no_errors(&diags),
+        "expected no errors, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -2003,7 +2110,11 @@ fn generic_multi_bound_missing_one_emits_e0103() {
            pub fn do_compare<T: EqBound + OrdBound>(a: T, b: T) -> bool { true }
            pub fn test() { do_compare(new Half { x: 1 }, new Half { x: 2 }); }"#,
     );
-    assert!(has_error(&diags, "E0103"), "expected E0103 for missing Ord, got: {:?}", diags);
+    assert!(
+        has_error(&diags, "E0103"),
+        "expected E0103 for missing Ord, got: {:?}",
+        diags
+    );
 }
 
 #[test]
@@ -2014,8 +2125,14 @@ fn generic_bound_error_has_secondary_label() {
            pub fn check_eq<T: EqBound>(a: T, b: T) -> bool { true }
            pub fn test() { check_eq(new Nope { x: 1 }, new Nope { x: 2 }); }"#,
     );
-    let e0103 = diags.iter().find(|d| d.code == "E0103").expect("expected E0103");
-    assert!(!e0103.secondary_labels.is_empty(), "expected secondary label pointing to bound declaration");
+    let e0103 = diags
+        .iter()
+        .find(|d| d.code == "E0103")
+        .expect("expected E0103");
+    assert!(
+        !e0103.secondary_labels.is_empty(),
+        "expected secondary label pointing to bound declaration"
+    );
 }
 
 #[test]
@@ -2026,9 +2143,13 @@ fn generic_bound_error_has_help_suggestion() {
            pub fn check_eq<T: EqBound>(a: T, b: T) -> bool { true }
            pub fn test() { check_eq(new Nope { x: 1 }, new Nope { x: 2 }); }"#,
     );
-    let e0103 = diags.iter().find(|d| d.code == "E0103").expect("expected E0103");
+    let e0103 = diags
+        .iter()
+        .find(|d| d.code == "E0103")
+        .expect("expected E0103");
     assert!(
         e0103.help.contains("consider adding `impl"),
-        "expected help suggestion, got: {:?}", e0103.help
+        "expected help suggestion, got: {:?}",
+        e0103.help
     );
 }

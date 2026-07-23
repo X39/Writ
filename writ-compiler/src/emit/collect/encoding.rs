@@ -3,19 +3,21 @@
 use rustc_hash::FxHashMap;
 use writ_diagnostics::FileId;
 
-use writ_module::attr::{AttrValue, encode_attr_args, ATTR_TAG_STRING, ATTR_TAG_INT, ATTR_TAG_BOOL};
+use writ_module::attr::{
+    ATTR_TAG_BOOL, ATTR_TAG_INT, ATTR_TAG_STRING, AttrValue, encode_attr_args,
+};
 use writ_module::tables::ATTR_OWNER_KIND_DECL;
 
+use crate::ast::Ast;
+use crate::ast::decl::AstAttributeArg;
 use crate::ast::decl::{AstDecl, AstFnParam, AstParam};
 use crate::ast::expr::AstExpr;
-use crate::ast::decl::AstAttributeArg;
-use crate::ast::Ast;
 use crate::check::ir::{TypedAst, TypedDecl};
 use crate::check::ty::TyInterner;
 use crate::resolve::def_map::{DefId, DefKind, DefMap, DefVis};
 
 use crate::emit::metadata::{MetadataToken, TableId};
-use crate::emit::module_builder::{ModuleBuilder, TypeDefHandle, MethodDefHandle};
+use crate::emit::module_builder::{MethodDefHandle, ModuleBuilder, TypeDefHandle};
 
 use super::lookup::find_attrs_for_entry;
 
@@ -27,8 +29,16 @@ pub(super) fn collect_exports(def_map: &DefMap, builder: &mut ModuleBuilder) {
     // Collect all public DefIds, including overloaded functions.
     // by_fqn has the first overload; fn_overloads has all overloads for overloaded names.
     let mut seen = rustc_hash::FxHashSet::default();
-    let all_ids: Vec<_> = def_map.by_fqn.values().copied()
-        .chain(def_map.fn_overloads.values().flat_map(|ids| ids.iter().copied()))
+    let all_ids: Vec<_> = def_map
+        .by_fqn
+        .values()
+        .copied()
+        .chain(
+            def_map
+                .fn_overloads
+                .values()
+                .flat_map(|ids| ids.iter().copied()),
+        )
         .filter(|id| seen.insert(*id))
         .collect();
     for def_id in all_ids {
@@ -49,12 +59,16 @@ pub(super) fn collect_exports(def_map: &DefMap, builder: &mut ModuleBuilder) {
         if let Some(token) = builder.token_for_def(def_id) {
             let item_kind = match entry.kind {
                 DefKind::Fn | DefKind::ExternFn => 0, // method
-                DefKind::Struct | DefKind::Class | DefKind::Entity | DefKind::Enum
+                DefKind::Struct
+                | DefKind::Class
+                | DefKind::Entity
+                | DefKind::Enum
                 | DefKind::Component
-                | DefKind::ExternComponent | DefKind::Contract => 1, // type
+                | DefKind::ExternComponent
+                | DefKind::Contract => 1, // type
                 DefKind::Const | DefKind::Global => 2, // global
-                DefKind::Impl => continue, // impls aren't exported directly
-                DefKind::AttributeDef => continue, // attribute decls are not exports
+                DefKind::Impl => continue,            // impls aren't exported directly
+                DefKind::AttributeDef => continue,    // attribute decls are not exports
             };
             let is_local_definition = match item_kind {
                 0 => matches!(token.table(), TableId::MethodDef | TableId::ExternDef),
@@ -97,7 +111,11 @@ fn map_attr_expr(expr: &AstExpr) -> Option<AttrValue> {
     }
 }
 
-pub(super) fn collect_attributes(typed_ast: &TypedAst, asts: &[(FileId, &Ast)], builder: &mut ModuleBuilder) {
+pub(super) fn collect_attributes(
+    typed_ast: &TypedAst,
+    asts: &[(FileId, &Ast)],
+    builder: &mut ModuleBuilder,
+) {
     let def_map = &typed_ast.def_map;
 
     for decl in &typed_ast.decls {
@@ -131,16 +149,18 @@ pub(super) fn collect_attributes(typed_ast: &TypedAst, asts: &[(FileId, &Ast)], 
             None => continue,
         };
         let owner_kind: u8 = match entry.kind {
-            DefKind::Struct | DefKind::Entity | DefKind::Enum | DefKind::Component
-            | DefKind::Contract | DefKind::ExternComponent => 0, // type
+            DefKind::Struct
+            | DefKind::Entity
+            | DefKind::Enum
+            | DefKind::Component
+            | DefKind::Contract
+            | DefKind::ExternComponent => 0, // type
             DefKind::Fn | DefKind::ExternFn => 1, // method
-            _ => 2, // field/global
+            _ => 2,                               // field/global
         };
 
         for attr in &attrs {
-            let values: Vec<AttrValue> = attr.args.iter()
-                .filter_map(map_attr_arg)
-                .collect();
+            let values: Vec<AttrValue> = attr.args.iter().filter_map(map_attr_arg).collect();
             let blob_offset = if values.is_empty() {
                 0u32
             } else {
@@ -231,7 +251,11 @@ pub(super) fn collect_attribute_decl_defs(
 /// Must be called from collect_post_finalize() after token assignment, because
 /// it uses builder.token_for_def() and builder.methoddef_token_by_name() which
 /// depend on finalized MethodDef tokens.
-pub(super) fn collect_locale_defs(typed_ast: &TypedAst, asts: &[(FileId, &Ast)], builder: &mut ModuleBuilder) {
+pub(super) fn collect_locale_defs(
+    typed_ast: &TypedAst,
+    asts: &[(FileId, &Ast)],
+    builder: &mut ModuleBuilder,
+) {
     let def_map = &typed_ast.def_map;
 
     for decl in &typed_ast.decls {
@@ -497,11 +521,9 @@ fn ast_type_signature(
                     .collect(),
             }
         }
-        crate::ast::types::AstType::Array { elem, .. } => {
-            TypeSignature::Array(Box::new(ast_type_signature(
-                elem, generics, def_map, builder,
-            )))
-        }
+        crate::ast::types::AstType::Array { elem, .. } => TypeSignature::Array(Box::new(
+            ast_type_signature(elem, generics, def_map, builder),
+        )),
         crate::ast::types::AstType::Func { params, ret, .. } => TypeSignature::Function {
             params: params
                 .iter()

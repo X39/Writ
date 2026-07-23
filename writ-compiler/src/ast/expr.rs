@@ -1,6 +1,6 @@
-use chumsky::span::SimpleSpan;
 use crate::ast::stmt::AstStmt;
 use crate::ast::types::AstType;
+use chumsky::span::SimpleSpan;
 
 /// All expression forms that survive lowering into the AST.
 ///
@@ -16,7 +16,6 @@ use crate::ast::types::AstType;
 #[derive(Debug, Clone, PartialEq)]
 pub enum AstExpr {
     // --- Literals ---
-
     /// Integer literal: `42`, `1_000`
     IntLit { value: i64, span: SimpleSpan },
     /// Float literal: `3.14`, `1.5e10`
@@ -30,37 +29,66 @@ pub enum AstExpr {
     // NOTE: No NullLit — lowered to path expression Option::None before reaching AST.
 
     // --- Identifiers and paths ---
-
     /// Identifier: `x`, `foo`
     Ident { name: String, span: SimpleSpan },
     /// Path expression: `a::b::c`
-    Path { segments: Vec<String>, span: SimpleSpan },
+    Path {
+        segments: Vec<String>,
+        span: SimpleSpan,
+    },
 
     // --- Binary and unary operations ---
-
     /// Binary operation: `a + b`, `x == y`
-    Binary { left: Box<AstExpr>, op: BinaryOp, right: Box<AstExpr>, span: SimpleSpan },
+    Binary {
+        left: Box<AstExpr>,
+        op: BinaryOp,
+        right: Box<AstExpr>,
+        span: SimpleSpan,
+    },
     /// Unary prefix operation: `-x`, `!flag`
-    UnaryPrefix { op: PrefixOp, expr: Box<AstExpr>, span: SimpleSpan },
+    UnaryPrefix {
+        op: PrefixOp,
+        expr: Box<AstExpr>,
+        span: SimpleSpan,
+    },
     /// Unary postfix operation: `val?`, `val!`
-    UnaryPostfix { expr: Box<AstExpr>, op: PostfixOp, span: SimpleSpan },
+    UnaryPostfix {
+        expr: Box<AstExpr>,
+        op: PostfixOp,
+        span: SimpleSpan,
+    },
 
     // --- Access ---
-
     /// Member access: `obj.field`
-    MemberAccess { object: Box<AstExpr>, field: String, field_span: SimpleSpan, span: SimpleSpan },
+    MemberAccess {
+        object: Box<AstExpr>,
+        field: String,
+        field_span: SimpleSpan,
+        span: SimpleSpan,
+    },
     /// Bracket access: `arr[0]`, `entity[Health]`
-    BracketAccess { object: Box<AstExpr>, index: Box<AstExpr>, span: SimpleSpan },
+    BracketAccess {
+        object: Box<AstExpr>,
+        index: Box<AstExpr>,
+        span: SimpleSpan,
+    },
 
     // --- Calls ---
-
     /// Function call or construction: `foo(a, b)`, `Point(x: 1, y: 2)`
-    Call { callee: Box<AstExpr>, args: Vec<AstArg>, span: SimpleSpan },
+    Call {
+        callee: Box<AstExpr>,
+        args: Vec<AstArg>,
+        span: SimpleSpan,
+    },
     /// Generic call: `f<T>(args)`
-    GenericCall { callee: Box<AstExpr>, type_args: Vec<AstType>, args: Vec<AstArg>, span: SimpleSpan },
+    GenericCall {
+        callee: Box<AstExpr>,
+        type_args: Vec<AstType>,
+        args: Vec<AstArg>,
+        span: SimpleSpan,
+    },
 
     // --- Control flow (expression forms) ---
-
     /// If expression: `if cond { } else { }`
     If {
         condition: Box<AstExpr>,
@@ -77,12 +105,18 @@ pub enum AstExpr {
         span: SimpleSpan,
     },
     /// Match expression: `match expr { arms }`
-    Match { scrutinee: Box<AstExpr>, arms: Vec<AstMatchArm>, span: SimpleSpan },
+    Match {
+        scrutinee: Box<AstExpr>,
+        arms: Vec<AstMatchArm>,
+        span: SimpleSpan,
+    },
     /// Block expression: `{ stmts }`
-    Block { stmts: Vec<AstStmt>, span: SimpleSpan },
+    Block {
+        stmts: Vec<AstStmt>,
+        span: SimpleSpan,
+    },
 
     // --- Range ---
-
     /// Range expression: `a..b`, `a..=b`, `..b`, `a..`
     Range {
         start: Option<Box<AstExpr>>,
@@ -91,10 +125,12 @@ pub enum AstExpr {
         span: SimpleSpan,
     },
     /// From-end index: `^expr`
-    FromEnd { expr: Box<AstExpr>, span: SimpleSpan },
+    FromEnd {
+        expr: Box<AstExpr>,
+        span: SimpleSpan,
+    },
 
     // --- Lambda ---
-
     /// Lambda expression: `fn(x: int, y: int) -> int { x + y }`
     Lambda {
         params: Vec<AstLambdaParam>,
@@ -104,27 +140,45 @@ pub enum AstExpr {
     },
 
     // --- Concurrency pass-through (R1: first-class AST nodes) ---
-
     /// Spawn expression: `spawn expr`
-    Spawn { expr: Box<AstExpr>, span: SimpleSpan },
+    Spawn {
+        expr: Box<AstExpr>,
+        span: SimpleSpan,
+    },
     /// Spawn detached expression: `spawn detached expr` (fused)
-    SpawnDetached { expr: Box<AstExpr>, span: SimpleSpan },
+    SpawnDetached {
+        expr: Box<AstExpr>,
+        span: SimpleSpan,
+    },
     /// Join expression: `join expr`
-    Join { expr: Box<AstExpr>, span: SimpleSpan },
+    Join {
+        expr: Box<AstExpr>,
+        span: SimpleSpan,
+    },
     /// Cancel expression: `cancel expr`
-    Cancel { expr: Box<AstExpr>, span: SimpleSpan },
+    Cancel {
+        expr: Box<AstExpr>,
+        span: SimpleSpan,
+    },
     /// Defer expression: `defer expr`
-    Defer { expr: Box<AstExpr>, span: SimpleSpan },
+    Defer {
+        expr: Box<AstExpr>,
+        span: SimpleSpan,
+    },
     /// Try expression: `try expr`
-    Try { expr: Box<AstExpr>, span: SimpleSpan },
+    Try {
+        expr: Box<AstExpr>,
+        span: SimpleSpan,
+    },
 
     // --- Array literal ---
-
     /// Array literal: `[1, 2, 3]`
-    ArrayLit { elements: Vec<AstExpr>, span: SimpleSpan },
+    ArrayLit {
+        elements: Vec<AstExpr>,
+        span: SimpleSpan,
+    },
 
     // --- New construction ---
-
     /// New construction expression: `new Type { field: value }`
     New {
         ty: AstType,
@@ -133,20 +187,24 @@ pub enum AstExpr {
     },
 
     // --- Reflection ---
-
     /// typeof expression: `typeof(expr)` — static compile-time type query.
     /// NOT a function call — lowers directly from CST::TypeOf.
     /// Result type: TyKind::ReflectionType(static type of inner expr).
-    TypeOf { expr: Box<AstExpr>, span: SimpleSpan },
+    TypeOf {
+        expr: Box<AstExpr>,
+        span: SimpleSpan,
+    },
 
     // --- Assignment ---
-
     /// Plain assignment only (`=`).
     /// NOTE: Compound assignments (+=, -=, etc.) are lowered to `a = a op b` before reaching AST.
-    Assign { target: Box<AstExpr>, value: Box<AstExpr>, span: SimpleSpan },
+    Assign {
+        target: Box<AstExpr>,
+        value: Box<AstExpr>,
+        span: SimpleSpan,
+    },
 
     // --- Error recovery sentinel ---
-
     /// Placeholder for recovered lowering errors.
     /// Downstream passes should detect and skip these nodes.
     Error { span: SimpleSpan },
@@ -250,15 +308,30 @@ pub struct AstMatchArm {
 #[derive(Debug, Clone, PartialEq)]
 pub enum AstPattern {
     /// Literal pattern: `42`, `"key"`, `true`
-    Literal { expr: Box<AstExpr>, span: SimpleSpan },
+    Literal {
+        expr: Box<AstExpr>,
+        span: SimpleSpan,
+    },
     /// Wildcard pattern: `_`
     Wildcard { span: SimpleSpan },
     /// Variable binding pattern: `x`
     Variable { name: String, span: SimpleSpan },
     /// Enum destructuring: `Result::Ok(val)`, `QuestStatus::InProgress(step)`
-    EnumDestructure { path: Vec<String>, fields: Vec<AstPattern>, span: SimpleSpan },
+    EnumDestructure {
+        path: Vec<String>,
+        fields: Vec<AstPattern>,
+        span: SimpleSpan,
+    },
     /// Or-pattern: `A | B | C`
-    Or { patterns: Vec<AstPattern>, span: SimpleSpan },
+    Or {
+        patterns: Vec<AstPattern>,
+        span: SimpleSpan,
+    },
     /// Range pattern: `1..=5`
-    Range { start: Box<AstExpr>, kind: RangeKind, end: Box<AstExpr>, span: SimpleSpan },
+    Range {
+        start: Box<AstExpr>,
+        kind: RangeKind,
+        end: Box<AstExpr>,
+        span: SimpleSpan,
+    },
 }

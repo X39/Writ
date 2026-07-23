@@ -32,7 +32,10 @@ pub(super) fn emit_range(
 ) -> u16 {
     let range_type_idx = emitter.builder.range_type_token();
     let r_range = emitter.alloc_reg(ty);
-    emitter.emit(Instruction::New { r_dst: r_range, type_idx: range_type_idx });
+    emitter.emit(Instruction::New {
+        r_dst: r_range,
+        type_idx: range_type_idx,
+    });
 
     // Field 0: start
     let int_ty = Ty(0); // Int is Ty(0) per TyInterner pre-interned ordering
@@ -43,7 +46,11 @@ pub(super) fn emit_range(
         emitter.emit(Instruction::LoadInt { r_dst: r, value: 0 });
         r
     };
-    emitter.emit(Instruction::SetField { r_obj: r_range, field_idx: 0, r_val: r_start });
+    emitter.emit(Instruction::SetField {
+        r_obj: r_range,
+        field_idx: 0,
+        r_val: r_start,
+    });
 
     // Field 1: end
     let r_end = if let Some(e) = end {
@@ -53,13 +60,21 @@ pub(super) fn emit_range(
         emitter.emit(Instruction::LoadInt { r_dst: r, value: 0 });
         r
     };
-    emitter.emit(Instruction::SetField { r_obj: r_range, field_idx: 1, r_val: r_end });
+    emitter.emit(Instruction::SetField {
+        r_obj: r_range,
+        field_idx: 1,
+        r_val: r_end,
+    });
 
     // Field 2: start_inclusive (always true — Writ ranges always include the start)
     let bool_ty = Ty(2); // Bool is Ty(2)
     let r_si = emitter.alloc_reg(bool_ty);
     emitter.emit(Instruction::LoadTrue { r_dst: r_si });
-    emitter.emit(Instruction::SetField { r_obj: r_range, field_idx: 2, r_val: r_si });
+    emitter.emit(Instruction::SetField {
+        r_obj: r_range,
+        field_idx: 2,
+        r_val: r_si,
+    });
 
     // Field 3: end_inclusive (true for ..=, false for ..)
     let r_ei = emitter.alloc_reg(bool_ty);
@@ -68,7 +83,11 @@ pub(super) fn emit_range(
     } else {
         emitter.emit(Instruction::LoadFalse { r_dst: r_ei });
     }
-    emitter.emit(Instruction::SetField { r_obj: r_range, field_idx: 3, r_val: r_ei });
+    emitter.emit(Instruction::SetField {
+        r_obj: r_range,
+        field_idx: 3,
+        r_val: r_ei,
+    });
 
     r_range
 }
@@ -90,7 +109,12 @@ pub(super) fn emit_array_lit(emitter: &mut BodyEmitter<'_>, ty: Ty, elements: &[
     // BUG-06 fix: use pack_args_consecutive to avoid phantom MOVs when already consecutive
     let r_base = pack_args_consecutive(emitter, &elem_regs);
 
-    emitter.emit(Instruction::ArrayInit { r_dst, elem_type, count, r_base });
+    emitter.emit(Instruction::ArrayInit {
+        r_dst,
+        elem_type,
+        count,
+        r_base,
+    });
     r_dst
 }
 
@@ -153,7 +177,10 @@ pub(super) fn emit_new(
                 .unwrap_or(0);
             // EMIT-11: Entity construction sequence per spec §2.16.7
             let r_entity = emitter.alloc_reg(ty);
-            emitter.emit(Instruction::SpawnEntity { r_dst: r_entity, type_idx });
+            emitter.emit(Instruction::SpawnEntity {
+                r_dst: r_entity,
+                type_idx,
+            });
             // ONLY explicitly-provided fields get SET_FIELD
             for (field_name, field_expr) in fields {
                 let r_val = emit_expr(emitter, field_expr);
@@ -163,7 +190,11 @@ pub(super) fn emit_new(
                     .unwrap_or_else(|| {
                         panic!("checked entity field `{field_name}` has no metadata operand")
                     });
-                emitter.emit(Instruction::SetField { r_obj: r_entity, field_idx, r_val });
+                emitter.emit(Instruction::SetField {
+                    r_obj: r_entity,
+                    field_idx,
+                    r_val,
+                });
             }
             emitter.emit(Instruction::InitEntity { r_entity });
             r_entity
@@ -177,7 +208,10 @@ pub(super) fn emit_new(
                 .unwrap_or(0);
             // EMIT-10: Struct construction
             let r_obj = emitter.alloc_reg(ty);
-            emitter.emit(Instruction::New { r_dst: r_obj, type_idx });
+            emitter.emit(Instruction::New {
+                r_dst: r_obj,
+                type_idx,
+            });
             for (field_name, field_expr) in fields {
                 let r_val = emit_expr(emitter, field_expr);
                 let field_idx = emitter
@@ -186,7 +220,11 @@ pub(super) fn emit_new(
                     .unwrap_or_else(|| {
                         panic!("checked construction field `{field_name}` has no metadata operand")
                     });
-                emitter.emit(Instruction::SetField { r_obj, field_idx, r_val });
+                emitter.emit(Instruction::SetField {
+                    r_obj,
+                    field_idx,
+                    r_val,
+                });
             }
             r_obj
         }

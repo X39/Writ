@@ -8,9 +8,18 @@ fn disassemble_empty_module() {
 "#;
     let module = writ_assembler::assemble(src).expect("should assemble");
     let text = writ_assembler::disassemble(&module);
-    assert!(text.contains(".module"), "output should contain .module directive");
-    assert!(text.contains("\"test\""), "output should contain module name");
-    assert!(text.contains("\"1.0.0\""), "output should contain module version");
+    assert!(
+        text.contains(".module"),
+        "output should contain .module directive"
+    );
+    assert!(
+        text.contains("\"test\""),
+        "output should contain module name"
+    );
+    assert!(
+        text.contains("\"1.0.0\""),
+        "output should contain module version"
+    );
     assert!(text.contains('}'), "output should have closing brace");
 }
 
@@ -26,10 +35,19 @@ fn disassemble_type_with_fields() {
 "#;
     let module = writ_assembler::assemble(src).expect("should assemble");
     let text = writ_assembler::disassemble(&module);
-    assert!(text.contains(".type"), "output should contain .type directive");
-    assert!(text.contains("\"MyStruct\""), "output should contain type name");
+    assert!(
+        text.contains(".type"),
+        "output should contain .type directive"
+    );
+    assert!(
+        text.contains("\"MyStruct\""),
+        "output should contain type name"
+    );
     assert!(text.contains("struct"), "output should contain kind");
-    assert!(text.contains(".field"), "output should contain .field directive");
+    assert!(
+        text.contains(".field"),
+        "output should contain .field directive"
+    );
     assert!(text.contains("\"x\""), "output should contain field name x");
     assert!(text.contains("\"y\""), "output should contain field name y");
     assert!(text.contains("int"), "output should contain int type");
@@ -47,9 +65,18 @@ fn disassemble_contract_with_methods() {
 "#;
     let module = writ_assembler::assemble(src).expect("should assemble");
     let text = writ_assembler::disassemble(&module);
-    assert!(text.contains(".contract"), "output should contain .contract directive");
-    assert!(text.contains("\"IFoo\""), "output should contain contract name");
-    assert!(text.contains("\"do_thing\""), "output should contain method name");
+    assert!(
+        text.contains(".contract"),
+        "output should contain .contract directive"
+    );
+    assert!(
+        text.contains("\"IFoo\""),
+        "output should contain contract name"
+    );
+    assert!(
+        text.contains("\"do_thing\""),
+        "output should contain method name"
+    );
     assert!(text.contains("slot"), "output should contain slot keyword");
 }
 
@@ -66,9 +93,18 @@ fn disassemble_method_with_instructions() {
 "#;
     let module = writ_assembler::assemble(src).expect("should assemble");
     let text = writ_assembler::disassemble(&module);
-    assert!(text.contains(".method"), "output should contain .method directive");
-    assert!(text.contains("\"main\""), "output should contain method name");
-    assert!(text.contains("LOAD_INT"), "output should contain LOAD_INT mnemonic");
+    assert!(
+        text.contains(".method"),
+        "output should contain .method directive"
+    );
+    assert!(
+        text.contains("\"main\""),
+        "output should contain method name"
+    );
+    assert!(
+        text.contains("LOAD_INT"),
+        "output should contain LOAD_INT mnemonic"
+    );
     assert!(text.contains("42"), "output should contain integer value");
     assert!(text.contains("RET"), "output should contain RET mnemonic");
     assert!(text.contains("r0"), "output should contain register r0");
@@ -76,14 +112,13 @@ fn disassemble_method_with_instructions() {
 
 #[test]
 fn disassemble_param_names_ignore_implicit_receiver_registers() {
+    use writ_module::TypeDefKind;
     use writ_module::builder::ModuleBuilder;
     use writ_module::module::MethodBody;
-    use writ_module::signature::{encode_method_signature, encode_type_signature, TypeSignature};
-    use writ_module::TypeDefKind;
+    use writ_module::signature::{TypeSignature, encode_method_signature, encode_type_signature};
 
     let void_sig = encode_method_signature(&[], &TypeSignature::Void).unwrap();
-    let one_int_sig =
-        encode_method_signature(&[TypeSignature::Int], &TypeSignature::Void).unwrap();
+    let one_int_sig = encode_method_signature(&[TypeSignature::Int], &TypeSignature::Void).unwrap();
     let int_sig = encode_type_signature(&TypeSignature::Int).unwrap();
     let empty_body = || MethodBody {
         register_types: vec![],
@@ -131,9 +166,18 @@ fn disassemble_impl_block() {
 "#;
     let module = writ_assembler::assemble(src).expect("should assemble");
     let text = writ_assembler::disassemble(&module);
-    assert!(text.contains(".impl"), "output should contain .impl directive");
-    assert!(text.contains("MyStruct"), "output should contain type name in impl");
-    assert!(text.contains("IFoo"), "output should contain contract name in impl");
+    assert!(
+        text.contains(".impl"),
+        "output should contain .impl directive"
+    );
+    assert!(
+        text.contains("MyStruct"),
+        "output should contain type name in impl"
+    );
+    assert!(
+        text.contains("IFoo"),
+        "output should contain contract name in impl"
+    );
     assert!(text.contains(':'), "output should contain : separator");
 }
 
@@ -149,7 +193,10 @@ fn disassemble_verbose_includes_offsets() {
 "#;
     let module = writ_assembler::assemble(src).expect("should assemble");
     let text = writ_assembler::disassemble_verbose(&module);
-    assert!(text.contains("// +0x"), "verbose output should contain hex offset comments");
+    assert!(
+        text.contains("// +0x"),
+        "verbose output should contain hex offset comments"
+    );
 }
 
 #[test]
@@ -161,9 +208,18 @@ fn disassemble_module_with_extern_ref() {
 "#;
     let module = writ_assembler::assemble(src).expect("should assemble");
     let text = writ_assembler::disassemble(&module);
-    assert!(text.contains(".extern"), "output should contain .extern directive");
-    assert!(text.contains("\"MyLib\""), "output should contain module ref name");
-    assert!(text.contains("\"2.0.0\""), "output should contain min version");
+    assert!(
+        text.contains(".extern"),
+        "output should contain .extern directive"
+    );
+    assert!(
+        text.contains("\"MyLib\""),
+        "output should contain module ref name"
+    );
+    assert!(
+        text.contains("\"2.0.0\""),
+        "output should contain min version"
+    );
 }
 
 #[test]
@@ -204,8 +260,14 @@ fn disassemble_all_control_flow() {
     let module = writ_assembler::assemble(src).expect("should assemble");
     let text = writ_assembler::disassemble(&module);
     assert!(text.contains("BR_TRUE"), "should contain BR_TRUE mnemonic");
-    assert!(text.contains("BR_FALSE"), "should contain BR_FALSE mnemonic");
-    assert!(text.contains("LOAD_TRUE"), "should contain LOAD_TRUE mnemonic");
+    assert!(
+        text.contains("BR_FALSE"),
+        "should contain BR_FALSE mnemonic"
+    );
+    assert!(
+        text.contains("LOAD_TRUE"),
+        "should contain LOAD_TRUE mnemonic"
+    );
 }
 
 #[test]

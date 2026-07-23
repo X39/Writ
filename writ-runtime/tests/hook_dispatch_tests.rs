@@ -6,13 +6,13 @@
 //! TypeSpecs use structural target/contract matching in CALL_VIRT.
 
 use std::sync::{Arc, Mutex};
-use writ_module::module::MethodBody;
-use writ_module::tables::TypeDefKind;
 use writ_module::Instruction;
 use writ_module::ModuleBuilder;
+use writ_module::module::MethodBody;
+use writ_module::tables::TypeDefKind;
 use writ_runtime::{
-    ExecutionLimit, GcStats, HostRequest, HostResponse, LogLevel, RequestId,
-    RuntimeBuilder, RuntimeHost, TaskState, Value,
+    ExecutionLimit, GcStats, HostRequest, HostResponse, LogLevel, RequestId, RuntimeBuilder,
+    RuntimeHost, TaskState, Value,
 };
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -49,7 +49,10 @@ struct TrackingHost {
 
 impl TrackingHost {
     fn new(extern_names: Vec<String>, calls: Arc<Mutex<Vec<String>>>) -> Self {
-        TrackingHost { calls, extern_names }
+        TrackingHost {
+            calls,
+            extern_names,
+        }
     }
 
     fn resolve_extern_name(&self, extern_idx: u32) -> String {
@@ -113,21 +116,35 @@ fn init_entity_dispatches_on_create_hook() {
     let entity_type = builder.add_type_def("EntityA", "", TypeDefKind::Entity, 0);
 
     // method[0]: "on_create" -- calls extern hook_fired, then RET_VOID
-    let on_create_body = make_body(&[
-        Instruction::CallExtern { r_dst: 1, extern_idx: hook_token.0, r_base: 0, argc: 0 },
-        Instruction::RetVoid,
-    ], 2);
+    let on_create_body = make_body(
+        &[
+            Instruction::CallExtern {
+                r_dst: 1,
+                extern_idx: hook_token.0,
+                r_base: 0,
+                argc: 0,
+            },
+            Instruction::RetVoid,
+        ],
+        2,
+    );
     builder.add_type_method(entity_type, "on_create", &[0, 0], 0, 2, on_create_body);
 
     // TypeDef "_Sentinel" (row 1): method_list=2 bounds EntityA's methods to [0..1)
     builder.add_type_def("_Sentinel", "", TypeDefKind::Entity, 0);
 
     // method[1]: "main" -- SPAWN_ENTITY, INIT_ENTITY, RET_VOID
-    let main_body = make_body(&[
-        Instruction::SpawnEntity { r_dst: 0, type_idx: typedef_token(0) },
-        Instruction::InitEntity { r_entity: 0 },
-        Instruction::RetVoid,
-    ], 2);
+    let main_body = make_body(
+        &[
+            Instruction::SpawnEntity {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+            },
+            Instruction::InitEntity { r_entity: 0 },
+            Instruction::RetVoid,
+        ],
+        2,
+    );
     builder.add_method("main", &[0, 0], 0, 2, main_body);
 
     let module = builder.build();
@@ -143,10 +160,7 @@ fn init_entity_dispatches_on_create_hook() {
 
     let calls = Arc::new(Mutex::new(Vec::<String>::new()));
     let host = TrackingHost::new(extern_names, Arc::clone(&calls));
-    let mut runtime = RuntimeBuilder::new(module)
-        .with_host(host)
-        .build()
-        .unwrap();
+    let mut runtime = RuntimeBuilder::new(module).with_host(host).build().unwrap();
 
     // main is method index 1 (on_create is index 0)
     let task_id = runtime.spawn_task(1, vec![]).unwrap();
@@ -177,22 +191,36 @@ fn destroy_entity_dispatches_on_destroy_hook() {
     let entity_type = builder.add_type_def("EntityB", "", TypeDefKind::Entity, 0);
 
     // method[0]: "on_destroy"
-    let on_destroy_body = make_body(&[
-        Instruction::CallExtern { r_dst: 1, extern_idx: hook_token.0, r_base: 0, argc: 0 },
-        Instruction::RetVoid,
-    ], 2);
+    let on_destroy_body = make_body(
+        &[
+            Instruction::CallExtern {
+                r_dst: 1,
+                extern_idx: hook_token.0,
+                r_base: 0,
+                argc: 0,
+            },
+            Instruction::RetVoid,
+        ],
+        2,
+    );
     builder.add_type_method(entity_type, "on_destroy", &[0, 0], 0, 2, on_destroy_body);
 
     // Sentinel type: method_list=2 bounds on_destroy to [0..1)
     builder.add_type_def("_Sentinel", "", TypeDefKind::Entity, 0);
 
     // method[1]: "main" -- SPAWN, INIT, DESTROY, RET_VOID
-    let main_body = make_body(&[
-        Instruction::SpawnEntity { r_dst: 0, type_idx: typedef_token(0) },
-        Instruction::InitEntity { r_entity: 0 },
-        Instruction::DestroyEntity { r_entity: 0 },
-        Instruction::RetVoid,
-    ], 2);
+    let main_body = make_body(
+        &[
+            Instruction::SpawnEntity {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+            },
+            Instruction::InitEntity { r_entity: 0 },
+            Instruction::DestroyEntity { r_entity: 0 },
+            Instruction::RetVoid,
+        ],
+        2,
+    );
     builder.add_method("main", &[0, 0], 0, 2, main_body);
 
     let module = builder.build();
@@ -208,10 +236,7 @@ fn destroy_entity_dispatches_on_destroy_hook() {
 
     let calls = Arc::new(Mutex::new(Vec::<String>::new()));
     let host = TrackingHost::new(extern_names, Arc::clone(&calls));
-    let mut runtime = RuntimeBuilder::new(module)
-        .with_host(host)
-        .build()
-        .unwrap();
+    let mut runtime = RuntimeBuilder::new(module).with_host(host).build().unwrap();
 
     let task_id = runtime.spawn_task(1, vec![]).unwrap();
     runtime.tick(0.0, ExecutionLimit::None);
@@ -239,12 +264,18 @@ fn entity_without_hooks_inits_and_destroys_ok() {
     builder.add_type_def("_Sentinel", "", TypeDefKind::Enum, 0);
 
     // method[0]: "main"
-    let main_body = make_body(&[
-        Instruction::SpawnEntity { r_dst: 0, type_idx: typedef_token(0) },
-        Instruction::InitEntity { r_entity: 0 },
-        Instruction::DestroyEntity { r_entity: 0 },
-        Instruction::RetVoid,
-    ], 2);
+    let main_body = make_body(
+        &[
+            Instruction::SpawnEntity {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+            },
+            Instruction::InitEntity { r_entity: 0 },
+            Instruction::DestroyEntity { r_entity: 0 },
+            Instruction::RetVoid,
+        ],
+        2,
+    );
     builder.add_method("main", &[0, 0], 0, 2, main_body);
 
     let module = builder.build();
@@ -254,5 +285,9 @@ fn entity_without_hooks_inits_and_destroys_ok() {
     runtime.tick(0.0, ExecutionLimit::None);
 
     let state = runtime.task_state(task_id);
-    assert_eq!(state, Some(TaskState::Completed), "task should complete without crash");
+    assert_eq!(
+        state,
+        Some(TaskState::Completed),
+        "task should complete without crash"
+    );
 }

@@ -7,13 +7,13 @@ use std::io::{Read, Write};
 
 use dap::prelude::*;
 use writ_module::heap::read_string;
-use writ_runtime::{FrameLocation, LogLevel, SuspendReason, TaskState, TaskId};
 use writ_runtime::runtime::{ExecutionLimit, TickResult};
+use writ_runtime::{FrameLocation, LogLevel, SuspendReason, TaskId, TaskState};
 
 use crate::debug_host::StopReason;
 
 use super::DapServer;
-use super::helpers::{instr_to_byte_pc, collect_frame_variables, evaluate_local};
+use super::helpers::{collect_frame_variables, evaluate_local, instr_to_byte_pc};
 
 impl<I: Read, O: Write> DapServer<I, O> {
     /// Run the VM until a debug suspension (breakpoint/step) or program completion.
@@ -31,14 +31,23 @@ impl<I: Read, O: Write> DapServer<I, O> {
         // exit with code 1 to indicate the crash.
         if let Some(rt) = self.runtime.as_ref() {
             let state = rt.task_state(task_id);
-            if matches!(state, Some(TaskState::Completed) | Some(TaskState::Cancelled)) {
-                let exit_code = if rt.crash_info(task_id).is_some() { 1 } else { 0 };
-                let _ = self.server.send_event(Event::Terminated(Some(
-                    events::TerminatedEventBody { restart: None },
-                )));
-                let _ = self.server.send_event(Event::Exited(events::ExitedEventBody {
-                    exit_code,
-                }));
+            if matches!(
+                state,
+                Some(TaskState::Completed) | Some(TaskState::Cancelled)
+            ) {
+                let exit_code = if rt.crash_info(task_id).is_some() {
+                    1
+                } else {
+                    0
+                };
+                let _ =
+                    self.server
+                        .send_event(Event::Terminated(Some(events::TerminatedEventBody {
+                            restart: None,
+                        })));
+                let _ = self
+                    .server
+                    .send_event(Event::Exited(events::ExitedEventBody { exit_code }));
                 return;
             }
         }
@@ -62,12 +71,14 @@ impl<I: Read, O: Write> DapServer<I, O> {
             // If we just resumed a CrashPending, the task is now Cancelled (unwound).
             // Emit terminated + exited with code 1 and return without entering the tick loop.
             if is_crash_resume {
-                let _ = self.server.send_event(Event::Terminated(Some(
-                    events::TerminatedEventBody { restart: None },
-                )));
-                let _ = self.server.send_event(Event::Exited(events::ExitedEventBody {
-                    exit_code: 1,
-                }));
+                let _ =
+                    self.server
+                        .send_event(Event::Terminated(Some(events::TerminatedEventBody {
+                            restart: None,
+                        })));
+                let _ = self
+                    .server
+                    .send_event(Event::Exited(events::ExitedEventBody { exit_code: 1 }));
                 return;
             }
         }
@@ -89,11 +100,13 @@ impl<I: Read, O: Write> DapServer<I, O> {
                     LogLevel::Warn => "WARN",
                     LogLevel::Error => "ERROR",
                 };
-                let _ = self.server.send_event(Event::Output(events::OutputEventBody {
-                    output: format!("[{prefix}] {msg}\n"),
-                    category: Some(category),
-                    ..Default::default()
-                }));
+                let _ = self
+                    .server
+                    .send_event(Event::Output(events::OutputEventBody {
+                        output: format!("[{prefix}] {msg}\n"),
+                        category: Some(category),
+                        ..Default::default()
+                    }));
             }
 
             // Check if the task is now suspended after this tick.
@@ -103,8 +116,8 @@ impl<I: Read, O: Write> DapServer<I, O> {
                     let is_debug_suspend = matches!(
                         runtime.suspend_reason(task_id),
                         Some(SuspendReason::Breakpoint { .. })
-                        | Some(SuspendReason::DebugStep { .. })
-                        | Some(SuspendReason::CrashPending { .. })
+                            | Some(SuspendReason::DebugStep { .. })
+                            | Some(SuspendReason::CrashPending { .. })
                     );
 
                     if is_debug_suspend {
@@ -114,21 +127,25 @@ impl<I: Read, O: Write> DapServer<I, O> {
                             runtime.suspend_reason(task_id)
                         {
                             let message = message.clone();
-                            let _ = self.server.send_event(Event::Output(events::OutputEventBody {
-                                output: format!("Runtime crash: {}\n", message),
-                                category: Some(types::OutputEventCategory::Stderr),
-                                ..Default::default()
-                            }));
+                            let _ =
+                                self.server
+                                    .send_event(Event::Output(events::OutputEventBody {
+                                        output: format!("Runtime crash: {}\n", message),
+                                        category: Some(types::OutputEventCategory::Stderr),
+                                        ..Default::default()
+                                    }));
                             let thread_id = self.task_id.map(|t| t.index as i64).unwrap_or(0);
-                            let _ = self.server.send_event(Event::Stopped(events::StoppedEventBody {
-                                reason: types::StoppedEventReason::Exception,
-                                description: Some(message.clone()),
-                                thread_id: Some(thread_id),
-                                preserve_focus_hint: None,
-                                text: Some(message),
-                                all_threads_stopped: Some(true),
-                                hit_breakpoint_ids: None,
-                            }));
+                            let _ =
+                                self.server
+                                    .send_event(Event::Stopped(events::StoppedEventBody {
+                                        reason: types::StoppedEventReason::Exception,
+                                        description: Some(message.clone()),
+                                        thread_id: Some(thread_id),
+                                        preserve_focus_hint: None,
+                                        text: Some(message),
+                                        all_threads_stopped: Some(true),
+                                        hit_breakpoint_ids: None,
+                                    }));
                             return;
                         }
 
@@ -138,15 +155,9 @@ impl<I: Read, O: Write> DapServer<I, O> {
                             Some(StopReason::Breakpoint(id)) => {
                                 (types::StoppedEventReason::Breakpoint, Some(vec![id as i64]))
                             }
-                            Some(StopReason::Step) => {
-                                (types::StoppedEventReason::Step, None)
-                            }
-                            Some(StopReason::Entry) => {
-                                (types::StoppedEventReason::Entry, None)
-                            }
-                            Some(StopReason::Pause) => {
-                                (types::StoppedEventReason::Pause, None)
-                            }
+                            Some(StopReason::Step) => (types::StoppedEventReason::Step, None),
+                            Some(StopReason::Entry) => (types::StoppedEventReason::Entry, None),
+                            Some(StopReason::Pause) => (types::StoppedEventReason::Pause, None),
                             Some(StopReason::Exception(_)) => {
                                 // Exception stops are handled by CrashPending above,
                                 // but include a fallback here for completeness.
@@ -159,15 +170,17 @@ impl<I: Read, O: Write> DapServer<I, O> {
                         };
 
                         let thread_id = self.task_id.map(|t| t.index as i64).unwrap_or(0);
-                        let _ = self.server.send_event(Event::Stopped(events::StoppedEventBody {
-                            reason: dap_reason,
-                            description: None,
-                            thread_id: Some(thread_id),
-                            preserve_focus_hint: None,
-                            text: None,
-                            all_threads_stopped: Some(true),
-                            hit_breakpoint_ids: hit_ids,
-                        }));
+                        let _ = self
+                            .server
+                            .send_event(Event::Stopped(events::StoppedEventBody {
+                                reason: dap_reason,
+                                description: None,
+                                thread_id: Some(thread_id),
+                                preserve_focus_hint: None,
+                                text: None,
+                                all_threads_stopped: Some(true),
+                                hit_breakpoint_ids: hit_ids,
+                            }));
                         return;
                     }
                     // Otherwise it's a HostRequest suspension — auto-confirmed by DebugHost.
@@ -181,31 +194,35 @@ impl<I: Read, O: Write> DapServer<I, O> {
                     if let Some(crash) = runtime.crash_info(task_id) {
                         let crash_msg = crash.message.clone();
                         // Send crash message as output event first.
-                        let _ = self.server.send_event(Event::Output(events::OutputEventBody {
-                            output: format!("Runtime crash: {}\n", crash_msg),
-                            category: Some(types::OutputEventCategory::Stderr),
-                            ..Default::default()
-                        }));
+                        let _ = self
+                            .server
+                            .send_event(Event::Output(events::OutputEventBody {
+                                output: format!("Runtime crash: {}\n", crash_msg),
+                                category: Some(types::OutputEventCategory::Stderr),
+                                ..Default::default()
+                            }));
                         // Send stopped event with exception reason so the user can inspect state.
                         let thread_id = self.task_id.map(|t| t.index as i64).unwrap_or(0);
-                        let _ = self.server.send_event(Event::Stopped(events::StoppedEventBody {
-                            reason: types::StoppedEventReason::Exception,
-                            description: Some(crash_msg.clone()),
-                            thread_id: Some(thread_id),
-                            preserve_focus_hint: None,
-                            text: Some(crash_msg),
-                            all_threads_stopped: Some(true),
-                            hit_breakpoint_ids: None,
-                        }));
+                        let _ = self
+                            .server
+                            .send_event(Event::Stopped(events::StoppedEventBody {
+                                reason: types::StoppedEventReason::Exception,
+                                description: Some(crash_msg.clone()),
+                                thread_id: Some(thread_id),
+                                preserve_focus_hint: None,
+                                text: Some(crash_msg),
+                                all_threads_stopped: Some(true),
+                                hit_breakpoint_ids: None,
+                            }));
                         return;
                     }
                     // Non-crash cancellation: terminate normally.
                     let _ = self.server.send_event(Event::Terminated(Some(
                         events::TerminatedEventBody { restart: None },
                     )));
-                    let _ = self.server.send_event(Event::Exited(events::ExitedEventBody {
-                        exit_code: 0,
-                    }));
+                    let _ = self
+                        .server
+                        .send_event(Event::Exited(events::ExitedEventBody { exit_code: 0 }));
                     return;
                 }
 
@@ -213,9 +230,9 @@ impl<I: Read, O: Write> DapServer<I, O> {
                     let _ = self.server.send_event(Event::Terminated(Some(
                         events::TerminatedEventBody { restart: None },
                     )));
-                    let _ = self.server.send_event(Event::Exited(events::ExitedEventBody {
-                        exit_code: 0,
-                    }));
+                    let _ = self
+                        .server
+                        .send_event(Event::Exited(events::ExitedEventBody { exit_code: 0 }));
                     return;
                 }
 
@@ -228,9 +245,9 @@ impl<I: Read, O: Write> DapServer<I, O> {
                     let _ = self.server.send_event(Event::Terminated(Some(
                         events::TerminatedEventBody { restart: None },
                     )));
-                    let _ = self.server.send_event(Event::Exited(events::ExitedEventBody {
-                        exit_code: 0,
-                    }));
+                    let _ = self
+                        .server
+                        .send_event(Event::Exited(events::ExitedEventBody { exit_code: 0 }));
                     return;
                 }
                 TickResult::TasksSuspended(_) => {
@@ -252,7 +269,10 @@ impl<I: Read, O: Write> DapServer<I, O> {
     /// Resolve a DAP thread_id to a TaskId by matching against active tasks.
     pub(super) fn resolve_task_id(&self, thread_id: i64) -> Option<TaskId> {
         let runtime = self.runtime.as_ref()?;
-        runtime.all_task_ids().into_iter().find(|t| t.index as i64 == thread_id)
+        runtime
+            .all_task_ids()
+            .into_iter()
+            .find(|t| t.index as i64 == thread_id)
     }
 
     /// Resolve a thread_id to a TaskId, including crashed (Cancelled) tasks.
@@ -302,12 +322,7 @@ impl<I: Read, O: Write> DapServer<I, O> {
                 Some(frame) => *frame,
                 None => return 0,
             };
-            let byte_pc = instr_to_byte_pc(
-                runtime,
-                frame.module_idx,
-                frame.method_idx,
-                frame.pc,
-            );
+            let byte_pc = instr_to_byte_pc(runtime, frame.module_idx, frame.method_idx, frame.pc);
             let body = match runtime
                 .domain()
                 .modules
@@ -317,7 +332,9 @@ impl<I: Read, O: Write> DapServer<I, O> {
                 Some(b) => b,
                 None => return 0,
             };
-            return body.debug_locals.iter()
+            return body
+                .debug_locals
+                .iter()
                 .filter(|dl| dl.start_pc <= byte_pc && byte_pc < dl.end_pc)
                 .count();
         }
@@ -345,7 +362,9 @@ impl<I: Read, O: Write> DapServer<I, O> {
                 Some(b) => b,
                 None => return 0,
             };
-            return body.debug_locals.iter()
+            return body
+                .debug_locals
+                .iter()
                 .filter(|dl| dl.start_pc <= byte_pc && byte_pc < dl.end_pc)
                 .count();
         }
@@ -354,7 +373,11 @@ impl<I: Read, O: Write> DapServer<I, O> {
     }
 
     /// Get variable list for a given (task_idx, display_frame_idx).
-    pub(super) fn get_variables(&self, task_idx: u32, display_frame_idx: u32) -> Vec<types::Variable> {
+    pub(super) fn get_variables(
+        &self,
+        task_idx: u32,
+        display_frame_idx: u32,
+    ) -> Vec<types::Variable> {
         let task_id = match self.resolve_task_id_or_crashed(task_idx as i64) {
             Some(id) => id,
             None => return vec![],
@@ -377,12 +400,7 @@ impl<I: Read, O: Write> DapServer<I, O> {
                 Some(frame) => *frame,
                 None => return vec![],
             };
-            let byte_pc = instr_to_byte_pc(
-                runtime,
-                frame.module_idx,
-                frame.method_idx,
-                frame.pc,
-            );
+            let byte_pc = instr_to_byte_pc(runtime, frame.module_idx, frame.method_idx, frame.pc);
             let regs = match runtime.frame_registers(task_id, actual_idx) {
                 Some(r) => r,
                 None => return vec![],
@@ -431,7 +449,12 @@ impl<I: Read, O: Write> DapServer<I, O> {
     }
 
     /// Evaluate an expression (local variable name lookup) in the given frame.
-    pub(super) fn do_evaluate(&self, expr: &str, task_idx: u32, display_frame_idx: u32) -> (String, Option<String>) {
+    pub(super) fn do_evaluate(
+        &self,
+        expr: &str,
+        task_idx: u32,
+        display_frame_idx: u32,
+    ) -> (String, Option<String>) {
         let task_id = match self.resolve_task_id_or_crashed(task_idx as i64) {
             Some(id) => id,
             None => return ("unavailable".into(), None),
@@ -454,12 +477,7 @@ impl<I: Read, O: Write> DapServer<I, O> {
                 Some(frame) => *frame,
                 None => return ("unavailable".into(), None),
             };
-            let byte_pc = instr_to_byte_pc(
-                runtime,
-                frame.module_idx,
-                frame.method_idx,
-                frame.pc,
-            );
+            let byte_pc = instr_to_byte_pc(runtime, frame.module_idx, frame.method_idx, frame.pc);
             let regs = match runtime.frame_registers(task_id, actual_idx) {
                 Some(r) => r,
                 None => return ("unavailable".into(), None),
@@ -544,12 +562,11 @@ impl<I: Read, O: Write> DapServer<I, O> {
 
         // Build an iterator in top-to-bottom order.
         // call_stack_frames is bottom-to-top so we .rev(); crash frames are already top-to-bottom.
-        let frames_iter: Box<dyn Iterator<Item = (usize, FrameLocation)>> =
-            if already_reversed {
-                Box::new(raw_frames.into_iter().enumerate())
-            } else {
-                Box::new(raw_frames.into_iter().rev().enumerate())
-            };
+        let frames_iter: Box<dyn Iterator<Item = (usize, FrameLocation)>> = if already_reversed {
+            Box::new(raw_frames.into_iter().enumerate())
+        } else {
+            Box::new(raw_frames.into_iter().rev().enumerate())
+        };
 
         frames_iter
             .map(|(frame_index, frame)| {
@@ -562,7 +579,12 @@ impl<I: Read, O: Write> DapServer<I, O> {
                     .map(str::to_owned)
                     .unwrap_or_else(|| format!("module_{}", frame.module_idx));
                 let method_name = module
-                    .and_then(|module| module.method_defs.get(frame.method_idx).map(|def| (module, def)))
+                    .and_then(|module| {
+                        module
+                            .method_defs
+                            .get(frame.method_idx)
+                            .map(|def| (module, def))
+                    })
                     .and_then(|(module, def)| read_string(&module.string_heap, def.name).ok())
                     .map(str::to_owned)
                     .unwrap_or_else(|| format!("method_{}", frame.method_idx));
@@ -573,12 +595,8 @@ impl<I: Read, O: Write> DapServer<I, O> {
                 };
 
                 // Translate instruction-index PC to byte-offset PC for span lookup.
-                let byte_pc = instr_to_byte_pc(
-                    runtime,
-                    frame.module_idx,
-                    frame.method_idx,
-                    frame.pc,
-                );
+                let byte_pc =
+                    instr_to_byte_pc(runtime, frame.module_idx, frame.method_idx, frame.pc);
 
                 // Resolve source location: find largest span.pc <= byte_pc.
                 let (line, col) = module
@@ -665,19 +683,16 @@ impl<I: Read, O: Write> DapServer<I, O> {
                 if let Some(frames) = runtime.call_stack_frames(task_id)
                     && let Some(frame) = frames.last()
                 {
-                    let byte_pc = instr_to_byte_pc(
-                        runtime,
-                        frame.module_idx,
-                        frame.method_idx,
-                        frame.pc,
-                    );
+                    let byte_pc =
+                        instr_to_byte_pc(runtime, frame.module_idx, frame.method_idx, frame.pc);
                     let line = runtime
                         .domain()
                         .modules
                         .get(frame.module_idx)
                         .and_then(|loaded| loaded.module.method_bodies.get(frame.method_idx))
                         .and_then(|body| {
-                            body.source_spans.iter()
+                            body.source_spans
+                                .iter()
                                 .filter(|s| s.pc <= byte_pc)
                                 .max_by_key(|s| s.pc)
                                 .map(|s| s.line)

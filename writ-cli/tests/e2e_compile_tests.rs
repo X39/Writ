@@ -6,7 +6,7 @@
 /// execute) integrate correctly.
 use writ_compiler;
 use writ_diagnostics::{FileId, Severity};
-use writ_module::{heap::read_string, Module};
+use writ_module::{Module, heap::read_string};
 use writ_runtime::{ExecutionLimit, RuntimeBuilder, TickResult};
 
 // ─── Pipeline helper ──────────────────────────────────────────────────────────
@@ -25,7 +25,11 @@ fn compile_source(src: &str) -> Result<Vec<u8>, String> {
     // Stage 1: Parse
     let (cst_opt, parse_errs) = writ_parser::parse(src_static);
     if !parse_errs.is_empty() {
-        return Err(format!("{} parse error(s): {:?}", parse_errs.len(), parse_errs.first()));
+        return Err(format!(
+            "{} parse error(s): {:?}",
+            parse_errs.len(),
+            parse_errs.first()
+        ));
     }
     let cst = cst_opt.ok_or_else(|| "parse failed: no CST output".to_string())?;
 
@@ -36,11 +40,8 @@ fn compile_source(src: &str) -> Result<Vec<u8>, String> {
     }
 
     // Stage 3: Name resolution
-    let (resolved, resolve_diags) = writ_compiler::resolve::resolve(
-        &[(file_id, &ast)],
-        &[(file_id, "test.writ")],
-        &[],
-    );
+    let (resolved, resolve_diags) =
+        writ_compiler::resolve::resolve(&[(file_id, &ast)], &[(file_id, "test.writ")], &[]);
     let has_resolve_errors = resolve_diags.iter().any(|d| d.severity == Severity::Error);
     if has_resolve_errors {
         let msgs: Vec<_> = resolve_diags.iter().map(|d| d.message.clone()).collect();
@@ -48,11 +49,8 @@ fn compile_source(src: &str) -> Result<Vec<u8>, String> {
     }
 
     // Stage 4: Type checking
-    let (typed_ast, interner, _type_env, type_diags) = writ_compiler::check::typecheck(
-        resolved,
-        &[(file_id, &ast)],
-        &[],
-    );
+    let (typed_ast, interner, _type_env, type_diags) =
+        writ_compiler::check::typecheck(resolved, &[(file_id, &ast)], &[]);
     let has_type_errors = type_diags.iter().any(|d| d.severity == Severity::Error);
     if has_type_errors {
         let msgs: Vec<_> = type_diags.iter().map(|d| d.message.clone()).collect();
@@ -61,11 +59,18 @@ fn compile_source(src: &str) -> Result<Vec<u8>, String> {
 
     // Stage 5: IL codegen (includes metadata + bodies + serialization)
     let active_conditions = std::collections::HashSet::new();
-    writ_compiler::emit_bodies(&typed_ast, &interner, &[(file_id, &ast)], true, &[], &active_conditions)
-        .map_err(|diags| {
-            let msgs: Vec<_> = diags.iter().map(|d| d.message.clone()).collect();
-            format!("{} codegen error(s): {}", diags.len(), msgs.join("; "))
-        })
+    writ_compiler::emit_bodies(
+        &typed_ast,
+        &interner,
+        &[(file_id, &ast)],
+        true,
+        &[],
+        &active_conditions,
+    )
+    .map_err(|diags| {
+        let msgs: Vec<_> = diags.iter().map(|d| d.message.clone()).collect();
+        format!("{} codegen error(s): {}", diags.len(), msgs.join("; "))
+    })
 }
 
 /// Try to compile; return (has_any_error, error_messages_from_all_stages).
@@ -88,11 +93,8 @@ fn compile_expect_error(src: &str) -> (bool, Vec<String>) {
         return (false, vec![format!("lower errors: {:?}", lower_errs)]);
     }
 
-    let (resolved, resolve_diags) = writ_compiler::resolve::resolve(
-        &[(file_id, &ast)],
-        &[(file_id, "test.writ")],
-        &[],
-    );
+    let (resolved, resolve_diags) =
+        writ_compiler::resolve::resolve(&[(file_id, &ast)], &[(file_id, "test.writ")], &[]);
     let resolve_errors: Vec<String> = resolve_diags
         .iter()
         .filter(|d| d.severity == Severity::Error)
@@ -104,11 +106,8 @@ fn compile_expect_error(src: &str) -> (bool, Vec<String>) {
 
     // Also check type errors — undefined variable references (E0102) are type errors,
     // not resolution errors, since the resolver only validates type-level names.
-    let (_typed_ast, _interner, _type_env, type_diags) = writ_compiler::check::typecheck(
-        resolved,
-        &[(file_id, &ast)],
-        &[],
-    );
+    let (_typed_ast, _interner, _type_env, type_diags) =
+        writ_compiler::check::typecheck(resolved, &[(file_id, &ast)], &[]);
     let type_errors: Vec<String> = type_diags
         .iter()
         .filter(|d| d.severity == Severity::Error)
@@ -129,7 +128,11 @@ fn test_compile_minimal_program() {
 }"#;
 
     let result = compile_source(src);
-    assert!(result.is_ok(), "minimal program should compile: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "minimal program should compile: {:?}",
+        result.err()
+    );
 
     let bytes = result.unwrap();
     assert!(!bytes.is_empty(), "compiled bytes should not be empty");
@@ -221,7 +224,10 @@ fn test_compile_and_run_minimal() {
         }
     }
 
-    assert!(completed, "main should run to completion without suspension");
+    assert!(
+        completed,
+        "main should run to completion without suspension"
+    );
 }
 
 // ─── Test 4: Compile error on undefined name ─────────────────────────────────
@@ -238,7 +244,10 @@ fn test_compile_error_on_invalid_name() {
 
     // compile_source should fail (at the type checking stage)
     let result = compile_source(src);
-    assert!(result.is_err(), "program with undefined name should fail to compile");
+    assert!(
+        result.is_err(),
+        "program with undefined name should fail to compile"
+    );
 
     let err_msg = result.unwrap_err();
     assert!(
@@ -249,7 +258,10 @@ fn test_compile_error_on_invalid_name() {
 
     // Also test via compile_expect_error for diagnostic content
     let (has_errors, msgs) = compile_expect_error(src);
-    assert!(has_errors, "pipeline should produce errors for undefined name");
+    assert!(
+        has_errors,
+        "pipeline should produce errors for undefined name"
+    );
     assert!(!msgs.is_empty(), "should have at least one error message");
 
     // The error message should mention 'undefined_name' or an undefined variable
@@ -332,7 +344,10 @@ pub fn main() {
         }
     }
 
-    assert!(completed, "struct with Result field should run to completion");
+    assert!(
+        completed,
+        "struct with Result field should run to completion"
+    );
 }
 
 // ─── Test: Struct field access (get + set) with multiple fields ────────────
@@ -407,7 +422,8 @@ pub fn main() -> int {
 }
 "#;
     let bytes = compile_source(src).expect("should compile");
-    let module = Module::from_bytes(&bytes).expect("module should deserialize without UnexpectedEof");
+    let module =
+        Module::from_bytes(&bytes).expect("module should deserialize without UnexpectedEof");
 
     let main_export = module
         .export_defs
@@ -416,8 +432,12 @@ pub fn main() -> int {
         .expect("main must be exported");
     let method_idx = (main_export.item.0 & 0x00FF_FFFF) as usize - 1;
 
-    let mut runtime = RuntimeBuilder::new(module).build().expect("runtime should build");
-    let tid = runtime.spawn_task(method_idx, vec![]).expect("spawn should succeed");
+    let mut runtime = RuntimeBuilder::new(module)
+        .build()
+        .expect("runtime should build");
+    let tid = runtime
+        .spawn_task(method_idx, vec![])
+        .expect("spawn should succeed");
     runtime.tick(0.0, ExecutionLimit::None);
 
     assert_eq!(
@@ -441,8 +461,12 @@ fn test_str_len_returns_byte_length() {
         .expect("main must be exported");
     let method_idx = (main_export.item.0 & 0x00FF_FFFF) as usize - 1;
 
-    let mut runtime = RuntimeBuilder::new(module).build().expect("runtime should build");
-    let tid = runtime.spawn_task(method_idx, vec![]).expect("spawn should succeed");
+    let mut runtime = RuntimeBuilder::new(module)
+        .build()
+        .expect("runtime should build");
+    let tid = runtime
+        .spawn_task(method_idx, vec![])
+        .expect("spawn should succeed");
     runtime.tick(0.0, ExecutionLimit::None);
 
     assert_eq!(

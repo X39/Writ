@@ -19,13 +19,20 @@ pub enum HeapObject {
         type_spec: Option<(usize, u32)>,
         fields: Vec<Value>,
     },
-    Array { elem_type: u32, elements: Vec<Value> },
+    Array {
+        elem_type: u32,
+        elements: Vec<Value>,
+    },
     Delegate {
         module_idx: usize,
         method_idx: usize,
         target: Option<Value>,
     },
-    Enum { type_idx: u32, tag: u16, fields: Vec<Value> },
+    Enum {
+        type_idx: u32,
+        tag: u16,
+        fields: Vec<Value>,
+    },
     Boxed(Value),
 }
 
@@ -128,24 +135,20 @@ impl BumpHeap {
     /// Get a field value from a struct or enum heap object.
     pub fn get_field(&self, href: HeapRef, idx: usize) -> Result<Value, RuntimeError> {
         match self.objects.get(href.0 as usize) {
-            Some(HeapObject::Struct { fields, .. }) => {
-                fields.get(idx).cloned().ok_or_else(|| {
-                    RuntimeError::ExecutionError(format!(
-                        "field index {} out of range for struct with {} fields",
-                        idx,
-                        fields.len()
-                    ))
-                })
-            }
-            Some(HeapObject::Enum { fields, .. }) => {
-                fields.get(idx).cloned().ok_or_else(|| {
-                    RuntimeError::ExecutionError(format!(
-                        "field index {} out of range for enum with {} fields",
-                        idx,
-                        fields.len()
-                    ))
-                })
-            }
+            Some(HeapObject::Struct { fields, .. }) => fields.get(idx).cloned().ok_or_else(|| {
+                RuntimeError::ExecutionError(format!(
+                    "field index {} out of range for struct with {} fields",
+                    idx,
+                    fields.len()
+                ))
+            }),
+            Some(HeapObject::Enum { fields, .. }) => fields.get(idx).cloned().ok_or_else(|| {
+                RuntimeError::ExecutionError(format!(
+                    "field index {} out of range for enum with {} fields",
+                    idx,
+                    fields.len()
+                ))
+            }),
             Some(_) => Err(RuntimeError::ExecutionError(format!(
                 "heap object at {} does not have fields",
                 href.0
@@ -351,9 +354,7 @@ mod tests {
         let mut heap = BumpHeap::new();
         let href = heap.alloc_enum(0, 1, vec![Value::Int(42)]);
         match heap.get_object(href).unwrap() {
-            HeapObject::Enum {
-                tag, fields, ..
-            } => {
+            HeapObject::Enum { tag, fields, .. } => {
                 assert_eq!(*tag, 1);
                 assert_eq!(fields.len(), 1);
                 assert_eq!(fields[0], Value::Int(42));

@@ -11,8 +11,8 @@
 pub mod collector;
 pub mod def_map;
 pub(crate) mod error;
-pub mod ir;
 pub(crate) mod inject_library;
+pub mod ir;
 pub mod prelude;
 pub(crate) mod resolver;
 pub(crate) mod scope;
@@ -34,7 +34,11 @@ fn inject_log_namespace(def_map: &mut def_map::DefMap) {
     use chumsky::span::SimpleSpan;
     use def_map::{DefEntry, DefKind, DefVis};
 
-    let synthetic_span = SimpleSpan { start: 0, end: 0, context: () };
+    let synthetic_span = SimpleSpan {
+        start: 0,
+        end: 0,
+        context: (),
+    };
     for &level_name in prelude::LOG_NAMESPACE_LEVELS {
         let fqn = format!("log::{}", level_name);
         // Skip if already present (e.g. user declared `extern fn log::trace`)
@@ -65,7 +69,11 @@ fn inject_dialogue_namespace(def_map: &mut def_map::DefMap) {
     use chumsky::span::SimpleSpan;
     use def_map::{DefEntry, DefKind, DefVis};
 
-    let synthetic_span = SimpleSpan { start: 0, end: 0, context: () };
+    let synthetic_span = SimpleSpan {
+        start: 0,
+        end: 0,
+        context: (),
+    };
     for &builtin_name in prelude::DIALOGUE_BUILTINS {
         // Skip if already present (e.g. user declared `extern fn say`)
         if def_map.by_fqn.contains_key(builtin_name) {

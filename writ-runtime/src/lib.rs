@@ -18,35 +18,40 @@
 //! - `virtual_module` -- writ-runtime built-in module (Option, Result, Range, contracts)
 //! - `extern_registry`-- ExternRegistry builder for game-engine extern dispatch
 
-pub mod value;
-pub mod heap;
-pub mod gc;
-pub mod entity;
-pub mod frame;
-pub mod task;
-pub mod host;
-pub mod error;
+pub(crate) mod dispatch;
 pub mod domain;
 mod domain_dispatch;
-mod type_specs;
-pub mod loader;
-pub(crate) mod dispatch;
-pub mod scheduler;
-pub mod runtime;
-pub mod virtual_module;
+pub mod entity;
+pub mod error;
 pub mod extern_registry;
+pub mod frame;
+pub mod gc;
+pub mod heap;
+pub mod host;
+pub mod loader;
 pub mod reflection;
+pub mod runtime;
+pub mod scheduler;
+pub mod task;
+mod type_specs;
+pub mod value;
+pub mod virtual_module;
 
-pub use value::{Value, HeapRef, GenHandle, TaskId, EntityId};
-pub use heap::BumpHeap;
-pub use gc::{GcHeap, GcStats, GcMode};
+pub use domain::{
+    Domain, DomainAttributeMatch, ResolvedField, ResolvedMethod, ResolvedRefs, ResolvedType,
+};
 pub use entity::{EntityRegistry, EntitySlot, EntityState, EntityTypeIdentity, PendingEntity};
+pub use error::{CrashInfo, HostError, RuntimeError, StackFrame};
+pub use extern_registry::{DeferredCall, ExternHandler, ExternHost, ExternRegistry};
 pub use frame::{CallFrame, FrameLocation, RegisterPool};
-pub use task::{Task, TaskState, SuspendReason};
-pub use host::{RuntimeHost, HostRequest, HostResponse, NullHost, RequestId, LogLevel, DebugAction, ModuleAttributeView, AttributeMatch};
-pub use error::{RuntimeError, CrashInfo, StackFrame, HostError};
-pub use domain::{Domain, ResolvedRefs, ResolvedType, ResolvedMethod, ResolvedField, DomainAttributeMatch};
+pub use gc::{GcHeap, GcMode, GcStats};
+pub use heap::BumpHeap;
+pub use host::{
+    AttributeMatch, DebugAction, HostRequest, HostResponse, LogLevel, ModuleAttributeView,
+    NullHost, RequestId, RuntimeHost,
+};
 pub use loader::LoadedModule;
-pub use runtime::{Runtime, RuntimeBuilder, ExecutionLimit, TickResult, PendingRequest};
-pub use extern_registry::{ExternRegistry, ExternHost, ExternHandler, DeferredCall};
 pub use reflection::ReflectionIndex;
+pub use runtime::{ExecutionLimit, PendingRequest, Runtime, RuntimeBuilder, TickResult};
+pub use task::{SuspendReason, Task, TaskState};
+pub use value::{EntityId, GenHandle, HeapRef, TaskId, Value};

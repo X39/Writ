@@ -8,23 +8,19 @@
 use chumsky::span::SimpleSpan;
 use rustc_hash::FxHashMap;
 
+use crate::ast::Ast;
 use crate::ast::decl::{
-    AstFnDecl, AstFnSig, AstFnParam, AstGenericParam,
-    AstStructDecl, AstStructMember, AstStructField,
-    AstClassDecl, AstEntityDecl, AstEnumDecl,
-    AstContractDecl, AstContractMember,
-    AstImplDecl, AstImplMember,
-    AstComponentDecl, AstComponentMember,
-    AstExternDecl, AstConstDecl, AstGlobalDecl,
-    AstAttribute, AstAttributeArg,
+    AstAttribute, AstAttributeArg, AstClassDecl, AstComponentDecl, AstComponentMember,
+    AstConstDecl, AstContractDecl, AstContractMember, AstEntityDecl, AstEnumDecl, AstExternDecl,
+    AstFnDecl, AstFnParam, AstFnSig, AstGenericParam, AstGlobalDecl, AstImplDecl, AstImplMember,
+    AstStructDecl, AstStructField, AstStructMember,
 };
 use crate::ast::types::AstType;
-use crate::ast::Ast;
 use crate::resolve::def_map::{DefEntry, DefId, DefKind, DefMap};
 use writ_diagnostics::FileId;
 
-use super::ty::{Ty, TyInterner, TyKind};
 use super::env::{EnumVariantSig, FnSig, ImplEntry, TypeEnv};
+use super::ty::{Ty, TyInterner, TyKind};
 
 // =============================================================================
 // DefId extraction
@@ -54,16 +50,21 @@ pub(super) fn decl_def_id(decl: &crate::resolve::ir::ResolvedDecl) -> DefId {
 // AST lookup helpers: find AST declarations by matching DefEntry name/file
 // =============================================================================
 
-pub(super) fn find_fn_decl<'a>(asts: &'a [(FileId, &Ast)], entry: &DefEntry) -> Option<&'a AstFnDecl> {
+pub(super) fn find_fn_decl<'a>(
+    asts: &'a [(FileId, &Ast)],
+    entry: &DefEntry,
+) -> Option<&'a AstFnDecl> {
     for (file_id, ast) in asts {
         if *file_id != entry.file_id {
             continue;
         }
         for decl in &ast.items {
             if let crate::ast::decl::AstDecl::Fn(fn_decl) = decl
-                && fn_decl.name == entry.name && fn_decl.name_span == entry.name_span {
-                    return Some(fn_decl);
-                }
+                && fn_decl.name == entry.name
+                && fn_decl.name_span == entry.name_span
+            {
+                return Some(fn_decl);
+            }
         }
     }
     None
@@ -79,9 +80,11 @@ pub(super) fn find_struct_decl<'a>(
         }
         for decl in &ast.items {
             if let crate::ast::decl::AstDecl::Struct(s) = decl
-                && s.name == entry.name && s.name_span == entry.name_span {
-                    return Some(s);
-                }
+                && s.name == entry.name
+                && s.name_span == entry.name_span
+            {
+                return Some(s);
+            }
         }
     }
     None
@@ -97,24 +100,31 @@ pub(super) fn find_entity_decl<'a>(
         }
         for decl in &ast.items {
             if let crate::ast::decl::AstDecl::Entity(e) = decl
-                && e.name == entry.name && e.name_span == entry.name_span {
-                    return Some(e);
-                }
+                && e.name == entry.name
+                && e.name_span == entry.name_span
+            {
+                return Some(e);
+            }
         }
     }
     None
 }
 
-pub(super) fn find_enum_decl<'a>(asts: &'a [(FileId, &Ast)], entry: &DefEntry) -> Option<&'a AstEnumDecl> {
+pub(super) fn find_enum_decl<'a>(
+    asts: &'a [(FileId, &Ast)],
+    entry: &DefEntry,
+) -> Option<&'a AstEnumDecl> {
     for (file_id, ast) in asts {
         if *file_id != entry.file_id {
             continue;
         }
         for decl in &ast.items {
             if let crate::ast::decl::AstDecl::Enum(e) = decl
-                && e.name == entry.name && e.name_span == entry.name_span {
-                    return Some(e);
-                }
+                && e.name == entry.name
+                && e.name_span == entry.name_span
+            {
+                return Some(e);
+            }
         }
     }
     None
@@ -130,24 +140,30 @@ pub(super) fn find_contract_decl<'a>(
         }
         for decl in &ast.items {
             if let crate::ast::decl::AstDecl::Contract(c) = decl
-                && c.name == entry.name && c.name_span == entry.name_span {
-                    return Some(c);
-                }
+                && c.name == entry.name
+                && c.name_span == entry.name_span
+            {
+                return Some(c);
+            }
         }
     }
     None
 }
 
-pub(super) fn find_impl_decl<'a>(asts: &'a [(FileId, &Ast)], entry: &DefEntry) -> Option<&'a AstImplDecl> {
+pub(super) fn find_impl_decl<'a>(
+    asts: &'a [(FileId, &Ast)],
+    entry: &DefEntry,
+) -> Option<&'a AstImplDecl> {
     for (file_id, ast) in asts {
         if *file_id != entry.file_id {
             continue;
         }
         for decl in &ast.items {
             if let crate::ast::decl::AstDecl::Impl(i) = decl
-                && i.span == entry.span {
-                    return Some(i);
-                }
+                && i.span == entry.span
+            {
+                return Some(i);
+            }
         }
     }
     None
@@ -180,16 +196,21 @@ pub(super) fn find_component_decl<'a>(
     None
 }
 
-pub(super) fn find_extern_fn_sig<'a>(asts: &'a [(FileId, &Ast)], entry: &DefEntry) -> Option<&'a AstFnSig> {
+pub(super) fn find_extern_fn_sig<'a>(
+    asts: &'a [(FileId, &Ast)],
+    entry: &DefEntry,
+) -> Option<&'a AstFnSig> {
     for (file_id, ast) in asts {
         if *file_id != entry.file_id {
             continue;
         }
         for decl in &ast.items {
             if let crate::ast::decl::AstDecl::Extern(AstExternDecl::Fn(_, sig)) = decl
-                && sig.name == entry.name && sig.name_span == entry.name_span {
-                    return Some(sig);
-                }
+                && sig.name == entry.name
+                && sig.name_span == entry.name_span
+            {
+                return Some(sig);
+            }
         }
     }
     None
@@ -205,24 +226,31 @@ pub(super) fn find_class_decl<'a>(
         }
         for decl in &ast.items {
             if let crate::ast::decl::AstDecl::Class(c) = decl
-                && c.name == entry.name && c.name_span == entry.name_span {
-                    return Some(c);
-                }
+                && c.name == entry.name
+                && c.name_span == entry.name_span
+            {
+                return Some(c);
+            }
         }
     }
     None
 }
 
-pub(super) fn find_const_decl<'a>(asts: &'a [(FileId, &Ast)], entry: &DefEntry) -> Option<&'a AstConstDecl> {
+pub(super) fn find_const_decl<'a>(
+    asts: &'a [(FileId, &Ast)],
+    entry: &DefEntry,
+) -> Option<&'a AstConstDecl> {
     for (file_id, ast) in asts {
         if *file_id != entry.file_id {
             continue;
         }
         for decl in &ast.items {
             if let crate::ast::decl::AstDecl::Const(c) = decl
-                && c.name == entry.name && c.name_span == entry.name_span {
-                    return Some(c);
-                }
+                && c.name == entry.name
+                && c.name_span == entry.name_span
+            {
+                return Some(c);
+            }
         }
     }
     None
@@ -238,9 +266,11 @@ pub(super) fn find_global_decl<'a>(
         }
         for decl in &ast.items {
             if let crate::ast::decl::AstDecl::Global(g) = decl
-                && g.name == entry.name && g.name_span == entry.name_span {
-                    return Some(g);
-                }
+                && g.name == entry.name
+                && g.name_span == entry.name_span
+            {
+                return Some(g);
+            }
         }
     }
     None
@@ -285,11 +315,7 @@ pub fn resolve_ast_type_with_file(
     resolve_ast_type_inner(ast_type, def_map, interner, generic_map, Some(file_id))
 }
 
-fn resolve_named_def_id(
-    name: &str,
-    def_map: &DefMap,
-    file_id: Option<FileId>,
-) -> Option<DefId> {
+fn resolve_named_def_id(name: &str, def_map: &DefMap, file_id: Option<FileId>) -> Option<DefId> {
     // 1. Public FQN table
     if let Some(def_id) = def_map.get(name) {
         return Some(def_id);
@@ -309,9 +335,10 @@ fn resolve_named_def_id(
     // 3. File-private table (requires file_id context)
     if let Some(fid) = file_id
         && let Some(privs) = def_map.file_private.get(&fid)
-            && let Some(&def_id) = privs.get(name) {
-                return Some(def_id);
-            }
+        && let Some(&def_id) = privs.get(name)
+    {
+        return Some(def_id);
+    }
     None
 }
 
@@ -399,12 +426,7 @@ fn resolve_ast_type_inner(
                         let namespace = entry.namespace.clone();
                         let constructor = entry.name.clone();
                         let base = def_id_to_ty(def_id, def_map, interner);
-                        interner.generic_instance(
-                            base,
-                            namespace,
-                            constructor,
-                            resolved_args,
-                        )
+                        interner.generic_instance(base, namespace, constructor, resolved_args)
                     } else {
                         interner.error()
                     }
@@ -443,7 +465,13 @@ pub(super) fn build_fn_sig(
     for param in &fn_decl.params {
         match param {
             AstFnParam::Regular(p) => {
-                let ty = resolve_ast_type_with_file(&p.ty, def_map, interner, &generic_map, entry.file_id);
+                let ty = resolve_ast_type_with_file(
+                    &p.ty,
+                    def_map,
+                    interner,
+                    &generic_map,
+                    entry.file_id,
+                );
                 params.push((p.name.clone(), ty));
             }
             AstFnParam::SelfParam { mutable, .. } => {
@@ -485,7 +513,13 @@ pub(super) fn build_fn_sig_from_ast_sig(
     for param in &sig.params {
         match param {
             AstFnParam::Regular(p) => {
-                let ty = resolve_ast_type_with_file(&p.ty, def_map, interner, &generic_map, entry.file_id);
+                let ty = resolve_ast_type_with_file(
+                    &p.ty,
+                    def_map,
+                    interner,
+                    &generic_map,
+                    entry.file_id,
+                );
                 params.push((p.name.clone(), ty));
             }
             AstFnParam::SelfParam { mutable, .. } => {
@@ -514,7 +548,10 @@ pub(super) fn build_fn_sig_from_ast_sig(
     }
 }
 
-pub(super) fn build_generic_bounds(generics: &[AstGenericParam], def_map: &DefMap) -> Vec<Vec<DefId>> {
+pub(super) fn build_generic_bounds(
+    generics: &[AstGenericParam],
+    def_map: &DefMap,
+) -> Vec<Vec<DefId>> {
     generics
         .iter()
         .map(|gp| {
@@ -542,7 +579,8 @@ pub(super) fn build_struct_fields(
     let mut fields = Vec::new();
     for member in members {
         if let AstStructMember::Field(f) = member {
-            let ty = resolve_ast_type_with_file(&f.ty, def_map, interner, &generic_map, entry.file_id);
+            let ty =
+                resolve_ast_type_with_file(&f.ty, def_map, interner, &generic_map, entry.file_id);
             fields.push((f.name.clone(), ty, f.name_span));
         }
     }
@@ -559,7 +597,8 @@ pub(super) fn build_entity_fields(
     properties
         .iter()
         .map(|f| {
-            let ty = resolve_ast_type_with_file(&f.ty, def_map, interner, &generic_map, entry.file_id);
+            let ty =
+                resolve_ast_type_with_file(&f.ty, def_map, interner, &generic_map, entry.file_id);
             (f.name.clone(), ty, f.name_span)
         })
         .collect()
@@ -580,7 +619,13 @@ pub(super) fn build_enum_variants(
                 Some(params) => params
                     .iter()
                     .map(|p| {
-                        let ty = resolve_ast_type_with_file(&p.ty, def_map, interner, &generic_map, entry.file_id);
+                        let ty = resolve_ast_type_with_file(
+                            &p.ty,
+                            def_map,
+                            interner,
+                            &generic_map,
+                            entry.file_id,
+                        );
                         (p.name.clone(), ty)
                     })
                     .collect(),
@@ -609,7 +654,13 @@ pub(super) fn build_contract_methods(
             for param in &sig.params {
                 match param {
                     AstFnParam::Regular(p) => {
-                        let ty = resolve_ast_type_with_file(&p.ty, def_map, interner, &generic_map, entry.file_id);
+                        let ty = resolve_ast_type_with_file(
+                            &p.ty,
+                            def_map,
+                            interner,
+                            &generic_map,
+                            entry.file_id,
+                        );
                         params.push((p.name.clone(), ty));
                     }
                     AstFnParam::SelfParam { mutable, .. } => {
@@ -618,7 +669,9 @@ pub(super) fn build_contract_methods(
                 }
             }
             let ret = match &sig.return_type {
-                Some(rt) => resolve_ast_type_with_file(rt, def_map, interner, &generic_map, entry.file_id),
+                Some(rt) => {
+                    resolve_ast_type_with_file(rt, def_map, interner, &generic_map, entry.file_id)
+                }
                 None => interner.void(),
             };
             methods.push(FnSig {
@@ -680,17 +733,21 @@ pub(super) fn build_impl_entry(
             let mut method_generic_map = impl_generic_map.clone();
             let first_method_ordinal = entry.generics.len() as u32;
             for (index, generic) in fn_decl.generics.iter().enumerate() {
-                method_generic_map.insert(
-                    generic.name.clone(),
-                    first_method_ordinal + index as u32,
-                );
+                method_generic_map
+                    .insert(generic.name.clone(), first_method_ordinal + index as u32);
             }
             let mut params = Vec::new();
             let mut self_param = None;
             for param in &fn_decl.params {
                 match param {
                     AstFnParam::Regular(p) => {
-                        let ty = resolve_ast_type_with_file(&p.ty, def_map, interner, &method_generic_map, entry.file_id);
+                        let ty = resolve_ast_type_with_file(
+                            &p.ty,
+                            def_map,
+                            interner,
+                            &method_generic_map,
+                            entry.file_id,
+                        );
                         params.push((p.name.clone(), ty));
                     }
                     AstFnParam::SelfParam { mutable, .. } => {
@@ -699,7 +756,13 @@ pub(super) fn build_impl_entry(
                 }
             }
             let ret = match &fn_decl.return_type {
-                Some(rt) => resolve_ast_type_with_file(rt, def_map, interner, &method_generic_map, entry.file_id),
+                Some(rt) => resolve_ast_type_with_file(
+                    rt,
+                    def_map,
+                    interner,
+                    &method_generic_map,
+                    entry.file_id,
+                ),
                 None => interner.void(),
             };
             let bounds = build_generic_bounds(&fn_decl.generics, def_map);
@@ -745,7 +808,8 @@ pub(super) fn build_component_fields(
     let mut fields = Vec::new();
     for member in members {
         if let AstComponentMember::Field(f) = member {
-            let ty = resolve_ast_type_with_file(&f.ty, def_map, interner, &generic_map, entry.file_id);
+            let ty =
+                resolve_ast_type_with_file(&f.ty, def_map, interner, &generic_map, entry.file_id);
             fields.push((f.name.clone(), ty, f.name_span));
         }
     }
@@ -765,7 +829,11 @@ pub(super) fn extract_conditional_name(attrs: &[AstAttribute]) -> Option<String>
     for attr in attrs {
         if attr.name == "Conditional" {
             for arg in &attr.args {
-                if let AstAttributeArg::Positional(crate::ast::expr::AstExpr::StringLit { value, .. }) = arg {
+                if let AstAttributeArg::Positional(crate::ast::expr::AstExpr::StringLit {
+                    value,
+                    ..
+                }) = arg
+                {
                     return Some(value.clone());
                 }
             }
@@ -793,7 +861,11 @@ pub(super) fn extract_deprecated_msg(attrs: &[AstAttribute]) -> Option<String> {
             }
             // [Deprecated("msg")] — look for first positional string arg
             for arg in &attr.args {
-                if let AstAttributeArg::Positional(crate::ast::expr::AstExpr::StringLit { value, .. }) = arg {
+                if let AstAttributeArg::Positional(crate::ast::expr::AstExpr::StringLit {
+                    value,
+                    ..
+                }) = arg
+                {
                     return Some(value.clone());
                 }
             }
@@ -808,7 +880,10 @@ pub(super) fn extract_deprecated_msg(attrs: &[AstAttribute]) -> Option<String> {
 ///
 /// This is the env_build analogue of `emit::collect::lookup::find_attrs_for_entry`.
 /// Duplicated here because that function is `pub(super)` to the emit module.
-pub(super) fn find_attrs_for_entry(asts: &[(FileId, &crate::ast::Ast)], entry: &DefEntry) -> Vec<AstAttribute> {
+pub(super) fn find_attrs_for_entry(
+    asts: &[(FileId, &crate::ast::Ast)],
+    entry: &DefEntry,
+) -> Vec<AstAttribute> {
     use crate::ast::decl::AstDecl;
     use crate::ast::decl::AstExternDecl;
 
@@ -839,7 +914,9 @@ pub(super) fn find_attrs_for_entry(asts: &[(FileId, &crate::ast::Ast)], entry: &
                 AstDecl::Component(c) if c.name == entry.name && c.name_span == entry.name_span => {
                     return c.attrs.clone();
                 }
-                AstDecl::Extern(AstExternDecl::Fn(_, sig)) if sig.name == entry.name && sig.name_span == entry.name_span => {
+                AstDecl::Extern(AstExternDecl::Fn(_, sig))
+                    if sig.name == entry.name && sig.name_span == entry.name_span =>
+                {
                     return sig.attrs.clone();
                 }
                 AstDecl::Const(c) if c.name == entry.name && c.name_span == entry.name_span => {

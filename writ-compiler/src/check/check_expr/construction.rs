@@ -2,13 +2,13 @@
 
 use chumsky::span::SimpleSpan;
 
-use crate::ast::expr::{AstExpr, AstNewField};
-use crate::ast::types::AstType;
-use super::CheckCtx;
-use super::check_expr;
 use super::super::error::TypeError;
 use super::super::ir::TypedExpr;
 use super::super::ty::TyKind;
+use super::CheckCtx;
+use super::check_expr;
+use crate::ast::expr::{AstExpr, AstNewField};
+use crate::ast::types::AstType;
 use writ_diagnostics::{Diagnostic, code};
 
 pub(super) fn check_new_construction(
@@ -30,15 +30,30 @@ pub(super) fn check_new_construction(
     // Get the DefId and expected fields
     let (def_id, mut expected_fields) = match ctx.interner.kind(resolved_ty).clone() {
         TyKind::Struct(did) => {
-            let fields = ctx.type_env.struct_fields.get(&did).cloned().unwrap_or_default();
+            let fields = ctx
+                .type_env
+                .struct_fields
+                .get(&did)
+                .cloned()
+                .unwrap_or_default();
             (did, fields)
         }
         TyKind::Class(did) => {
-            let fields = ctx.type_env.struct_fields.get(&did).cloned().unwrap_or_default();
+            let fields = ctx
+                .type_env
+                .struct_fields
+                .get(&did)
+                .cloned()
+                .unwrap_or_default();
             (did, fields)
         }
         TyKind::Entity(did) => {
-            let fields = ctx.type_env.entity_fields.get(&did).cloned().unwrap_or_default();
+            let fields = ctx
+                .type_env
+                .entity_fields
+                .get(&did)
+                .cloned()
+                .unwrap_or_default();
             (did, fields)
         }
         _ => {
@@ -61,7 +76,11 @@ pub(super) fn check_new_construction(
     // Generic fields contain GenericParam ordinals in TypeEnv. Substitute the
     // arguments preserved by the resolved nominal instance so construction and
     // later assignment share exactly the same concrete type identity.
-    if let Some(type_args) = ctx.interner.generic_args(resolved_ty).map(|args| args.to_vec()) {
+    if let Some(type_args) = ctx
+        .interner
+        .generic_args(resolved_ty)
+        .map(|args| args.to_vec())
+    {
         for (_, field_ty, _) in &mut expected_fields {
             *field_ty = super::super::infer::substitute(*field_ty, &type_args, &mut ctx.interner);
         }
@@ -93,7 +112,9 @@ pub(super) fn check_new_construction(
         let value_ty = typed_value.ty();
 
         // Find this field in the expected fields
-        let field_def = expected_fields.iter().find(|(name, _, _)| name == &field.name);
+        let field_def = expected_fields
+            .iter()
+            .find(|(name, _, _)| name == &field.name);
 
         if let Some((_name, expected_ty, _fspan)) = field_def {
             // Check type compatibility
@@ -121,12 +142,15 @@ pub(super) fn check_new_construction(
     // Check for missing required fields
     for (fname, _, _) in &expected_fields {
         if !provided_names.iter().any(|n| n == fname) {
-            ctx.diags.push(TypeError::MissingConstructionField {
-                type_name: ctx.display_ty(resolved_ty),
-                field_name: fname.clone(),
-                span,
-                file: ctx.current_file,
-            }.into());
+            ctx.diags.push(
+                TypeError::MissingConstructionField {
+                    type_name: ctx.display_ty(resolved_ty),
+                    field_name: fname.clone(),
+                    span,
+                    file: ctx.current_file,
+                }
+                .into(),
+            );
         }
     }
 
@@ -162,19 +186,21 @@ pub(super) fn check_array_lit(
     let mut elem_ty = first_ty;
     for (i, te) in typed_elements.iter().enumerate().skip(1) {
         let ty = te.ty();
-        if !ctx.is_error(elem_ty) && !ctx.is_error(ty)
-            && ctx.unify.unify(elem_ty, ty, &mut ctx.interner).is_err() {
-                ctx.emit_error(TypeError::TypeMismatch {
-                    expected: ctx.display_ty(elem_ty),
-                    found: ctx.display_ty(ty),
-                    expected_span: typed_elements[0].span(),
-                    found_span: te.span(),
-                    file: ctx.current_file,
-                    help: Some(format!("array element {} has different type", i)),
-                });
-                elem_ty = ctx.interner.error();
-                break;
-            }
+        if !ctx.is_error(elem_ty)
+            && !ctx.is_error(ty)
+            && ctx.unify.unify(elem_ty, ty, &mut ctx.interner).is_err()
+        {
+            ctx.emit_error(TypeError::TypeMismatch {
+                expected: ctx.display_ty(elem_ty),
+                found: ctx.display_ty(ty),
+                expected_span: typed_elements[0].span(),
+                found_span: te.span(),
+                file: ctx.current_file,
+                help: Some(format!("array element {} has different type", i)),
+            });
+            elem_ty = ctx.interner.error();
+            break;
+        }
     }
 
     let array_ty = ctx.interner.array(elem_ty);

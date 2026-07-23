@@ -78,7 +78,11 @@ impl EntityRegistry {
         self.allocate_with_identity(type_idx, Some(identity))
     }
 
-    fn allocate_with_identity(&mut self, type_idx: u32, type_identity: Option<EntityTypeIdentity>) -> EntityId {
+    fn allocate_with_identity(
+        &mut self,
+        type_idx: u32,
+        type_identity: Option<EntityTypeIdentity>,
+    ) -> EntityId {
         if let Some(idx) = self.free_list.pop() {
             let slot = &mut self.slots[idx as usize];
             slot.state = EntityState::Alive;
@@ -106,11 +110,19 @@ impl EntityRegistry {
         self.begin_spawn_with_identity(type_idx, None)
     }
 
-    pub fn begin_spawn_resolved(&mut self, type_idx: u32, identity: EntityTypeIdentity) -> EntityId {
+    pub fn begin_spawn_resolved(
+        &mut self,
+        type_idx: u32,
+        identity: EntityTypeIdentity,
+    ) -> EntityId {
         self.begin_spawn_with_identity(type_idx, Some(identity))
     }
 
-    fn begin_spawn_with_identity(&mut self, type_idx: u32, type_identity: Option<EntityTypeIdentity>) -> EntityId {
+    fn begin_spawn_with_identity(
+        &mut self,
+        type_idx: u32,
+        type_identity: Option<EntityTypeIdentity>,
+    ) -> EntityId {
         let entity_id = if let Some(idx) = self.free_list.pop() {
             let slot = &mut self.slots[idx as usize];
             slot.state = EntityState::Pending;
@@ -158,10 +170,7 @@ impl EntityRegistry {
         }
 
         let pending = self.pending.get_mut(&entity_id.index).ok_or_else(|| {
-            RuntimeError::ExecutionError(format!(
-                "no pending entity for index {}",
-                entity_id.index
-            ))
+            RuntimeError::ExecutionError(format!("no pending entity for index {}", entity_id.index))
         })?;
 
         pending.field_writes.push((field_idx, value));
@@ -171,10 +180,7 @@ impl EntityRegistry {
     /// Commit an entity init, transitioning from Pending to Alive.
     ///
     /// Returns the buffered field writes so the caller can apply them.
-    pub fn commit_init(
-        &mut self,
-        entity_id: EntityId,
-    ) -> Result<Vec<(u32, Value)>, RuntimeError> {
+    pub fn commit_init(&mut self, entity_id: EntityId) -> Result<Vec<(u32, Value)>, RuntimeError> {
         self.validate_handle(entity_id)?;
         let slot = &mut self.slots[entity_id.index as usize];
         if slot.state != EntityState::Pending {
@@ -187,10 +193,7 @@ impl EntityRegistry {
         slot.state = EntityState::Alive;
 
         let pending = self.pending.remove(&entity_id.index).ok_or_else(|| {
-            RuntimeError::ExecutionError(format!(
-                "no pending entity for index {}",
-                entity_id.index
-            ))
+            RuntimeError::ExecutionError(format!("no pending entity for index {}", entity_id.index))
         })?;
 
         Ok(pending.field_writes)
@@ -263,14 +266,19 @@ impl EntityRegistry {
         // Remove from singletons if this entity was registered as one
         if let Some(&singleton_id) = self.singletons.get(&type_idx)
             && singleton_id.index == entity_id.index
-                && singleton_id.generation == entity_id.generation
-            {
+            && singleton_id.generation == entity_id.generation
+        {
             self.singletons.remove(&type_idx);
         }
         if let Some(type_identity) = type_identity
-            && self.resolved_singletons.get(&type_identity).is_some_and(|singleton_id| {
-                singleton_id.index == entity_id.index && singleton_id.generation == entity_id.generation
-            }) {
+            && self
+                .resolved_singletons
+                .get(&type_identity)
+                .is_some_and(|singleton_id| {
+                    singleton_id.index == entity_id.index
+                        && singleton_id.generation == entity_id.generation
+                })
+        {
             self.resolved_singletons.remove(&type_identity);
         }
 
@@ -303,14 +311,19 @@ impl EntityRegistry {
         // Remove from singletons if this entity was registered as one
         if let Some(&singleton_id) = self.singletons.get(&type_idx)
             && singleton_id.index == entity_id.index
-                && singleton_id.generation == entity_id.generation
-            {
+            && singleton_id.generation == entity_id.generation
+        {
             self.singletons.remove(&type_idx);
         }
         if let Some(type_identity) = type_identity
-            && self.resolved_singletons.get(&type_identity).is_some_and(|singleton_id| {
-                singleton_id.index == entity_id.index && singleton_id.generation == entity_id.generation
-            }) {
+            && self
+                .resolved_singletons
+                .get(&type_identity)
+                .is_some_and(|singleton_id| {
+                    singleton_id.index == entity_id.index
+                        && singleton_id.generation == entity_id.generation
+                })
+        {
             self.resolved_singletons.remove(&type_identity);
         }
 
@@ -324,27 +337,23 @@ impl EntityRegistry {
     }
 
     /// Return the domain-wide type identity for an active runtime-created entity.
-    pub fn get_type_identity(&self, entity_id: EntityId) -> Result<Option<EntityTypeIdentity>, RuntimeError> {
+    pub fn get_type_identity(
+        &self,
+        entity_id: EntityId,
+    ) -> Result<Option<EntityTypeIdentity>, RuntimeError> {
         self.validate_active(entity_id)?;
         Ok(self.slots[entity_id.index as usize].type_identity)
     }
 
     /// Set the heap data reference for an entity.
-    pub fn set_data_ref(
-        &mut self,
-        entity_id: EntityId,
-        href: HeapRef,
-    ) -> Result<(), RuntimeError> {
+    pub fn set_data_ref(&mut self, entity_id: EntityId, href: HeapRef) -> Result<(), RuntimeError> {
         self.validate_active(entity_id)?;
         self.slots[entity_id.index as usize].data_ref = Some(href);
         Ok(())
     }
 
     /// Get the heap data reference for an active entity (Pending, Alive, or Destroying).
-    pub fn get_data_ref(
-        &self,
-        entity_id: EntityId,
-    ) -> Result<Option<HeapRef>, RuntimeError> {
+    pub fn get_data_ref(&self, entity_id: EntityId) -> Result<Option<HeapRef>, RuntimeError> {
         self.validate_active(entity_id)?;
         Ok(self.slots[entity_id.index as usize].data_ref)
     }
@@ -359,7 +368,11 @@ impl EntityRegistry {
         self.singletons.get(&type_idx).copied()
     }
 
-    pub fn register_resolved_singleton(&mut self, identity: EntityTypeIdentity, entity_id: EntityId) {
+    pub fn register_resolved_singleton(
+        &mut self,
+        identity: EntityTypeIdentity,
+        entity_id: EntityId,
+    ) {
         self.resolved_singletons.insert(identity, entity_id);
     }
 
@@ -373,9 +386,7 @@ impl EntityRegistry {
             .iter()
             .enumerate()
             .filter(|(_, slot)| slot.state == EntityState::Alive)
-            .map(|(idx, slot)| {
-                (EntityId::new(idx as u32, slot.generation), slot)
-            })
+            .map(|(idx, slot)| (EntityId::new(idx as u32, slot.generation), slot))
     }
 
     /// Return the number of alive entities.

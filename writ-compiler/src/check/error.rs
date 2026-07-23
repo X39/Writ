@@ -1,7 +1,7 @@
 //! Type error definitions and conversion to diagnostics.
 
 use chumsky::span::SimpleSpan;
-use writ_diagnostics::{code, Diagnostic, FileId};
+use writ_diagnostics::{Diagnostic, FileId, code};
 
 /// Type errors produced during type checking.
 #[derive(Debug, Clone)]
@@ -175,7 +175,11 @@ impl From<TypeError> for Diagnostic {
                     format!("type mismatch: expected `{}`, found `{}`", expected, found),
                 )
                 .with_primary(file, found_span, format!("found `{}` here", found))
-                .with_secondary(file, expected_span, format!("expected `{}`", expected));
+                .with_secondary(
+                    file,
+                    expected_span,
+                    format!("expected `{}`", expected),
+                );
 
                 if let Some(h) = help {
                     builder = builder.with_help(h);
@@ -203,12 +207,11 @@ impl From<TypeError> for Diagnostic {
                 format!("`{}` defined with {} parameter(s)", fn_name, expected),
             )
             .build(),
-            TypeError::UndefinedVariable { name, span, file } => Diagnostic::error(
-                code::E0102,
-                format!("undefined variable `{}`", name),
-            )
-            .with_primary(file, span, "not found in this scope")
-            .build(),
+            TypeError::UndefinedVariable { name, span, file } => {
+                Diagnostic::error(code::E0102, format!("undefined variable `{}`", name))
+                    .with_primary(file, span, "not found in this scope")
+                    .build()
+            }
             TypeError::UnsatisfiedBound {
                 ty_name,
                 bound_name,
@@ -224,24 +227,28 @@ impl From<TypeError> for Diagnostic {
                 ),
             )
             .with_primary(file, call_span, "unsatisfied bound here")
-            .with_secondary(bound_decl_file, bound_decl_span, format!("bound `{}` declared here", bound_name))
+            .with_secondary(
+                bound_decl_file,
+                bound_decl_span,
+                format!("bound `{}` declared here", bound_name),
+            )
             .with_help(format!(
                 "consider adding `impl {} for {} {{ ... }}`",
                 bound_name, ty_name
             ))
             .build(),
-            TypeError::NotCallable { ty_name, span, file } => Diagnostic::error(
-                code::E0104,
-                format!("type `{}` is not callable", ty_name),
-            )
-            .with_primary(file, span, "not a function")
-            .build(),
-            TypeError::CannotInferType { name, span, file } => Diagnostic::error(
-                code::E0105,
-                format!("cannot infer type for `{}`", name),
-            )
-            .with_primary(file, span, "type annotation needed")
-            .build(),
+            TypeError::NotCallable {
+                ty_name,
+                span,
+                file,
+            } => Diagnostic::error(code::E0104, format!("type `{}` is not callable", ty_name))
+                .with_primary(file, span, "not a function")
+                .build(),
+            TypeError::CannotInferType { name, span, file } => {
+                Diagnostic::error(code::E0105, format!("cannot infer type for `{}`", name))
+                    .with_primary(file, span, "type annotation needed")
+                    .build()
+            }
             TypeError::UnknownField {
                 ty_name,
                 field_name,
@@ -338,10 +345,7 @@ impl From<TypeError> for Diagnostic {
                 file,
             } => Diagnostic::error(
                 code::E0113,
-                format!(
-                    "`?` operator requires `Option<T>`, found `{}`",
-                    found_ty
-                ),
+                format!("`?` operator requires `Option<T>`, found `{}`", found_ty),
             )
             .with_primary(file, span, "not an Option type")
             .build(),
@@ -365,10 +369,7 @@ impl From<TypeError> for Diagnostic {
                 file,
             } => Diagnostic::error(
                 code::E0115,
-                format!(
-                    "`try` requires `Result<T, E>`, found `{}`",
-                    found_ty
-                ),
+                format!("`try` requires `Result<T, E>`, found `{}`", found_ty),
             )
             .with_primary(file, span, "not a Result type")
             .build(),
@@ -407,12 +408,9 @@ impl From<TypeError> for Diagnostic {
                 ty_name,
                 span,
                 file,
-            } => Diagnostic::error(
-                code::E0118,
-                format!("type `{}` is not iterable", ty_name),
-            )
-            .with_primary(file, span, "not iterable")
-            .build(),
+            } => Diagnostic::error(code::E0118, format!("type `{}` is not iterable", ty_name))
+                .with_primary(file, span, "not iterable")
+                .build(),
             TypeError::NoneWithoutAnnotation { span, file } => Diagnostic::error(
                 code::E0120,
                 "cannot infer type for `None` -- add a type annotation: `let x: T? = None`"
@@ -427,10 +425,15 @@ impl From<TypeError> for Diagnostic {
                 file,
             } => Diagnostic::error(
                 code::E0121,
-                format!("recursive struct `{}` has infinite size: {}", struct_name, chain),
+                format!(
+                    "recursive struct `{}` has infinite size: {}",
+                    struct_name, chain
+                ),
             )
             .with_primary(file, span, "recursive struct defined here")
-            .with_help("consider using `class` instead of `struct` for reference semantics".to_string())
+            .with_help(
+                "consider using `class` instead of `struct` for reference semantics".to_string(),
+            )
             .build(),
             TypeError::IncompleteContractImpl {
                 ty_name,
@@ -446,10 +449,7 @@ impl From<TypeError> for Diagnostic {
                 ),
             )
             .with_primary(file, span, "impl block defined here")
-            .with_help(format!(
-                "missing methods: {}",
-                missing_methods.join(", ")
-            ))
+            .with_help(format!("missing methods: {}", missing_methods.join(", ")))
             .build(),
             TypeError::AmbiguousOverload {
                 fn_name,

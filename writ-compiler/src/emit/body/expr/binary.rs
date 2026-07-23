@@ -179,35 +179,66 @@ pub(super) fn emit_binary(
                 TyKind::GenericParam(_) => {
                     let r_cmp = emit_generic_eq(emitter, r_a, r_b);
                     let r_dst = emitter.alloc_reg(bool_ty);
-                    emitter.emit(Instruction::Not { r_dst, r_src: r_cmp });
+                    emitter.emit(Instruction::Not {
+                        r_dst,
+                        r_src: r_cmp,
+                    });
                     r_dst
                 }
                 TyKind::Float => {
                     let r_cmp = emitter.alloc_reg(bool_ty);
-                    emitter.emit(Instruction::CmpEqF { r_dst: r_cmp, r_a, r_b });
+                    emitter.emit(Instruction::CmpEqF {
+                        r_dst: r_cmp,
+                        r_a,
+                        r_b,
+                    });
                     let r_dst = emitter.alloc_reg(bool_ty);
-                    emitter.emit(Instruction::Not { r_dst, r_src: r_cmp });
+                    emitter.emit(Instruction::Not {
+                        r_dst,
+                        r_src: r_cmp,
+                    });
                     r_dst
                 }
                 TyKind::Bool => {
                     let r_cmp = emitter.alloc_reg(bool_ty);
-                    emitter.emit(Instruction::CmpEqB { r_dst: r_cmp, r_a, r_b });
+                    emitter.emit(Instruction::CmpEqB {
+                        r_dst: r_cmp,
+                        r_a,
+                        r_b,
+                    });
                     let r_dst = emitter.alloc_reg(bool_ty);
-                    emitter.emit(Instruction::Not { r_dst, r_src: r_cmp });
+                    emitter.emit(Instruction::Not {
+                        r_dst,
+                        r_src: r_cmp,
+                    });
                     r_dst
                 }
                 TyKind::String => {
                     let r_cmp = emitter.alloc_reg(bool_ty);
-                    emitter.emit(Instruction::CmpEqS { r_dst: r_cmp, r_a, r_b });
+                    emitter.emit(Instruction::CmpEqS {
+                        r_dst: r_cmp,
+                        r_a,
+                        r_b,
+                    });
                     let r_dst = emitter.alloc_reg(bool_ty);
-                    emitter.emit(Instruction::Not { r_dst, r_src: r_cmp });
+                    emitter.emit(Instruction::Not {
+                        r_dst,
+                        r_src: r_cmp,
+                    });
                     r_dst
                 }
                 _ => {
                     let r_cmp = emitter.alloc_reg(bool_ty);
-                    emitter.emit(Instruction::CmpEqI { r_dst: r_cmp, r_a, r_b });
+                    emitter.emit(Instruction::CmpEqI {
+                        r_dst: r_cmp,
+                        r_a,
+                        r_b,
+                    });
                     let r_dst = emitter.alloc_reg(bool_ty);
-                    emitter.emit(Instruction::Not { r_dst, r_src: r_cmp });
+                    emitter.emit(Instruction::Not {
+                        r_dst,
+                        r_src: r_cmp,
+                    });
                     r_dst
                 }
             }
@@ -226,8 +257,16 @@ pub(super) fn emit_binary(
             let bool_ty = Ty(2);
             let r_dst = emitter.alloc_reg(bool_ty);
             match ty_kind {
-                TyKind::Float => emitter.emit(Instruction::CmpLtF { r_dst, r_a: r_b, r_b: r_a }),
-                _ => emitter.emit(Instruction::CmpLtI { r_dst, r_a: r_b, r_b: r_a }),
+                TyKind::Float => emitter.emit(Instruction::CmpLtF {
+                    r_dst,
+                    r_a: r_b,
+                    r_b: r_a,
+                }),
+                _ => emitter.emit(Instruction::CmpLtI {
+                    r_dst,
+                    r_a: r_b,
+                    r_b: r_a,
+                }),
             }
             r_dst
         }
@@ -236,11 +275,22 @@ pub(super) fn emit_binary(
             let bool_ty = Ty(2);
             let r_cmp = emitter.alloc_reg(bool_ty);
             match ty_kind {
-                TyKind::Float => emitter.emit(Instruction::CmpLtF { r_dst: r_cmp, r_a: r_b, r_b: r_a }),
-                _ => emitter.emit(Instruction::CmpLtI { r_dst: r_cmp, r_a: r_b, r_b: r_a }),
+                TyKind::Float => emitter.emit(Instruction::CmpLtF {
+                    r_dst: r_cmp,
+                    r_a: r_b,
+                    r_b: r_a,
+                }),
+                _ => emitter.emit(Instruction::CmpLtI {
+                    r_dst: r_cmp,
+                    r_a: r_b,
+                    r_b: r_a,
+                }),
             }
             let r_dst = emitter.alloc_reg(bool_ty);
-            emitter.emit(Instruction::Not { r_dst, r_src: r_cmp });
+            emitter.emit(Instruction::Not {
+                r_dst,
+                r_src: r_cmp,
+            });
             r_dst
         }
         BinaryOp::GtEq => {
@@ -248,11 +298,22 @@ pub(super) fn emit_binary(
             let bool_ty = Ty(2);
             let r_cmp = emitter.alloc_reg(bool_ty);
             match ty_kind {
-                TyKind::Float => emitter.emit(Instruction::CmpLtF { r_dst: r_cmp, r_a, r_b }),
-                _ => emitter.emit(Instruction::CmpLtI { r_dst: r_cmp, r_a, r_b }),
+                TyKind::Float => emitter.emit(Instruction::CmpLtF {
+                    r_dst: r_cmp,
+                    r_a,
+                    r_b,
+                }),
+                _ => emitter.emit(Instruction::CmpLtI {
+                    r_dst: r_cmp,
+                    r_a,
+                    r_b,
+                }),
             }
             let r_dst = emitter.alloc_reg(bool_ty);
-            emitter.emit(Instruction::Not { r_dst, r_src: r_cmp });
+            emitter.emit(Instruction::Not {
+                r_dst,
+                r_src: r_cmp,
+            });
             r_dst
         }
 

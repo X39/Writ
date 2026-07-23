@@ -9,17 +9,11 @@ pub(super) fn exec_spawn_task(
     r_base: u16,
     argc: u16,
 ) -> ExecutionResult {
-    let (module_idx, method_idx, args) = match prepare_spawn(
-        ctx,
-        "SPAWN_TASK",
-        r_dst,
-        method_idx,
-        r_base,
-        argc,
-    ) {
-        Ok(spawn) => spawn,
-        Err(message) => return ExecutionResult::Crash(message),
-    };
+    let (module_idx, method_idx, args) =
+        match prepare_spawn(ctx, "SPAWN_TASK", r_dst, method_idx, r_base, argc) {
+            Ok(spawn) => spawn,
+            Err(message) => return ExecutionResult::Crash(message),
+        };
     ExecutionResult::SpawnChild {
         r_dst,
         module_idx,
@@ -35,17 +29,11 @@ pub(super) fn exec_spawn_detached(
     r_base: u16,
     argc: u16,
 ) -> ExecutionResult {
-    let (module_idx, method_idx, args) = match prepare_spawn(
-        ctx,
-        "SPAWN_DETACHED",
-        r_dst,
-        method_idx,
-        r_base,
-        argc,
-    ) {
-        Ok(spawn) => spawn,
-        Err(message) => return ExecutionResult::Crash(message),
-    };
+    let (module_idx, method_idx, args) =
+        match prepare_spawn(ctx, "SPAWN_DETACHED", r_dst, method_idx, r_base, argc) {
+            Ok(spawn) => spawn,
+            Err(message) => return ExecutionResult::Crash(message),
+        };
     ExecutionResult::SpawnDetachedTask {
         r_dst,
         module_idx,
@@ -63,25 +51,12 @@ fn prepare_spawn(
     argc: u16,
 ) -> Result<(usize, usize, Vec<Value>), String> {
     let caller_register_count = ctx.task.call_stack.last().unwrap().registers.len();
-    super::calls::validate_call_site_registers(
-        opcode,
-        caller_register_count,
-        r_dst,
-        r_base,
-        argc,
-    )?;
-    let (module_idx, method_idx) = super::calls::resolve_call_target(
-        method_token,
-        ctx.modules,
-        ctx.current_module_idx,
-    )
-    .map_err(|message| format!("{opcode}: {message}"))?;
-    let (register_count, param_count) = super::calls::checked_method_register_count(
-        opcode,
-        ctx.modules,
-        module_idx,
-        method_idx,
-    )?;
+    super::calls::validate_call_site_registers(opcode, caller_register_count, r_dst, r_base, argc)?;
+    let (module_idx, method_idx) =
+        super::calls::resolve_call_target(method_token, ctx.modules, ctx.current_module_idx)
+            .map_err(|message| format!("{opcode}: {message}"))?;
+    let (register_count, param_count) =
+        super::calls::checked_method_register_count(opcode, ctx.modules, module_idx, method_idx)?;
     super::calls::validate_method_param_count(opcode, param_count, argc as usize)?;
     super::calls::validate_callee_register_capacity(opcode, register_count, argc, 0)?;
 
@@ -123,7 +98,11 @@ pub(super) fn exec_defer_pop(ctx: &mut ExecContext<'_>) -> ExecutionResult {
     ExecutionResult::Continue
 }
 
-pub(super) fn exec_load_global(ctx: &mut ExecContext<'_>, r_dst: u16, global_idx: u32) -> ExecutionResult {
+pub(super) fn exec_load_global(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    global_idx: u32,
+) -> ExecutionResult {
     let idx = global_idx as usize;
     let Some(module_globals) = ctx.globals.get(ctx.current_module_idx) else {
         return ExecutionResult::Crash(format!(
@@ -141,7 +120,11 @@ pub(super) fn exec_load_global(ctx: &mut ExecContext<'_>, r_dst: u16, global_idx
     }
 }
 
-pub(super) fn exec_store_global(ctx: &mut ExecContext<'_>, global_idx: u32, r_src: u16) -> ExecutionResult {
+pub(super) fn exec_store_global(
+    ctx: &mut ExecContext<'_>,
+    global_idx: u32,
+    r_src: u16,
+) -> ExecutionResult {
     let idx = global_idx as usize;
     let val = ctx.task.call_stack.last().unwrap().registers[r_src as usize];
     let Some(module_globals) = ctx.globals.get_mut(ctx.current_module_idx) else {

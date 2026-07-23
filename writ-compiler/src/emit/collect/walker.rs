@@ -43,7 +43,12 @@ pub(super) fn collect_called_def_ids(
 /// Recursively walk a TypedExpr, collecting callee DefIds from Call nodes.
 fn walk_expr(expr: &TypedExpr, ids: &mut FxHashSet<DefId>) {
     match expr {
-        TypedExpr::Call { callee, args, callee_def_id, .. } => {
+        TypedExpr::Call {
+            callee,
+            args,
+            callee_def_id,
+            ..
+        } => {
             if let Some(id) = callee_def_id {
                 ids.insert(*id);
             }
@@ -52,9 +57,12 @@ fn walk_expr(expr: &TypedExpr, ids: &mut FxHashSet<DefId>) {
                 walk_expr(arg, ids);
             }
         }
-        TypedExpr::Field { receiver, .. }
-        | TypedExpr::ComponentAccess { receiver, .. } => walk_expr(receiver, ids),
-        TypedExpr::Index { receiver, index, .. } => {
+        TypedExpr::Field { receiver, .. } | TypedExpr::ComponentAccess { receiver, .. } => {
+            walk_expr(receiver, ids)
+        }
+        TypedExpr::Index {
+            receiver, index, ..
+        } => {
             walk_expr(receiver, ids);
             walk_expr(index, ids);
         }
@@ -68,13 +76,20 @@ fn walk_expr(expr: &TypedExpr, ids: &mut FxHashSet<DefId>) {
         | TypedExpr::Join { expr, .. }
         | TypedExpr::Cancel { expr, .. }
         | TypedExpr::Defer { expr, .. } => walk_expr(expr, ids),
-        TypedExpr::Match { scrutinee, arms, .. } => {
+        TypedExpr::Match {
+            scrutinee, arms, ..
+        } => {
             walk_expr(scrutinee, ids);
             for arm in arms {
                 walk_expr(&arm.body, ids);
             }
         }
-        TypedExpr::If { condition, then_branch, else_branch, .. } => {
+        TypedExpr::If {
+            condition,
+            then_branch,
+            else_branch,
+            ..
+        } => {
             walk_expr(condition, ids);
             walk_expr(then_branch, ids);
             if let Some(e) = else_branch {
@@ -105,11 +120,17 @@ fn walk_expr(expr: &TypedExpr, ids: &mut FxHashSet<DefId>) {
             }
         }
         TypedExpr::Range { start, end, .. } => {
-            if let Some(s) = start { walk_expr(s, ids); }
-            if let Some(e) = end { walk_expr(e, ids); }
+            if let Some(s) = start {
+                walk_expr(s, ids);
+            }
+            if let Some(e) = end {
+                walk_expr(e, ids);
+            }
         }
         TypedExpr::Return { value, .. } => {
-            if let Some(v) = value { walk_expr(v, ids); }
+            if let Some(v) = value {
+                walk_expr(v, ids);
+            }
         }
         TypedExpr::Literal { .. }
         | TypedExpr::Var { .. }
@@ -129,21 +150,33 @@ fn walk_stmt(stmt: &TypedStmt, ids: &mut FxHashSet<DefId>) {
         }
         TypedStmt::For { iterable, body, .. } => {
             walk_expr(iterable, ids);
-            for s in body { walk_stmt(s, ids); }
+            for s in body {
+                walk_stmt(s, ids);
+            }
         }
-        TypedStmt::While { condition, body, .. } => {
+        TypedStmt::While {
+            condition, body, ..
+        } => {
             walk_expr(condition, ids);
-            for s in body { walk_stmt(s, ids); }
+            for s in body {
+                walk_stmt(s, ids);
+            }
         }
         TypedStmt::Break { value, .. } => {
-            if let Some(v) = value { walk_expr(v, ids); }
+            if let Some(v) = value {
+                walk_expr(v, ids);
+            }
         }
         TypedStmt::Return { value, .. } => {
-            if let Some(v) = value { walk_expr(v, ids); }
+            if let Some(v) = value {
+                walk_expr(v, ids);
+            }
         }
         TypedStmt::Transition { call, .. } => walk_expr(call, ids),
         TypedStmt::Atomic { body, .. } => {
-            for s in body { walk_stmt(s, ids); }
+            for s in body {
+                walk_stmt(s, ids);
+            }
         }
         TypedStmt::Continue { .. } | TypedStmt::Error { .. } => {}
     }
@@ -184,12 +217,7 @@ pub(super) fn collect_addressable_generic_types(
     types
 }
 
-fn record_type(
-    ty: Ty,
-    interner: &TyInterner,
-    seen: &mut FxHashSet<Ty>,
-    types: &mut Vec<Ty>,
-) {
+fn record_type(ty: Ty, interner: &TyInterner, seen: &mut FxHashSet<Ty>, types: &mut Vec<Ty>) {
     let ty = interner.resolve_infer(ty);
     if !seen.insert(ty) {
         return;
@@ -234,12 +262,17 @@ fn walk_expr_types(
                 walk_expr_types(arg, interner, seen, types);
             }
         }
-        TypedExpr::Field { receiver, .. }
-        | TypedExpr::ComponentAccess { receiver, .. } => {
+        TypedExpr::Field { receiver, .. } | TypedExpr::ComponentAccess { receiver, .. } => {
             walk_expr_types(receiver, interner, seen, types)
         }
-        TypedExpr::Index { receiver, index, .. }
-        | TypedExpr::Binary { left: receiver, right: index, .. } => {
+        TypedExpr::Index {
+            receiver, index, ..
+        }
+        | TypedExpr::Binary {
+            left: receiver,
+            right: index,
+            ..
+        } => {
             walk_expr_types(receiver, interner, seen, types);
             walk_expr_types(index, interner, seen, types);
         }
@@ -249,13 +282,20 @@ fn walk_expr_types(
         | TypedExpr::Join { expr, .. }
         | TypedExpr::Cancel { expr, .. }
         | TypedExpr::Defer { expr, .. } => walk_expr_types(expr, interner, seen, types),
-        TypedExpr::Match { scrutinee, arms, .. } => {
+        TypedExpr::Match {
+            scrutinee, arms, ..
+        } => {
             walk_expr_types(scrutinee, interner, seen, types);
             for arm in arms {
                 walk_expr_types(&arm.body, interner, seen, types);
             }
         }
-        TypedExpr::If { condition, then_branch, else_branch, .. } => {
+        TypedExpr::If {
+            condition,
+            then_branch,
+            else_branch,
+            ..
+        } => {
             walk_expr_types(condition, interner, seen, types);
             walk_expr_types(then_branch, interner, seen, types);
             if let Some(branch) = else_branch {
@@ -270,7 +310,13 @@ fn walk_expr_types(
                 walk_expr_types(tail, interner, seen, types);
             }
         }
-        TypedExpr::Lambda { params, ret_ty, captures, body, .. } => {
+        TypedExpr::Lambda {
+            params,
+            ret_ty,
+            captures,
+            body,
+            ..
+        } => {
             for (_, ty) in params {
                 record_type(*ty, interner, seen, types);
             }
@@ -329,14 +375,21 @@ fn walk_stmt_types(
             walk_expr_types(value, interner, seen, types);
         }
         TypedStmt::Expr { expr, .. } => walk_expr_types(expr, interner, seen, types),
-        TypedStmt::For { binding_ty, iterable, body, .. } => {
+        TypedStmt::For {
+            binding_ty,
+            iterable,
+            body,
+            ..
+        } => {
             record_type(*binding_ty, interner, seen, types);
             walk_expr_types(iterable, interner, seen, types);
             for stmt in body {
                 walk_stmt_types(stmt, interner, seen, types);
             }
         }
-        TypedStmt::While { condition, body, .. } => {
+        TypedStmt::While {
+            condition, body, ..
+        } => {
             walk_expr_types(condition, interner, seen, types);
             for stmt in body {
                 walk_stmt_types(stmt, interner, seen, types);

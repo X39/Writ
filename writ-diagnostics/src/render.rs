@@ -74,9 +74,7 @@ pub fn render_diagnostics(diagnostics: &[Diagnostic], sources: &[(FileId, &str, 
         let report = builder.finish();
 
         // Build ariadne cache from raw source strings
-        let cache = ariadne::sources(
-            sources.iter().map(|(id, _name, text)| (*id, *text)),
-        );
+        let cache = ariadne::sources(sources.iter().map(|(id, _name, text)| (*id, *text)));
 
         let mut buf = Vec::new();
         let _ = report.write_for_stdout(cache, &mut buf);
@@ -105,7 +103,10 @@ mod tests {
         let sources = vec![(FileId(0), "test.writ", "fn Foo() {}\nfn Foo() {}")];
         let output = render_diagnostics(&[diag], &sources);
         assert!(output.contains("E0001"), "output should contain error code");
-        assert!(output.contains("duplicate definition"), "output should contain message");
+        assert!(
+            output.contains("duplicate definition"),
+            "output should contain message"
+        );
     }
 
     #[test]
@@ -116,7 +117,10 @@ mod tests {
 
         let sources = vec![(FileId(0), "test.writ", "namespace survival;")];
         let output = render_diagnostics(&[diag], &sources);
-        assert!(output.contains("W0004"), "output should contain warning code");
+        assert!(
+            output.contains("W0004"),
+            "output should contain warning code"
+        );
     }
 
     /// DIAG-01: render_diagnostics must not panic when a secondary label references a
@@ -124,7 +128,11 @@ mod tests {
     #[test]
     fn render_diagnostics_cross_file_guard() {
         let diag = Diagnostic::error("E0103", "unsatisfied bound")
-            .with_primary(FileId(0), SimpleSpan::new((), 0..5), "type does not satisfy bound")
+            .with_primary(
+                FileId(0),
+                SimpleSpan::new((), 0..5),
+                "type does not satisfy bound",
+            )
             // FileId(99) is intentionally absent from sources — this used to cause a panic.
             .with_secondary(FileId(99), SimpleSpan::new((), 0..4), "bound declared here")
             .build();
@@ -132,8 +140,14 @@ mod tests {
         let sources = vec![(FileId(0), "test.writ", "fn foo() {}")];
         // Must not panic; the secondary label for FileId(99) is silently skipped.
         let output = render_diagnostics(&[diag], &sources);
-        assert!(output.contains("E0103"), "output should contain primary error code");
-        assert!(!output.contains("bound declared here"), "output must not contain label for absent FileId");
+        assert!(
+            output.contains("E0103"),
+            "output should contain primary error code"
+        );
+        assert!(
+            !output.contains("bound declared here"),
+            "output must not contain label for absent FileId"
+        );
     }
 
     /// DIAG-01: render_diagnostics must not panic when a secondary label references
@@ -143,12 +157,19 @@ mod tests {
         let diag = Diagnostic::error("E0103", "unsatisfied bound")
             .with_primary(FileId(0), SimpleSpan::new((), 0..5), "type here")
             // FileId(u32::MAX) is the sentinel used for built-in/synthetic spans.
-            .with_secondary(FileId(u32::MAX), SimpleSpan::new((), 0..0), "built-in bound")
+            .with_secondary(
+                FileId(u32::MAX),
+                SimpleSpan::new((), 0..0),
+                "built-in bound",
+            )
             .build();
 
         let sources = vec![(FileId(0), "test.writ", "fn foo() {}")];
         // Must not panic.
         let output = render_diagnostics(&[diag], &sources);
-        assert!(output.contains("E0103"), "output should contain primary error code");
+        assert!(
+            output.contains("E0103"),
+            "output should contain primary error code"
+        );
     }
 }

@@ -39,7 +39,10 @@ pub(super) fn emit_if(
 
     // Emit then-branch; MOV result into shared register
     let r_then = emit_expr(emitter, then_branch);
-    emitter.emit(Instruction::Mov { r_dst: r_result, r_src: r_then });
+    emitter.emit(Instruction::Mov {
+        r_dst: r_result,
+        r_src: r_then,
+    });
 
     // Br to end_label — record fixup
     let br_idx = emitter.instructions.len();
@@ -52,7 +55,10 @@ pub(super) fn emit_if(
     // Emit else-branch (or Nop if None); MOV result into shared register
     if let Some(e) = else_branch {
         let r_else = emit_expr(emitter, e);
-        emitter.emit(Instruction::Mov { r_dst: r_result, r_src: r_else });
+        emitter.emit(Instruction::Mov {
+            r_dst: r_result,
+            r_src: r_else,
+        });
     } else {
         emitter.emit(Instruction::Nop);
     }
@@ -150,7 +156,10 @@ pub(super) fn emit_defer(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16
 
     // Emit DeferPush with placeholder method_idx; record index for patching
     let defer_push_idx = emitter.instructions.len();
-    emitter.emit(Instruction::DeferPush { r_dst, method_idx: 0 }); // placeholder
+    emitter.emit(Instruction::DeferPush {
+        r_dst,
+        method_idx: 0,
+    }); // placeholder
 
     // DeferPop: disarm the defer on normal exit path
     emitter.emit(Instruction::DeferPop);

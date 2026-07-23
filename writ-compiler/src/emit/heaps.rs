@@ -34,7 +34,8 @@ impl StringHeap {
         }
         let offset = self.data.len() as u32;
         let bytes = s.as_bytes();
-        self.data.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+        self.data
+            .extend_from_slice(&(bytes.len() as u32).to_le_bytes());
         self.data.extend_from_slice(bytes);
         self.dedup.insert(s.to_string(), offset);
         offset
@@ -117,7 +118,8 @@ impl BlobHeap {
             return offset;
         }
         let offset = self.data.len() as u32;
-        self.data.extend_from_slice(&(blob.len() as u32).to_le_bytes());
+        self.data
+            .extend_from_slice(&(blob.len() as u32).to_le_bytes());
         self.data.extend_from_slice(blob);
         self.dedup.insert(blob.to_vec(), offset);
         offset

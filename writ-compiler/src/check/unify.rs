@@ -122,12 +122,7 @@ impl UnifyCtx {
     }
 
     /// Unify two types. Returns Ok(()) on success, Err(UnifyError) on mismatch.
-    pub fn unify(
-        &mut self,
-        a: Ty,
-        b: Ty,
-        interner: &mut TyInterner,
-    ) -> Result<(), UnifyError> {
+    pub fn unify(&mut self, a: Ty, b: Ty, interner: &mut TyInterner) -> Result<(), UnifyError> {
         // Short circuit: same Ty id means same type
         if a == b {
             return Ok(());
@@ -205,7 +200,9 @@ impl UnifyCtx {
             (TyKind::Entity(a_id), TyKind::Entity(b_id)) if a_id == b_id => Ok(()),
             // AnyEntity (base Entity type) accepts any specific entity type
             (TyKind::AnyEntity, TyKind::AnyEntity) => Ok(()),
-            (TyKind::AnyEntity, TyKind::Entity(_)) | (TyKind::Entity(_), TyKind::AnyEntity) => Ok(()),
+            (TyKind::AnyEntity, TyKind::Entity(_)) | (TyKind::Entity(_), TyKind::AnyEntity) => {
+                Ok(())
+            }
             (TyKind::AnyEntity, TyKind::GenericInstance { base, .. })
                 if matches!(interner.kind(*base), TyKind::Entity(_)) =>
             {

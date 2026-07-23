@@ -101,9 +101,7 @@ impl MetadataToken {
 // TypeDef kind and hook kind enums
 // =============================================================================
 
-use writ_module::tables::{
-    FIELD_FLAG_COMPONENT, FIELD_FLAG_HAS_DEFAULT, FIELD_FLAG_PUBLIC,
-};
+use writ_module::tables::{FIELD_FLAG_COMPONENT, FIELD_FLAG_HAS_DEFAULT, FIELD_FLAG_PUBLIC};
 
 /// TypeDef kind discriminant — re-exported from writ_module for a single source of truth.
 pub use writ_module::TypeDefKind;
@@ -216,8 +214,8 @@ pub struct ModuleRefRow {
 #[derive(Debug, Clone)]
 pub struct TypeDefRow {
     pub name: u32,      // string heap offset
-    pub namespace: u32,  // string heap offset
-    pub kind: u8,        // TypeDefKind
+    pub namespace: u32, // string heap offset
+    pub kind: u8,       // TypeDefKind
     pub flags: u16,
     pub field_list: u32, // next-index start in FieldDef (1-based; never 0 when finalized)
     pub method_list: u32, // first MethodDef row index (1-based)
@@ -256,8 +254,8 @@ pub struct FieldRefRow {
 /// Table 7: MethodDef — Methods/functions defined here.
 #[derive(Debug, Clone)]
 pub struct MethodDefRow {
-    pub name: u32,        // string heap offset
-    pub signature: u32,   // blob heap offset
+    pub name: u32,      // string heap offset
+    pub signature: u32, // blob heap offset
     pub flags: u16,
     pub body_offset: u32,
     pub body_size: u32,
@@ -286,9 +284,9 @@ pub struct ParamDefRow {
 /// Table 10: ContractDef — Contract declarations.
 #[derive(Debug, Clone)]
 pub struct ContractDefRow {
-    pub name: u32,             // string heap offset
-    pub namespace: u32,        // string heap offset
-    pub method_list: u32,      // first ContractMethod row index
+    pub name: u32,               // string heap offset
+    pub namespace: u32,          // string heap offset
+    pub method_list: u32,        // first ContractMethod row index
     pub generic_param_list: u32, // first GenericParam row index
 }
 
@@ -320,15 +318,15 @@ pub struct GenericParamRow {
 /// Table 14: GenericConstraint — Bounds on type parameters.
 #[derive(Debug, Clone)]
 pub struct GenericConstraintRow {
-    pub param_row: u32,           // GenericParam row index (1-based)
+    pub param_row: u32,            // GenericParam row index (1-based)
     pub constraint: MetadataToken, // Contract token
 }
 
 /// Table 15: GlobalDef — Constants and `global mut` variables.
 #[derive(Debug, Clone)]
 pub struct GlobalDefRow {
-    pub name: u32,       // string heap offset
-    pub type_sig: u32,   // blob heap offset
+    pub name: u32,     // string heap offset
+    pub type_sig: u32, // blob heap offset
     pub flags: u16,
     pub init_value: u32, // blob heap offset
 }
@@ -345,23 +343,23 @@ pub struct ExternDefRow {
 /// Table 17: ComponentSlot — Entity to component bindings.
 #[derive(Debug, Clone)]
 pub struct ComponentSlotRow {
-    pub owner_entity: MetadataToken, // TypeDef token
+    pub owner_entity: MetadataToken,   // TypeDef token
     pub component_type: MetadataToken, // TypeDef token
 }
 
 /// Table 18: LocaleDef — Dialogue locale dispatch.
 #[derive(Debug, Clone)]
 pub struct LocaleDefRow {
-    pub dlg_method: MetadataToken,  // MethodDef token
-    pub locale: u32,                // string heap offset
-    pub loc_method: MetadataToken,  // MethodDef token
+    pub dlg_method: MetadataToken, // MethodDef token
+    pub locale: u32,               // string heap offset
+    pub loc_method: MetadataToken, // MethodDef token
 }
 
 /// Table 19: ExportDef — Convenience index of pub-visible items.
 #[derive(Debug, Clone)]
 pub struct ExportDefRow {
-    pub name: u32,         // string heap offset
-    pub item_kind: u8,     // 0=type, 1=method, 2=field
+    pub name: u32,     // string heap offset
+    pub item_kind: u8, // 0=type, 1=method, 2=field
     pub item: MetadataToken,
 }
 
@@ -369,7 +367,7 @@ pub struct ExportDefRow {
 #[derive(Debug, Clone)]
 pub struct AttributeDefRow {
     pub owner: MetadataToken,
-    pub owner_kind: u8,    // 0=type, 1=method, 2=field
-    pub name: u32,         // string heap offset
-    pub value: u32,        // blob heap offset
+    pub owner_kind: u8, // 0=type, 1=method, 2=field
+    pub name: u32,      // string heap offset
+    pub value: u32,     // blob heap offset
 }

@@ -3,20 +3,20 @@
 //! Consumes a `NameResolvedAst` and the original ASTs, producing a `TypedAst`
 //! where every expression carries a fully resolved `Ty`.
 
-pub mod ty;
-pub mod ir;
-pub mod env;
-pub(crate) mod env_build;
-pub(crate) mod library_sigs;
-pub mod unify;
-pub(crate) mod infer;
+pub(crate) mod check_decl;
 pub(crate) mod check_expr;
 pub(crate) mod check_stmt;
-pub(crate) mod check_decl;
-pub(crate) mod error;
-pub(crate) mod mutability;
 pub(crate) mod desugar;
+pub mod env;
+pub(crate) mod env_build;
+pub(crate) mod error;
+pub(crate) mod infer;
+pub mod ir;
+pub(crate) mod library_sigs;
+pub(crate) mod mutability;
 pub(crate) mod pattern;
+pub mod ty;
+pub mod unify;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -55,10 +55,7 @@ pub fn typecheck(
     // typecheck is a public boundary and may receive a NameResolvedAst built by
     // another frontend. Injection is idempotent, so ensure its DefMap contains
     // the same normalized libraries before materializing TypeEnv metadata.
-    crate::resolve::inject_library::inject_module_types(
-        &library_modules,
-        &mut resolved.def_map,
-    );
+    crate::resolve::inject_library::inject_module_types(&library_modules, &mut resolved.def_map);
 
     // 1. Build TyInterner with primitives pre-interned
     let mut interner = ty::TyInterner::new();
@@ -105,17 +102,29 @@ pub fn typecheck(
     //     Must run after all declarations are checked so that struct_fields is fully populated.
     {
         let mut recursive_diags = Vec::new();
-        detect_recursive_structs(&resolved.def_map, &type_env, &ctx.interner, &mut recursive_diags);
+        detect_recursive_structs(
+            &resolved.def_map,
+            &type_env,
+            &ctx.interner,
+            &mut recursive_diags,
+        );
         ctx.diags.extend(recursive_diags);
     }
 
     // 5. Extract struct field types from TypeEnv before it's dropped.
     //    Map: DefId -> Vec<(field_name, field_ty)>, dropping the span.
     let struct_field_types: FxHashMap<crate::resolve::def_map::DefId, Vec<(String, ty::Ty)>> =
-        type_env.struct_fields
+        type_env
+            .struct_fields
             .iter()
             .map(|(def_id, fields)| {
-                (*def_id, fields.iter().map(|(name, field_ty, _span)| (name.clone(), *field_ty)).collect())
+                (
+                    *def_id,
+                    fields
+                        .iter()
+                        .map(|(name, field_ty, _span)| (name.clone(), *field_ty))
+                        .collect(),
+                )
             })
             .collect();
 
