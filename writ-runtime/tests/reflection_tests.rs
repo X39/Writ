@@ -485,6 +485,167 @@ fn test_field_info_get() {
 
 // ── Phase 106 additions ────────────────────────────────────────────────
 
+// ── Test: FieldInfo rejects an unrelated owner type ─────────────────
+
+/// A FieldInfo is tied to its declaring type, not merely to a field offset.
+/// Passing an unrelated object with a field at the same offset must crash for
+/// both get and set, and the rejected set must leave that object unchanged.
+#[test]
+fn test_field_info_rejects_unrelated_same_offset_instance() {
+    let mut builder = ModuleBuilder::new("test");
+
+    builder.add_type_def("Expected", "", TypeDefKind::Struct, 0);
+    builder.add_field_def("expected_value", &[0x01], FIELD_FLAG_PUBLIC);
+    builder.add_type_def("Unrelated", "", TypeDefKind::Struct, 0);
+    builder.add_field_def("unrelated_value", &[0x01], FIELD_FLAG_PUBLIC);
+
+    let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
+    let type_fields_ref = builder.add_type_ref(mod_ref, "Type.fields", "writ");
+    let fieldinfo_get_ref = builder.add_type_ref(mod_ref, "FieldInfo.get", "writ");
+    let fieldinfo_set_ref = builder.add_type_ref(mod_ref, "FieldInfo.set", "writ");
+
+    // Method 0 constructs the unrelated object with field 0 set to a sentinel.
+    let make_unrelated = MethodBody {
+        register_types: vec![0; 2],
+        code: encode(&[
+            Instruction::LoadInt {
+                r_dst: 0,
+                value: 73,
+            },
+            Instruction::New {
+                r_dst: 1,
+                type_idx: typedef_token(1),
+                field_count: 1,
+                r_base: 0,
+            },
+            Instruction::Ret { r_src: 1 },
+        ]),
+        debug_locals: vec![],
+        source_spans: vec![],
+    };
+    builder.add_method("make_unrelated", &[0], 0, 2, make_unrelated);
+
+    // Method 1 gets Expected.expected_value's FieldInfo, then attempts to read
+    // field 0 from an Unrelated instance supplied in r0.
+    let wrong_get = MethodBody {
+        register_types: vec![0; 7],
+        code: encode(&[
+            Instruction::TypeOf {
+                r_dst: 1,
+                type_idx: typedef_token(0),
+            },
+            Instruction::CallVirt {
+                r_dst: 2,
+                r_obj: 1,
+                contract_idx: type_fields_ref.0,
+                slot: 0,
+                r_base: 1,
+                argc: 1,
+            },
+            Instruction::LoadInt { r_dst: 3, value: 0 },
+            Instruction::ArrayLoad {
+                r_dst: 4,
+                r_arr: 2,
+                r_idx: 3,
+            },
+            Instruction::Mov { r_dst: 5, r_src: 0 },
+            Instruction::CallVirt {
+                r_dst: 6,
+                r_obj: 4,
+                contract_idx: fieldinfo_get_ref.0,
+                slot: 0,
+                r_base: 4,
+                argc: 2,
+            },
+            Instruction::Ret { r_src: 6 },
+        ]),
+        debug_locals: vec![],
+        source_spans: vec![],
+    };
+    builder.add_method("wrong_get", &[0], 0, 7, wrong_get);
+
+    // Method 2 attempts the equivalent cross-type write at the same offset.
+    let wrong_set = MethodBody {
+        register_types: vec![0; 8],
+        code: encode(&[
+            Instruction::TypeOf {
+                r_dst: 1,
+                type_idx: typedef_token(0),
+            },
+            Instruction::CallVirt {
+                r_dst: 2,
+                r_obj: 1,
+                contract_idx: type_fields_ref.0,
+                slot: 0,
+                r_base: 1,
+                argc: 1,
+            },
+            Instruction::LoadInt { r_dst: 3, value: 0 },
+            Instruction::ArrayLoad {
+                r_dst: 4,
+                r_arr: 2,
+                r_idx: 3,
+            },
+            Instruction::Mov { r_dst: 5, r_src: 0 },
+            Instruction::LoadInt {
+                r_dst: 6,
+                value: 99,
+            },
+            Instruction::CallVirt {
+                r_dst: 7,
+                r_obj: 4,
+                contract_idx: fieldinfo_set_ref.0,
+                slot: 0,
+                r_base: 4,
+                argc: 3,
+            },
+            Instruction::RetVoid,
+        ]),
+        debug_locals: vec![],
+        source_spans: vec![],
+    };
+    builder.add_method("wrong_set", &[0], 0, 8, wrong_set);
+
+    let module = builder.build();
+    let mut runtime = RuntimeBuilder::new(module).with_gc().build().unwrap();
+    let unrelated = runtime.call_sync(0, vec![]).unwrap();
+    let unrelated_href = match unrelated {
+        Value::Struct { href, .. } => href,
+        other => panic!("expected Unrelated struct instance, got {other:?}"),
+    };
+    assert_eq!(
+        runtime.heap().get_field(unrelated_href, 0).unwrap(),
+        Value::Int(73)
+    );
+
+    let get_crash = runtime
+        .call_sync(1, vec![unrelated])
+        .expect_err("FieldInfo.get must reject an unrelated object type");
+    assert!(
+        get_crash.message.contains("does not match declaring type"),
+        "unexpected get crash: {}",
+        get_crash.message
+    );
+    assert_eq!(
+        runtime.heap().get_field(unrelated_href, 0).unwrap(),
+        Value::Int(73)
+    );
+
+    let set_crash = runtime
+        .call_sync(2, vec![unrelated])
+        .expect_err("FieldInfo.set must reject an unrelated object type");
+    assert!(
+        set_crash.message.contains("does not match declaring type"),
+        "unexpected set crash: {}",
+        set_crash.message
+    );
+    assert_eq!(
+        runtime.heap().get_field(unrelated_href, 0).unwrap(),
+        Value::Int(73),
+        "rejected cross-type FieldInfo.set must not mutate the unrelated object"
+    );
+}
+
 // ── Test: Type.methods() returns Array of MethodInfo (REFL-04) ────────
 
 /// Test that Type.methods() returns an Array of MethodInfo with at least one entry

@@ -1,10 +1,39 @@
 use crate::heap::HeapObject;
 use crate::reflection::ReflectionIndex;
-use crate::value::Value;
+use crate::value::{HeapRef, Value};
 use writ_module::instruction::ArrayDefaultKind;
 use writ_module::tables::FIELD_FLAG_READONLY;
 
 use super::{ExecContext, ExecutionResult, IntrinsicId, helpers};
+
+fn checked_field_info_instance(
+    ctx: &ExecContext<'_>,
+    instance: Value,
+    module_idx: usize,
+    typedef_idx: usize,
+    operation: &str,
+) -> Result<HeapRef, String> {
+    let href = match instance {
+        Value::Ref(href) | Value::Struct { href, .. } => href,
+        _ => {
+            return Err(format!(
+                "{operation}: instance argument is not a struct or ref"
+            ));
+        }
+    };
+
+    let expected_type_key = ((module_idx as u32) << 16) | typedef_idx as u32;
+    match ctx.heap.get_object(href) {
+        Ok(HeapObject::Struct { type_key, .. }) if *type_key == expected_type_key => Ok(href),
+        Ok(HeapObject::Struct { type_key, .. }) => Err(format!(
+            "{operation}: instance type key 0x{type_key:08x} does not match declaring type key 0x{expected_type_key:08x}"
+        )),
+        Ok(_) => Err(format!(
+            "{operation}: instance reference is not a struct or class object"
+        )),
+        Err(error) => Err(format!("{operation}: {error}")),
+    }
+}
 
 /// Execute an intrinsic operation and store the result in r_dst.
 ///
@@ -887,18 +916,8 @@ pub(super) fn execute_intrinsic(
                 &ctx.task.call_stack.last().unwrap().registers[r_obj as usize],
             );
             let instance_val = ctx.task.call_stack.last().unwrap().registers[r_base as usize + 1];
-            // Extract HeapRef from either Value::Ref or Value::Struct
-            let instance_href = match instance_val {
-                Value::Ref(href) => href,
-                Value::Struct { href, .. } => href,
-                _ => {
-                    return ExecutionResult::Crash(
-                        "FieldInfo.get: instance argument is not a struct or ref".into(),
-                    );
-                }
-            };
             // Recover field identity from reverse map
-            let (_module_idx, _typedef_idx, field_offset) = match ctx
+            let (module_idx, typedef_idx, field_offset) = match ctx
                 .reflection
                 .lookup_field_identity(fi_href)
             {
@@ -907,12 +926,22 @@ pub(super) fn execute_intrinsic(
                     return ExecutionResult::Crash("FieldInfo.get: not a FieldInfo object".into());
                 }
             };
+            let instance_href = match checked_field_info_instance(
+                ctx,
+                instance_val,
+                module_idx,
+                typedef_idx,
+                "FieldInfo.get",
+            ) {
+                Ok(href) => href,
+                Err(error) => return ExecutionResult::Crash(error),
+            };
             // field_offset within the typedef is the heap object field index.
             // The struct's field at offset N corresponds to heap field index N.
-            let val = ctx
-                .heap
-                .get_field(instance_href, field_offset)
-                .unwrap_or(Value::Void);
+            let val = match ctx.heap.get_field(instance_href, field_offset) {
+                Ok(value) => value,
+                Err(error) => return ExecutionResult::Crash(format!("FieldInfo.get: {error}")),
+            };
             let frame = ctx.task.call_stack.last_mut().unwrap();
             frame.registers[r_dst as usize] = val;
             ExecutionResult::Continue
@@ -956,16 +985,6 @@ pub(super) fn execute_intrinsic(
             let instance_val = ctx.task.call_stack.last().unwrap().registers[r_base as usize + 1];
             let new_val = ctx.task.call_stack.last().unwrap().registers[r_base as usize + 2];
 
-            let instance_href = match instance_val {
-                Value::Ref(href) => href,
-                Value::Struct { href, .. } => href,
-                _ => {
-                    return ExecutionResult::Crash(
-                        "FieldInfo.set: instance argument is not a struct or ref".into(),
-                    );
-                }
-            };
-
             let (module_idx, typedef_idx, field_offset) = match ctx
                 .reflection
                 .lookup_field_identity(fi_href)
@@ -974,6 +993,16 @@ pub(super) fn execute_intrinsic(
                 None => {
                     return ExecutionResult::Crash("FieldInfo.set: not a FieldInfo object".into());
                 }
+            };
+            let instance_href = match checked_field_info_instance(
+                ctx,
+                instance_val,
+                module_idx,
+                typedef_idx,
+                "FieldInfo.set",
+            ) {
+                Ok(href) => href,
+                Err(error) => return ExecutionResult::Crash(error),
             };
 
             // Compute the absolute field index in the module's field_defs table
