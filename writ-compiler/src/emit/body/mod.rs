@@ -368,6 +368,7 @@ fn expr_has_error(expr: &TypedExpr) -> bool {
         // Leaf nodes with no children to recurse into
         TypedExpr::Literal { .. }
         | TypedExpr::Var { .. }
+        | TypedExpr::GlobalRef { .. }
         | TypedExpr::SelfRef { .. }
         | TypedExpr::Path { .. }
         | TypedExpr::Crash { .. }
@@ -954,6 +955,7 @@ fn collect_lambda_exprs_from_expr<'a>(expr: &'a TypedExpr, out: &mut Vec<&'a Typ
         // Leaf nodes
         TypedExpr::Literal { .. }
         | TypedExpr::Var { .. }
+        | TypedExpr::GlobalRef { .. }
         | TypedExpr::SelfRef { .. }
         | TypedExpr::Path { .. }
         | TypedExpr::Error { .. }

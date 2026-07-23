@@ -24,6 +24,7 @@ use writ_module::instruction::Instruction;
 use crate::ast::expr::PrefixOp;
 use crate::check::ir::TypedExpr;
 use crate::check::ty::{Ty, TyKind};
+use crate::emit::metadata::TableId;
 
 use super::BodyEmitter;
 use super::call::{emit_call_indirect, pack_args_consecutive};
@@ -63,6 +64,23 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
                 // Unresolved var: alloc a new register (shouldn't happen post-typecheck)
                 emitter.alloc_reg(*ty)
             }
+        }
+        TypedExpr::GlobalRef { ty, def_id, .. } => {
+            let token = emitter
+                .builder
+                .token_for_def(*def_id)
+                .expect("checked source global must have a metadata operand");
+            assert_eq!(
+                token.table(),
+                TableId::GlobalDef,
+                "checked source global must resolve to a GlobalDef"
+            );
+            let r_dst = emitter.alloc_reg(*ty);
+            emitter.emit(Instruction::LoadGlobal {
+                r_dst,
+                global_idx: token.row() - 1,
+            });
+            r_dst
         }
 
         TypedExpr::SelfRef { .. } => {
@@ -208,6 +226,22 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
                         });
                         r_dst
                     }
+                }
+                TypedExpr::GlobalRef { def_id, .. } => {
+                    let token = emitter
+                        .builder
+                        .token_for_def(*def_id)
+                        .expect("checked source global must have a metadata operand");
+                    assert_eq!(
+                        token.table(),
+                        TableId::GlobalDef,
+                        "checked source global must resolve to a GlobalDef"
+                    );
+                    emitter.emit(Instruction::StoreGlobal {
+                        global_idx: token.row() - 1,
+                        r_src: r_val,
+                    });
+                    r_val
                 }
                 TypedExpr::Field {
                     receiver, field, ..

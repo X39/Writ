@@ -39,10 +39,21 @@ pub(super) fn check_path(ctx: &mut CheckCtx, segments: &[String], span: SimpleSp
             }
             DefKind::Const => {
                 if let Some(&ty) = ctx.type_env.const_types.get(&def_id) {
-                    return TypedExpr::Path {
+                    return TypedExpr::GlobalRef {
                         ty,
                         span,
-                        segments: segments.to_vec(),
+                        name: fqn,
+                        def_id,
+                    };
+                }
+            }
+            DefKind::Global => {
+                if let Some(&(ty, _)) = ctx.type_env.global_types.get(&def_id) {
+                    return TypedExpr::GlobalRef {
+                        ty,
+                        span,
+                        name: fqn,
+                        def_id,
                     };
                 }
             }

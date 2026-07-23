@@ -213,6 +213,7 @@ fn collect_var_refs(
         TypedExpr::Lambda { .. } => {}
         // Leaf nodes
         TypedExpr::Literal { .. }
+        | TypedExpr::GlobalRef { .. }
         | TypedExpr::SelfRef { .. }
         | TypedExpr::Path { .. }
         | TypedExpr::Crash { .. }

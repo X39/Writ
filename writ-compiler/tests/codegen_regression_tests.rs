@@ -127,3 +127,93 @@ fn range_construction_emits_atomic_ordered_field_block() {
         Instruction::LoadTrue { r_dst } if r_dst == r_base + 3
     ));
 }
+
+#[test]
+fn field_default_loads_declaration_global_despite_caller_shadowing() {
+    let module = compile(
+        r#"
+        global mut seed: int = 7;
+        struct Config { value: int = seed }
+        fn main() {
+            let seed = "caller local";
+            let config = new Config {};
+        }
+        "#,
+    );
+
+    let instructions = method_instructions(&module, "main");
+    let (load_index, loaded_register) = instructions
+        .iter()
+        .enumerate()
+        .find_map(|(index, instruction)| match instruction {
+            Instruction::LoadGlobal {
+                r_dst,
+                global_idx: 0,
+            } => Some((index, *r_dst)),
+            _ => None,
+        })
+        .expect("field default should load the declaration-scope global");
+    let (new_index, field_base) = instructions
+        .iter()
+        .enumerate()
+        .find_map(|(index, instruction)| match instruction {
+            Instruction::New {
+                field_count: 1,
+                r_base,
+                ..
+            } => Some((index, *r_base)),
+            _ => None,
+        })
+        .expect("Config construction should initialize its one field atomically");
+
+    assert!(load_index < new_index);
+    assert_eq!(
+        field_base, loaded_register,
+        "NEW must consume the global value, not the same-named caller local"
+    );
+}
+
+#[test]
+fn namespaced_field_default_loads_declaration_constant_despite_caller_shadowing() {
+    let module = compile(
+        r#"
+        namespace settings;
+        const default_value: int = 41;
+        struct Config { value: int = default_value }
+        fn main() {
+            let default_value = "caller local";
+            let config = new Config {};
+        }
+        "#,
+    );
+
+    let instructions = method_instructions(&module, "main");
+    assert!(
+        instructions.iter().any(|instruction| matches!(
+            instruction,
+            Instruction::LoadGlobal { global_idx: 0, .. }
+        )),
+        "field default should load the namespaced declaration-scope constant"
+    );
+}
+
+#[test]
+fn global_assignment_emits_store_global() {
+    let module = compile(
+        r#"
+        global mut counter: int = 0;
+        fn main() {
+            counter = 1;
+        }
+        "#,
+    );
+
+    let instructions = method_instructions(&module, "main");
+    assert!(
+        instructions.iter().any(|instruction| matches!(
+            instruction,
+            Instruction::StoreGlobal { global_idx: 0, .. }
+        )),
+        "global assignment should write the GlobalDef slot"
+    );
+}

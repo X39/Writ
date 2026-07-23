@@ -19,8 +19,9 @@ pub(super) fn check_ident(ctx: &mut CheckCtx, name: &str, span: SimpleSpan) -> T
         };
     }
 
-    // Check DefMap for constants, globals, functions
-    if let Some(def_id) = ctx.def_map.get(name) {
+    // Resolve module items in declaration scope. Keep the DefId for globals
+    // and constants so later emission cannot re-bind them by spelling.
+    if let Some(def_id) = find_definition(ctx, name) {
         let entry = ctx.def_map.get_entry(def_id);
         match entry.kind {
             DefKind::Fn | DefKind::ExternFn => {
@@ -41,67 +42,26 @@ pub(super) fn check_ident(ctx: &mut CheckCtx, name: &str, span: SimpleSpan) -> T
             DefKind::Const => {
                 if let Some(&ty) = ctx.type_env.const_types.get(&def_id) {
                     emit_deprecated_warning_if_cross_file(ctx, def_id, name, span);
-                    return TypedExpr::Var {
+                    return TypedExpr::GlobalRef {
                         ty,
                         span,
                         name: name.to_string(),
+                        def_id,
                     };
                 }
             }
             DefKind::Global => {
                 if let Some(&(ty, _)) = ctx.type_env.global_types.get(&def_id) {
                     emit_deprecated_warning_if_cross_file(ctx, def_id, name, span);
-                    return TypedExpr::Var {
+                    return TypedExpr::GlobalRef {
                         ty,
                         span,
                         name: name.to_string(),
+                        def_id,
                     };
                 }
             }
             _ => {}
-        }
-    }
-
-    // Also check by FQN with namespace prefixes - look in file-private scope
-    for privates in ctx.def_map.file_private.values() {
-        if let Some(&def_id) = privates.get(name) {
-            let entry = ctx.def_map.get_entry(def_id);
-            match entry.kind {
-                DefKind::Fn | DefKind::ExternFn => {
-                    if let Some(sig) = ctx.type_env.fn_sigs.get(&def_id) {
-                        emit_deprecated_warning_if_cross_file(ctx, def_id, name, span);
-                        let ty = ctx
-                            .interner
-                            .func(sig.params.iter().map(|(_, t)| *t).collect(), sig.ret);
-                        return TypedExpr::Var {
-                            ty,
-                            span,
-                            name: name.to_string(),
-                        };
-                    }
-                }
-                DefKind::Const => {
-                    if let Some(&ty) = ctx.type_env.const_types.get(&def_id) {
-                        emit_deprecated_warning_if_cross_file(ctx, def_id, name, span);
-                        return TypedExpr::Var {
-                            ty,
-                            span,
-                            name: name.to_string(),
-                        };
-                    }
-                }
-                DefKind::Global => {
-                    if let Some(&(ty, _)) = ctx.type_env.global_types.get(&def_id) {
-                        emit_deprecated_warning_if_cross_file(ctx, def_id, name, span);
-                        return TypedExpr::Var {
-                            ty,
-                            span,
-                            name: name.to_string(),
-                        };
-                    }
-                }
-                _ => {}
-            }
         }
     }
 
@@ -168,6 +128,27 @@ pub(super) fn check_ident(ctx: &mut CheckCtx, name: &str, span: SimpleSpan) -> T
         file: ctx.current_file,
     });
     TypedExpr::Error { ty: err_ty, span }
+}
+
+fn find_definition(ctx: &CheckCtx<'_>, name: &str) -> Option<crate::resolve::def_map::DefId> {
+    if !ctx.current_namespace.is_empty()
+        && let Some(def_id) = ctx
+            .def_map
+            .get(&format!("{}::{name}", ctx.current_namespace))
+    {
+        return Some(def_id);
+    }
+
+    if let Some(def_id) = ctx
+        .def_map
+        .file_private
+        .get(&ctx.current_file)
+        .and_then(|definitions| definitions.get(name).copied())
+    {
+        return Some(def_id);
+    }
+
+    ctx.def_map.get(name)
 }
 
 /// Emit a W0006 warning if `def_id` is in deprecated_items and the definition

@@ -33,7 +33,10 @@ pub(crate) fn check_assignment(
 ) {
     let place = place_mutability(ctx, target);
 
-    if matches!(target, TypedExpr::Var { .. } | TypedExpr::Path { .. }) {
+    if matches!(
+        target,
+        TypedExpr::Var { .. } | TypedExpr::GlobalRef { .. } | TypedExpr::Path { .. }
+    ) {
         match place {
             PlaceMutability::Mutable => {}
             PlaceMutability::ImmutableBinding { name, span } => {
@@ -146,6 +149,7 @@ fn place_mutability(ctx: &CheckCtx<'_>, expr: &TypedExpr) -> PlaceMutability {
 
     match expr {
         TypedExpr::Var { name, .. } => binding_mutability(ctx, name),
+        TypedExpr::GlobalRef { def_id, .. } => definition_mutability_by_id(ctx, *def_id),
         TypedExpr::SelfRef { .. } => ctx
             .local_env
             .lookup("self")
@@ -217,6 +221,13 @@ fn definition_mutability(ctx: &CheckCtx<'_>, name: &str) -> PlaceMutability {
     let Some(def_id) = def_id else {
         return PlaceMutability::NonPlace;
     };
+    definition_mutability_by_id(ctx, def_id)
+}
+
+fn definition_mutability_by_id(
+    ctx: &CheckCtx<'_>,
+    def_id: crate::resolve::def_map::DefId,
+) -> PlaceMutability {
     let entry = ctx.def_map.get_entry(def_id);
     match entry.kind {
         DefKind::Global => {

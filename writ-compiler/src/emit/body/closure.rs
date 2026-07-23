@@ -263,6 +263,7 @@ fn scan_expr_for_lambdas(
         // Leaf nodes
         TypedExpr::Literal { .. }
         | TypedExpr::Var { .. }
+        | TypedExpr::GlobalRef { .. }
         | TypedExpr::SelfRef { .. }
         | TypedExpr::Path { .. }
         | TypedExpr::Error { .. }

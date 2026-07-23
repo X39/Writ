@@ -41,6 +41,17 @@ pub enum TypedExpr {
         span: SimpleSpan,
         name: String,
     },
+    /// A source-module constant or global resolved to its declaration identity.
+    ///
+    /// Keeping the DefId prevents body emission from accidentally binding this
+    /// reference to a same-named local at the expression's use site. Constants
+    /// and globals both occupy GlobalDef rows in the module format.
+    GlobalRef {
+        ty: Ty,
+        span: SimpleSpan,
+        name: String,
+        def_id: DefId,
+    },
     SelfRef {
         ty: Ty,
         span: SimpleSpan,
@@ -194,6 +205,7 @@ impl TypedExpr {
         match self {
             TypedExpr::Literal { ty, .. }
             | TypedExpr::Var { ty, .. }
+            | TypedExpr::GlobalRef { ty, .. }
             | TypedExpr::SelfRef { ty, .. }
             | TypedExpr::Call { ty, .. }
             | TypedExpr::Field { ty, .. }
@@ -225,6 +237,7 @@ impl TypedExpr {
         match self {
             TypedExpr::Literal { span, .. }
             | TypedExpr::Var { span, .. }
+            | TypedExpr::GlobalRef { span, .. }
             | TypedExpr::SelfRef { span, .. }
             | TypedExpr::Call { span, .. }
             | TypedExpr::Field { span, .. }

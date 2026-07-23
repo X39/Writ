@@ -133,6 +133,7 @@ fn walk_expr(expr: &TypedExpr, ids: &mut FxHashSet<DefId>) {
         }
         TypedExpr::Literal { .. }
         | TypedExpr::Var { .. }
+        | TypedExpr::GlobalRef { .. }
         | TypedExpr::SelfRef { .. }
         | TypedExpr::Path { .. }
         | TypedExpr::Error { .. }
@@ -354,6 +355,7 @@ fn walk_expr_types(
         TypedExpr::TypeOf { static_ty, .. } => record_type(*static_ty, interner, seen, types),
         TypedExpr::Literal { .. }
         | TypedExpr::Var { .. }
+        | TypedExpr::GlobalRef { .. }
         | TypedExpr::SelfRef { .. }
         | TypedExpr::Path { .. }
         | TypedExpr::Error { .. }
