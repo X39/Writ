@@ -995,7 +995,7 @@ fn read_only_field_mutation_error_even_through_mutable_binding() {
     );
     assert!(
         has_error(&diags, "E0107"),
-        "expected E0107 immutable field mutation, got: {:?}",
+        "expected E0107 read-only field mutation, got: {:?}",
         diags
     );
 }
