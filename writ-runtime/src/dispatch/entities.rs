@@ -94,8 +94,22 @@ fn collect_entity_constructor_fields(
 }
 
 pub(super) fn exec_init_entity(ctx: &mut ExecContext<'_>, r_entity: u16) -> ExecutionResult {
-    let entity_id =
-        helpers::extract_entity(&ctx.task.call_stack.last().unwrap().registers[r_entity as usize]);
+    let frame = match ctx.task.call_stack.last() {
+        Some(frame) => frame,
+        None => {
+            return ExecutionResult::Crash("INIT_ENTITY: task has no active call frame".into());
+        }
+    };
+    let entity_value = match frame.registers.get(r_entity as usize) {
+        Some(value) => value,
+        None => {
+            return ExecutionResult::Crash(format!(
+                "INIT_ENTITY: entity register r{r_entity} is out of range for frame with {} registers",
+                frame.registers.len()
+            ));
+        }
+    };
+    let entity_id = helpers::extract_entity(entity_value);
 
     // The field state was installed atomically by SPAWN_ENTITY. INIT_ENTITY only
     // transitions lifecycle state and dispatches the creation hook.

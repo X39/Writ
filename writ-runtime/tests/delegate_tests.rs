@@ -1,6 +1,6 @@
 use writ_module::module::MethodBody;
 use writ_module::signature::{TypeSignature, encode_method_signature};
-use writ_module::tables::TypeDefKind;
+use writ_module::tables::{METHOD_FLAG_INTRINSIC, TypeDefKind};
 use writ_module::{Instruction, MetadataToken, Module, ModuleBuilder};
 use writ_runtime::{ExecutionLimit, RuntimeBuilder, TaskState, Value};
 
@@ -628,4 +628,127 @@ fn call_indirect_rejects_implicit_target_beyond_callee_registers() {
         main,
         "CALL_INDIRECT: 1 arguments exceed callee register count 0",
     );
+}
+
+#[test]
+fn new_delegate_rejects_non_executable_method_before_allocation() {
+    for (case, flags, expected) in [
+        (
+            "intrinsic",
+            METHOD_STATIC | METHOD_FLAG_INTRINSIC,
+            "runtime-intrinsic",
+        ),
+        ("empty", METHOD_STATIC, "no executable bytecode body"),
+    ] {
+        let mut builder = ModuleBuilder::new(&format!("delegate-new-{case}"));
+        let owner = builder.add_type_def("Functions", "test", TypeDefKind::Struct, 0);
+        let invoke = builder.add_type_method(
+            owner,
+            "invoke",
+            &signature(&[], TypeSignature::Void),
+            flags,
+            0,
+            body(&[], 0),
+        );
+        let main = builder.add_method(
+            "main",
+            &signature(&[], TypeSignature::Void),
+            0,
+            1,
+            body(
+                &[Instruction::NewDelegate {
+                    r_dst: 0,
+                    method_idx: invoke.0,
+                    r_target: 0,
+                }],
+                1,
+            ),
+        );
+
+        let mut runtime = RuntimeBuilder::new(builder.build())
+            .build()
+            .expect("build runtime");
+        let heap_before = runtime.heap().object_count();
+        let task = runtime
+            .spawn_task(row_index(main), vec![])
+            .expect("spawn main");
+        runtime.run_task(task, ExecutionLimit::Instructions(1));
+
+        assert_eq!(runtime.task_state(task), Some(TaskState::Cancelled));
+        assert_eq!(
+            runtime.heap().object_count(),
+            heap_before,
+            "NEW_DELEGATE must reject {case} targets before allocating"
+        );
+        let crash = runtime
+            .crash_info(task)
+            .expect("delegate creation must crash");
+        assert!(
+            crash.message.contains(expected),
+            "expected {case} crash containing {expected:?}, got {:?}",
+            crash.message
+        );
+    }
+}
+
+#[test]
+fn call_indirect_rejects_non_executable_method_before_frame_push() {
+    for (case, flags, expected) in [
+        (
+            "intrinsic",
+            METHOD_STATIC | METHOD_FLAG_INTRINSIC,
+            "runtime-intrinsic",
+        ),
+        ("empty", METHOD_STATIC, "no executable bytecode body"),
+    ] {
+        let mut builder = ModuleBuilder::new(&format!("delegate-call-{case}"));
+        let owner = builder.add_type_def("Functions", "test", TypeDefKind::Struct, 0);
+        let invoke = builder.add_type_method(
+            owner,
+            "invoke",
+            &signature(&[], TypeSignature::Void),
+            flags,
+            0,
+            body(&[], 0),
+        );
+        let main = builder.add_method(
+            "main",
+            &signature(&[TypeSignature::Int], TypeSignature::Void),
+            0,
+            1,
+            body(
+                &[Instruction::CallIndirect {
+                    r_dst: 0,
+                    r_delegate: 0,
+                    r_base: 0,
+                    argc: 0,
+                }],
+                1,
+            ),
+        );
+
+        let mut runtime = RuntimeBuilder::new(builder.build())
+            .build()
+            .expect("build runtime");
+        let user_module_idx = runtime.user_module_idx();
+        let delegate = runtime
+            .heap_mut()
+            .alloc_delegate(user_module_idx, row_index(invoke), None);
+        let task = runtime
+            .spawn_task(row_index(main), vec![Value::Ref(delegate)])
+            .expect("spawn main");
+        runtime.run_task(task, ExecutionLimit::Instructions(1));
+
+        assert_eq!(
+            runtime.task_state(task),
+            Some(TaskState::Cancelled),
+            "CALL_INDIRECT must reject {case} targets in the calling instruction"
+        );
+        let crash = runtime.crash_info(task).expect("delegate call must crash");
+        assert!(
+            crash.message.contains(expected),
+            "expected {case} crash containing {expected:?}, got {:?}",
+            crash.message
+        );
+    }
 }

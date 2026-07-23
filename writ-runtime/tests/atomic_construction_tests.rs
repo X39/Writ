@@ -282,6 +282,33 @@ fn zero_field_spawn_entity_ignores_r_base() {
 }
 
 #[test]
+fn init_entity_rejects_entity_register_out_of_bounds() {
+    let mut runtime = runtime_with_type(
+        TypeDefKind::Entity,
+        &[],
+        1,
+        &[
+            Instruction::InitEntity { r_entity: 1 },
+            Instruction::RetVoid,
+        ],
+    );
+    let task = run(&mut runtime);
+
+    assert_eq!(runtime.task_state(task), Some(TaskState::Cancelled));
+    assert_eq!(runtime.host().requests, 0);
+    let crash = runtime
+        .crash_info(task)
+        .expect("out-of-range INIT_ENTITY must crash");
+    assert!(
+        crash
+            .message
+            .contains("INIT_ENTITY: entity register r1 is out of range"),
+        "unexpected crash: {}",
+        crash.message
+    );
+}
+
+#[test]
 fn spawn_entity_publishes_complete_fields_before_init() {
     let mut runtime = runtime_with_type(
         TypeDefKind::Entity,

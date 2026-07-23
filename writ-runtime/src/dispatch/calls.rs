@@ -365,7 +365,7 @@ pub(super) fn exec_new_delegate(
             Err(message) => return ExecutionResult::Crash(format!("NEW_DELEGATE: {message}")),
         };
     if let Err(message) =
-        checked_method_register_count("NEW_DELEGATE", ctx.modules, target_module_idx, method_idx)
+        checked_delegate_method("NEW_DELEGATE", ctx.modules, target_module_idx, method_idx)
     {
         return ExecutionResult::Crash(message);
     }
@@ -429,7 +429,7 @@ pub(super) fn exec_call_indirect(
         _ => return ExecutionResult::Crash("CALL_INDIRECT: not a delegate".into()),
     };
 
-    let (reg_count, param_count) = match checked_method_register_count(
+    let (reg_count, param_count) = match checked_delegate_method(
         "CALL_INDIRECT",
         ctx.modules,
         target_module_idx,
@@ -627,6 +627,28 @@ pub(super) fn checked_method_register_count(
         ));
     }
     Ok((body_register_count, method_def.param_count as usize))
+}
+
+fn checked_delegate_method(
+    opcode: &str,
+    modules: &[crate::loader::LoadedModule],
+    module_idx: usize,
+    method_idx: usize,
+) -> Result<(usize, usize), String> {
+    let counts = checked_method_register_count(opcode, modules, module_idx, method_idx)?;
+    let module = &modules[module_idx];
+    let method = &module.module.method_defs[method_idx];
+    if method.flags & writ_module::tables::METHOD_FLAG_INTRINSIC != 0 {
+        return Err(format!(
+            "{opcode}: MethodDef {method_idx} in module {module_idx} is runtime-intrinsic and has no delegate-callable IL body"
+        ));
+    }
+    if module.decoded_bodies[method_idx].is_empty() {
+        return Err(format!(
+            "{opcode}: MethodDef {method_idx} in module {module_idx} has no executable bytecode body"
+        ));
+    }
+    Ok(counts)
 }
 
 fn validate_delegate_binding(
