@@ -2,14 +2,14 @@
 
 use chumsky::span::SimpleSpan;
 
-use crate::ast::expr::{AstExpr, AstMatchArm, AstPattern, RangeKind};
-use super::CheckCtx;
-use super::check_expr;
-use super::check_block_stmts;
 use super::super::env::Mutability;
 use super::super::error::TypeError;
 use super::super::ir::{TypedArm, TypedExpr, TypedLiteral, TypedPattern};
 use super::super::ty::TyKind;
+use super::CheckCtx;
+use super::check_block_stmts;
+use super::check_expr;
+use crate::ast::expr::{AstExpr, AstMatchArm, AstPattern, RangeKind};
 
 pub(super) fn check_match(
     ctx: &mut CheckCtx,
@@ -58,7 +58,11 @@ pub(super) fn check_match(
         if ctx.is_error(result_ty) || ctx.is_error(arm_ty) {
             continue;
         }
-        if ctx.unify.unify(result_ty, arm_ty, &mut ctx.interner).is_err() {
+        if ctx
+            .unify
+            .unify(result_ty, arm_ty, &mut ctx.interner)
+            .is_err()
+        {
             ctx.emit_error(TypeError::TypeMismatch {
                 expected: ctx.display_ty(result_ty),
                 found: ctx.display_ty(arm_ty),
@@ -83,26 +87,27 @@ pub(super) fn check_match(
     }
 }
 
-pub(super) fn check_pattern(ctx: &mut CheckCtx, pattern: &AstPattern, scrutinee_ty: super::super::ty::Ty) -> TypedPattern {
+pub(super) fn check_pattern(
+    ctx: &mut CheckCtx,
+    pattern: &AstPattern,
+    scrutinee_ty: super::super::ty::Ty,
+) -> TypedPattern {
     match pattern {
         AstPattern::Wildcard { span } => TypedPattern::Wildcard { span: *span },
         AstPattern::Variable { name, span } => {
             // Handle unqualified None/Some when scrutinee is Option<T>.
             // These are sub-prelude builtin variant names, not user variable bindings.
             if matches!(name.as_str(), "None" | "Some")
-                && let TyKind::Option(_) = ctx.interner.kind(scrutinee_ty) {
-                    // None/Some in pattern position on an Option: treat as wildcard
-                    // (no user variable is bound). Semantic correctness for IL emission
-                    // is handled by the desugar layer; this just suppresses false errors.
-                    return TypedPattern::Wildcard { span: *span };
-                }
+                && let TyKind::Option(_) = ctx.interner.kind(scrutinee_ty)
+            {
+                // None/Some in pattern position on an Option: treat as wildcard
+                // (no user variable is bound). Semantic correctness for IL emission
+                // is handled by the desugar layer; this just suppresses false errors.
+                return TypedPattern::Wildcard { span: *span };
+            }
             // Bind the variable to the scrutinee type
-            ctx.local_env.define(
-                name.clone(),
-                scrutinee_ty,
-                Mutability::Immutable,
-                *span,
-            );
+            ctx.local_env
+                .define(name.clone(), scrutinee_ty, Mutability::Immutable, *span);
             TypedPattern::Variable {
                 name: name.clone(),
                 ty: scrutinee_ty,
@@ -113,23 +118,25 @@ pub(super) fn check_pattern(ctx: &mut CheckCtx, pattern: &AstPattern, scrutinee_
             // Check the literal expression and verify it's compatible with scrutinee
             let typed_lit = check_expr(ctx, expr);
             let lit_ty = typed_lit.ty();
-            if !ctx.is_error(lit_ty) && !ctx.is_error(scrutinee_ty)
-                && ctx.unify.unify(scrutinee_ty, lit_ty, &mut ctx.interner).is_err() {
-                    ctx.emit_error(TypeError::TypeMismatch {
-                        expected: ctx.display_ty(scrutinee_ty),
-                        found: ctx.display_ty(lit_ty),
-                        expected_span: *span,
-                        found_span: typed_lit.span(),
-                        file: ctx.current_file,
-                        help: Some("pattern type must match scrutinee type".to_string()),
-                    });
-                }
+            if !ctx.is_error(lit_ty)
+                && !ctx.is_error(scrutinee_ty)
+                && ctx
+                    .unify
+                    .unify(scrutinee_ty, lit_ty, &mut ctx.interner)
+                    .is_err()
+            {
+                ctx.emit_error(TypeError::TypeMismatch {
+                    expected: ctx.display_ty(scrutinee_ty),
+                    found: ctx.display_ty(lit_ty),
+                    expected_span: *span,
+                    found_span: typed_lit.span(),
+                    file: ctx.current_file,
+                    help: Some("pattern type must match scrutinee type".to_string()),
+                });
+            }
             // Extract literal value from the typed expression
             match typed_lit {
-                TypedExpr::Literal { value, .. } => TypedPattern::Literal {
-                    value,
-                    span: *span,
-                },
+                TypedExpr::Literal { value, .. } => TypedPattern::Literal { value, span: *span },
                 _ => TypedPattern::Wildcard { span: *span },
             }
         }
@@ -165,18 +172,32 @@ pub(super) fn check_pattern(ctx: &mut CheckCtx, pattern: &AstPattern, scrutinee_
             // Try to find the enum def_id and variant fields
             let mut enum_def_id = None;
             let mut variant_fields = Vec::new();
+            let enum_args = ctx
+                .interner
+                .generic_args(scrutinee_ty)
+                .map(|args| args.to_vec());
 
             // Check if scrutinee is an enum type
             if let TyKind::Enum(def_id) = ctx.interner.kind(scrutinee_ty).clone()
-                && let Some(variants) = ctx.type_env.enum_variants.get(&def_id) {
-                    for v in variants {
-                        if v.name == variant_name {
-                            enum_def_id = Some(def_id);
-                            variant_fields = v.fields.clone();
-                            break;
+                && let Some(variants) = ctx.type_env.enum_variants.get(&def_id)
+            {
+                for v in variants {
+                    if v.name == variant_name {
+                        enum_def_id = Some(def_id);
+                        variant_fields = v.fields.clone();
+                        if let Some(args) = &enum_args {
+                            for (_, field_ty) in &mut variant_fields {
+                                *field_ty = super::super::infer::substitute(
+                                    *field_ty,
+                                    args,
+                                    &mut ctx.interner,
+                                );
+                            }
                         }
+                        break;
                     }
                 }
+            }
 
             // Bind pattern variables to the variant's field types
             let mut typed_bindings = Vec::new();
@@ -210,7 +231,12 @@ pub(super) fn check_pattern(ctx: &mut CheckCtx, pattern: &AstPattern, scrutinee_
                 span: *span,
             }
         }
-        AstPattern::Range { start, kind, end, span } => {
+        AstPattern::Range {
+            start,
+            kind,
+            end,
+            span,
+        } => {
             let start_typed = check_expr(ctx, start);
             let end_typed = check_expr(ctx, end);
             // Both should be compatible with scrutinee type

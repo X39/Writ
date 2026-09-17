@@ -20,15 +20,22 @@ use super::{emit_expr, extract_type_def_id};
 /// - Result: .is_err(), .is_ok(), .unwrap_ok(), .unwrap_err(), .extract_err()
 /// - Array: .len(), .slice(), .resize(), .copy_from()
 /// - Constructor patterns: Some(val), None, Ok(val), Err(val) via Path callee
-pub(super) fn try_emit_builtin_method(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> Option<u16> {
+pub(super) fn try_emit_builtin_method(
+    emitter: &mut BodyEmitter<'_>,
+    expr: &TypedExpr,
+) -> Option<u16> {
     let (ty, callee, args) = match expr {
-        TypedExpr::Call { ty, callee, args, .. } => (*ty, callee.as_ref(), args),
+        TypedExpr::Call {
+            ty, callee, args, ..
+        } => (*ty, callee.as_ref(), args),
         _ => return None,
     };
 
     match callee {
         // ── Method call on a receiver: Field { receiver, field, .. } ─────────
-        TypedExpr::Field { receiver, field, .. } => {
+        TypedExpr::Field {
+            receiver, field, ..
+        } => {
             let recv_ty = receiver.ty();
             match emitter.interner.kind(recv_ty).clone() {
                 TyKind::Option(_) => {
@@ -90,7 +97,12 @@ pub(super) fn try_emit_builtin_method(emitter: &mut BodyEmitter<'_>, expr: &Type
                             let r_start = emit_expr(emitter, &args[0]);
                             let r_end = emit_expr(emitter, &args[1]);
                             let r_dst = emitter.alloc_reg(ty);
-                            emitter.emit(Instruction::ArraySlice { r_dst, r_arr, r_start, r_end });
+                            emitter.emit(Instruction::ArraySlice {
+                                r_dst,
+                                r_arr,
+                                r_start,
+                                r_end,
+                            });
                             return Some(r_dst);
                         }
                         "resize" if args.len() == 1 => {
@@ -126,7 +138,10 @@ pub(super) fn try_emit_builtin_method(emitter: &mut BodyEmitter<'_>, expr: &Type
                         "len" => {
                             // EMIT-20: string.len() -> STR_LEN
                             let r_dst = emitter.alloc_reg(ty);
-                            emitter.emit(Instruction::StrLen { r_dst, r_str: r_src });
+                            emitter.emit(Instruction::StrLen {
+                                r_dst,
+                                r_str: r_src,
+                            });
                             return Some(r_dst);
                         }
                         "into_int" => {
@@ -166,32 +181,53 @@ pub(super) fn try_emit_builtin_method(emitter: &mut BodyEmitter<'_>, expr: &Type
                         "starts_with" if args.len() == 1 => {
                             let r_prefix = emit_expr(emitter, &args[0]);
                             let r_dst = emitter.alloc_reg(ty);
-                            emitter.emit(Instruction::StrStartsWith { r_dst, r_str: r_src, r_prefix });
+                            emitter.emit(Instruction::StrStartsWith {
+                                r_dst,
+                                r_str: r_src,
+                                r_prefix,
+                            });
                             return Some(r_dst);
                         }
                         "ends_with" if args.len() == 1 => {
                             let r_suffix = emit_expr(emitter, &args[0]);
                             let r_dst = emitter.alloc_reg(ty);
-                            emitter.emit(Instruction::StrEndsWith { r_dst, r_str: r_src, r_suffix });
+                            emitter.emit(Instruction::StrEndsWith {
+                                r_dst,
+                                r_str: r_src,
+                                r_suffix,
+                            });
                             return Some(r_dst);
                         }
                         "contains" if args.len() == 1 => {
                             let r_sub = emit_expr(emitter, &args[0]);
                             let r_dst = emitter.alloc_reg(ty);
-                            emitter.emit(Instruction::StrContains { r_dst, r_str: r_src, r_sub });
+                            emitter.emit(Instruction::StrContains {
+                                r_dst,
+                                r_str: r_src,
+                                r_sub,
+                            });
                             return Some(r_dst);
                         }
                         "split" if args.len() == 1 => {
                             let r_sep = emit_expr(emitter, &args[0]);
                             let r_dst = emitter.alloc_reg(ty);
-                            emitter.emit(Instruction::StrSplit { r_dst, r_str: r_src, r_sep });
+                            emitter.emit(Instruction::StrSplit {
+                                r_dst,
+                                r_str: r_src,
+                                r_sep,
+                            });
                             return Some(r_dst);
                         }
                         "replace" if args.len() == 2 => {
                             let r_from = emit_expr(emitter, &args[0]);
                             let r_to = emit_expr(emitter, &args[1]);
                             let r_dst = emitter.alloc_reg(ty);
-                            emitter.emit(Instruction::StrReplace { r_dst, r_str: r_src, r_from, r_to });
+                            emitter.emit(Instruction::StrReplace {
+                                r_dst,
+                                r_str: r_src,
+                                r_from,
+                                r_to,
+                            });
                             return Some(r_dst);
                         }
                         _ => {}
@@ -325,34 +361,32 @@ pub(super) fn try_emit_builtin_method(emitter: &mut BodyEmitter<'_>, expr: &Type
 
         // ── Var-based constructor patterns ────────────────────────────────────
         // TypedExpr::Var { name: "Some"/"None"/"Ok"/"Err", .. }
-        TypedExpr::Var { name, .. } => {
-            match name.as_str() {
-                "Some" if args.len() == 1 => {
-                    let r_val = emit_expr(emitter, &args[0]);
-                    let r_dst = emitter.alloc_reg(ty);
-                    emitter.emit(Instruction::WrapSome { r_dst, r_val });
-                    return Some(r_dst);
-                }
-                "None" if args.is_empty() => {
-                    let r_dst = emitter.alloc_reg(ty);
-                    emitter.emit(Instruction::LoadNull { r_dst });
-                    return Some(r_dst);
-                }
-                "Ok" if args.len() == 1 => {
-                    let r_val = emit_expr(emitter, &args[0]);
-                    let r_dst = emitter.alloc_reg(ty);
-                    emitter.emit(Instruction::WrapOk { r_dst, r_val });
-                    return Some(r_dst);
-                }
-                "Err" if args.len() == 1 => {
-                    let r_err = emit_expr(emitter, &args[0]);
-                    let r_dst = emitter.alloc_reg(ty);
-                    emitter.emit(Instruction::WrapErr { r_dst, r_err });
-                    return Some(r_dst);
-                }
-                _ => {}
+        TypedExpr::Var { name, .. } => match name.as_str() {
+            "Some" if args.len() == 1 => {
+                let r_val = emit_expr(emitter, &args[0]);
+                let r_dst = emitter.alloc_reg(ty);
+                emitter.emit(Instruction::WrapSome { r_dst, r_val });
+                return Some(r_dst);
             }
-        }
+            "None" if args.is_empty() => {
+                let r_dst = emitter.alloc_reg(ty);
+                emitter.emit(Instruction::LoadNull { r_dst });
+                return Some(r_dst);
+            }
+            "Ok" if args.len() == 1 => {
+                let r_val = emit_expr(emitter, &args[0]);
+                let r_dst = emitter.alloc_reg(ty);
+                emitter.emit(Instruction::WrapOk { r_dst, r_val });
+                return Some(r_dst);
+            }
+            "Err" if args.len() == 1 => {
+                let r_err = emit_expr(emitter, &args[0]);
+                let r_dst = emitter.alloc_reg(ty);
+                emitter.emit(Instruction::WrapErr { r_dst, r_err });
+                return Some(r_dst);
+            }
+            _ => {}
+        },
 
         _ => {}
     }

@@ -16,10 +16,10 @@
 | Result             | 6      | WRAP_OK, WRAP_ERR, UNWRAP_OK, IS_OK, IS_ERR, EXTRACT_ERR                                                                      |
 | Enum               | 3      | NEW_ENUM, GET_TAG, EXTRACT_FIELD                                                                                              |
 | Reflection         | 1      | TYPEOF                                                                                                                        |
-| Concurrency        | 7      | SPAWN_TASK, SPAWN_DETACHED, JOIN, CANCEL, DEFER_PUSH, DEFER_POP, DEFER_END                                                    |
+| Concurrency        | 6      | SPAWN_TASK, JOIN, CANCEL, DEFER_PUSH, DEFER_POP, DEFER_END                                                                   |
 | Globals & Atomics  | 4      | LOAD_GLOBAL, STORE_GLOBAL, ATOMIC_BEGIN, ATOMIC_END                                                                           |
 | Conversion         | 6      | I2F, F2I, I2S, F2S, B2S, CONVERT                                                                                              |
 | Strings            | 3      | STR_CONCAT, STR_BUILD, STR_LEN                                                                                                |
 | Boxing             | 2      | BOX, UNBOX                                                                                                                    |
-| **Total**          | **93** |                                                                                                                               |
+| **Total**          | **92** |                                                                                                                               |
 

@@ -35,9 +35,9 @@ extern fn random(min: float, max: float) -> float;
 
 // Runtime-provided components (data-only — no methods)
 extern component Sprite {
-    texture: string,
+    mut texture: string,
     scale: float = 1.0,
-    visible: bool = true,
+    mut visible: bool = true,
 }
 
 extern component Speaker {
@@ -48,7 +48,7 @@ extern component Speaker {
 }
 
 extern component Health {
-    current: int,
+    mut current: int,
     max: int,
 }
 ```

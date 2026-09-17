@@ -1,36 +1,36 @@
 pub mod context;
-pub mod error;
-pub(crate) mod optional;
-pub(crate) mod fmt_string;
-pub(crate) mod expr;
-pub(crate) mod stmt;
-pub(crate) mod operator;
 pub(crate) mod dialogue;
 pub(crate) mod entity;
+pub mod error;
+pub(crate) mod expr;
+pub(crate) mod fmt_string;
+pub(crate) mod operator;
+pub(crate) mod optional;
+pub(crate) mod stmt;
 
-use chumsky::span::SimpleSpan;
-use writ_parser::cst::{
-    Attribute, AttrArg, AttributeDecl, ClassDecl, ClassMember, ComponentDecl, ComponentMember,
-    ConstDecl, ContractDecl, ContractMember, EnumDecl, EnumVariant, ExternDecl, FnDecl, FnParam,
-    FnSig, GlobalDecl, Item, NamespaceDecl, OpSig, OpSymbol, Param, GenericParam, Spanned,
-    StructDecl, StructField, StructMember, UsingDecl, Visibility,
-};
-use crate::ast::{Ast, AstDecl};
 use crate::ast::decl::{
     AstAttribute, AstAttributeArg, AstAttributeDecl, AstClassDecl, AstComponentDecl,
     AstComponentMember, AstConstDecl, AstContractDecl, AstContractMember, AstEnumDecl,
-    AstEnumVariant, AstExternDecl, AstFnDecl, AstFnParam, AstFnSig, AstGenericParam,
-    AstGlobalDecl, AstNamespaceDecl, AstOpSig, AstOpSymbol, AstParam, AstStructDecl,
-    AstStructField, AstStructMember, AstUsingDecl, AstVisibility,
+    AstEnumVariant, AstExternDecl, AstFnDecl, AstFnParam, AstFnSig, AstGenericParam, AstGlobalDecl,
+    AstNamespaceDecl, AstOpSig, AstOpSymbol, AstParam, AstStructDecl, AstStructField,
+    AstStructMember, AstUsingDecl, AstVisibility,
 };
+use crate::ast::{Ast, AstDecl};
 use crate::lower::context::LoweringContext;
-use crate::lower::error::LoweringError;
-use crate::lower::expr::lower_expr;
 use crate::lower::dialogue::lower_dialogue;
 use crate::lower::entity::lower_entity;
+use crate::lower::error::LoweringError;
+use crate::lower::expr::lower_expr;
 use crate::lower::operator::lower_operator_impls;
 use crate::lower::optional::lower_type;
 use crate::lower::stmt::lower_stmt;
+use chumsky::span::SimpleSpan;
+use writ_parser::cst::{
+    AttrArg, Attribute, AttributeDecl, ClassDecl, ClassMember, ComponentDecl, ComponentMember,
+    ConstDecl, ContractDecl, ContractMember, EnumDecl, EnumVariant, ExternDecl, FnDecl, FnParam,
+    FnSig, GenericParam, GlobalDecl, Item, NamespaceDecl, OpSig, OpSymbol, Param, Spanned,
+    StructDecl, StructField, StructMember, UsingDecl, Visibility,
+};
 
 /// Lowers a CST item list to a simplified AST.
 ///
@@ -44,7 +44,7 @@ use crate::lower::stmt::lower_stmt;
 ///    - `lower_fmt_string` — `$"..."` → string concatenation with `.into<string>()` calls
 ///    - `lower_compound_assign` — `a += b` → `a = a + b` (mechanical expansion)
 ///    - `lower_operator` — operator decls → contract impl methods
-///    - `lower_concurrency` — spawn/join/cancel/defer/detached pass-through (1:1 mapping)
+///    - `lower_concurrency` — spawn/join/cancel/defer pass-through (1:1 mapping)
 ///
 /// 2. **Structural passes** (top-level, process Item variants):
 ///    - `lower_fn` — Fn items; invokes expression helpers on body
@@ -149,6 +149,7 @@ pub(crate) fn lower_fn(f: FnDecl<'_>, fn_span: SimpleSpan, ctx: &mut LoweringCon
         return_type: f.return_type.map(lower_type),
         body: f.body.into_iter().map(|s| lower_stmt(s, ctx)).collect(),
         span: fn_span,
+        is_dialogue: false,
     }
 }
 
@@ -239,9 +240,15 @@ pub(crate) fn lower_fn_param(param: FnParam<'_>, param_span: SimpleSpan) -> AstF
     }
 }
 
-fn lower_struct_member(member: StructMember<'_>, member_span: SimpleSpan, ctx: &mut LoweringContext) -> AstStructMember {
+fn lower_struct_member(
+    member: StructMember<'_>,
+    member_span: SimpleSpan,
+    ctx: &mut LoweringContext,
+) -> AstStructMember {
     match member {
-        StructMember::Field(field) => AstStructMember::Field(lower_struct_field(field, member_span, ctx)),
+        StructMember::Field(field) => {
+            AstStructMember::Field(lower_struct_field(field, member_span, ctx))
+        }
         StructMember::OnHook { event, body } => AstStructMember::OnHook {
             event: event.0.to_string(),
             event_span: event.1,
@@ -298,9 +305,14 @@ fn lower_attr_arg(
     }
 }
 
-pub(crate) fn lower_struct_field(field: StructField<'_>, field_span: SimpleSpan, ctx: &mut LoweringContext) -> AstStructField {
+pub(crate) fn lower_struct_field(
+    field: StructField<'_>,
+    field_span: SimpleSpan,
+    ctx: &mut LoweringContext,
+) -> AstStructField {
     AstStructField {
         vis: lower_vis(field.vis),
+        is_mutable: field.is_mutable,
         name: field.name.0.to_string(),
         name_span: field.name.1,
         ty: lower_type(field.ty),
@@ -313,7 +325,11 @@ pub(crate) fn lower_struct_field(field: StructField<'_>, field_span: SimpleSpan,
 // Structural pass-through lowering functions
 // =========================================================
 
-fn lower_namespace(ns: NamespaceDecl<'_>, ns_span: SimpleSpan, ctx: &mut LoweringContext) -> AstDecl {
+fn lower_namespace(
+    ns: NamespaceDecl<'_>,
+    ns_span: SimpleSpan,
+    ctx: &mut LoweringContext,
+) -> AstDecl {
     match ns {
         NamespaceDecl::Declarative(path) => {
             let segments: Vec<String> = path.iter().map(|(s, _)| s.to_string()).collect();
@@ -552,9 +568,15 @@ fn lower_component(
     }
 }
 
-fn lower_extern(e: ExternDecl<'_>, _e_span: SimpleSpan, ctx: &mut LoweringContext) -> AstExternDecl {
+fn lower_extern(
+    e: ExternDecl<'_>,
+    _e_span: SimpleSpan,
+    ctx: &mut LoweringContext,
+) -> AstExternDecl {
     match e {
-        ExternDecl::Fn(vis, (sig, sig_span)) => AstExternDecl::Fn(lower_vis(vis), lower_fn_sig(sig, sig_span, ctx)),
+        ExternDecl::Fn(vis, (sig, sig_span)) => {
+            AstExternDecl::Fn(lower_vis(vis), lower_fn_sig(sig, sig_span, ctx))
+        }
         ExternDecl::Component(vis, (c, c_span)) => {
             AstExternDecl::Component(lower_vis(vis), lower_component(c, c_span, ctx))
         }

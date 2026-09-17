@@ -50,8 +50,10 @@ pub fn emit_call(
     callee_def_id: DefId,
     kind: CallKind,
 ) -> u16 {
-    let (ty, args) = match call_expr {
-        TypedExpr::Call { ty, args, .. } => (*ty, args),
+    let (ty, callee, args) = match call_expr {
+        TypedExpr::Call {
+            ty, callee, args, ..
+        } => (*ty, callee, args),
         _ => unreachable!("emit_call called on non-Call expr"),
     };
 
@@ -64,7 +66,27 @@ pub fn emit_call(
     // 2. Allocate a consecutive block (r_base is the first).
     // 3. MOV each arg into its slot if not already consecutive.
 
-    let arg_regs: Vec<u16> = args.iter().map(|arg| emit_expr(emitter, arg)).collect();
+    let direct_has_receiver = emitter
+        .builder
+        .token_for_def(callee_def_id)
+        .and_then(|token| emitter.builder.method_has_receiver(token))
+        .unwrap_or(true);
+    let arg_regs: Vec<u16> = match (kind, callee.as_ref()) {
+        (CallKind::Direct, TypedExpr::Field { receiver, .. }) if direct_has_receiver => {
+            std::iter::once(emit_expr(emitter, receiver))
+                .chain(args.iter().map(|arg| emit_expr(emitter, arg)))
+                .collect()
+        }
+        (CallKind::Virtual { .. }, TypedExpr::Field { receiver, .. }) => {
+            std::iter::once(emit_expr(emitter, receiver))
+                .chain(args.iter().map(|arg| emit_expr(emitter, arg)))
+                .collect()
+        }
+        (CallKind::Virtual { .. }, _) => {
+            panic!("virtual call requires a field receiver");
+        }
+        _ => args.iter().map(|arg| emit_expr(emitter, arg)).collect(),
+    };
     let argc = arg_regs.len() as u16;
 
     // BUG-06 fix: use pack_args_consecutive to avoid phantom MOVs when args
@@ -87,11 +109,9 @@ pub fn emit_call(
             });
         }
         CallKind::Virtual { slot } => {
-            // CALL_VIRT: receiver is r_base (implicit self), remaining args follow.
-            // The spec layout: r_obj = receiver, r_base = first actual arg, argc = n-1
+            // CALL_VIRT's argument block includes the receiver at r_base, followed
+            // by the explicit arguments. r_obj names that same receiver register.
             let r_obj = r_base;
-            let r_args_base = if argc > 0 { r_base + 1 } else { r_base };
-            let n_args = if argc > 0 { argc - 1 } else { 0 };
             // FIX-02: Resolve the contract token for this virtual call site.
             // If the callee DefId has a registered impl-method-to-contract mapping
             // (populated by register_impl_method_contract during collection), emit
@@ -108,8 +128,8 @@ pub fn emit_call(
                 r_obj,
                 contract_idx,
                 slot,
-                r_base: r_args_base,
-                argc: n_args,
+                r_base,
+                argc,
             });
         }
         CallKind::Extern => {
@@ -186,7 +206,10 @@ pub fn emit_box_if_needed(
     let needs_box = is_value_type(emitter, arg_ty) && is_generic_param(emitter, param_ty);
     if needs_box {
         let r_boxed = emitter.alloc_reg(param_ty);
-        emitter.emit(Instruction::Box { r_dst: r_boxed, r_val });
+        emitter.emit(Instruction::Box {
+            r_dst: r_boxed,
+            r_val,
+        });
         r_boxed
     } else {
         r_val
@@ -203,10 +226,14 @@ pub fn emit_unbox_if_needed(
     declared_ret_ty: Ty,
     expected_ty: Ty,
 ) -> u16 {
-    let needs_unbox = is_generic_param(emitter, declared_ret_ty) && is_value_type(emitter, expected_ty);
+    let needs_unbox =
+        is_generic_param(emitter, declared_ret_ty) && is_value_type(emitter, expected_ty);
     if needs_unbox {
         let r_unboxed = emitter.alloc_reg(expected_ty);
-        emitter.emit(Instruction::Unbox { r_dst: r_unboxed, r_boxed });
+        emitter.emit(Instruction::Unbox {
+            r_dst: r_unboxed,
+            r_boxed,
+        });
         r_unboxed
     } else {
         r_boxed
@@ -310,7 +337,10 @@ pub fn pack_args_consecutive(emitter: &mut BodyEmitter<'_>, arg_regs: &[u16]) ->
             allocated, slot_reg,
             "consecutive register allocation should produce r_block_start + i"
         );
-        emitter.emit(Instruction::Mov { r_dst: allocated, r_src: arg_reg });
+        emitter.emit(Instruction::Mov {
+            r_dst: allocated,
+            r_src: arg_reg,
+        });
     }
     r_block_start
 }

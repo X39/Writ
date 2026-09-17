@@ -5,7 +5,7 @@
 
 mod common;
 
-use common::{workspace_file, DapClient};
+use common::{DapClient, workspace_file};
 use serde_json::json;
 
 /// Full DAP debug session with quest_system.writ:
@@ -58,7 +58,10 @@ fn test_quest_system_full_debug_session() {
             .and_then(|v| v.as_str())
             .unwrap_or("");
         assert!(
-            reason == "breakpoint" || reason == "step" || reason == "entry" || reason == "exception",
+            reason == "breakpoint"
+                || reason == "step"
+                || reason == "entry"
+                || reason == "exception",
             "stopped reason should be breakpoint/step/entry/exception, got: {}",
             reason
         );

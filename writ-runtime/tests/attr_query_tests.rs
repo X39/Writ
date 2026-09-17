@@ -6,13 +6,13 @@
 use std::sync::{Arc, Mutex};
 
 use writ_module::ModuleBuilder;
-use writ_module::tables::{TableId, ATTR_OWNER_KIND_DECL, TypeDefKind};
+use writ_module::attr::{AttrValue, encode_attr_args};
+use writ_module::tables::{ATTR_OWNER_KIND_DECL, TableId, TypeDefKind};
 use writ_module::token::MetadataToken;
-use writ_module::attr::{encode_attr_args, AttrValue};
 
 use writ_runtime::{
-    RuntimeBuilder, RuntimeHost, HostRequest, HostResponse, RequestId, LogLevel,
-    ModuleAttributeView,
+    HostRequest, HostResponse, LogLevel, ModuleAttributeView, RequestId, RuntimeBuilder,
+    RuntimeHost,
 };
 
 // ── Helper: build a test module with attributes ──────────────────────────────
@@ -98,7 +98,10 @@ fn on_module_load_fires_for_user_module() {
         .expect("build should succeed");
 
     let guard = data.lock().unwrap();
-    assert_eq!(guard.load_call_count, 1, "on_module_load should fire exactly once");
+    assert_eq!(
+        guard.load_call_count, 1,
+        "on_module_load should fire exactly once"
+    );
 }
 
 #[test]
@@ -122,11 +125,12 @@ fn on_module_load_view_has_correct_module_name() {
 fn on_module_load_rejection_prevents_loading() {
     let module = make_test_module();
     let (host, _data) = RecordingHost::new(Some("bad module".to_owned()));
-    let result = RuntimeBuilder::new(module)
-        .with_host(host)
-        .build();
+    let result = RuntimeBuilder::new(module).with_host(host).build();
 
-    assert!(result.is_err(), "build should fail when host rejects module");
+    assert!(
+        result.is_err(),
+        "build should fail when host rejects module"
+    );
     let err_str = format!("{}", result.err().unwrap());
     assert!(
         err_str.contains("module rejected by host"),
@@ -150,7 +154,8 @@ fn on_module_load_allows_attribute_query() {
     let guard = data.lock().unwrap();
     // Should have exactly 1 match (application row), not 2 (declaration row filtered)
     assert_eq!(
-        guard.quest_matches.len(), 1,
+        guard.quest_matches.len(),
+        1,
         "should find 1 Quest attribute application (declaration filtered), got {:?}",
         guard.quest_matches
     );
@@ -168,7 +173,8 @@ fn on_module_load_query_attributes_on_typedef() {
 
     let guard = data.lock().unwrap();
     assert_eq!(
-        guard.typedef0_matches.len(), 1,
+        guard.typedef0_matches.len(),
+        1,
         "should find 1 attribute on typedef[0], got {:?}",
         guard.typedef0_matches
     );
@@ -178,7 +184,7 @@ fn on_module_load_query_attributes_on_typedef() {
 // ── Domain query tests ────────────────────────────────────────────────────────
 
 fn build_runtime_with_quest_attr() -> writ_runtime::Runtime<impl writ_runtime::RuntimeHost> {
-    use writ_runtime::{RuntimeBuilder, NullHost};
+    use writ_runtime::{NullHost, RuntimeBuilder};
 
     let mut b = ModuleBuilder::new("test-module");
     b.add_type_def("QuestGiver", "", TypeDefKind::Struct, 0);
@@ -199,7 +205,12 @@ fn build_runtime_with_quest_attr() -> writ_runtime::Runtime<impl writ_runtime::R
 fn domain_query_attributes_by_name() {
     let rt = build_runtime_with_quest_attr();
     let matches = rt.domain().query_attributes("Quest");
-    assert_eq!(matches.len(), 1, "expected 1 Quest match, got {}", matches.len());
+    assert_eq!(
+        matches.len(),
+        1,
+        "expected 1 Quest match, got {}",
+        matches.len()
+    );
     assert_eq!(matches[0].name, "Quest");
     assert_eq!(matches[0].args, vec![AttrValue::String("Chapter1".into())]);
 }
@@ -209,21 +220,34 @@ fn domain_query_attributes_excludes_declarations() {
     let rt = build_runtime_with_quest_attr();
     // Module has 1 application + 1 declaration; only 1 should be returned
     let matches = rt.domain().query_attributes("Quest");
-    assert_eq!(matches.len(), 1, "declaration rows must be excluded; expected 1, got {}", matches.len());
+    assert_eq!(
+        matches.len(),
+        1,
+        "declaration rows must be excluded; expected 1, got {}",
+        matches.len()
+    );
 }
 
 #[test]
 fn domain_query_attributes_no_match() {
     let rt = build_runtime_with_quest_attr();
     let matches = rt.domain().query_attributes("Missing");
-    assert!(matches.is_empty(), "expected empty vec for non-existent attribute");
+    assert!(
+        matches.is_empty(),
+        "expected empty vec for non-existent attribute"
+    );
 }
 
 #[test]
 fn domain_query_attributes_on_typedef() {
     let rt = build_runtime_with_quest_attr();
     let matches = rt.domain().query_attributes_on(rt.user_module_idx(), 0);
-    assert_eq!(matches.len(), 1, "expected 1 attribute on typedef[0], got {}", matches.len());
+    assert_eq!(
+        matches.len(),
+        1,
+        "expected 1 attribute on typedef[0], got {}",
+        matches.len()
+    );
     assert_eq!(matches[0].name, "Quest");
 }
 
@@ -231,14 +255,19 @@ fn domain_query_attributes_on_typedef() {
 fn domain_query_attributes_on_wrong_typedef() {
     let rt = build_runtime_with_quest_attr();
     let matches = rt.domain().query_attributes_on(rt.user_module_idx(), 99);
-    assert!(matches.is_empty(), "expected empty vec for non-existent typedef index");
+    assert!(
+        matches.is_empty(),
+        "expected empty vec for non-existent typedef index"
+    );
 }
 
 #[test]
 fn domain_query_attribute_value_found() {
     let rt = build_runtime_with_quest_attr();
     let typedef_token = MetadataToken::new(TableId::TypeDef.as_u8(), 1);
-    let args = rt.domain().query_attribute_value(rt.user_module_idx(), typedef_token, "Quest");
+    let args = rt
+        .domain()
+        .query_attribute_value(rt.user_module_idx(), typedef_token, "Quest");
     assert!(args.is_some(), "expected Some for existing attribute");
     assert_eq!(args.unwrap(), vec![AttrValue::String("Chapter1".into())]);
 }
@@ -247,6 +276,11 @@ fn domain_query_attribute_value_found() {
 fn domain_query_attribute_value_not_found() {
     let rt = build_runtime_with_quest_attr();
     let typedef_token = MetadataToken::new(TableId::TypeDef.as_u8(), 1);
-    let args = rt.domain().query_attribute_value(rt.user_module_idx(), typedef_token, "Missing");
-    assert!(args.is_none(), "expected None for non-existent attribute name");
+    let args = rt
+        .domain()
+        .query_attribute_value(rt.user_module_idx(), typedef_token, "Missing");
+    assert!(
+        args.is_none(),
+        "expected None for non-existent attribute name"
+    );
 }

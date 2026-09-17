@@ -5,15 +5,10 @@ use writ_diagnostics::{Diagnostic, FileId};
 #[derive(Debug, Error, Clone, PartialEq)]
 pub enum LoweringError {
     #[error("unknown speaker `{name}`")]
-    UnknownSpeaker {
-        name: String,
-        span: SimpleSpan,
-    },
+    UnknownSpeaker { name: String, span: SimpleSpan },
 
     #[error("dialogue transition `->` must be the last statement in its block")]
-    NonTerminalTransition {
-        span: SimpleSpan,
-    },
+    NonTerminalTransition { span: SimpleSpan },
 
     #[error("duplicate localization key `{key}`")]
     DuplicateLocKey {
@@ -22,7 +17,9 @@ pub enum LoweringError {
         second_span: SimpleSpan,
     },
 
-    #[error("conflicting component method `{method}` (from `{first_component}` and `{second_component}`)")]
+    #[error(
+        "conflicting component method `{method}` (from `{first_component}` and `{second_component}`)"
+    )]
     ConflictingComponentMethod {
         method: String,
         first_component: String,
@@ -45,10 +42,7 @@ pub enum LoweringError {
     },
 
     #[error("unknown lifecycle event `{event}` — valid events: create, interact, destroy")]
-    UnknownLifecycleEvent {
-        event: String,
-        span: SimpleSpan,
-    },
+    UnknownLifecycleEvent { event: String, span: SimpleSpan },
 
     #[error("property `{name}` conflicts with component `use {name}` in entity `{entity}`")]
     PropertyComponentCollision {
@@ -58,10 +52,7 @@ pub enum LoweringError {
     },
 
     #[error("{message}")]
-    Generic {
-        message: String,
-        span: SimpleSpan,
-    },
+    Generic { message: String, span: SimpleSpan },
 }
 
 impl LoweringError {

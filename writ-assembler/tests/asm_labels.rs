@@ -3,7 +3,10 @@ use writ_module::Instruction;
 
 fn assemble_and_decode_method(src: &str) -> Vec<Instruction> {
     let module = writ_assembler::assemble(src).expect("should assemble");
-    assert!(!module.method_bodies.is_empty(), "expected at least one method body");
+    assert!(
+        !module.method_bodies.is_empty(),
+        "expected at least one method body"
+    );
     let code = &module.method_bodies[0].code;
     let mut cursor = std::io::Cursor::new(code.as_slice());
     let mut instructions = Vec::new();
@@ -65,7 +68,10 @@ fn backward_label_resolution() {
     // .top is at byte 0
     // offset = 0 - (2 + 8) = -10
     if let Instruction::Br { offset } = &instrs[1] {
-        assert_eq!(*offset, -10, "backward branch offset: jump back over BR(8) + NOP(2)");
+        assert_eq!(
+            *offset, -10,
+            "backward branch offset: jump back over BR(8) + NOP(2)"
+        );
     } else {
         panic!("expected BR instruction");
     }

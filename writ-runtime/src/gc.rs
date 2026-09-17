@@ -25,8 +25,23 @@ pub trait GcHeap: Send + Sync {
     // ── Allocation ────────────────────────────────────────────
     fn alloc_string(&mut self, s: &str) -> HeapRef;
     fn alloc_struct(&mut self, type_key: u32, field_count: usize) -> HeapRef;
-    fn alloc_array(&mut self, elem_type: u32) -> HeapRef;
-    fn alloc_delegate(&mut self, method_idx: usize, target: Option<Value>) -> HeapRef;
+    /// Allocate a struct or class whose complete field state is supplied up front.
+    ///
+    /// Constructor dispatch uses this entry point so an object with partially
+    /// initialized fields is never observable through a heap reference.
+    fn alloc_struct_initialized(
+        &mut self,
+        type_key: u32,
+        type_spec: Option<(usize, u32)>,
+        fields: Vec<Value>,
+    ) -> HeapRef;
+    fn alloc_array(&mut self, default_kind: u32) -> HeapRef;
+    fn alloc_delegate(
+        &mut self,
+        module_idx: usize,
+        method_idx: usize,
+        target: Option<Value>,
+    ) -> HeapRef;
     fn alloc_enum(&mut self, type_idx: u32, tag: u16, fields: Vec<Value>) -> HeapRef;
     fn alloc_boxed(&mut self, val: Value) -> HeapRef;
 
@@ -176,19 +191,42 @@ impl GcHeap for MarkSweepHeap {
     fn alloc_struct(&mut self, type_key: u32, field_count: usize) -> HeapRef {
         self.alloc_slot(HeapObject::Struct {
             type_key,
+            type_spec: None,
             fields: vec![Value::Void; field_count],
         })
     }
 
-    fn alloc_array(&mut self, elem_type: u32) -> HeapRef {
+    fn alloc_struct_initialized(
+        &mut self,
+        type_key: u32,
+        type_spec: Option<(usize, u32)>,
+        fields: Vec<Value>,
+    ) -> HeapRef {
+        self.alloc_slot(HeapObject::Struct {
+            type_key,
+            type_spec,
+            fields,
+        })
+    }
+
+    fn alloc_array(&mut self, default_kind: u32) -> HeapRef {
         self.alloc_slot(HeapObject::Array {
-            elem_type,
+            default_kind,
             elements: Vec::new(),
         })
     }
 
-    fn alloc_delegate(&mut self, method_idx: usize, target: Option<Value>) -> HeapRef {
-        self.alloc_slot(HeapObject::Delegate { method_idx, target })
+    fn alloc_delegate(
+        &mut self,
+        module_idx: usize,
+        method_idx: usize,
+        target: Option<Value>,
+    ) -> HeapRef {
+        self.alloc_slot(HeapObject::Delegate {
+            module_idx,
+            method_idx,
+            target,
+        })
     }
 
     fn alloc_enum(&mut self, type_idx: u32, tag: u16, fields: Vec<Value>) -> HeapRef {
@@ -473,6 +511,19 @@ mod tests {
         assert_eq!(stats.objects_traced, 2);
         assert_eq!(stats.objects_freed, 0);
         assert_eq!(heap.read_string(child).unwrap(), "child");
+    }
+
+    #[test]
+    fn ms_collect_traces_delegate_target() {
+        let mut heap = MarkSweepHeap::new();
+        let target = GcHeap::alloc_string(&mut heap, "target");
+        let delegate = GcHeap::alloc_delegate(&mut heap, 2, 5, Some(Value::Ref(target)));
+
+        let stats = heap.collect(&[delegate]);
+
+        assert_eq!(stats.objects_traced, 2);
+        assert_eq!(stats.objects_freed, 0);
+        assert_eq!(heap.read_string(target).unwrap(), "target");
     }
 
     #[test]

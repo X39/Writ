@@ -283,11 +283,14 @@ version = "0.1.0"
         fs::write(src.join("armor.writ"), "fn defend() {}").unwrap();
         fs::write(src.join("notes.txt"), "not a writ file").unwrap();
 
-        let config: WritConfig = toml::from_str(r#"
+        let config: WritConfig = toml::from_str(
+            r#"
 [project]
 name = "test"
 version = "0.1.0"
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         let files = discover_source_files(&tmp, &config).unwrap();
         assert_eq!(files.len(), 2);
@@ -305,8 +308,14 @@ name = "test"
 version = "0.1.0"
 "#;
         let config: WritConfig = toml::from_str(toml_str).unwrap();
-        assert!(config.profile.debug.debug_info, "debug profile should default to debug_info=true");
-        assert!(!config.profile.release.debug_info, "release profile should default to debug_info=false");
+        assert!(
+            config.profile.debug.debug_info,
+            "debug profile should default to debug_info=true"
+        );
+        assert!(
+            !config.profile.release.debug_info,
+            "release profile should default to debug_info=false"
+        );
     }
 
     #[test]
@@ -324,8 +333,14 @@ debug_info = false
 debug_info = true
 "#;
         let config: WritConfig = toml::from_str(toml_str).unwrap();
-        assert!(!config.profile.debug.debug_info, "debug profile should be overridden to debug_info=false");
-        assert!(config.profile.release.debug_info, "release profile should be overridden to debug_info=true");
+        assert!(
+            !config.profile.debug.debug_info,
+            "debug profile should be overridden to debug_info=false"
+        );
+        assert!(
+            config.profile.release.debug_info,
+            "release profile should be overridden to debug_info=true"
+        );
     }
 
     #[test]
@@ -340,8 +355,14 @@ version = "0.1.0"
 debug_info = true
 "#;
         let config: WritConfig = toml::from_str(toml_str).unwrap();
-        assert!(config.profile.debug.debug_info, "debug profile should keep its default of debug_info=true");
-        assert!(config.profile.release.debug_info, "release profile should have the explicit override debug_info=true");
+        assert!(
+            config.profile.debug.debug_info,
+            "debug profile should keep its default of debug_info=true"
+        );
+        assert!(
+            config.profile.release.debug_info,
+            "release profile should have the explicit override debug_info=true"
+        );
     }
 
     #[test]
@@ -386,7 +407,10 @@ path = "libs/writ-std.writc"
 "#;
         let config: WritConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.dependencies.len(), 1);
-        assert_eq!(config.dependencies["writ-std"].path(), "libs/writ-std.writc");
+        assert_eq!(
+            config.dependencies["writ-std"].path(),
+            "libs/writ-std.writc"
+        );
     }
 
     #[test]

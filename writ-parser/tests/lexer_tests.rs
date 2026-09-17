@@ -1,4 +1,4 @@
-use writ_parser::{dedent_raw_string, lex, process_escapes, EscapeError, Token};
+use writ_parser::{EscapeError, Token, dedent_raw_string, lex, process_escapes};
 
 // =============================================================
 // Lossless Roundtrip Tests (LEX-02, INTG-02)
@@ -184,6 +184,18 @@ fn basic_string_with_escaped_quote() {
 }
 
 #[test]
+fn basic_string_with_line_continuation() {
+    let src = "\"this is a long \\\n                        string on one line\"";
+    let tokens = lex(src);
+    let non_ws: Vec<_> = tokens
+        .iter()
+        .filter(|(t, _)| !matches!(t, Token::Whitespace))
+        .collect();
+    assert_eq!(non_ws.len(), 1);
+    assert!(matches!(non_ws[0].0, Token::StringLit(_)));
+}
+
+#[test]
 fn empty_string() {
     let tokens = lex(r#""""#);
     let non_ws: Vec<_> = tokens
@@ -280,6 +292,70 @@ fn formattable_string_with_nested_braces() {
         "Formattable string with nested braces should be a single token, got {:?}",
         non_ws
     );
+    assert!(matches!(non_ws[0].0, Token::FormattableStringLit));
+}
+
+#[test]
+fn formattable_string_rejects_bare_lf() {
+    let src = "$\"hello\nworld\"";
+    let tokens = lex(src);
+
+    assert!(
+        tokens
+            .iter()
+            .any(|(token, _)| matches!(token, Token::Error)),
+        "Formattable string with a bare LF should produce an error, got {tokens:?}"
+    );
+    assert!(
+        !tokens
+            .iter()
+            .any(|(token, _)| matches!(token, Token::FormattableStringLit)),
+        "Formattable string with a bare LF must not be accepted, got {tokens:?}"
+    );
+}
+
+#[test]
+fn formattable_string_rejects_bare_crlf() {
+    let src = "$\"hello\r\nworld\"";
+    let tokens = lex(src);
+
+    assert!(
+        tokens
+            .iter()
+            .any(|(token, _)| matches!(token, Token::Error)),
+        "Formattable string with a bare CRLF should produce an error, got {tokens:?}"
+    );
+    assert!(
+        !tokens
+            .iter()
+            .any(|(token, _)| matches!(token, Token::FormattableStringLit)),
+        "Formattable string with a bare CRLF must not be accepted, got {tokens:?}"
+    );
+}
+
+#[test]
+fn formattable_string_accepts_escaped_lf_continuation() {
+    let src = "$\"hello \\\n        {name}\"";
+    let tokens = lex(src);
+    let non_ws: Vec<_> = tokens
+        .iter()
+        .filter(|(token, _)| !matches!(token, Token::Whitespace))
+        .collect();
+
+    assert_eq!(non_ws.len(), 1, "Expected one token, got {non_ws:?}");
+    assert!(matches!(non_ws[0].0, Token::FormattableStringLit));
+}
+
+#[test]
+fn formattable_string_accepts_escaped_crlf_continuation() {
+    let src = "$\"hello \\\r\n        {name}\"";
+    let tokens = lex(src);
+    let non_ws: Vec<_> = tokens
+        .iter()
+        .filter(|(token, _)| !matches!(token, Token::Whitespace))
+        .collect();
+
+    assert_eq!(non_ws.len(), 1, "Expected one token, got {non_ws:?}");
     assert!(matches!(non_ws[0].0, Token::FormattableStringLit));
 }
 
@@ -448,7 +524,6 @@ fn all_keywords_recognized() {
         ("break", Token::KwBreak),
         ("continue", Token::KwContinue),
         ("spawn", Token::KwSpawn),
-        ("detached", Token::KwDetached),
         ("join", Token::KwJoin),
         ("cancel", Token::KwCancel),
         ("defer", Token::KwDefer),
@@ -478,6 +553,11 @@ fn all_keywords_recognized() {
             text, expected, tokens[0].0
         );
     }
+}
+
+#[test]
+fn detached_is_an_identifier() {
+    assert_eq!(lex("detached")[0].0, Token::Ident("detached"));
 }
 
 // =============================================================
@@ -843,6 +923,45 @@ fn escapes_basic_escapes() {
     assert_eq!(process_escapes("a\\0b").unwrap(), "a\0b");
     assert_eq!(process_escapes("a\\\\b").unwrap(), "a\\b");
     assert_eq!(process_escapes("a\\\"b").unwrap(), "a\"b");
+}
+
+#[test]
+fn escapes_line_continuation() {
+    for (before_continuation, description) in [
+        ("", "zero spaces"),
+        (" ", "one space"),
+        ("   ", "multiple spaces"),
+        ("\t", "tab"),
+    ] {
+        let input = format!("left{before_continuation}\\\n    right");
+        assert_eq!(
+            process_escapes(&input).unwrap(),
+            "left right",
+            "LF continuation with {description} before the boundary"
+        );
+    }
+}
+
+#[test]
+fn escapes_line_continuation_crlf() {
+    for (before_continuation, description) in [
+        ("", "zero spaces"),
+        (" ", "one space"),
+        ("   ", "multiple spaces"),
+        ("\t", "tab"),
+    ] {
+        let input = format!("left{before_continuation}\\\r\n\t\tright");
+        assert_eq!(
+            process_escapes(&input).unwrap(),
+            "left right",
+            "CRLF continuation with {description} before the boundary"
+        );
+    }
+}
+
+#[test]
+fn escapes_line_continuation_preserves_escaped_whitespace_before_boundary() {
+    assert_eq!(process_escapes("left\\t\\\nright").unwrap(), "left\t right");
 }
 
 #[test]

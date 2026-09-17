@@ -3,7 +3,7 @@
 //! Provides identifier completions, dot-completions, and signature help
 //! used by LSP completion and signatureHelp handlers.
 
-use lsp_types::{CompletionItem, CompletionItemKind, Command};
+use lsp_types::{Command, CompletionItem, CompletionItemKind};
 use writ_compiler::check::ir::{TypedAst, TypedDecl, TypedExpr, TypedStmt};
 use writ_compiler::check::ty::{Ty, TyInterner, TyKind};
 use writ_compiler::resolve::def_map::{DefKind, DefMap};
@@ -23,11 +23,40 @@ pub fn build_identifier_completions(
 
     // 1. Keywords
     let keywords = [
-        "fn", "struct", "entity", "enum", "impl", "contract", "let", "mut",
-        "if", "else", "for", "while", "return", "spawn", "yield", "new",
-        "using", "namespace", "extern", "global", "const", "pub", "priv",
-        "match", "break", "continue", "true", "false", "class", "component",
-        "on", "atomic", "defer", "self",
+        "fn",
+        "struct",
+        "entity",
+        "enum",
+        "impl",
+        "contract",
+        "let",
+        "mut",
+        "if",
+        "else",
+        "for",
+        "while",
+        "return",
+        "spawn",
+        "yield",
+        "new",
+        "using",
+        "namespace",
+        "extern",
+        "global",
+        "const",
+        "pub",
+        "priv",
+        "match",
+        "break",
+        "continue",
+        "true",
+        "false",
+        "class",
+        "component",
+        "on",
+        "atomic",
+        "defer",
+        "self",
     ];
     for kw in keywords {
         if kw == "new" {
@@ -170,12 +199,12 @@ pub fn build_dot_completions(
         TyKind::Struct(def_id) | TyKind::Class(def_id) => {
             // Fields
             if let Some(fields) = type_env.struct_fields.get(def_id) {
-                for (name, ty, _) in fields {
+                for field in fields {
                     items.push(CompletionItem {
-                        label: name.clone(),
+                        label: field.name.clone(),
                         kind: Some(CompletionItemKind::FIELD),
-                        detail: Some(interner.display_named(*ty, def_map)),
-                        sort_text: Some(format!("0_{}", name)),
+                        detail: Some(interner.display_named(field.ty, def_map)),
+                        sort_text: Some(format!("0_{}", field.name)),
                         ..Default::default()
                     });
                 }
@@ -198,12 +227,12 @@ pub fn build_dot_completions(
         TyKind::Entity(def_id) => {
             // Entity properties
             if let Some(fields) = type_env.entity_fields.get(def_id) {
-                for (name, ty, _) in fields {
+                for field in fields {
                     items.push(CompletionItem {
-                        label: name.clone(),
+                        label: field.name.clone(),
                         kind: Some(CompletionItemKind::FIELD),
-                        detail: Some(interner.display_named(*ty, def_map)),
-                        sort_text: Some(format!("0_{}", name)),
+                        detail: Some(interner.display_named(field.ty, def_map)),
+                        sort_text: Some(format!("0_{}", field.name)),
                         ..Default::default()
                     });
                 }
@@ -355,7 +384,9 @@ fn extract_callee_name(source: &str, paren_offset: usize) -> Option<String> {
     }
     let end = i;
     // Read identifier + :: path separators backward
-    while i > 0 && (bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_' || bytes[i - 1] == b':') {
+    while i > 0
+        && (bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'_' || bytes[i - 1] == b':')
+    {
         i -= 1;
     }
     if i == end {
@@ -409,7 +440,10 @@ pub fn build_signature_help(
         let simple_name = callee_name.split("::").last().unwrap_or(&callee_name);
 
         // Look up in DefMap — try by_fqn first (check if any entry's simple name matches)
-        let def_id = ast.def_map.by_fqn.values()
+        let def_id = ast
+            .def_map
+            .by_fqn
+            .values()
             .copied()
             .find(|&id| ast.def_map.get_entry(id).name == simple_name)
             .or_else(|| {
@@ -423,50 +457,62 @@ pub fn build_signature_help(
             });
 
         if let Some(id) = def_id
-            && let Some(sig) = type_env.fn_sigs.get(&id) {
-                // Build SignatureHelp from sig (reuse existing label-building code)
-                let params: Vec<lsp_types::ParameterInformation> = sig
-                    .params
-                    .iter()
-                    .map(|(name, ty)| lsp_types::ParameterInformation {
-                        label: lsp_types::ParameterLabel::Simple(format!(
-                            "{}: {}",
-                            name,
-                            interner.display_named(*ty, &ast.def_map)
-                        )),
-                        documentation: None,
-                    })
-                    .collect();
+            && let Some(sig) = type_env.fn_sigs.get(&id)
+        {
+            // Build SignatureHelp from sig (reuse existing label-building code)
+            let params: Vec<lsp_types::ParameterInformation> = sig
+                .params
+                .iter()
+                .map(|(name, ty)| lsp_types::ParameterInformation {
+                    label: lsp_types::ParameterLabel::Simple(format!(
+                        "{}: {}",
+                        name,
+                        interner.display_named(*ty, &ast.def_map)
+                    )),
+                    documentation: None,
+                })
+                .collect();
 
-                let mut label_parts = Vec::new();
-                if let Some(mutable) = sig.self_param {
-                    label_parts.push(if mutable { "mut self".to_string() } else { "self".to_string() });
-                }
-                for (name, ty) in &sig.params {
-                    label_parts.push(format!("{}: {}", name, interner.display_named(*ty, &ast.def_map)));
-                }
-                let ret_str = interner.display_named(sig.ret, &ast.def_map);
-                let label = format!("fn {}({}) -> {}", sig.name, label_parts.join(", "), ret_str);
-
-                return Some(lsp_types::SignatureHelp {
-                    signatures: vec![lsp_types::SignatureInformation {
-                        label,
-                        documentation: None,
-                        parameters: Some(params),
-                        active_parameter: Some(comma_count),
-                    }],
-                    active_signature: Some(0),
-                    active_parameter: Some(comma_count),
+            let mut label_parts = Vec::new();
+            if let Some(mutable) = sig.self_param {
+                label_parts.push(if mutable {
+                    "mut self".to_string()
+                } else {
+                    "self".to_string()
                 });
             }
+            for (name, ty) in &sig.params {
+                label_parts.push(format!(
+                    "{}: {}",
+                    name,
+                    interner.display_named(*ty, &ast.def_map)
+                ));
+            }
+            let ret_str = interner.display_named(sig.ret, &ast.def_map);
+            let label = format!("fn {}({}) -> {}", sig.name, label_parts.join(", "), ret_str);
+
+            return Some(lsp_types::SignatureHelp {
+                signatures: vec![lsp_types::SignatureInformation {
+                    label,
+                    documentation: None,
+                    parameters: Some(params),
+                    active_parameter: Some(comma_count),
+                }],
+                active_signature: Some(0),
+                active_parameter: Some(comma_count),
+            });
+        }
     }
 
     // FALLBACK: AST-based Call node lookup (works when source has complete call)
-    let call_expr = find_enclosing_call(ast, byte_offset)
-        .or_else(|| find_enclosing_call(ast, paren_offset))?;
+    let call_expr =
+        find_enclosing_call(ast, byte_offset).or_else(|| find_enclosing_call(ast, paren_offset))?;
 
     let def_id = match call_expr {
-        TypedExpr::Call { callee_def_id: Some(id), .. } => *id,
+        TypedExpr::Call {
+            callee_def_id: Some(id),
+            ..
+        } => *id,
         _ => return None,
     };
 
@@ -487,10 +533,18 @@ pub fn build_signature_help(
 
     let mut label_parts = Vec::new();
     if let Some(mutable) = sig.self_param {
-        label_parts.push(if mutable { "mut self".to_string() } else { "self".to_string() });
+        label_parts.push(if mutable {
+            "mut self".to_string()
+        } else {
+            "self".to_string()
+        });
     }
     for (name, ty) in &sig.params {
-        label_parts.push(format!("{}: {}", name, interner.display_named(*ty, &ast.def_map)));
+        label_parts.push(format!(
+            "{}: {}",
+            name,
+            interner.display_named(*ty, &ast.def_map)
+        ));
     }
     let ret_str = interner.display_named(sig.ret, &ast.def_map);
     let label = format!("fn {}({}) -> {}", sig.name, label_parts.join(", "), ret_str);
@@ -566,7 +620,13 @@ fn build_type_detail(
             if let Some(fields) = type_env.struct_fields.get(&def_id) {
                 let field_strs: Vec<String> = fields
                     .iter()
-                    .map(|(name, ty, _)| format!("{}: {}", name, interner.display_named(*ty, def_map)))
+                    .map(|field| {
+                        format!(
+                            "{}: {}",
+                            field.name,
+                            interner.display_named(field.ty, def_map)
+                        )
+                    })
                     .collect();
                 Some(format!("struct {{ {} }}", field_strs.join(", ")))
             } else {
@@ -577,7 +637,13 @@ fn build_type_detail(
             if let Some(fields) = type_env.entity_fields.get(&def_id) {
                 let field_strs: Vec<String> = fields
                     .iter()
-                    .map(|(name, ty, _)| format!("{}: {}", name, interner.display_named(*ty, def_map)))
+                    .map(|field| {
+                        format!(
+                            "{}: {}",
+                            field.name,
+                            interner.display_named(field.ty, def_map)
+                        )
+                    })
                     .collect();
                 Some(format!("entity {{ {} }}", field_strs.join(", ")))
             } else {
@@ -835,44 +901,48 @@ fn find_call_in_expr(expr: &TypedExpr, offset: usize) -> Option<&TypedExpr> {
         TypedExpr::Field { receiver, .. } | TypedExpr::ComponentAccess { receiver, .. } => {
             find_call_in_expr(receiver, offset)
         }
-        TypedExpr::Index { receiver, index, .. } => {
-            find_call_in_expr(receiver, offset).or_else(|| find_call_in_expr(index, offset))
-        }
+        TypedExpr::Index {
+            receiver, index, ..
+        } => find_call_in_expr(receiver, offset).or_else(|| find_call_in_expr(index, offset)),
         TypedExpr::Binary { left, right, .. } => {
             find_call_in_expr(left, offset).or_else(|| find_call_in_expr(right, offset))
         }
         TypedExpr::UnaryPrefix { expr: inner, .. } => find_call_in_expr(inner, offset),
-        TypedExpr::Match { scrutinee, arms, .. } => {
-            find_call_in_expr(scrutinee, offset)
-                .or_else(|| arms.iter().find_map(|arm| find_call_in_expr(&arm.body, offset)))
-        }
-        TypedExpr::If { condition, then_branch, else_branch, .. } => {
-            find_call_in_expr(condition, offset)
-                .or_else(|| find_call_in_expr(then_branch, offset))
-                .or_else(|| else_branch.as_ref().and_then(|e| find_call_in_expr(e, offset)))
-        }
-        TypedExpr::Block { stmts, tail, .. } => {
-            find_call_in_stmts(stmts, offset)
-                .or_else(|| tail.as_ref().and_then(|t| find_call_in_expr(t, offset)))
-        }
+        TypedExpr::Match {
+            scrutinee, arms, ..
+        } => find_call_in_expr(scrutinee, offset).or_else(|| {
+            arms.iter()
+                .find_map(|arm| find_call_in_expr(&arm.body, offset))
+        }),
+        TypedExpr::If {
+            condition,
+            then_branch,
+            else_branch,
+            ..
+        } => find_call_in_expr(condition, offset)
+            .or_else(|| find_call_in_expr(then_branch, offset))
+            .or_else(|| {
+                else_branch
+                    .as_ref()
+                    .and_then(|e| find_call_in_expr(e, offset))
+            }),
+        TypedExpr::Block { stmts, tail, .. } => find_call_in_stmts(stmts, offset)
+            .or_else(|| tail.as_ref().and_then(|t| find_call_in_expr(t, offset))),
         TypedExpr::Lambda { body, .. } => find_call_in_expr(body, offset),
         TypedExpr::Assign { target, value, .. } => {
             find_call_in_expr(target, offset).or_else(|| find_call_in_expr(value, offset))
         }
-        TypedExpr::New { fields, .. } => {
-            fields.iter().find_map(|(_, v)| find_call_in_expr(v, offset))
-        }
+        TypedExpr::New { fields, .. } => fields
+            .iter()
+            .find_map(|(_, v)| find_call_in_expr(v, offset)),
         TypedExpr::ArrayLit { elements, .. } => {
             elements.iter().find_map(|e| find_call_in_expr(e, offset))
         }
-        TypedExpr::Range { start, end, .. } => {
-            start
-                .as_ref()
-                .and_then(|s| find_call_in_expr(s, offset))
-                .or_else(|| end.as_ref().and_then(|e| find_call_in_expr(e, offset)))
-        }
+        TypedExpr::Range { start, end, .. } => start
+            .as_ref()
+            .and_then(|s| find_call_in_expr(s, offset))
+            .or_else(|| end.as_ref().and_then(|e| find_call_in_expr(e, offset))),
         TypedExpr::Spawn { expr: inner, .. }
-        | TypedExpr::SpawnDetached { expr: inner, .. }
         | TypedExpr::Join { expr: inner, .. }
         | TypedExpr::Cancel { expr: inner, .. }
         | TypedExpr::Defer { expr: inner, .. } => find_call_in_expr(inner, offset),
@@ -885,7 +955,9 @@ fn find_call_in_expr(expr: &TypedExpr, offset: usize) -> Option<&TypedExpr> {
 
 /// Search statements for a Call expression containing `offset`.
 fn find_call_in_stmts(stmts: &[TypedStmt], offset: usize) -> Option<&TypedExpr> {
-    stmts.iter().find_map(|stmt| find_call_in_stmt(stmt, offset))
+    stmts
+        .iter()
+        .find_map(|stmt| find_call_in_stmt(stmt, offset))
 }
 
 /// Search a single statement for a Call expression containing `offset`.
@@ -896,16 +968,15 @@ fn find_call_in_stmt(stmt: &TypedStmt, offset: usize) -> Option<&TypedExpr> {
         TypedStmt::For { iterable, body, .. } => {
             find_call_in_expr(iterable, offset).or_else(|| find_call_in_stmts(body, offset))
         }
-        TypedStmt::While { condition, body, .. } => {
-            find_call_in_expr(condition, offset).or_else(|| find_call_in_stmts(body, offset))
-        }
+        TypedStmt::While {
+            condition, body, ..
+        } => find_call_in_expr(condition, offset).or_else(|| find_call_in_stmts(body, offset)),
         TypedStmt::Atomic { body, .. } => find_call_in_stmts(body, offset),
         TypedStmt::Return { value, .. } => {
             value.as_ref().and_then(|v| find_call_in_expr(v, offset))
         }
-        TypedStmt::Break { value, .. } => {
-            value.as_ref().and_then(|v| find_call_in_expr(v, offset))
-        }
+        TypedStmt::Transition { call, .. } => find_call_in_expr(call, offset),
+        TypedStmt::Break { value, .. } => value.as_ref().and_then(|v| find_call_in_expr(v, offset)),
         TypedStmt::Continue { .. } | TypedStmt::Error { .. } => None,
     }
 }
@@ -913,9 +984,9 @@ fn find_call_in_stmt(stmt: &TypedStmt, offset: usize) -> Option<&TypedExpr> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_identifier_completions, build_dot_completions, build_signature_help,
-        build_namespace_completions, extract_namespace_prefix,
-        is_after_new_keyword, build_new_keyword_completions,
+        build_dot_completions, build_identifier_completions, build_namespace_completions,
+        build_new_keyword_completions, build_signature_help, extract_namespace_prefix,
+        is_after_new_keyword,
     };
     use writ_compiler::check::ir::TypedAst;
     use writ_compiler::check::ty::TyInterner;
@@ -934,16 +1005,17 @@ mod tests {
         let (ast, lower_errs) = writ_compiler::lower(cst);
         assert!(lower_errs.is_empty(), "lower errors: {:?}", lower_errs);
 
-        let (resolved, resolve_diags) = writ_compiler::resolve::resolve(
-            &[(file_id, &ast)],
-            &[(file_id, "test.writ")],
-            &[],
-        );
+        let (resolved, resolve_diags) =
+            writ_compiler::resolve::resolve(&[(file_id, &ast)], &[(file_id, "test.writ")], &[]);
         let resolve_errors: Vec<_> = resolve_diags
             .iter()
             .filter(|d| d.severity == Severity::Error)
             .collect();
-        assert!(resolve_errors.is_empty(), "resolve errors: {:?}", resolve_errors);
+        assert!(
+            resolve_errors.is_empty(),
+            "resolve errors: {:?}",
+            resolve_errors
+        );
 
         let (typed_ast, interner, type_env, type_diags) =
             writ_compiler::check::typecheck(resolved, &[(file_id, &ast)], &[]);
@@ -993,7 +1065,10 @@ mod tests {
         let (ast, mut interner, type_env) = build_typed_ast_full(src);
 
         // Find the DefId for 'Point' (public, so in by_fqn)
-        let point_def_id = ast.def_map.by_fqn.values()
+        let point_def_id = ast
+            .def_map
+            .by_fqn
+            .values()
             .copied()
             .find(|&id| ast.def_map.get_entry(id).name == "Point")
             .expect("should find 'Point'");
@@ -1027,7 +1102,10 @@ fn main() { }
         let (ast, mut interner, type_env) = build_typed_ast_full(src);
 
         // Find the DefId for 'Player' (public entity, in by_fqn)
-        let player_def_id = ast.def_map.by_fqn.values()
+        let player_def_id = ast
+            .def_map
+            .by_fqn
+            .values()
             .copied()
             .find(|&id| ast.def_map.get_entry(id).name == "Player")
             .expect("should find 'Player'");
@@ -1050,10 +1128,26 @@ fn main() { }
         let items = build_dot_completions(receiver_ty, &interner, &ast.def_map, &type_env);
 
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
-        assert!(labels.contains(&"getOrCreate"), "expected getOrCreate in Entity completions, got: {:?}", labels);
-        assert!(labels.contains(&"findAll"), "expected findAll in Entity completions, got: {:?}", labels);
-        assert!(labels.contains(&"destroy"), "expected destroy in Entity completions, got: {:?}", labels);
-        assert!(labels.contains(&"isAlive"), "expected isAlive in Entity completions, got: {:?}", labels);
+        assert!(
+            labels.contains(&"getOrCreate"),
+            "expected getOrCreate in Entity completions, got: {:?}",
+            labels
+        );
+        assert!(
+            labels.contains(&"findAll"),
+            "expected findAll in Entity completions, got: {:?}",
+            labels
+        );
+        assert!(
+            labels.contains(&"destroy"),
+            "expected destroy in Entity completions, got: {:?}",
+            labels
+        );
+        assert!(
+            labels.contains(&"isAlive"),
+            "expected isAlive in Entity completions, got: {:?}",
+            labels
+        );
     }
 
     // ── build_signature_help tests ────────────────────────────────────────────
@@ -1074,7 +1168,11 @@ fn main() { }
         let help = build_signature_help(src, after_comma, &ast, &interner, &type_env);
         assert!(help.is_some(), "expected signature help to be Some");
         let help = help.unwrap();
-        assert_eq!(help.active_parameter, Some(1), "expected active_parameter=1 after first comma");
+        assert_eq!(
+            help.active_parameter,
+            Some(1),
+            "expected active_parameter=1 after first comma"
+        );
     }
 
     #[test]
@@ -1091,7 +1189,10 @@ fn main() { }
         {
             let cursor = src.find("foo( ").unwrap() + "foo(".len();
             let help = build_signature_help(src_static, cursor, &ast, &interner, &type_env);
-            assert!(help.is_some(), "expected signature help for incomplete call");
+            assert!(
+                help.is_some(),
+                "expected signature help for incomplete call"
+            );
             let help = help.unwrap();
             assert_eq!(help.signatures.len(), 1);
             let sig = &help.signatures[0];
@@ -1128,7 +1229,11 @@ fn main() { }
         let src = "fn main() { log::";
         let cursor = src.len();
         let result = extract_namespace_prefix(src, cursor);
-        assert_eq!(result, Some("log".to_string()), "expected 'log' namespace prefix");
+        assert_eq!(
+            result,
+            Some("log".to_string()),
+            "expected 'log' namespace prefix"
+        );
     }
 
     #[test]
@@ -1137,7 +1242,11 @@ fn main() { }
         let src = "let x = Option::";
         let cursor = src.len();
         let result = extract_namespace_prefix(src, cursor);
-        assert_eq!(result, Some("Option".to_string()), "expected 'Option' namespace prefix");
+        assert_eq!(
+            result,
+            Some("Option".to_string()),
+            "expected 'Option' namespace prefix"
+        );
     }
 
     #[test]
@@ -1167,12 +1276,37 @@ fn main() { }
         let (ast, _interner, type_env) = build_typed_ast_full(src);
         let items = build_namespace_completions("log", &ast.def_map, &type_env);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
-        assert!(labels.contains(&"trace"), "expected 'trace' in log completions, got: {:?}", labels);
-        assert!(labels.contains(&"debug"), "expected 'debug' in log completions, got: {:?}", labels);
-        assert!(labels.contains(&"info"), "expected 'info' in log completions, got: {:?}", labels);
-        assert!(labels.contains(&"warn"), "expected 'warn' in log completions, got: {:?}", labels);
-        assert!(labels.contains(&"error"), "expected 'error' in log completions, got: {:?}", labels);
-        assert_eq!(items.len(), 5, "expected exactly 5 log completions, got: {:?}", labels);
+        assert!(
+            labels.contains(&"trace"),
+            "expected 'trace' in log completions, got: {:?}",
+            labels
+        );
+        assert!(
+            labels.contains(&"debug"),
+            "expected 'debug' in log completions, got: {:?}",
+            labels
+        );
+        assert!(
+            labels.contains(&"info"),
+            "expected 'info' in log completions, got: {:?}",
+            labels
+        );
+        assert!(
+            labels.contains(&"warn"),
+            "expected 'warn' in log completions, got: {:?}",
+            labels
+        );
+        assert!(
+            labels.contains(&"error"),
+            "expected 'error' in log completions, got: {:?}",
+            labels
+        );
+        assert_eq!(
+            items.len(),
+            5,
+            "expected exactly 5 log completions, got: {:?}",
+            labels
+        );
     }
 
     #[test]
@@ -1195,16 +1329,35 @@ fn main() { }
             fallback_for_conditional: Default::default(),
             prelude_enum_variants: {
                 let mut m: std::collections::HashMap<String, Vec<String>> = Default::default();
-                m.insert("Option".to_string(), vec!["Some".to_string(), "None".to_string()]);
-                m.insert("Result".to_string(), vec!["Ok".to_string(), "Err".to_string()]);
+                m.insert(
+                    "Option".to_string(),
+                    vec!["Some".to_string(), "None".to_string()],
+                );
+                m.insert(
+                    "Result".to_string(),
+                    vec!["Ok".to_string(), "Err".to_string()],
+                );
                 m.into_iter().collect()
             },
         };
         let items = build_namespace_completions("Option", &def_map, &type_env_empty);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
-        assert!(labels.contains(&"Some"), "expected 'Some' in Option completions, got: {:?}", labels);
-        assert!(labels.contains(&"None"), "expected 'None' in Option completions, got: {:?}", labels);
-        assert_eq!(items.len(), 2, "expected exactly 2 Option completions, got: {:?}", labels);
+        assert!(
+            labels.contains(&"Some"),
+            "expected 'Some' in Option completions, got: {:?}",
+            labels
+        );
+        assert!(
+            labels.contains(&"None"),
+            "expected 'None' in Option completions, got: {:?}",
+            labels
+        );
+        assert_eq!(
+            items.len(),
+            2,
+            "expected exactly 2 Option completions, got: {:?}",
+            labels
+        );
     }
 
     #[test]
@@ -1227,16 +1380,35 @@ fn main() { }
             fallback_for_conditional: Default::default(),
             prelude_enum_variants: {
                 let mut m: std::collections::HashMap<String, Vec<String>> = Default::default();
-                m.insert("Option".to_string(), vec!["Some".to_string(), "None".to_string()]);
-                m.insert("Result".to_string(), vec!["Ok".to_string(), "Err".to_string()]);
+                m.insert(
+                    "Option".to_string(),
+                    vec!["Some".to_string(), "None".to_string()],
+                );
+                m.insert(
+                    "Result".to_string(),
+                    vec!["Ok".to_string(), "Err".to_string()],
+                );
                 m.into_iter().collect()
             },
         };
         let items = build_namespace_completions("Result", &def_map, &type_env_empty);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
-        assert!(labels.contains(&"Ok"), "expected 'Ok' in Result completions, got: {:?}", labels);
-        assert!(labels.contains(&"Err"), "expected 'Err' in Result completions, got: {:?}", labels);
-        assert_eq!(items.len(), 2, "expected exactly 2 Result completions, got: {:?}", labels);
+        assert!(
+            labels.contains(&"Ok"),
+            "expected 'Ok' in Result completions, got: {:?}",
+            labels
+        );
+        assert!(
+            labels.contains(&"Err"),
+            "expected 'Err' in Result completions, got: {:?}",
+            labels
+        );
+        assert_eq!(
+            items.len(),
+            2,
+            "expected exactly 2 Result completions, got: {:?}",
+            labels
+        );
     }
 
     #[test]
@@ -1246,9 +1418,21 @@ fn main() { }
         let (ast, _interner, type_env) = build_typed_ast_full(src);
         let items = build_namespace_completions("Color", &ast.def_map, &type_env);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
-        assert!(labels.contains(&"Red"), "expected 'Red' in Color completions, got: {:?}", labels);
-        assert!(labels.contains(&"Green"), "expected 'Green' in Color completions, got: {:?}", labels);
-        assert!(labels.contains(&"Blue"), "expected 'Blue' in Color completions, got: {:?}", labels);
+        assert!(
+            labels.contains(&"Red"),
+            "expected 'Red' in Color completions, got: {:?}",
+            labels
+        );
+        assert!(
+            labels.contains(&"Green"),
+            "expected 'Green' in Color completions, got: {:?}",
+            labels
+        );
+        assert!(
+            labels.contains(&"Blue"),
+            "expected 'Blue' in Color completions, got: {:?}",
+            labels
+        );
     }
 
     #[test]
@@ -1271,7 +1455,11 @@ fn main() { }
             prelude_enum_variants: Default::default(),
         };
         let items = build_namespace_completions("Nonexistent", &def_map, &type_env_empty);
-        assert!(items.is_empty(), "expected empty vec for unknown namespace, got: {:?}", items.iter().map(|i| &i.label).collect::<Vec<_>>());
+        assert!(
+            items.is_empty(),
+            "expected empty vec for unknown namespace, got: {:?}",
+            items.iter().map(|i| &i.label).collect::<Vec<_>>()
+        );
     }
 
     // ── is_after_new_keyword tests ────────────────────────────────────────────
@@ -1375,16 +1563,28 @@ fn main() { }
 
         // Run analyze_standalone on the modified source
         let result = crate::analysis_host::AnalysisHost::analyze_standalone(
-            modified.clone(), "test.writ".to_string()
+            modified.clone(),
+            "test.writ".to_string(),
         );
-        let (typed_ast, interner, type_env) = match (result.typed_ast, result.ty_interner, result.type_env) {
+        let (typed_ast, interner, type_env) = match (
+            result.typed_ast,
+            result.ty_interner,
+            result.type_env,
+        ) {
             (Some(t), Some(i), Some(e)) => (t, i, e),
-            _ => panic!("analyze_standalone failed to produce typed AST for modified source.\nModified source:\n{}", modified),
+            _ => panic!(
+                "analyze_standalone failed to produce typed AST for modified source.\nModified source:\n{}",
+                modified
+            ),
         };
 
         // Find receiver at dot_pos - 1 (the 'p' character)
         let receiver_offset = dot_pos.saturating_sub(1);
-        let receiver_expr = crate::queries::expr_at_offset(&typed_ast, receiver_offset, writ_diagnostics::FileId(0));
+        let receiver_expr = crate::queries::expr_at_offset(
+            &typed_ast,
+            receiver_offset,
+            writ_diagnostics::FileId(0),
+        );
         assert!(
             receiver_expr.is_some(),
             "expr_at_offset should find receiver at offset {} in modified source:\n{}",
@@ -1396,8 +1596,16 @@ fn main() { }
         let items = build_dot_completions(receiver_ty, &interner, &typed_ast.def_map, &type_env);
 
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
-        assert!(labels.contains(&"x"), "expected field 'x' in dot completions, got: {:?}", labels);
-        assert!(labels.contains(&"y"), "expected field 'y' in dot completions, got: {:?}", labels);
+        assert!(
+            labels.contains(&"x"),
+            "expected field 'x' in dot completions, got: {:?}",
+            labels
+        );
+        assert!(
+            labels.contains(&"y"),
+            "expected field 'y' in dot completions, got: {:?}",
+            labels
+        );
     }
 
     #[test]
@@ -1411,16 +1619,28 @@ fn main() { }
 
         // Run analyze_standalone on the modified source
         let result = crate::analysis_host::AnalysisHost::analyze_standalone(
-            modified.clone(), "test.writ".to_string()
+            modified.clone(),
+            "test.writ".to_string(),
         );
-        let (typed_ast, interner, type_env) = match (result.typed_ast, result.ty_interner, result.type_env) {
+        let (typed_ast, interner, type_env) = match (
+            result.typed_ast,
+            result.ty_interner,
+            result.type_env,
+        ) {
             (Some(t), Some(i), Some(e)) => (t, i, e),
-            _ => panic!("analyze_standalone failed to produce typed AST for modified source.\nModified source:\n{}", modified),
+            _ => panic!(
+                "analyze_standalone failed to produce typed AST for modified source.\nModified source:\n{}",
+                modified
+            ),
         };
 
         // Find receiver at dot_pos - 1 (the 'r' of "arr")
         let receiver_offset = dot_pos.saturating_sub(1);
-        let receiver_expr = crate::queries::expr_at_offset(&typed_ast, receiver_offset, writ_diagnostics::FileId(0));
+        let receiver_expr = crate::queries::expr_at_offset(
+            &typed_ast,
+            receiver_offset,
+            writ_diagnostics::FileId(0),
+        );
         assert!(
             receiver_expr.is_some(),
             "expr_at_offset should find receiver at offset {} in modified source:\n{}",
@@ -1432,10 +1652,26 @@ fn main() { }
         let items = build_dot_completions(receiver_ty, &interner, &typed_ast.def_map, &type_env);
 
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
-        assert!(labels.contains(&"push"),     "expected 'push' in array dot completions, got: {:?}", labels);
-        assert!(labels.contains(&"pop"),      "expected 'pop' in array dot completions, got: {:?}", labels);
-        assert!(labels.contains(&"len"),      "expected 'len' in array dot completions, got: {:?}", labels);
-        assert!(labels.contains(&"is_empty"), "expected 'is_empty' in array dot completions, got: {:?}", labels);
+        assert!(
+            labels.contains(&"push"),
+            "expected 'push' in array dot completions, got: {:?}",
+            labels
+        );
+        assert!(
+            labels.contains(&"pop"),
+            "expected 'pop' in array dot completions, got: {:?}",
+            labels
+        );
+        assert!(
+            labels.contains(&"len"),
+            "expected 'len' in array dot completions, got: {:?}",
+            labels
+        );
+        assert!(
+            labels.contains(&"is_empty"),
+            "expected 'is_empty' in array dot completions, got: {:?}",
+            labels
+        );
     }
 
     // ── TyKind::Contract dot-completion tests ─────────────────────────────────
@@ -1457,7 +1693,8 @@ pub fn main() {
 
         // Find the contract DefId by looking for the "Vocalize" def
         use writ_compiler::resolve::def_map::DefKind;
-        let contract_def_id = ast.def_map
+        let contract_def_id = ast
+            .def_map
             .by_fqn
             .values()
             .chain(ast.def_map.file_private.values().flat_map(|m| m.values()))
@@ -1469,7 +1706,8 @@ pub fn main() {
             .expect("should find Vocalize contract def");
 
         // Build a TyKind::Contract Ty via the interner
-        let contract_ty = interner.intern(writ_compiler::check::ty::TyKind::Contract(contract_def_id));
+        let contract_ty =
+            interner.intern(writ_compiler::check::ty::TyKind::Contract(contract_def_id));
 
         // Call build_dot_completions with the contract type
         let items = build_dot_completions(contract_ty, &interner, &ast.def_map, &type_env);
@@ -1523,16 +1761,28 @@ pub fn main() {
 
         // Run analyze_standalone on the modified source
         let result = crate::analysis_host::AnalysisHost::analyze_standalone(
-            modified.clone(), "test.writ".to_string()
+            modified.clone(),
+            "test.writ".to_string(),
         );
-        let (typed_ast, interner, type_env) = match (result.typed_ast, result.ty_interner, result.type_env) {
+        let (typed_ast, interner, type_env) = match (
+            result.typed_ast,
+            result.ty_interner,
+            result.type_env,
+        ) {
             (Some(t), Some(i), Some(e)) => (t, i, e),
-            _ => panic!("analyze_standalone failed to produce typed AST for modified source.\nModified source:\n{}", modified),
+            _ => panic!(
+                "analyze_standalone failed to produce typed AST for modified source.\nModified source:\n{}",
+                modified
+            ),
         };
 
         // Find receiver at dot_pos - 1 (the 's' character)
         let receiver_offset = dot_pos.saturating_sub(1);
-        let receiver_expr = crate::queries::expr_at_offset(&typed_ast, receiver_offset, writ_diagnostics::FileId(0));
+        let receiver_expr = crate::queries::expr_at_offset(
+            &typed_ast,
+            receiver_offset,
+            writ_diagnostics::FileId(0),
+        );
         assert!(
             receiver_expr.is_some(),
             "expr_at_offset should find receiver at offset {} in modified source:\n{}",

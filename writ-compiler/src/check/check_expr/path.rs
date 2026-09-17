@@ -2,11 +2,11 @@
 
 use chumsky::span::SimpleSpan;
 
-use crate::resolve::def_map::DefKind;
-use super::CheckCtx;
 use super::super::error::TypeError;
 use super::super::ir::TypedExpr;
 use super::super::ty::TyKind;
+use super::CheckCtx;
+use crate::resolve::def_map::DefKind;
 
 pub(super) fn check_path(ctx: &mut CheckCtx, segments: &[String], span: SimpleSpan) -> TypedExpr {
     // Normalize root-qualified paths: lower/expr.rs encodes `::log` as
@@ -15,9 +15,10 @@ pub(super) fn check_path(ctx: &mut CheckCtx, segments: &[String], span: SimpleSp
     let normalized_segments: Vec<String> = {
         let mut segs = segments.to_vec();
         if let Some(first) = segs.first_mut()
-            && let Some(stripped) = first.strip_prefix("::") {
-                *first = stripped.to_string();
-            }
+            && let Some(stripped) = first.strip_prefix("::")
+        {
+            *first = stripped.to_string();
+        }
         segs
     };
     let fqn = normalized_segments.join("::");
@@ -26,10 +27,9 @@ pub(super) fn check_path(ctx: &mut CheckCtx, segments: &[String], span: SimpleSp
         match entry.kind {
             DefKind::Fn | DefKind::ExternFn => {
                 if let Some(sig) = ctx.type_env.fn_sigs.get(&def_id) {
-                    let ty = ctx.interner.func(
-                        sig.params.iter().map(|(_, t)| *t).collect(),
-                        sig.ret,
-                    );
+                    let ty = ctx
+                        .interner
+                        .func(sig.params.iter().map(|(_, t)| *t).collect(), sig.ret);
                     return TypedExpr::Path {
                         ty,
                         span,
@@ -39,10 +39,21 @@ pub(super) fn check_path(ctx: &mut CheckCtx, segments: &[String], span: SimpleSp
             }
             DefKind::Const => {
                 if let Some(&ty) = ctx.type_env.const_types.get(&def_id) {
-                    return TypedExpr::Path {
+                    return TypedExpr::GlobalRef {
                         ty,
                         span,
-                        segments: segments.to_vec(),
+                        name: fqn,
+                        def_id,
+                    };
+                }
+            }
+            DefKind::Global => {
+                if let Some(&(ty, _)) = ctx.type_env.global_types.get(&def_id) {
+                    return TypedExpr::GlobalRef {
+                        ty,
+                        span,
+                        name: fqn,
+                        def_id,
                     };
                 }
             }
@@ -102,15 +113,31 @@ pub(super) fn check_path(ctx: &mut CheckCtx, segments: &[String], span: SimpleSp
             let entry = ctx.def_map.get_entry(enum_def_id);
             if matches!(entry.kind, DefKind::Enum)
                 && let Some(variants) = ctx.type_env.enum_variants.get(&enum_def_id)
-                    && let Some(variant_idx) = variants.iter().position(|v| v.name == *variant_name) {
-                        let enum_ty = ctx.interner.intern(TyKind::Enum(enum_def_id));
-                        // Unit variant: emit the tag index as an int literal typed as the enum.
-                        return TypedExpr::Literal {
-                            ty: enum_ty,
-                            span,
-                            value: super::super::ir::TypedLiteral::Int(variant_idx as i64),
-                        };
-                    }
+                && let Some(variant_idx) = variants.iter().position(|v| v.name == *variant_name)
+            {
+                let enum_base = ctx.interner.intern(TyKind::Enum(enum_def_id));
+                let enum_ty = if entry.generics.is_empty() {
+                    enum_base
+                } else {
+                    let namespace = entry.namespace.clone();
+                    let name = entry.name.clone();
+                    let generic_count = entry.generics.len();
+                    let args = (0..generic_count)
+                        .map(|_| {
+                            let var = ctx.unify.new_var();
+                            ctx.interner.intern(TyKind::Infer(var))
+                        })
+                        .collect();
+                    ctx.interner
+                        .generic_instance(enum_base, namespace, name, args)
+                };
+                // Unit variant: emit the tag index as an int literal typed as the enum.
+                return TypedExpr::Literal {
+                    ty: enum_ty,
+                    span,
+                    value: super::super::ir::TypedLiteral::Int(variant_idx as i64),
+                };
+            }
         }
     }
 

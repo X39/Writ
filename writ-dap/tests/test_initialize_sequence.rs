@@ -1,3 +1,4 @@
+use dap::prelude::*;
 /// Integration test for the DAP initialize sequence (DAP-01).
 ///
 /// Verifies that DapServer responds to an `initialize` request with a
@@ -8,7 +9,6 @@
 /// in a Cursor buffer, feed them to DapServer via in-memory I/O, and verify
 /// the output buffer contains the expected capabilities response and event.
 use std::io::{BufReader, BufWriter, Cursor};
-use dap::prelude::*;
 use writ_dap::server::DapServer;
 
 /// Build a DAP wire-protocol message: `Content-Length: {n}\r\n\r\n{body}`.
@@ -92,14 +92,11 @@ fn test_initialize_responds_with_capabilities_and_sends_initialized_event() {
 fn test_initialize_sends_supports_configuration_done_capability() {
     // Arrange: single initialize request followed by disconnect.
     // The JSON must be compact (no formatting issues with Content-Length).
-    let init_json = r#"{"seq":1,"type":"request","command":"initialize","arguments":{"adapterID":"test"}}"#;
+    let init_json =
+        r#"{"seq":1,"type":"request","command":"initialize","arguments":{"adapterID":"test"}}"#;
     let disc_json = r#"{"seq":2,"type":"request","command":"disconnect","arguments":{}}"#;
 
-    let input_data = format!(
-        "{}{}",
-        framed(init_json),
-        framed(disc_json)
-    );
+    let input_data = format!("{}{}", framed(init_json), framed(disc_json));
 
     let input_bytes = input_data.into_bytes();
     let output_bytes: Vec<u8> = Vec::new();

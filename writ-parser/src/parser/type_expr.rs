@@ -42,7 +42,8 @@ where
 
         // Qualified or named type: [::] ident (:: ident)*
         // Single-segment → Named, multi-segment or rooted → Qualified
-        let named_or_qualified = just(Token::ColonColon).or_not()
+        let named_or_qualified = just(Token::ColonColon)
+            .or_not()
             .then(
                 ident_token_for_type
                     .map_with(|name, e| (name, e.span()))
@@ -50,16 +51,21 @@ where
                     .at_least(1)
                     .collect::<Vec<_>>(),
             )
-            .map_with(|(root_prefix, segments): (Option<_>, Vec<cst::Spanned<&'src str>>), e| {
-                if root_prefix.is_none() && segments.len() == 1 {
-                    (cst::TypeExpr::Named(segments[0].0), e.span())
-                } else {
-                    (cst::TypeExpr::Qualified {
-                        segments,
-                        rooted: root_prefix.is_some(),
-                    }, e.span())
-                }
-            });
+            .map_with(
+                |(root_prefix, segments): (Option<_>, Vec<cst::Spanned<&'src str>>), e| {
+                    if root_prefix.is_none() && segments.len() == 1 {
+                        (cst::TypeExpr::Named(segments[0].0), e.span())
+                    } else {
+                        (
+                            cst::TypeExpr::Qualified {
+                                segments,
+                                rooted: root_prefix.is_some(),
+                            },
+                            e.span(),
+                        )
+                    }
+                },
+            );
 
         // Function type: fn(A, B) -> C
         let fn_type = just(Token::KwFn)
@@ -71,16 +77,9 @@ where
                     .collect::<Vec<_>>()
                     .delimited_by(just(Token::LParen), just(Token::RParen)),
             )
-            .then(
-                just(Token::Arrow)
-                    .ignore_then(type_expr.clone())
-                    .or_not(),
-            )
+            .then(just(Token::Arrow).ignore_then(type_expr.clone()).or_not())
             .map_with(|(params, ret), e| {
-                (
-                    cst::TypeExpr::Func(params, ret.map(Box::new)),
-                    e.span(),
-                )
+                (cst::TypeExpr::Func(params, ret.map(Box::new)), e.span())
             });
 
         // Atom: function type, void, or named/qualified path
@@ -111,9 +110,7 @@ where
                     (cst::TypeExpr::Generic(Box::new(base), args), e.span())
                 }
                 TypePostfix::Array => (cst::TypeExpr::Array(Box::new(base)), e.span()),
-                TypePostfix::Nullable => {
-                    (cst::TypeExpr::Nullable(Box::new(base)), e.span())
-                }
+                TypePostfix::Nullable => (cst::TypeExpr::Nullable(Box::new(base)), e.span()),
             },
         )
     })

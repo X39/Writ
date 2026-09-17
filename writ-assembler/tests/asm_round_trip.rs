@@ -48,9 +48,23 @@ fn round_trip_preserves_structure() {
     assert_eq!(reloaded.type_defs.len(), 1, "1 TypeDef preserved");
     assert_eq!(reloaded.field_defs.len(), 2, "2 FieldDefs preserved");
     assert_eq!(reloaded.contract_defs.len(), 1, "1 ContractDef preserved");
-    assert_eq!(reloaded.contract_methods.len(), 1, "1 ContractMethod preserved");
+    assert_eq!(
+        reloaded.contract_methods.len(),
+        1,
+        "1 ContractMethod preserved"
+    );
     assert_eq!(reloaded.impl_defs.len(), 1, "1 ImplDef preserved");
     assert_eq!(reloaded.method_defs.len(), 2, "2 MethodDefs preserved");
+    assert_eq!(
+        reloaded.impl_method_indices(0),
+        vec![0],
+        "impl method ownership preserved"
+    );
+    assert_eq!(
+        reloaded.top_level_method_indices(),
+        vec![1],
+        "top-level method ownership preserved"
+    );
 }
 
 #[test]
@@ -83,10 +97,32 @@ fn round_trip_method_body_intact() {
     assert_eq!(instrs.len(), 4, "LOAD_INT + LOAD_INT + ADD_I + RET");
 
     // Verify instruction types
-    assert!(matches!(instrs[0], writ_module::Instruction::LoadInt { r_dst: 0, value: 10 }));
-    assert!(matches!(instrs[1], writ_module::Instruction::LoadInt { r_dst: 1, value: 20 }));
-    assert!(matches!(instrs[2], writ_module::Instruction::AddI { r_dst: 2, r_a: 0, r_b: 1 }));
-    assert!(matches!(instrs[3], writ_module::Instruction::Ret { r_src: 2 }));
+    assert!(matches!(
+        instrs[0],
+        writ_module::Instruction::LoadInt {
+            r_dst: 0,
+            value: 10
+        }
+    ));
+    assert!(matches!(
+        instrs[1],
+        writ_module::Instruction::LoadInt {
+            r_dst: 1,
+            value: 20
+        }
+    ));
+    assert!(matches!(
+        instrs[2],
+        writ_module::Instruction::AddI {
+            r_dst: 2,
+            r_a: 0,
+            r_b: 1
+        }
+    ));
+    assert!(matches!(
+        instrs[3],
+        writ_module::Instruction::Ret { r_src: 2 }
+    ));
 }
 
 #[test]
@@ -110,7 +146,10 @@ fn round_trip_with_labels() {
     let mut cursor = std::io::Cursor::new(code.as_slice());
     let first = writ_module::Instruction::decode(&mut cursor).expect("decode ok");
     if let writ_module::Instruction::Br { offset } = first {
-        assert_eq!(offset, 2, "forward branch offset preserved through round-trip");
+        assert_eq!(
+            offset, 2,
+            "forward branch offset preserved through round-trip"
+        );
     } else {
         panic!("expected BR instruction after round-trip");
     }
@@ -134,10 +173,18 @@ fn round_trip_export() {
 
     let bytes = module.to_bytes().expect("should encode");
     let reloaded = writ_module::Module::from_bytes(&bytes).expect("should decode");
-    assert_eq!(reloaded.export_defs.len(), 1, "1 export def after round-trip");
+    assert_eq!(
+        reloaded.export_defs.len(),
+        1,
+        "1 export def after round-trip"
+    );
 
     let text = writ_assembler::disassemble(&reloaded);
-    assert!(text.contains(".export \"main\" method"), "disassembled output contains .export \"main\" method, got:\n{}", text);
+    assert!(
+        text.contains(".export \"main\" method"),
+        "disassembled output contains .export \"main\" method, got:\n{}",
+        text
+    );
 }
 
 #[test]
@@ -157,7 +204,11 @@ fn round_trip_extern_fn() {
     let reloaded = writ_module::Module::from_bytes(&bytes).expect("should decode");
 
     let text = writ_assembler::disassemble(&reloaded);
-    assert!(text.contains(".extern_fn \"print\""), "disassembled output contains .extern_fn \"print\", got:\n{}", text);
+    assert!(
+        text.contains(".extern_fn \"print\""),
+        "disassembled output contains .extern_fn \"print\", got:\n{}",
+        text
+    );
 }
 
 #[test]
@@ -175,10 +226,18 @@ fn round_trip_component_slot() {
 
     let bytes = module.to_bytes().expect("should encode");
     let reloaded = writ_module::Module::from_bytes(&bytes).expect("should decode");
-    assert_eq!(reloaded.component_slots.len(), 1, "1 component slot after round-trip");
+    assert_eq!(
+        reloaded.component_slots.len(),
+        1,
+        "1 component slot after round-trip"
+    );
 
     let text = writ_assembler::disassemble(&reloaded);
-    assert!(text.contains(".component_slot 1 2"), "disassembled output contains .component_slot 1 2, got:\n{}", text);
+    assert!(
+        text.contains(".component_slot 1 2"),
+        "disassembled output contains .component_slot 1 2, got:\n{}",
+        text
+    );
 }
 
 #[test]
@@ -196,10 +255,18 @@ fn round_trip_locale() {
 
     let bytes = module.to_bytes().expect("should encode");
     let reloaded = writ_module::Module::from_bytes(&bytes).expect("should decode");
-    assert_eq!(reloaded.locale_defs.len(), 1, "1 locale def after round-trip");
+    assert_eq!(
+        reloaded.locale_defs.len(),
+        1,
+        "1 locale def after round-trip"
+    );
 
     let text = writ_assembler::disassemble(&reloaded);
-    assert!(text.contains(".locale 1 \"en-US\" 2"), "disassembled output contains .locale 1 \"en-US\" 2, got:\n{}", text);
+    assert!(
+        text.contains(".locale 1 \"en-US\" 2"),
+        "disassembled output contains .locale 1 \"en-US\" 2, got:\n{}",
+        text
+    );
 }
 
 #[test]
@@ -218,10 +285,18 @@ fn round_trip_attribute() {
 
     let bytes = module.to_bytes().expect("should encode");
     let reloaded = writ_module::Module::from_bytes(&bytes).expect("should decode");
-    assert_eq!(reloaded.attribute_defs.len(), 1, "1 attribute def after round-trip");
+    assert_eq!(
+        reloaded.attribute_defs.len(),
+        1,
+        "1 attribute def after round-trip"
+    );
 
     let text = writ_assembler::disassemble(&reloaded);
-    assert!(text.contains(".attribute 1 3 \"deprecated\""), "disassembled output contains .attribute 1 3 \"deprecated\", got:\n{}", text);
+    assert!(
+        text.contains(".attribute 1 3 \"deprecated\""),
+        "disassembled output contains .attribute 1 3 \"deprecated\", got:\n{}",
+        text
+    );
 }
 
 #[test]
@@ -250,12 +325,36 @@ fn round_trip_all_new_directives() {
     let text = writ_assembler::disassemble(&module1);
     let module2 = writ_assembler::assemble(&text).expect("re-assemble from disassembly");
 
-    assert_eq!(module1.extern_defs.len(), module2.extern_defs.len(), "extern_defs count preserved");
-    assert_eq!(module1.export_defs.len(), module2.export_defs.len(), "export_defs count preserved");
-    assert_eq!(module1.component_slots.len(), module2.component_slots.len(), "component_slots count preserved");
-    assert_eq!(module1.locale_defs.len(), module2.locale_defs.len(), "locale_defs count preserved");
-    assert_eq!(module1.attribute_defs.len(), module2.attribute_defs.len(), "attribute_defs count preserved");
-    assert_eq!(module1.method_defs.len(), module2.method_defs.len(), "method_defs count preserved");
+    assert_eq!(
+        module1.extern_defs.len(),
+        module2.extern_defs.len(),
+        "extern_defs count preserved"
+    );
+    assert_eq!(
+        module1.export_defs.len(),
+        module2.export_defs.len(),
+        "export_defs count preserved"
+    );
+    assert_eq!(
+        module1.component_slots.len(),
+        module2.component_slots.len(),
+        "component_slots count preserved"
+    );
+    assert_eq!(
+        module1.locale_defs.len(),
+        module2.locale_defs.len(),
+        "locale_defs count preserved"
+    );
+    assert_eq!(
+        module1.attribute_defs.len(),
+        module2.attribute_defs.len(),
+        "attribute_defs count preserved"
+    );
+    assert_eq!(
+        module1.method_defs.len(),
+        module2.method_defs.len(),
+        "method_defs count preserved"
+    );
 }
 
 #[test]
@@ -273,9 +372,18 @@ fn register_types_real_offsets() {
     assert_eq!(module.method_bodies.len(), 1, "1 method body");
     let body = &module.method_bodies[0];
     assert_eq!(body.register_types.len(), 2, "2 register types");
-    assert_ne!(body.register_types[0], 0, "r0 (int) blob offset should be non-zero");
-    assert_ne!(body.register_types[1], 0, "r1 (string) blob offset should be non-zero");
-    assert_ne!(body.register_types[0], body.register_types[1], "int and string encode differently");
+    assert_ne!(
+        body.register_types[0], 0,
+        "r0 (int) blob offset should be non-zero"
+    );
+    assert_ne!(
+        body.register_types[1], 0,
+        "r1 (string) blob offset should be non-zero"
+    );
+    assert_ne!(
+        body.register_types[0], body.register_types[1],
+        "int and string encode differently"
+    );
 
     // Verify blob contents are valid type signatures
     let int_blob = writ_module::heap::read_blob(&module.blob_heap, body.register_types[0])
@@ -313,7 +421,10 @@ fn test_class_round_trip() {
     // Round-trip: binary -> bytes -> Module
     let bytes = module.to_bytes().expect("should encode to bytes");
     let reloaded = writ_module::Module::from_bytes(&bytes).expect("should decode from bytes");
-    assert_eq!(reloaded.type_defs[0].kind, 4, "kind=4 preserved through binary round-trip");
+    assert_eq!(
+        reloaded.type_defs[0].kind, 4,
+        "kind=4 preserved through binary round-trip"
+    );
 
     // Disassemble and confirm "class" appears in output
     let text = writ_assembler::disassemble(&reloaded);

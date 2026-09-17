@@ -1,9 +1,9 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
-    .method "greet" () -> void pub mut {
+    .method "greet" () -> void pub static {
         RET_VOID
     }
-    .method "main" () -> void pub mut {
+    .method "main" () -> void pub static {
         .reg r0 void
         CALL r0, 117440513, r1, 0  ; line:6 col:5
         RET_VOID

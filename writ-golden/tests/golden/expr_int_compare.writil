@@ -1,6 +1,6 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
-    .method "compare" (a: int, b: int) -> bool pub mut {
+    .method "compare" (a: int, b: int) -> bool pub static {
         .locals {
             r0: int "a" [0, 70)
             r1: int "b" [0, 70)
@@ -33,7 +33,7 @@
         NOT r10, r9
         RET r2  ; line:8 col:5
     }
-    .method "main" () -> void mut {
+    .method "main" () -> void static {
         .locals {
             r0: bool "r" [36, 38)
         }

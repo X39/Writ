@@ -7,13 +7,13 @@
 //! 4. Entities without Speaker fall back to type name
 
 use std::sync::{Arc, Mutex};
-use writ_module::module::MethodBody;
-use writ_module::tables::TypeDefKind;
 use writ_module::Instruction;
 use writ_module::ModuleBuilder;
+use writ_module::module::MethodBody;
+use writ_module::tables::TypeDefKind;
 use writ_runtime::{
-    ExecutionLimit, GcStats, HostRequest, HostResponse, LogLevel, RequestId,
-    RuntimeBuilder, RuntimeHost, TaskState, Value,
+    ExecutionLimit, GcStats, HostRequest, HostResponse, LogLevel, RequestId, RuntimeBuilder,
+    RuntimeHost, TaskState, Value,
 };
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -24,6 +24,10 @@ fn encode(instrs: &[Instruction]) -> Vec<u8> {
         instr.encode(&mut code).unwrap();
     }
     code
+}
+
+fn typedef_token(index: u32) -> u32 {
+    0x0200_0000 | (index + 1)
 }
 
 fn make_body(instrs: &[Instruction], reg_count: usize) -> MethodBody {
@@ -157,14 +161,11 @@ fn speaker_impl_populates_dispatch_table() {
     let speaker_ref = builder.add_type_ref(mod_ref, "Speaker", "writ");
 
     // Implement Speaker for Merchant
-    builder.add_impl_def(merchant_type, speaker_ref);
+    let speaker_impl = builder.add_impl_def(merchant_type, speaker_ref);
 
     // speaker_name method (placeholder: returns void since we just check dispatch table)
-    let speaker_body = make_body(
-        &[Instruction::RetVoid],
-        2,
-    );
-    builder.add_method("speaker_name", &[], 0, 2, speaker_body);
+    let speaker_body = make_body(&[Instruction::RetVoid], 2);
+    builder.add_impl_method(speaker_impl, "speaker_name", &[], 0, 2, speaker_body);
 
     // Sentinel type to bound Merchant's method list
     builder.add_type_def("_Sentinel", "", TypeDefKind::Struct, 0);
@@ -207,7 +208,7 @@ fn speaker_override_in_display_args() {
     let speaker_ref = builder.add_type_ref(mod_ref, "Speaker", "writ");
 
     // Implement Speaker for Merchant
-    builder.add_impl_def(merchant_type, speaker_ref);
+    let speaker_impl = builder.add_impl_def(merchant_type, speaker_ref);
 
     // method[0]: speaker_name — loads a string and returns it
     // The string offset will be patched after build; use placeholder 0 for now
@@ -221,7 +222,7 @@ fn speaker_override_in_display_args() {
         ],
         2,
     );
-    builder.add_method("speaker_name", &[], 0, 2, speaker_body);
+    builder.add_impl_method(speaker_impl, "speaker_name", &[], 0, 2, speaker_body);
 
     // We need a string "The Merchant" in the heap. Adding a dummy type with that name.
     builder.add_type_def("The Merchant", "", TypeDefKind::Struct, 0);
@@ -231,7 +232,9 @@ fn speaker_override_in_display_args() {
         &[
             Instruction::SpawnEntity {
                 r_dst: 0,
-                type_idx: 1, // 1-based row for TypeDef[0] (Merchant)
+                type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
             },
             Instruction::InitEntity { r_entity: 0 },
             Instruction::LoadString {
@@ -270,7 +273,9 @@ fn speaker_override_in_display_args() {
     let patched_main_code = encode(&[
         Instruction::SpawnEntity {
             r_dst: 0,
-            type_idx: 1,
+            type_idx: typedef_token(0),
+            field_count: 0,
+            r_base: 0,
         },
         Instruction::InitEntity { r_entity: 0 },
         Instruction::LoadString {
@@ -343,7 +348,9 @@ fn entity_without_speaker_uses_type_name() {
         &[
             Instruction::SpawnEntity {
                 r_dst: 0,
-                type_idx: 1, // TypeDef table=2, row=1 (Guard)
+                type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
             },
             Instruction::InitEntity { r_entity: 0 },
             Instruction::LoadString {
@@ -369,7 +376,9 @@ fn entity_without_speaker_uses_type_name() {
     let patched_code = encode(&[
         Instruction::SpawnEntity {
             r_dst: 0,
-            type_idx: 1,
+            type_idx: typedef_token(0),
+            field_count: 0,
+            r_base: 0,
         },
         Instruction::InitEntity { r_entity: 0 },
         Instruction::LoadString {

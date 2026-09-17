@@ -1,6 +1,6 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
-    .method "abs" (n: int) -> int pub mut {
+    .method "abs" (n: int) -> int pub static {
         .locals {
             r0: int "n" [0, 58)
         }
@@ -19,7 +19,7 @@
         NOP
         RET r0  ; line:5 col:5
     }
-    .method "main" () -> void mut {
+    .method "main" () -> void static {
         .locals {
             r0: int "x" [30, 32)
         }

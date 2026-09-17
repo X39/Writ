@@ -11,11 +11,12 @@ use chumsky::span::SimpleSpan;
 use rustc_hash::FxHashMap;
 
 use crate::ast::Ast;
+use crate::ast::expr::AstExpr;
 use crate::resolve::def_map::{DefId, DefKind, DefMap};
 use crate::resolve::ir::NameResolvedAst;
 
-use super::ty::{Ty, TyInterner};
 use super::env_build;
+use super::ty::{Ty, TyInterner};
 use writ_diagnostics::{Diagnostic, FileId, code};
 
 // Re-export the public resolve functions so callers who import from `check::env`
@@ -52,23 +53,50 @@ pub struct EnumVariantSig {
 #[derive(Debug, Clone)]
 pub struct ImplEntry {
     pub impl_def_id: DefId,
+    /// Number of generic parameters declared by the impl itself. Method-level
+    /// generic ordinals begin immediately after this prefix.
+    pub impl_generic_count: u32,
+    /// The declared implementation target, including generic arguments.
+    pub target_ty: Ty,
     pub contract_def_id: Option<DefId>,
+    /// The implemented contract specialization, including generic arguments.
+    pub contract_ty: Option<Ty>,
     pub methods: Vec<(String, FnSig)>,
+}
+
+/// A source or metadata field signature.
+#[derive(Debug, Clone)]
+pub struct FieldSig {
+    pub name: String,
+    pub ty: Ty,
+    pub span: SimpleSpan,
+    /// Whether writes are permitted after construction.
+    pub is_mutable: bool,
+    /// Whether construction may omit this field.
+    pub has_default: bool,
+    /// Source default expression. Library metadata currently records only
+    /// `has_default`, so imported fields have no expression here.
+    pub default: Option<AstExpr>,
+    /// Declaration context used when checking a source default. Defaults are
+    /// not permitted to capture locals from a construction site.
+    pub decl_file: FileId,
+    pub decl_namespace: String,
+    pub decl_generics: FxHashMap<String, u32>,
 }
 
 /// The materialized type environment.
 #[derive(Debug)]
 pub struct TypeEnv {
     pub fn_sigs: FxHashMap<DefId, FnSig>,
-    pub struct_fields: FxHashMap<DefId, Vec<(String, Ty, SimpleSpan)>>,
-    pub entity_fields: FxHashMap<DefId, Vec<(String, Ty, SimpleSpan)>>,
+    pub struct_fields: FxHashMap<DefId, Vec<FieldSig>>,
+    pub entity_fields: FxHashMap<DefId, Vec<FieldSig>>,
     pub entity_components: FxHashMap<DefId, Vec<String>>,
     pub enum_variants: FxHashMap<DefId, Vec<EnumVariantSig>>,
     pub contract_methods: FxHashMap<DefId, Vec<FnSig>>,
     pub impl_index: FxHashMap<DefId, Vec<ImplEntry>>,
     pub const_types: FxHashMap<DefId, Ty>,
     pub global_types: FxHashMap<DefId, (Ty, bool)>,
-    pub component_fields: FxHashMap<DefId, Vec<(String, Ty, SimpleSpan)>>,
+    pub component_fields: FxHashMap<DefId, Vec<FieldSig>>,
     /// Deprecated item messages, keyed by DefId. Value is the user's message string,
     /// or empty string for bare `[Deprecated]` (no message). Only items with the
     /// `[Deprecated]` attribute have entries here.
@@ -108,8 +136,14 @@ impl TypeEnv {
             fallback_for_conditional: FxHashMap::default(),
             prelude_enum_variants: {
                 let mut m = FxHashMap::default();
-                m.insert("Option".to_string(), vec!["Some".to_string(), "None".to_string()]);
-                m.insert("Result".to_string(), vec!["Ok".to_string(), "Err".to_string()]);
+                m.insert(
+                    "Option".to_string(),
+                    vec!["Some".to_string(), "None".to_string()],
+                );
+                m.insert(
+                    "Result".to_string(),
+                    vec!["Ok".to_string(), "Err".to_string()],
+                );
                 m
             },
         };
@@ -122,7 +156,8 @@ impl TypeEnv {
             match &entry.kind {
                 DefKind::Fn => {
                     if let Some(fn_decl) = env_build::find_fn_decl(asts, entry) {
-                        let sig = env_build::build_fn_sig(fn_decl, entry, &resolved.def_map, interner);
+                        let sig =
+                            env_build::build_fn_sig(fn_decl, entry, &resolved.def_map, interner);
                         env.fn_sigs.insert(def_id, sig);
                     }
                 }
@@ -168,8 +203,12 @@ impl TypeEnv {
                 }
                 DefKind::Enum => {
                     if let Some(enum_decl) = env_build::find_enum_decl(asts, entry) {
-                        let variants =
-                            env_build::build_enum_variants(enum_decl, entry, &resolved.def_map, interner);
+                        let variants = env_build::build_enum_variants(
+                            enum_decl,
+                            entry,
+                            &resolved.def_map,
+                            interner,
+                        );
                         env.enum_variants.insert(def_id, variants);
                     }
                 }
@@ -209,22 +248,38 @@ impl TypeEnv {
                 }
                 DefKind::ExternFn => {
                     if let Some(fn_sig) = env_build::find_extern_fn_sig(asts, entry) {
-                        let sig =
-                            env_build::build_fn_sig_from_ast_sig(fn_sig, entry, &resolved.def_map, interner);
+                        let sig = env_build::build_fn_sig_from_ast_sig(
+                            fn_sig,
+                            entry,
+                            &resolved.def_map,
+                            interner,
+                        );
                         env.fn_sigs.insert(def_id, sig);
                     }
                 }
                 DefKind::Const => {
                     if let Some(const_decl) = env_build::find_const_decl(asts, entry) {
                         let generic_map = FxHashMap::default();
-                        let ty = env_build::resolve_ast_type_with_file(&const_decl.ty, &resolved.def_map, interner, &generic_map, entry.file_id);
+                        let ty = env_build::resolve_ast_type_with_file(
+                            &const_decl.ty,
+                            &resolved.def_map,
+                            interner,
+                            &generic_map,
+                            entry.file_id,
+                        );
                         env.const_types.insert(def_id, ty);
                     }
                 }
                 DefKind::Global => {
                     if let Some(global_decl) = env_build::find_global_decl(asts, entry) {
                         let generic_map = FxHashMap::default();
-                        let ty = env_build::resolve_ast_type_with_file(&global_decl.ty, &resolved.def_map, interner, &generic_map, entry.file_id);
+                        let ty = env_build::resolve_ast_type_with_file(
+                            &global_decl.ty,
+                            &resolved.def_map,
+                            interner,
+                            &generic_map,
+                            entry.file_id,
+                        );
                         env.global_types.insert(def_id, (ty, true));
                     }
                 }
@@ -267,13 +322,38 @@ impl TypeEnv {
         {
             // Collect (cond_def_id, cond_name, entry_name, entry_namespace, entry_file_id, entry_name_span, sig)
             // We collect first to avoid borrow conflicts.
-            let conditional_entries: Vec<(DefId, String, String, String, FileId, chumsky::span::SimpleSpan)> =
-                env.conditional_fns.iter().map(|(&def_id, cond_name)| {
+            let conditional_entries: Vec<(
+                DefId,
+                String,
+                String,
+                String,
+                FileId,
+                chumsky::span::SimpleSpan,
+            )> = env
+                .conditional_fns
+                .iter()
+                .map(|(&def_id, cond_name)| {
                     let entry = resolved.def_map.get_entry(def_id);
-                    (def_id, cond_name.clone(), entry.name.clone(), entry.namespace.clone(), entry.file_id, entry.name_span)
-                }).collect();
+                    (
+                        def_id,
+                        cond_name.clone(),
+                        entry.name.clone(),
+                        entry.namespace.clone(),
+                        entry.file_id,
+                        entry.name_span,
+                    )
+                })
+                .collect();
 
-            for (cond_def_id, cond_name, entry_name, entry_namespace, entry_file_id, entry_name_span) in conditional_entries {
+            for (
+                cond_def_id,
+                cond_name,
+                entry_name,
+                entry_namespace,
+                entry_file_id,
+                entry_name_span,
+            ) in conditional_entries
+            {
                 // Get the overload set for this function's FQN.
                 let fqn = if entry_namespace.is_empty() {
                     entry_name.clone()
@@ -281,26 +361,27 @@ impl TypeEnv {
                     format!("{}::{}", entry_namespace, entry_name)
                 };
 
-                let all_overloads: Vec<DefId> = if let Some(overloads) = resolved.def_map.fn_overloads.get(&fqn) {
-                    overloads.clone()
-                } else if let Some(&single_id) = resolved.def_map.by_fqn.get(&fqn) {
-                    vec![single_id]
-                } else {
-                    // Private fn: check file_private
-                    let mut found = vec![];
-                    if let Some(privs) = resolved.def_map.file_private.get(&entry_file_id) {
-                        if let Some(&id) = privs.get(&entry_name) {
-                            found.push(id);
+                let all_overloads: Vec<DefId> =
+                    if let Some(overloads) = resolved.def_map.fn_overloads.get(&fqn) {
+                        overloads.clone()
+                    } else if let Some(&single_id) = resolved.def_map.by_fqn.get(&fqn) {
+                        vec![single_id]
+                    } else {
+                        // Private fn: check file_private
+                        let mut found = vec![];
+                        if let Some(privs) = resolved.def_map.file_private.get(&entry_file_id) {
+                            if let Some(&id) = privs.get(&entry_name) {
+                                found.push(id);
+                            }
                         }
-                    }
-                    // Also check private overloads by file_private_overloads if available
-                    // (fall back to private_fn_overloads key format)
-                    let priv_key = format!("{}@{}", entry_name, entry_file_id.0);
-                    if let Some(overloads) = resolved.def_map.fn_overloads.get(&priv_key) {
-                        found = overloads.clone();
-                    }
-                    found
-                };
+                        // Also check private overloads by file_private_overloads if available
+                        // (fall back to private_fn_overloads key format)
+                        let priv_key = format!("{}@{}", entry_name, entry_file_id.0);
+                        if let Some(overloads) = resolved.def_map.fn_overloads.get(&priv_key) {
+                            found = overloads.clone();
+                        }
+                        found
+                    };
 
                 // Get the conditional fn's signature.
                 let cond_sig = match env.fn_sigs.get(&cond_def_id) {
@@ -322,7 +403,10 @@ impl TypeEnv {
                             other_sig.params.len() == cond_sig.params.len()
                                 && other_sig.ret == cond_sig.ret
                                 && other_sig.generics.len() == cond_sig.generics.len()
-                                && other_sig.params.iter().zip(cond_sig.params.iter())
+                                && other_sig
+                                    .params
+                                    .iter()
+                                    .zip(cond_sig.params.iter())
                                     .all(|((_, t1), (_, t2))| t1 == t2)
                         }
                         None => false,
@@ -331,7 +415,8 @@ impl TypeEnv {
 
                 match fallback {
                     Some(fallback_id) => {
-                        env.fallback_for_conditional.insert(cond_def_id, fallback_id);
+                        env.fallback_for_conditional
+                            .insert(cond_def_id, fallback_id);
                     }
                     None => {
                         diags.push(
@@ -348,6 +433,8 @@ impl TypeEnv {
                 }
             }
         }
+
+        diags.extend(env.validate_duplicate_parameter_signatures(resolved, asts, interner));
 
         // Inject synthetic FnSig entries for log-level builtins (log::trace .. log::error).
         // These are injected by inject_log_namespace in the resolver — no AST entry exists,
@@ -380,10 +467,30 @@ impl TypeEnv {
 
         #[allow(clippy::type_complexity)] // dialogue signature table is a static data literal
         let dialogue_sigs: &[(&str, Vec<(&str, Ty)>, Ty)] = &[
-            ("say", vec![("speaker", entity_ty), ("text", string_ty)], void_ty),
-            ("say_localized", vec![("speaker", entity_ty), ("key", string_ty), ("fallback", string_ty)], void_ty),
+            (
+                "say",
+                vec![("speaker", entity_ty), ("text", string_ty)],
+                void_ty,
+            ),
+            (
+                "say_localized",
+                vec![
+                    ("speaker", entity_ty),
+                    ("key", string_ty),
+                    ("fallback", string_ty),
+                ],
+                void_ty,
+            ),
             ("choice", vec![("options", array_int_ty)], int_ty),
-            ("ChoiceOption", vec![("label", string_ty), ("key", string_ty), ("body", fn_void_void)], int_ty),
+            (
+                "ChoiceOption",
+                vec![
+                    ("label", string_ty),
+                    ("key", string_ty),
+                    ("body", fn_void_void),
+                ],
+                int_ty,
+            ),
         ];
 
         for (name, params, ret) in dialogue_sigs {
@@ -417,6 +524,124 @@ impl TypeEnv {
         (env, diags)
     }
 
+    fn validate_duplicate_parameter_signatures(
+        &self,
+        resolved: &NameResolvedAst,
+        asts: &[(FileId, &Ast)],
+        interner: &TyInterner,
+    ) -> Vec<Diagnostic> {
+        let mut diagnostics = Vec::new();
+
+        for overloads in resolved.def_map.fn_overloads.values() {
+            for right_index in 1..overloads.len() {
+                let right_id = overloads[right_index];
+                if self.conditional_fns.contains_key(&right_id) {
+                    continue;
+                }
+                let Some(right) = self.fn_sigs.get(&right_id) else {
+                    continue;
+                };
+                let duplicate = overloads[..right_index].iter().copied().find(|left_id| {
+                    !self.conditional_fns.contains_key(left_id)
+                        && self
+                            .fn_sigs
+                            .get(left_id)
+                            .is_some_and(|left| same_parameter_signature(left, right, interner))
+                });
+                if let Some(left_id) = duplicate {
+                    let left_entry = resolved.def_map.get_entry(left_id);
+                    let right_entry = resolved.def_map.get_entry(right_id);
+                    diagnostics.push(duplicate_overload_diagnostic(
+                        &right_entry.name,
+                        left_entry.file_id,
+                        left_entry.name_span,
+                        right_entry.file_id,
+                        right_entry.name_span,
+                    ));
+                }
+            }
+        }
+
+        for impl_entries in self.impl_index.values() {
+            for implementation in impl_entries {
+                let impl_entry = resolved.def_map.get_entry(implementation.impl_def_id);
+                let Some(impl_decl) = env_build::find_impl_decl(asts, impl_entry) else {
+                    continue;
+                };
+                let declarations: Vec<_> = impl_decl
+                    .members
+                    .iter()
+                    .filter_map(|member| match member {
+                        crate::ast::decl::AstImplMember::Fn(function) => Some(function),
+                        _ => None,
+                    })
+                    .collect();
+                for right_index in 1..implementation.methods.len() {
+                    let (right_name, right) = &implementation.methods[right_index];
+                    let duplicate = implementation.methods[..right_index].iter().position(
+                        |(left_name, left)| {
+                            left_name == right_name
+                                && same_parameter_signature(left, right, interner)
+                        },
+                    );
+                    if let Some(left_index) = duplicate
+                        && let (Some(left_decl), Some(right_decl)) =
+                            (declarations.get(left_index), declarations.get(right_index))
+                    {
+                        diagnostics.push(duplicate_overload_diagnostic(
+                            right_name,
+                            impl_entry.file_id,
+                            left_decl.name_span,
+                            impl_entry.file_id,
+                            right_decl.name_span,
+                        ));
+                    }
+                }
+            }
+        }
+
+        for decl in &resolved.decls {
+            let crate::resolve::ir::ResolvedDecl::Contract { def_id } = decl else {
+                continue;
+            };
+            let Some(methods) = self.contract_methods.get(def_id) else {
+                continue;
+            };
+            let entry = resolved.def_map.get_entry(*def_id);
+            let Some(contract_decl) = env_build::find_contract_decl(asts, entry) else {
+                continue;
+            };
+            let declarations: Vec<_> = contract_decl
+                .members
+                .iter()
+                .filter_map(|member| match member {
+                    crate::ast::decl::AstContractMember::FnSig(signature) => Some(signature),
+                    _ => None,
+                })
+                .collect();
+            for right_index in 1..methods.len() {
+                let right = &methods[right_index];
+                let duplicate = methods[..right_index].iter().position(|left| {
+                    left.name == right.name && same_parameter_signature(left, right, interner)
+                });
+                if let Some(left_index) = duplicate
+                    && let (Some(left_decl), Some(right_decl)) =
+                        (declarations.get(left_index), declarations.get(right_index))
+                {
+                    diagnostics.push(duplicate_overload_diagnostic(
+                        &right.name,
+                        entry.file_id,
+                        left_decl.name_span,
+                        entry.file_id,
+                        right_decl.name_span,
+                    ));
+                }
+            }
+        }
+
+        diagnostics
+    }
+
     /// Check every `impl Contract for Type` block for completeness.
     ///
     /// For each impl that has a `contract_def_id`, look up the contract's required
@@ -439,8 +664,11 @@ impl TypeEnv {
                 };
 
                 // Collect method names provided by this impl block.
-                let provided: std::collections::HashSet<&str> =
-                    impl_entry.methods.iter().map(|(name, _)| name.as_str()).collect();
+                let provided: std::collections::HashSet<&str> = impl_entry
+                    .methods
+                    .iter()
+                    .map(|(name, _)| name.as_str())
+                    .collect();
 
                 // Find missing method names.
                 let missing: Vec<String> = required_methods
@@ -474,6 +702,36 @@ impl TypeEnv {
 
         errors
     }
+}
+
+fn same_parameter_signature(left: &FnSig, right: &FnSig, interner: &TyInterner) -> bool {
+    left.params.len() == right.params.len()
+        && left
+            .params
+            .iter()
+            .zip(&right.params)
+            .all(|((_, left_ty), (_, right_ty))| {
+                super::infer::types_equal_strict(*left_ty, *right_ty, interner)
+            })
+}
+
+fn duplicate_overload_diagnostic(
+    name: &str,
+    first_file: FileId,
+    first_span: SimpleSpan,
+    second_file: FileId,
+    second_span: SimpleSpan,
+) -> Diagnostic {
+    Diagnostic::error(
+        code::E0001,
+        format!(
+            "duplicate overload `{}` has an identical parameter signature",
+            name
+        ),
+    )
+    .with_primary(second_file, second_span, "duplicate parameter signature")
+    .with_secondary(first_file, first_span, "first declared here")
+    .build()
 }
 
 /// Local variable environment with scoped lookup.

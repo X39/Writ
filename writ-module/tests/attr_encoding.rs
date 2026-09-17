@@ -1,4 +1,4 @@
-use writ_module::attr::{decode_attr_args, encode_attr_args, AttrValue};
+use writ_module::attr::{AttrValue, decode_attr_args, encode_attr_args};
 
 fn round_trip(args: &[AttrValue]) -> Vec<AttrValue> {
     let encoded = encode_attr_args(args);

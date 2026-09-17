@@ -13,7 +13,7 @@
 /// The runtime pre-resolves `Value::Ref` args through the GC heap before issuing the request,
 /// so `display_args` always contains actual string content. CliHost uses `display_args` for
 /// say() output instead of `format_value()`, which produced `<string>` placeholders for Ref args.
-use writ_module::{heap::read_string, Module};
+use writ_module::{Module, heap::read_string};
 use writ_runtime::{GcStats, HostRequest, HostResponse, LogLevel, RequestId, RuntimeHost, Value};
 
 /// A RuntimeHost implementation for CLI use with annotated output.
@@ -77,7 +77,10 @@ impl CliHost {
             return "?";
         }
         let idx = row_1based - 1; // convert to 0-based
-        self.extern_names.get(idx).map(|s| s.as_str()).unwrap_or("?")
+        self.extern_names
+            .get(idx)
+            .map(|s| s.as_str())
+            .unwrap_or("?")
     }
 
     /// Print execution statistics to stderr (only when verbose).
@@ -93,7 +96,12 @@ impl RuntimeHost for CliHost {
         self.request_count += 1;
 
         match req {
-            HostRequest::ExternCall { extern_idx, args, display_args, .. } => {
+            HostRequest::ExternCall {
+                extern_idx,
+                args,
+                display_args,
+                ..
+            } => {
                 let name = self.resolve_extern_name(*extern_idx);
 
                 match name {
@@ -126,8 +134,7 @@ impl RuntimeHost for CliHost {
                             eprint!("[choice] Enter selection: ");
                             let mut line = String::new();
                             if std::io::stdin().read_line(&mut line).is_ok() {
-                                let idx: i64 =
-                                    line.trim().parse().unwrap_or(0);
+                                let idx: i64 = line.trim().parse().unwrap_or(0);
                                 HostResponse::Value(Value::Int(idx))
                             } else {
                                 println!("[choice] auto-selecting 0 (stdin read failed)");
@@ -177,7 +184,10 @@ impl RuntimeHost for CliHost {
             }
 
             HostRequest::DestroyEntity { entity, .. } => {
-                println!("[entity:destroy] entity={}:{}", entity.index, entity.generation);
+                println!(
+                    "[entity:destroy] entity={}:{}",
+                    entity.index, entity.generation
+                );
                 HostResponse::Confirmed
             }
 
@@ -194,8 +204,8 @@ impl RuntimeHost for CliHost {
         let prefix = match level {
             LogLevel::Trace => "TRACE",
             LogLevel::Debug => "DEBUG",
-            LogLevel::Info  => "INFO",
-            LogLevel::Warn  => "WARN",
+            LogLevel::Info => "INFO",
+            LogLevel::Warn => "WARN",
             LogLevel::Error => "ERROR",
         };
         eprintln!("[{prefix}] {message}");
@@ -205,10 +215,7 @@ impl RuntimeHost for CliHost {
         if self.verbose {
             eprintln!(
                 "[gc] freed={} traced={} heap_before={} heap_after={}",
-                stats.objects_freed,
-                stats.objects_traced,
-                stats.heap_before,
-                stats.heap_after,
+                stats.objects_freed, stats.objects_traced, stats.heap_before, stats.heap_after,
             );
         }
     }
@@ -219,7 +226,7 @@ impl RuntimeHost for CliHost {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use writ_module::{heap::intern_string, Module};
+    use writ_module::{Module, heap::intern_string};
     use writ_runtime::{HostRequest, RequestId, TaskId, Value};
 
     /// Build a minimal Module containing one extern def named `name`.
@@ -337,7 +344,13 @@ mod tests {
         };
 
         // Each log level extern name must return Value(Void)
-        for level_name in &["log::trace", "log::debug", "log::info", "log::warn", "log::error"] {
+        for level_name in &[
+            "log::trace",
+            "log::debug",
+            "log::info",
+            "log::warn",
+            "log::error",
+        ] {
             let mut host = make_host(level_name);
             let req = make_req(extern_tok);
             match host.on_request(RequestId(0), &req) {

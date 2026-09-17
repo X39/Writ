@@ -1,7 +1,7 @@
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::error::RuntimeError;
-use crate::value::{EntityId, HeapRef, Value};
+use crate::value::{EntityId, HeapRef};
 
 /// State of an entity slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,20 +20,21 @@ pub enum EntityState {
     Destroyed,
 }
 
+/// Canonical identity of an entity type in a loaded module domain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct EntityTypeIdentity {
+    pub module_idx: usize,
+    pub type_def_idx: usize,
+}
+
 /// A slot in the entity registry.
 #[derive(Debug)]
 pub struct EntitySlot {
     pub generation: u32,
     pub state: EntityState,
     pub type_idx: u32,
+    pub type_identity: Option<EntityTypeIdentity>,
     pub data_ref: Option<HeapRef>,
-}
-
-/// Buffered field writes for an entity under construction.
-#[derive(Debug)]
-pub struct PendingEntity {
-    pub type_idx: u32,
-    pub field_writes: Vec<(u32, Value)>,
 }
 
 /// Manages entity lifecycle through generation-indexed handles.
@@ -45,7 +46,8 @@ pub struct EntityRegistry {
     slots: Vec<EntitySlot>,
     free_list: Vec<u32>,
     singletons: FxHashMap<u32, EntityId>,
-    pending: FxHashMap<u32, PendingEntity>, // keyed by slot index
+    resolved_singletons: FxHashMap<EntityTypeIdentity, EntityId>,
+    pending: FxHashSet<u32>, // slot indices awaiting INIT_ENTITY
 }
 
 impl EntityRegistry {
@@ -55,16 +57,30 @@ impl EntityRegistry {
             slots: Vec::new(),
             free_list: Vec::new(),
             singletons: FxHashMap::default(),
-            pending: FxHashMap::default(),
+            resolved_singletons: FxHashMap::default(),
+            pending: FxHashSet::default(),
         }
     }
 
     /// Allocate a new entity slot in Alive state.
     pub fn allocate(&mut self, type_idx: u32) -> EntityId {
+        self.allocate_with_identity(type_idx, None)
+    }
+
+    pub fn allocate_resolved(&mut self, type_idx: u32, identity: EntityTypeIdentity) -> EntityId {
+        self.allocate_with_identity(type_idx, Some(identity))
+    }
+
+    fn allocate_with_identity(
+        &mut self,
+        type_idx: u32,
+        type_identity: Option<EntityTypeIdentity>,
+    ) -> EntityId {
         if let Some(idx) = self.free_list.pop() {
             let slot = &mut self.slots[idx as usize];
             slot.state = EntityState::Alive;
             slot.type_idx = type_idx;
+            slot.type_identity = type_identity;
             slot.data_ref = None;
             EntityId::new(idx, slot.generation)
         } else {
@@ -73,6 +89,7 @@ impl EntityRegistry {
                 generation: 0,
                 state: EntityState::Alive,
                 type_idx,
+                type_identity,
                 data_ref: None,
             });
             EntityId::new(idx, 0)
@@ -83,10 +100,27 @@ impl EntityRegistry {
     ///
     /// The entity is not visible to the host until `commit_init` is called.
     pub fn begin_spawn(&mut self, type_idx: u32) -> EntityId {
+        self.begin_spawn_with_identity(type_idx, None)
+    }
+
+    pub fn begin_spawn_resolved(
+        &mut self,
+        type_idx: u32,
+        identity: EntityTypeIdentity,
+    ) -> EntityId {
+        self.begin_spawn_with_identity(type_idx, Some(identity))
+    }
+
+    fn begin_spawn_with_identity(
+        &mut self,
+        type_idx: u32,
+        type_identity: Option<EntityTypeIdentity>,
+    ) -> EntityId {
         let entity_id = if let Some(idx) = self.free_list.pop() {
             let slot = &mut self.slots[idx as usize];
             slot.state = EntityState::Pending;
             slot.type_idx = type_idx;
+            slot.type_identity = type_identity;
             slot.data_ref = None;
             EntityId::new(idx, slot.generation)
         } else {
@@ -95,29 +129,19 @@ impl EntityRegistry {
                 generation: 0,
                 state: EntityState::Pending,
                 type_idx,
+                type_identity,
                 data_ref: None,
             });
             EntityId::new(idx, 0)
         };
 
-        self.pending.insert(
-            entity_id.index,
-            PendingEntity {
-                type_idx,
-                field_writes: Vec::new(),
-            },
-        );
+        self.pending.insert(entity_id.index);
 
         entity_id
     }
 
-    /// Buffer a field write for a pending entity (between SPAWN and INIT).
-    pub fn buffer_field_write(
-        &mut self,
-        entity_id: EntityId,
-        field_idx: u32,
-        value: Value,
-    ) -> Result<(), RuntimeError> {
+    /// Commit an entity init, transitioning from Pending to Alive.
+    pub fn commit_init(&mut self, entity_id: EntityId) -> Result<(), RuntimeError> {
         self.validate_handle(entity_id)?;
         let slot = &self.slots[entity_id.index as usize];
         if slot.state != EntityState::Pending {
@@ -127,43 +151,14 @@ impl EntityRegistry {
             )));
         }
 
-        let pending = self.pending.get_mut(&entity_id.index).ok_or_else(|| {
-            RuntimeError::ExecutionError(format!(
+        if !self.pending.remove(&entity_id.index) {
+            return Err(RuntimeError::ExecutionError(format!(
                 "no pending entity for index {}",
                 entity_id.index
-            ))
-        })?;
-
-        pending.field_writes.push((field_idx, value));
-        Ok(())
-    }
-
-    /// Commit an entity init, transitioning from Pending to Alive.
-    ///
-    /// Returns the buffered field writes so the caller can apply them.
-    pub fn commit_init(
-        &mut self,
-        entity_id: EntityId,
-    ) -> Result<Vec<(u32, Value)>, RuntimeError> {
-        self.validate_handle(entity_id)?;
-        let slot = &mut self.slots[entity_id.index as usize];
-        if slot.state != EntityState::Pending {
-            return Err(RuntimeError::ExecutionError(format!(
-                "entity {} is not pending (state: {:?})",
-                entity_id.index, slot.state
             )));
         }
-
-        slot.state = EntityState::Alive;
-
-        let pending = self.pending.remove(&entity_id.index).ok_or_else(|| {
-            RuntimeError::ExecutionError(format!(
-                "no pending entity for index {}",
-                entity_id.index
-            ))
-        })?;
-
-        Ok(pending.field_writes)
+        self.slots[entity_id.index as usize].state = EntityState::Alive;
+        Ok(())
     }
 
     /// Check if an entity is alive (valid handle and Alive state).
@@ -222,6 +217,7 @@ impl EntityRegistry {
         }
 
         let type_idx = slot.type_idx;
+        let type_identity = slot.type_identity;
 
         let slot = &mut self.slots[entity_id.index as usize];
         slot.state = EntityState::Destroyed;
@@ -232,10 +228,21 @@ impl EntityRegistry {
         // Remove from singletons if this entity was registered as one
         if let Some(&singleton_id) = self.singletons.get(&type_idx)
             && singleton_id.index == entity_id.index
-                && singleton_id.generation == entity_id.generation
-            {
-                self.singletons.remove(&type_idx);
-            }
+            && singleton_id.generation == entity_id.generation
+        {
+            self.singletons.remove(&type_idx);
+        }
+        if let Some(type_identity) = type_identity
+            && self
+                .resolved_singletons
+                .get(&type_identity)
+                .is_some_and(|singleton_id| {
+                    singleton_id.index == entity_id.index
+                        && singleton_id.generation == entity_id.generation
+                })
+        {
+            self.resolved_singletons.remove(&type_identity);
+        }
 
         Ok(())
     }
@@ -255,6 +262,7 @@ impl EntityRegistry {
         }
 
         let type_idx = slot.type_idx;
+        let type_identity = slot.type_identity;
 
         let slot = &mut self.slots[entity_id.index as usize];
         slot.state = EntityState::Destroyed;
@@ -265,10 +273,21 @@ impl EntityRegistry {
         // Remove from singletons if this entity was registered as one
         if let Some(&singleton_id) = self.singletons.get(&type_idx)
             && singleton_id.index == entity_id.index
-                && singleton_id.generation == entity_id.generation
-            {
-                self.singletons.remove(&type_idx);
-            }
+            && singleton_id.generation == entity_id.generation
+        {
+            self.singletons.remove(&type_idx);
+        }
+        if let Some(type_identity) = type_identity
+            && self
+                .resolved_singletons
+                .get(&type_identity)
+                .is_some_and(|singleton_id| {
+                    singleton_id.index == entity_id.index
+                        && singleton_id.generation == entity_id.generation
+                })
+        {
+            self.resolved_singletons.remove(&type_identity);
+        }
 
         Ok(())
     }
@@ -279,22 +298,24 @@ impl EntityRegistry {
         Ok(self.slots[entity_id.index as usize].type_idx)
     }
 
-    /// Set the heap data reference for an entity.
-    pub fn set_data_ref(
-        &mut self,
+    /// Return the domain-wide type identity for an active runtime-created entity.
+    pub fn get_type_identity(
+        &self,
         entity_id: EntityId,
-        href: HeapRef,
-    ) -> Result<(), RuntimeError> {
+    ) -> Result<Option<EntityTypeIdentity>, RuntimeError> {
+        self.validate_active(entity_id)?;
+        Ok(self.slots[entity_id.index as usize].type_identity)
+    }
+
+    /// Set the heap data reference for an entity.
+    pub fn set_data_ref(&mut self, entity_id: EntityId, href: HeapRef) -> Result<(), RuntimeError> {
         self.validate_active(entity_id)?;
         self.slots[entity_id.index as usize].data_ref = Some(href);
         Ok(())
     }
 
     /// Get the heap data reference for an active entity (Pending, Alive, or Destroying).
-    pub fn get_data_ref(
-        &self,
-        entity_id: EntityId,
-    ) -> Result<Option<HeapRef>, RuntimeError> {
+    pub fn get_data_ref(&self, entity_id: EntityId) -> Result<Option<HeapRef>, RuntimeError> {
         self.validate_active(entity_id)?;
         Ok(self.slots[entity_id.index as usize].data_ref)
     }
@@ -309,15 +330,39 @@ impl EntityRegistry {
         self.singletons.get(&type_idx).copied()
     }
 
+    pub fn register_resolved_singleton(
+        &mut self,
+        identity: EntityTypeIdentity,
+        entity_id: EntityId,
+    ) {
+        self.resolved_singletons.insert(identity, entity_id);
+    }
+
+    pub fn get_resolved_singleton(&self, identity: EntityTypeIdentity) -> Option<EntityId> {
+        self.resolved_singletons.get(&identity).copied()
+    }
+
     /// Iterate over all alive entity slots (for GC root collection).
     pub fn alive_entities(&self) -> impl Iterator<Item = (EntityId, &EntitySlot)> {
         self.slots
             .iter()
             .enumerate()
             .filter(|(_, slot)| slot.state == EntityState::Alive)
-            .map(|(idx, slot)| {
-                (EntityId::new(idx as u32, slot.generation), slot)
-            })
+            .map(|(idx, slot)| (EntityId::new(idx as u32, slot.generation), slot))
+    }
+
+    /// Iterate over entity slots whose script-field storage remains a GC root.
+    ///
+    /// Pending entities already contain their complete constructor state, and
+    /// destroying entities can still execute lifecycle hooks. Their data must
+    /// therefore remain rooted even though `is_alive` is false.
+    pub(crate) fn gc_root_entities(&self) -> impl Iterator<Item = &EntitySlot> {
+        self.slots.iter().filter(|slot| {
+            matches!(
+                slot.state,
+                EntityState::Pending | EntityState::Alive | EntityState::Destroying
+            )
+        })
     }
 
     /// Return the number of alive entities.
@@ -516,32 +561,11 @@ mod tests {
     }
 
     #[test]
-    fn buffer_field_write_on_pending() {
-        let mut reg = EntityRegistry::new();
-        let eid = reg.begin_spawn(5);
-        reg.buffer_field_write(eid, 0, Value::Int(42)).unwrap();
-        reg.buffer_field_write(eid, 1, Value::Bool(true)).unwrap();
-    }
-
-    #[test]
-    fn buffer_field_write_on_alive_fails() {
-        let mut reg = EntityRegistry::new();
-        let eid = reg.allocate(0);
-        assert!(reg.buffer_field_write(eid, 0, Value::Int(1)).is_err());
-    }
-
-    #[test]
     fn commit_init_transitions_to_alive() {
         let mut reg = EntityRegistry::new();
         let eid = reg.begin_spawn(5);
 
-        reg.buffer_field_write(eid, 0, Value::Int(42)).unwrap();
-        reg.buffer_field_write(eid, 1, Value::Bool(true)).unwrap();
-
-        let writes = reg.commit_init(eid).unwrap();
-        assert_eq!(writes.len(), 2);
-        assert_eq!(writes[0], (0, Value::Int(42)));
-        assert_eq!(writes[1], (1, Value::Bool(true)));
+        reg.commit_init(eid).unwrap();
 
         assert!(reg.is_alive(eid));
         assert_eq!(reg.get_state(eid), Some(EntityState::Alive));

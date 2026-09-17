@@ -3,6 +3,42 @@ use std::io::{Read, Write};
 
 use crate::error::{DecodeError, EncodeError};
 
+/// Growth-default category carried by array-construction instructions.
+///
+/// The encoded `u32` operand is intentionally a compact value category rather
+/// than a metadata token: array growth only needs a recipe for synthesizing a
+/// new slot. It does not identify or validate the array's element type.
+/// `Unavailable` is used when no such recipe exists and must never be replaced
+/// with an arbitrary default by the VM.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum ArrayDefaultKind {
+    Int = 0,
+    Float = 1,
+    Bool = 2,
+    String = 3,
+    NullReference = 4,
+    Unavailable = u32::MAX,
+}
+
+impl ArrayDefaultKind {
+    pub const fn operand(self) -> u32 {
+        self as u32
+    }
+
+    pub const fn from_operand(operand: u32) -> Option<Self> {
+        match operand {
+            0 => Some(Self::Int),
+            1 => Some(Self::Float),
+            2 => Some(Self::Bool),
+            3 => Some(Self::String),
+            4 => Some(Self::NullReference),
+            u32::MAX => Some(Self::Unavailable),
+            _ => None,
+        }
+    }
+}
+
 /// All 93 IL opcodes, grouped by category.
 ///
 /// Operand field names match the spec. Shape comments reference section 4.1.
@@ -100,31 +136,83 @@ pub enum Instruction {
 
     // ── 0x07 Calls & Delegates ─────────────────────────────────
     /// 0x0700 — Shape CALL (12B)
-    Call { r_dst: u16, method_idx: u32, r_base: u16, argc: u16 },
+    Call {
+        r_dst: u16,
+        method_idx: u32,
+        r_base: u16,
+        argc: u16,
+    },
     /// 0x0701 — var (14B): u16(op) u16(r_dst) u16(r_obj) u32(contract_idx) u16(slot) u16(r_base) u16(argc)
-    CallVirt { r_dst: u16, r_obj: u16, contract_idx: u32, slot: u16, r_base: u16, argc: u16 },
+    CallVirt {
+        r_dst: u16,
+        r_obj: u16,
+        contract_idx: u32,
+        slot: u16,
+        r_base: u16,
+        argc: u16,
+    },
     /// 0x0702 — Shape CALL (12B)
-    CallExtern { r_dst: u16, extern_idx: u32, r_base: u16, argc: u16 },
+    CallExtern {
+        r_dst: u16,
+        extern_idx: u32,
+        r_base: u16,
+        argc: u16,
+    },
     /// 0x0703 — var (10B): u16(op) u16(r_dst) u32(method_idx) u16(r_target)
-    NewDelegate { r_dst: u16, method_idx: u32, r_target: u16 },
+    NewDelegate {
+        r_dst: u16,
+        method_idx: u32,
+        r_target: u16,
+    },
     /// 0x0704 — var (10B): u16(op) u16(r_dst) u16(r_delegate) u16(r_base) u16(argc)
-    CallIndirect { r_dst: u16, r_delegate: u16, r_base: u16, argc: u16 },
+    CallIndirect {
+        r_dst: u16,
+        r_delegate: u16,
+        r_base: u16,
+        argc: u16,
+    },
     /// 0x0705 — var (10B): u16(op) u32(method_idx) u16(r_base) u16(argc)
-    TailCall { method_idx: u32, r_base: u16, argc: u16 },
+    TailCall {
+        method_idx: u32,
+        r_base: u16,
+        argc: u16,
+    },
 
     // ── 0x08 Object Model ──────────────────────────────────────
-    /// 0x0800 — Shape RI32 (8B)
-    New { r_dst: u16, type_idx: u32 },
-    /// 0x0801 — var (10B): u16(op) u16(r_dst) u16(r_obj) u32(field_idx)
-    GetField { r_dst: u16, r_obj: u16, field_idx: u32 },
-    /// 0x0802 — var (10B): u16(op) u16(r_obj) u32(field_idx) u16(r_val)
-    SetField { r_obj: u16, field_idx: u32, r_val: u16 },
-    /// 0x0803 — Shape RI32 (8B)
-    SpawnEntity { r_dst: u16, type_idx: u32 },
+    /// 0x0800 — var (12B): u16(op) u16(r_dst) u32(type_idx) u16(field_count) u16(r_base)
+    New {
+        r_dst: u16,
+        type_idx: u32,
+        field_count: u16,
+        r_base: u16,
+    },
+    /// 0x0801 — var (10B): u16(op) u16(r_dst) u16(r_obj) u32(field_token)
+    GetField {
+        r_dst: u16,
+        r_obj: u16,
+        field_token: u32,
+    },
+    /// 0x0802 — var (10B): u16(op) u16(r_obj) u32(field_token) u16(r_val)
+    SetField {
+        r_obj: u16,
+        field_token: u32,
+        r_val: u16,
+    },
+    /// 0x0803 — var (12B): u16(op) u16(r_dst) u32(type_idx) u16(field_count) u16(r_base)
+    SpawnEntity {
+        r_dst: u16,
+        type_idx: u32,
+        field_count: u16,
+        r_base: u16,
+    },
     /// 0x0804 — Shape R (4B)
     InitEntity { r_entity: u16 },
     /// 0x0805 — var (10B): u16(op) u16(r_dst) u16(r_entity) u32(comp_type_idx)
-    GetComponent { r_dst: u16, r_entity: u16, comp_type_idx: u32 },
+    GetComponent {
+        r_dst: u16,
+        r_entity: u16,
+        comp_type_idx: u32,
+    },
     /// 0x0806 — Shape RI32 (8B)
     GetOrCreate { r_dst: u16, type_idx: u32 },
     /// 0x0807 — Shape RI32 (8B)
@@ -135,10 +223,16 @@ pub enum Instruction {
     EntityIsAlive { r_dst: u16, r_entity: u16 },
 
     // ── 0x09 Arrays ────────────────────────────────────────────
-    /// 0x0900 — Shape RI32 (8B)
-    NewArray { r_dst: u16, elem_type: u32 },
-    /// 0x0901 — var (12B): u16(op) u16(r_dst) u32(elem_type) u16(count) u16(r_base)
-    ArrayInit { r_dst: u16, elem_type: u32, count: u16, r_base: u16 },
+    /// 0x0900 — Shape RI32 (8B); `default_kind` is an [`ArrayDefaultKind`] operand.
+    NewArray { r_dst: u16, default_kind: u32 },
+    /// 0x0901 — var (12B): u16(op) u16(r_dst) u32(default_kind) u16(count) u16(r_base).
+    /// `default_kind` is an [`ArrayDefaultKind`] operand.
+    ArrayInit {
+        r_dst: u16,
+        default_kind: u32,
+        count: u16,
+        r_base: u16,
+    },
     /// 0x0902 — Shape RRR (8B)
     ArrayLoad { r_dst: u16, r_arr: u16, r_idx: u16 },
     /// 0x0903 — Shape RRR (8B)
@@ -148,13 +242,35 @@ pub enum Instruction {
     /// 0x0905 — Shape RR (6B)
     ArrayResize { r_arr: u16, r_new_len: u16 },
     /// 0x0906 — var (12B): u16(op) u16(r_dst_arr) u16(r_dst_idx) u16(r_src_arr) u16(r_src_idx) u16(r_len)
-    ArrayCopy { r_dst_arr: u16, r_dst_idx: u16, r_src_arr: u16, r_src_idx: u16, r_len: u16 },
+    ArrayCopy {
+        r_dst_arr: u16,
+        r_dst_idx: u16,
+        r_src_arr: u16,
+        r_src_idx: u16,
+        r_len: u16,
+    },
     /// 0x0907 — var (10B): u16(op) u16(r_dst) u16(r_arr) u16(r_start) u16(r_end)
-    ArraySlice { r_dst: u16, r_arr: u16, r_start: u16, r_end: u16 },
-    /// 0x0908 — var (10B): u16(op) u16(r_dst) u32(elem_type) u16(r_len)
-    NewArraySized { r_dst: u16, elem_type: u32, r_len: u16 },
-    /// 0x0909 — var (12B): u16(op) u16(r_dst) u32(elem_type) u16(r_len) u16(r_fill)
-    NewArrayFilled { r_dst: u16, elem_type: u32, r_len: u16, r_fill: u16 },
+    ArraySlice {
+        r_dst: u16,
+        r_arr: u16,
+        r_start: u16,
+        r_end: u16,
+    },
+    /// 0x0908 — var (10B): u16(op) u16(r_dst) u32(default_kind) u16(r_len).
+    /// `default_kind` is an [`ArrayDefaultKind`] operand.
+    NewArraySized {
+        r_dst: u16,
+        default_kind: u32,
+        r_len: u16,
+    },
+    /// 0x0909 — var (12B): u16(op) u16(r_dst) u32(default_kind) u16(r_len) u16(r_fill).
+    /// `default_kind` is an [`ArrayDefaultKind`] operand.
+    NewArrayFilled {
+        r_dst: u16,
+        default_kind: u32,
+        r_len: u16,
+        r_fill: u16,
+    },
 
     // ── 0x0A Type Operations ───────────────────────────────────
     // Option
@@ -183,11 +299,21 @@ pub enum Instruction {
 
     // Enum
     /// 0x0A20 — var (14B): u16(op) u16(r_dst) u32(type_idx) u16(tag) u16(field_count) u16(r_base)
-    NewEnum { r_dst: u16, type_idx: u32, tag: u16, field_count: u16, r_base: u16 },
+    NewEnum {
+        r_dst: u16,
+        type_idx: u32,
+        tag: u16,
+        field_count: u16,
+        r_base: u16,
+    },
     /// 0x0A21 — Shape RR (6B)
     GetTag { r_dst: u16, r_enum: u16 },
     /// 0x0A22 — var (8B): u16(op) u16(r_dst) u16(r_enum) u16(field_idx)
-    ExtractField { r_dst: u16, r_enum: u16, field_idx: u16 },
+    ExtractField {
+        r_dst: u16,
+        r_enum: u16,
+        field_idx: u16,
+    },
 
     // Reflection
     /// 0x0A30 — Shape RI32 (8B)
@@ -195,9 +321,12 @@ pub enum Instruction {
 
     // ── 0x0B Concurrency ───────────────────────────────────────
     /// 0x0B00 — Shape CALL (12B)
-    SpawnTask { r_dst: u16, method_idx: u32, r_base: u16, argc: u16 },
-    /// 0x0B01 — Shape CALL (12B)
-    SpawnDetached { r_dst: u16, method_idx: u32, r_base: u16, argc: u16 },
+    SpawnTask {
+        r_dst: u16,
+        method_idx: u32,
+        r_base: u16,
+        argc: u16,
+    },
     /// 0x0B02 — Shape RR (6B)
     Join { r_dst: u16, r_task: u16 },
     /// 0x0B03 — Shape R (4B)
@@ -231,7 +360,11 @@ pub enum Instruction {
     /// 0x0D04 — Shape RR (6B)
     B2s { r_dst: u16, r_src: u16 },
     /// 0x0D05 — var (10B): u16(op) u16(r_dst) u16(r_src) u32(target_type)
-    Convert { r_dst: u16, r_src: u16, target_type: u32 },
+    Convert {
+        r_dst: u16,
+        r_src: u16,
+        target_type: u32,
+    },
     /// 0x0D06 — Shape RR (6B): parse string as int
     S2i { r_dst: u16, r_src: u16 },
     /// 0x0D07 — Shape RR (6B): parse string as float
@@ -253,15 +386,28 @@ pub enum Instruction {
     /// 0x0E05 — Shape RR (6B): to_ascii_lowercase
     StrToLower { r_dst: u16, r_src: u16 },
     /// 0x0E06 — Shape RRR (8B): starts_with(prefix) -> bool
-    StrStartsWith { r_dst: u16, r_str: u16, r_prefix: u16 },
+    StrStartsWith {
+        r_dst: u16,
+        r_str: u16,
+        r_prefix: u16,
+    },
     /// 0x0E07 — Shape RRR (8B): ends_with(suffix) -> bool
-    StrEndsWith { r_dst: u16, r_str: u16, r_suffix: u16 },
+    StrEndsWith {
+        r_dst: u16,
+        r_str: u16,
+        r_suffix: u16,
+    },
     /// 0x0E08 — Shape RRR (8B): contains(substr) -> bool
     StrContains { r_dst: u16, r_str: u16, r_sub: u16 },
     /// 0x0E09 — Shape RRR (8B): split(sep) -> string[]
     StrSplit { r_dst: u16, r_str: u16, r_sep: u16 },
     /// 0x0E0A — Shape RRRR (10B): replace(from, to) -> string
-    StrReplace { r_dst: u16, r_str: u16, r_from: u16, r_to: u16 },
+    StrReplace {
+        r_dst: u16,
+        r_str: u16,
+        r_from: u16,
+        r_to: u16,
+    },
 
     // ── 0x0F Boxing ────────────────────────────────────────────
     /// 0x0F00 — Shape RR (6B)
@@ -368,7 +514,6 @@ impl Instruction {
             Instruction::TypeOf { .. } => 0x0A30,
             // 0x0B Concurrency
             Instruction::SpawnTask { .. } => 0x0B00,
-            Instruction::SpawnDetached { .. } => 0x0B01,
             Instruction::Join { .. } => 0x0B02,
             Instruction::Cancel { .. } => 0x0B03,
             Instruction::DeferPush { .. } => 0x0B04,
@@ -518,27 +663,48 @@ impl Instruction {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u16::<LittleEndian>(*r_src)?;
             }
-            Instruction::StrStartsWith { r_dst, r_str, r_prefix } => {
+            Instruction::StrStartsWith {
+                r_dst,
+                r_str,
+                r_prefix,
+            } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u16::<LittleEndian>(*r_str)?;
                 w.write_u16::<LittleEndian>(*r_prefix)?;
             }
-            Instruction::StrEndsWith { r_dst, r_str, r_suffix } => {
+            Instruction::StrEndsWith {
+                r_dst,
+                r_str,
+                r_suffix,
+            } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u16::<LittleEndian>(*r_str)?;
                 w.write_u16::<LittleEndian>(*r_suffix)?;
             }
-            Instruction::StrContains { r_dst, r_str, r_sub } => {
+            Instruction::StrContains {
+                r_dst,
+                r_str,
+                r_sub,
+            } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u16::<LittleEndian>(*r_str)?;
                 w.write_u16::<LittleEndian>(*r_sub)?;
             }
-            Instruction::StrSplit { r_dst, r_str, r_sep } => {
+            Instruction::StrSplit {
+                r_dst,
+                r_str,
+                r_sep,
+            } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u16::<LittleEndian>(*r_str)?;
                 w.write_u16::<LittleEndian>(*r_sep)?;
             }
-            Instruction::StrReplace { r_dst, r_str, r_from, r_to } => {
+            Instruction::StrReplace {
+                r_dst,
+                r_str,
+                r_from,
+                r_to,
+            } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u16::<LittleEndian>(*r_str)?;
                 w.write_u16::<LittleEndian>(*r_from)?;
@@ -583,12 +749,20 @@ impl Instruction {
                 w.write_u16::<LittleEndian>(*r_a)?;
                 w.write_u16::<LittleEndian>(*r_b)?;
             }
-            Instruction::ArrayLoad { r_dst, r_arr, r_idx } => {
+            Instruction::ArrayLoad {
+                r_dst,
+                r_arr,
+                r_idx,
+            } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u16::<LittleEndian>(*r_arr)?;
                 w.write_u16::<LittleEndian>(*r_idx)?;
             }
-            Instruction::ArrayStore { r_arr, r_idx, r_val } => {
+            Instruction::ArrayStore {
+                r_arr,
+                r_idx,
+                r_val,
+            } => {
                 w.write_u16::<LittleEndian>(*r_arr)?;
                 w.write_u16::<LittleEndian>(*r_idx)?;
                 w.write_u16::<LittleEndian>(*r_val)?;
@@ -598,14 +772,6 @@ impl Instruction {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u32::<LittleEndian>(*string_idx)?;
             }
-            Instruction::New { r_dst, type_idx } => {
-                w.write_u16::<LittleEndian>(*r_dst)?;
-                w.write_u32::<LittleEndian>(*type_idx)?;
-            }
-            Instruction::SpawnEntity { r_dst, type_idx } => {
-                w.write_u16::<LittleEndian>(*r_dst)?;
-                w.write_u32::<LittleEndian>(*type_idx)?;
-            }
             Instruction::GetOrCreate { r_dst, type_idx } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u32::<LittleEndian>(*type_idx)?;
@@ -614,9 +780,12 @@ impl Instruction {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u32::<LittleEndian>(*type_idx)?;
             }
-            Instruction::NewArray { r_dst, elem_type } => {
+            Instruction::NewArray {
+                r_dst,
+                default_kind,
+            } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
-                w.write_u32::<LittleEndian>(*elem_type)?;
+                w.write_u32::<LittleEndian>(*default_kind)?;
             }
             Instruction::DeferPush { r_dst, method_idx } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
@@ -639,6 +808,25 @@ impl Instruction {
                 w.write_u32::<LittleEndian>(*offset as u32)?;
             }
 
+            // ── Atomic object construction ───────────────────────────────
+            Instruction::New {
+                r_dst,
+                type_idx,
+                field_count,
+                r_base,
+            }
+            | Instruction::SpawnEntity {
+                r_dst,
+                type_idx,
+                field_count,
+                r_base,
+            } => {
+                w.write_u16::<LittleEndian>(*r_dst)?;
+                w.write_u32::<LittleEndian>(*type_idx)?;
+                w.write_u16::<LittleEndian>(*field_count)?;
+                w.write_u16::<LittleEndian>(*r_base)?;
+            }
+
             // ── Shape RI64 (u16, u64) ──────────────────────────
             Instruction::LoadInt { r_dst, value } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
@@ -656,31 +844,39 @@ impl Instruction {
             }
 
             // ── Shape CALL (u16, u32, u16, u16) ────────────────
-            Instruction::Call { r_dst, method_idx, r_base, argc } => {
+            Instruction::Call {
+                r_dst,
+                method_idx,
+                r_base,
+                argc,
+            } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u32::<LittleEndian>(*method_idx)?;
                 w.write_u16::<LittleEndian>(*r_base)?;
                 w.write_u16::<LittleEndian>(*argc)?;
             }
-            Instruction::CallExtern { r_dst, extern_idx, r_base, argc } => {
+            Instruction::CallExtern {
+                r_dst,
+                extern_idx,
+                r_base,
+                argc,
+            } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u32::<LittleEndian>(*extern_idx)?;
                 w.write_u16::<LittleEndian>(*r_base)?;
                 w.write_u16::<LittleEndian>(*argc)?;
             }
-            Instruction::SpawnTask { r_dst, method_idx, r_base, argc } => {
+            Instruction::SpawnTask {
+                r_dst,
+                method_idx,
+                r_base,
+                argc,
+            } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u32::<LittleEndian>(*method_idx)?;
                 w.write_u16::<LittleEndian>(*r_base)?;
                 w.write_u16::<LittleEndian>(*argc)?;
             }
-            Instruction::SpawnDetached { r_dst, method_idx, r_base, argc } => {
-                w.write_u16::<LittleEndian>(*r_dst)?;
-                w.write_u32::<LittleEndian>(*method_idx)?;
-                w.write_u16::<LittleEndian>(*r_base)?;
-                w.write_u16::<LittleEndian>(*argc)?;
-            }
-
             // ── Variable-layout instructions ───────────────────
             Instruction::Switch { r_tag, offsets } => {
                 w.write_u16::<LittleEndian>(*r_tag)?;
@@ -689,7 +885,14 @@ impl Instruction {
                     w.write_i32::<LittleEndian>(*off)?;
                 }
             }
-            Instruction::CallVirt { r_dst, r_obj, contract_idx, slot, r_base, argc } => {
+            Instruction::CallVirt {
+                r_dst,
+                r_obj,
+                contract_idx,
+                slot,
+                r_base,
+                argc,
+            } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u16::<LittleEndian>(*r_obj)?;
                 w.write_u32::<LittleEndian>(*contract_idx)?;
@@ -697,75 +900,135 @@ impl Instruction {
                 w.write_u16::<LittleEndian>(*r_base)?;
                 w.write_u16::<LittleEndian>(*argc)?;
             }
-            Instruction::NewDelegate { r_dst, method_idx, r_target } => {
+            Instruction::NewDelegate {
+                r_dst,
+                method_idx,
+                r_target,
+            } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u32::<LittleEndian>(*method_idx)?;
                 w.write_u16::<LittleEndian>(*r_target)?;
             }
-            Instruction::CallIndirect { r_dst, r_delegate, r_base, argc } => {
+            Instruction::CallIndirect {
+                r_dst,
+                r_delegate,
+                r_base,
+                argc,
+            } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u16::<LittleEndian>(*r_delegate)?;
                 w.write_u16::<LittleEndian>(*r_base)?;
                 w.write_u16::<LittleEndian>(*argc)?;
             }
-            Instruction::TailCall { method_idx, r_base, argc } => {
+            Instruction::TailCall {
+                method_idx,
+                r_base,
+                argc,
+            } => {
                 w.write_u32::<LittleEndian>(*method_idx)?;
                 w.write_u16::<LittleEndian>(*r_base)?;
                 w.write_u16::<LittleEndian>(*argc)?;
             }
-            Instruction::GetField { r_dst, r_obj, field_idx } => {
+            Instruction::GetField {
+                r_dst,
+                r_obj,
+                field_token,
+            } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u16::<LittleEndian>(*r_obj)?;
-                w.write_u32::<LittleEndian>(*field_idx)?;
+                w.write_u32::<LittleEndian>(*field_token)?;
             }
-            Instruction::SetField { r_obj, field_idx, r_val } => {
+            Instruction::SetField {
+                r_obj,
+                field_token,
+                r_val,
+            } => {
                 w.write_u16::<LittleEndian>(*r_obj)?;
-                w.write_u32::<LittleEndian>(*field_idx)?;
+                w.write_u32::<LittleEndian>(*field_token)?;
                 w.write_u16::<LittleEndian>(*r_val)?;
             }
-            Instruction::GetComponent { r_dst, r_entity, comp_type_idx } => {
+            Instruction::GetComponent {
+                r_dst,
+                r_entity,
+                comp_type_idx,
+            } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u16::<LittleEndian>(*r_entity)?;
                 w.write_u32::<LittleEndian>(*comp_type_idx)?;
             }
-            Instruction::ArrayInit { r_dst, elem_type, count, r_base } => {
+            Instruction::ArrayInit {
+                r_dst,
+                default_kind,
+                count,
+                r_base,
+            } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
-                w.write_u32::<LittleEndian>(*elem_type)?;
+                w.write_u32::<LittleEndian>(*default_kind)?;
                 w.write_u16::<LittleEndian>(*count)?;
                 w.write_u16::<LittleEndian>(*r_base)?;
             }
-            Instruction::ArrayCopy { r_dst_arr, r_dst_idx, r_src_arr, r_src_idx, r_len } => {
+            Instruction::ArrayCopy {
+                r_dst_arr,
+                r_dst_idx,
+                r_src_arr,
+                r_src_idx,
+                r_len,
+            } => {
                 w.write_u16::<LittleEndian>(*r_dst_arr)?;
                 w.write_u16::<LittleEndian>(*r_dst_idx)?;
                 w.write_u16::<LittleEndian>(*r_src_arr)?;
                 w.write_u16::<LittleEndian>(*r_src_idx)?;
                 w.write_u16::<LittleEndian>(*r_len)?;
             }
-            Instruction::ArraySlice { r_dst, r_arr, r_start, r_end } => {
+            Instruction::ArraySlice {
+                r_dst,
+                r_arr,
+                r_start,
+                r_end,
+            } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u16::<LittleEndian>(*r_arr)?;
                 w.write_u16::<LittleEndian>(*r_start)?;
                 w.write_u16::<LittleEndian>(*r_end)?;
             }
-            Instruction::NewArraySized { r_dst, elem_type, r_len } => {
+            Instruction::NewArraySized {
+                r_dst,
+                default_kind,
+                r_len,
+            } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
-                w.write_u32::<LittleEndian>(*elem_type)?;
+                w.write_u32::<LittleEndian>(*default_kind)?;
                 w.write_u16::<LittleEndian>(*r_len)?;
             }
-            Instruction::NewArrayFilled { r_dst, elem_type, r_len, r_fill } => {
+            Instruction::NewArrayFilled {
+                r_dst,
+                default_kind,
+                r_len,
+                r_fill,
+            } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
-                w.write_u32::<LittleEndian>(*elem_type)?;
+                w.write_u32::<LittleEndian>(*default_kind)?;
                 w.write_u16::<LittleEndian>(*r_len)?;
                 w.write_u16::<LittleEndian>(*r_fill)?;
             }
-            Instruction::NewEnum { r_dst, type_idx, tag, field_count, r_base } => {
+            Instruction::NewEnum {
+                r_dst,
+                type_idx,
+                tag,
+                field_count,
+                r_base,
+            } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u32::<LittleEndian>(*type_idx)?;
                 w.write_u16::<LittleEndian>(*tag)?;
                 w.write_u16::<LittleEndian>(*field_count)?;
                 w.write_u16::<LittleEndian>(*r_base)?;
             }
-            Instruction::ExtractField { r_dst, r_enum, field_idx } => {
+            Instruction::ExtractField {
+                r_dst,
+                r_enum,
+                field_idx,
+            } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u16::<LittleEndian>(*r_enum)?;
                 w.write_u16::<LittleEndian>(*field_idx)?;
@@ -774,12 +1037,20 @@ impl Instruction {
                 w.write_u32::<LittleEndian>(*global_idx)?;
                 w.write_u16::<LittleEndian>(*r_src)?;
             }
-            Instruction::Convert { r_dst, r_src, target_type } => {
+            Instruction::Convert {
+                r_dst,
+                r_src,
+                target_type,
+            } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u16::<LittleEndian>(*r_src)?;
                 w.write_u32::<LittleEndian>(*target_type)?;
             }
-            Instruction::StrBuild { r_dst, count, r_base } => {
+            Instruction::StrBuild {
+                r_dst,
+                count,
+                r_base,
+            } => {
                 w.write_u16::<LittleEndian>(*r_dst)?;
                 w.write_u16::<LittleEndian>(*count)?;
                 w.write_u16::<LittleEndian>(*r_base)?;
@@ -796,7 +1067,9 @@ impl Instruction {
         match opcode {
             // ── 0x00 Meta ──────────────────────────────────────
             0x0000 => Ok(Instruction::Nop),
-            0x0001 => Ok(Instruction::Crash { r_msg: r.read_u16::<LittleEndian>()? }),
+            0x0001 => Ok(Instruction::Crash {
+                r_msg: r.read_u16::<LittleEndian>()?,
+            }),
 
             // ── 0x01 Data Movement ─────────────────────────────
             0x0100 => Ok(Instruction::Mov {
@@ -811,44 +1084,130 @@ impl Instruction {
                 r_dst: r.read_u16::<LittleEndian>()?,
                 value: f64::from_bits(r.read_u64::<LittleEndian>()?),
             }),
-            0x0103 => Ok(Instruction::LoadTrue { r_dst: r.read_u16::<LittleEndian>()? }),
-            0x0104 => Ok(Instruction::LoadFalse { r_dst: r.read_u16::<LittleEndian>()? }),
+            0x0103 => Ok(Instruction::LoadTrue {
+                r_dst: r.read_u16::<LittleEndian>()?,
+            }),
+            0x0104 => Ok(Instruction::LoadFalse {
+                r_dst: r.read_u16::<LittleEndian>()?,
+            }),
             0x0105 => Ok(Instruction::LoadString {
                 r_dst: r.read_u16::<LittleEndian>()?,
                 string_idx: r.read_u32::<LittleEndian>()?,
             }),
-            0x0106 => Ok(Instruction::LoadNull { r_dst: r.read_u16::<LittleEndian>()? }),
+            0x0106 => Ok(Instruction::LoadNull {
+                r_dst: r.read_u16::<LittleEndian>()?,
+            }),
 
             // ── 0x02 Integer Arithmetic ────────────────────────
-            0x0200 => read_rrr(r).map(|(d, a, b)| Instruction::AddI { r_dst: d, r_a: a, r_b: b }),
-            0x0201 => read_rrr(r).map(|(d, a, b)| Instruction::SubI { r_dst: d, r_a: a, r_b: b }),
-            0x0202 => read_rrr(r).map(|(d, a, b)| Instruction::MulI { r_dst: d, r_a: a, r_b: b }),
-            0x0203 => read_rrr(r).map(|(d, a, b)| Instruction::DivI { r_dst: d, r_a: a, r_b: b }),
-            0x0204 => read_rrr(r).map(|(d, a, b)| Instruction::ModI { r_dst: d, r_a: a, r_b: b }),
+            0x0200 => read_rrr(r).map(|(d, a, b)| Instruction::AddI {
+                r_dst: d,
+                r_a: a,
+                r_b: b,
+            }),
+            0x0201 => read_rrr(r).map(|(d, a, b)| Instruction::SubI {
+                r_dst: d,
+                r_a: a,
+                r_b: b,
+            }),
+            0x0202 => read_rrr(r).map(|(d, a, b)| Instruction::MulI {
+                r_dst: d,
+                r_a: a,
+                r_b: b,
+            }),
+            0x0203 => read_rrr(r).map(|(d, a, b)| Instruction::DivI {
+                r_dst: d,
+                r_a: a,
+                r_b: b,
+            }),
+            0x0204 => read_rrr(r).map(|(d, a, b)| Instruction::ModI {
+                r_dst: d,
+                r_a: a,
+                r_b: b,
+            }),
             0x0205 => read_rr(r).map(|(d, s)| Instruction::NegI { r_dst: d, r_src: s }),
 
             // ── 0x03 Float Arithmetic ──────────────────────────
-            0x0300 => read_rrr(r).map(|(d, a, b)| Instruction::AddF { r_dst: d, r_a: a, r_b: b }),
-            0x0301 => read_rrr(r).map(|(d, a, b)| Instruction::SubF { r_dst: d, r_a: a, r_b: b }),
-            0x0302 => read_rrr(r).map(|(d, a, b)| Instruction::MulF { r_dst: d, r_a: a, r_b: b }),
-            0x0303 => read_rrr(r).map(|(d, a, b)| Instruction::DivF { r_dst: d, r_a: a, r_b: b }),
-            0x0304 => read_rrr(r).map(|(d, a, b)| Instruction::ModF { r_dst: d, r_a: a, r_b: b }),
+            0x0300 => read_rrr(r).map(|(d, a, b)| Instruction::AddF {
+                r_dst: d,
+                r_a: a,
+                r_b: b,
+            }),
+            0x0301 => read_rrr(r).map(|(d, a, b)| Instruction::SubF {
+                r_dst: d,
+                r_a: a,
+                r_b: b,
+            }),
+            0x0302 => read_rrr(r).map(|(d, a, b)| Instruction::MulF {
+                r_dst: d,
+                r_a: a,
+                r_b: b,
+            }),
+            0x0303 => read_rrr(r).map(|(d, a, b)| Instruction::DivF {
+                r_dst: d,
+                r_a: a,
+                r_b: b,
+            }),
+            0x0304 => read_rrr(r).map(|(d, a, b)| Instruction::ModF {
+                r_dst: d,
+                r_a: a,
+                r_b: b,
+            }),
             0x0305 => read_rr(r).map(|(d, s)| Instruction::NegF { r_dst: d, r_src: s }),
 
             // ── 0x04 Bitwise & Logical ─────────────────────────
-            0x0400 => read_rrr(r).map(|(d, a, b)| Instruction::BitAnd { r_dst: d, r_a: a, r_b: b }),
-            0x0401 => read_rrr(r).map(|(d, a, b)| Instruction::BitOr { r_dst: d, r_a: a, r_b: b }),
-            0x0402 => read_rrr(r).map(|(d, a, b)| Instruction::Shl { r_dst: d, r_a: a, r_b: b }),
-            0x0403 => read_rrr(r).map(|(d, a, b)| Instruction::Shr { r_dst: d, r_a: a, r_b: b }),
+            0x0400 => read_rrr(r).map(|(d, a, b)| Instruction::BitAnd {
+                r_dst: d,
+                r_a: a,
+                r_b: b,
+            }),
+            0x0401 => read_rrr(r).map(|(d, a, b)| Instruction::BitOr {
+                r_dst: d,
+                r_a: a,
+                r_b: b,
+            }),
+            0x0402 => read_rrr(r).map(|(d, a, b)| Instruction::Shl {
+                r_dst: d,
+                r_a: a,
+                r_b: b,
+            }),
+            0x0403 => read_rrr(r).map(|(d, a, b)| Instruction::Shr {
+                r_dst: d,
+                r_a: a,
+                r_b: b,
+            }),
             0x0404 => read_rr(r).map(|(d, s)| Instruction::Not { r_dst: d, r_src: s }),
 
             // ── 0x05 Comparison ────────────────────────────────
-            0x0500 => read_rrr(r).map(|(d, a, b)| Instruction::CmpEqI { r_dst: d, r_a: a, r_b: b }),
-            0x0501 => read_rrr(r).map(|(d, a, b)| Instruction::CmpEqF { r_dst: d, r_a: a, r_b: b }),
-            0x0502 => read_rrr(r).map(|(d, a, b)| Instruction::CmpEqB { r_dst: d, r_a: a, r_b: b }),
-            0x0503 => read_rrr(r).map(|(d, a, b)| Instruction::CmpEqS { r_dst: d, r_a: a, r_b: b }),
-            0x0504 => read_rrr(r).map(|(d, a, b)| Instruction::CmpLtI { r_dst: d, r_a: a, r_b: b }),
-            0x0505 => read_rrr(r).map(|(d, a, b)| Instruction::CmpLtF { r_dst: d, r_a: a, r_b: b }),
+            0x0500 => read_rrr(r).map(|(d, a, b)| Instruction::CmpEqI {
+                r_dst: d,
+                r_a: a,
+                r_b: b,
+            }),
+            0x0501 => read_rrr(r).map(|(d, a, b)| Instruction::CmpEqF {
+                r_dst: d,
+                r_a: a,
+                r_b: b,
+            }),
+            0x0502 => read_rrr(r).map(|(d, a, b)| Instruction::CmpEqB {
+                r_dst: d,
+                r_a: a,
+                r_b: b,
+            }),
+            0x0503 => read_rrr(r).map(|(d, a, b)| Instruction::CmpEqS {
+                r_dst: d,
+                r_a: a,
+                r_b: b,
+            }),
+            0x0504 => read_rrr(r).map(|(d, a, b)| Instruction::CmpLtI {
+                r_dst: d,
+                r_a: a,
+                r_b: b,
+            }),
+            0x0505 => read_rrr(r).map(|(d, a, b)| Instruction::CmpLtF {
+                r_dst: d,
+                r_a: a,
+                r_b: b,
+            }),
 
             // ── 0x06 Control Flow ──────────────────────────────
             0x0600 => {
@@ -875,7 +1234,9 @@ impl Instruction {
                 }
                 Ok(Instruction::Switch { r_tag, offsets })
             }
-            0x0604 => Ok(Instruction::Ret { r_src: r.read_u16::<LittleEndian>()? }),
+            0x0604 => Ok(Instruction::Ret {
+                r_src: r.read_u16::<LittleEndian>()?,
+            }),
             0x0605 => Ok(Instruction::RetVoid),
 
             // ── 0x07 Calls & Delegates ─────────────────────────
@@ -884,7 +1245,12 @@ impl Instruction {
                 let method_idx = r.read_u32::<LittleEndian>()?;
                 let r_base = r.read_u16::<LittleEndian>()?;
                 let argc = r.read_u16::<LittleEndian>()?;
-                Ok(Instruction::Call { r_dst, method_idx, r_base, argc })
+                Ok(Instruction::Call {
+                    r_dst,
+                    method_idx,
+                    r_base,
+                    argc,
+                })
             }
             0x0701 => {
                 let r_dst = r.read_u16::<LittleEndian>()?;
@@ -893,64 +1259,117 @@ impl Instruction {
                 let slot = r.read_u16::<LittleEndian>()?;
                 let r_base = r.read_u16::<LittleEndian>()?;
                 let argc = r.read_u16::<LittleEndian>()?;
-                Ok(Instruction::CallVirt { r_dst, r_obj, contract_idx, slot, r_base, argc })
+                Ok(Instruction::CallVirt {
+                    r_dst,
+                    r_obj,
+                    contract_idx,
+                    slot,
+                    r_base,
+                    argc,
+                })
             }
             0x0702 => {
                 let r_dst = r.read_u16::<LittleEndian>()?;
                 let extern_idx = r.read_u32::<LittleEndian>()?;
                 let r_base = r.read_u16::<LittleEndian>()?;
                 let argc = r.read_u16::<LittleEndian>()?;
-                Ok(Instruction::CallExtern { r_dst, extern_idx, r_base, argc })
+                Ok(Instruction::CallExtern {
+                    r_dst,
+                    extern_idx,
+                    r_base,
+                    argc,
+                })
             }
             0x0703 => {
                 let r_dst = r.read_u16::<LittleEndian>()?;
                 let method_idx = r.read_u32::<LittleEndian>()?;
                 let r_target = r.read_u16::<LittleEndian>()?;
-                Ok(Instruction::NewDelegate { r_dst, method_idx, r_target })
+                Ok(Instruction::NewDelegate {
+                    r_dst,
+                    method_idx,
+                    r_target,
+                })
             }
             0x0704 => {
                 let r_dst = r.read_u16::<LittleEndian>()?;
                 let r_delegate = r.read_u16::<LittleEndian>()?;
                 let r_base = r.read_u16::<LittleEndian>()?;
                 let argc = r.read_u16::<LittleEndian>()?;
-                Ok(Instruction::CallIndirect { r_dst, r_delegate, r_base, argc })
+                Ok(Instruction::CallIndirect {
+                    r_dst,
+                    r_delegate,
+                    r_base,
+                    argc,
+                })
             }
             0x0705 => {
                 let method_idx = r.read_u32::<LittleEndian>()?;
                 let r_base = r.read_u16::<LittleEndian>()?;
                 let argc = r.read_u16::<LittleEndian>()?;
-                Ok(Instruction::TailCall { method_idx, r_base, argc })
+                Ok(Instruction::TailCall {
+                    method_idx,
+                    r_base,
+                    argc,
+                })
             }
 
             // ── 0x08 Object Model ──────────────────────────────
             0x0800 => {
                 let r_dst = r.read_u16::<LittleEndian>()?;
                 let type_idx = r.read_u32::<LittleEndian>()?;
-                Ok(Instruction::New { r_dst, type_idx })
+                let field_count = r.read_u16::<LittleEndian>()?;
+                let r_base = r.read_u16::<LittleEndian>()?;
+                Ok(Instruction::New {
+                    r_dst,
+                    type_idx,
+                    field_count,
+                    r_base,
+                })
             }
             0x0801 => {
                 let r_dst = r.read_u16::<LittleEndian>()?;
                 let r_obj = r.read_u16::<LittleEndian>()?;
-                let field_idx = r.read_u32::<LittleEndian>()?;
-                Ok(Instruction::GetField { r_dst, r_obj, field_idx })
+                let field_token = r.read_u32::<LittleEndian>()?;
+                Ok(Instruction::GetField {
+                    r_dst,
+                    r_obj,
+                    field_token,
+                })
             }
             0x0802 => {
                 let r_obj = r.read_u16::<LittleEndian>()?;
-                let field_idx = r.read_u32::<LittleEndian>()?;
+                let field_token = r.read_u32::<LittleEndian>()?;
                 let r_val = r.read_u16::<LittleEndian>()?;
-                Ok(Instruction::SetField { r_obj, field_idx, r_val })
+                Ok(Instruction::SetField {
+                    r_obj,
+                    field_token,
+                    r_val,
+                })
             }
             0x0803 => {
                 let r_dst = r.read_u16::<LittleEndian>()?;
                 let type_idx = r.read_u32::<LittleEndian>()?;
-                Ok(Instruction::SpawnEntity { r_dst, type_idx })
+                let field_count = r.read_u16::<LittleEndian>()?;
+                let r_base = r.read_u16::<LittleEndian>()?;
+                Ok(Instruction::SpawnEntity {
+                    r_dst,
+                    type_idx,
+                    field_count,
+                    r_base,
+                })
             }
-            0x0804 => Ok(Instruction::InitEntity { r_entity: r.read_u16::<LittleEndian>()? }),
+            0x0804 => Ok(Instruction::InitEntity {
+                r_entity: r.read_u16::<LittleEndian>()?,
+            }),
             0x0805 => {
                 let r_dst = r.read_u16::<LittleEndian>()?;
                 let r_entity = r.read_u16::<LittleEndian>()?;
                 let comp_type_idx = r.read_u32::<LittleEndian>()?;
-                Ok(Instruction::GetComponent { r_dst, r_entity, comp_type_idx })
+                Ok(Instruction::GetComponent {
+                    r_dst,
+                    r_entity,
+                    comp_type_idx,
+                })
             }
             0x0806 => {
                 let r_dst = r.read_u16::<LittleEndian>()?;
@@ -962,53 +1381,97 @@ impl Instruction {
                 let type_idx = r.read_u32::<LittleEndian>()?;
                 Ok(Instruction::FindAll { r_dst, type_idx })
             }
-            0x0808 => Ok(Instruction::DestroyEntity { r_entity: r.read_u16::<LittleEndian>()? }),
-            0x0809 => read_rr(r).map(|(d, e)| Instruction::EntityIsAlive { r_dst: d, r_entity: e }),
+            0x0808 => Ok(Instruction::DestroyEntity {
+                r_entity: r.read_u16::<LittleEndian>()?,
+            }),
+            0x0809 => read_rr(r).map(|(d, e)| Instruction::EntityIsAlive {
+                r_dst: d,
+                r_entity: e,
+            }),
 
             // ── 0x09 Arrays ────────────────────────────────────
             0x0900 => {
                 let r_dst = r.read_u16::<LittleEndian>()?;
-                let elem_type = r.read_u32::<LittleEndian>()?;
-                Ok(Instruction::NewArray { r_dst, elem_type })
+                let default_kind = r.read_u32::<LittleEndian>()?;
+                Ok(Instruction::NewArray {
+                    r_dst,
+                    default_kind,
+                })
             }
             0x0901 => {
                 let r_dst = r.read_u16::<LittleEndian>()?;
-                let elem_type = r.read_u32::<LittleEndian>()?;
+                let default_kind = r.read_u32::<LittleEndian>()?;
                 let count = r.read_u16::<LittleEndian>()?;
                 let r_base = r.read_u16::<LittleEndian>()?;
-                Ok(Instruction::ArrayInit { r_dst, elem_type, count, r_base })
+                Ok(Instruction::ArrayInit {
+                    r_dst,
+                    default_kind,
+                    count,
+                    r_base,
+                })
             }
-            0x0902 => read_rrr(r).map(|(d, a, i)| Instruction::ArrayLoad { r_dst: d, r_arr: a, r_idx: i }),
-            0x0903 => read_rrr(r).map(|(a, i, v)| Instruction::ArrayStore { r_arr: a, r_idx: i, r_val: v }),
+            0x0902 => read_rrr(r).map(|(d, a, i)| Instruction::ArrayLoad {
+                r_dst: d,
+                r_arr: a,
+                r_idx: i,
+            }),
+            0x0903 => read_rrr(r).map(|(a, i, v)| Instruction::ArrayStore {
+                r_arr: a,
+                r_idx: i,
+                r_val: v,
+            }),
             0x0904 => read_rr(r).map(|(d, a)| Instruction::ArrayLen { r_dst: d, r_arr: a }),
-            0x0905 => read_rr(r).map(|(a, n)| Instruction::ArrayResize { r_arr: a, r_new_len: n }),
+            0x0905 => read_rr(r).map(|(a, n)| Instruction::ArrayResize {
+                r_arr: a,
+                r_new_len: n,
+            }),
             0x0906 => {
                 let r_dst_arr = r.read_u16::<LittleEndian>()?;
                 let r_dst_idx = r.read_u16::<LittleEndian>()?;
                 let r_src_arr = r.read_u16::<LittleEndian>()?;
                 let r_src_idx = r.read_u16::<LittleEndian>()?;
                 let r_len = r.read_u16::<LittleEndian>()?;
-                Ok(Instruction::ArrayCopy { r_dst_arr, r_dst_idx, r_src_arr, r_src_idx, r_len })
+                Ok(Instruction::ArrayCopy {
+                    r_dst_arr,
+                    r_dst_idx,
+                    r_src_arr,
+                    r_src_idx,
+                    r_len,
+                })
             }
             0x0907 => {
                 let r_dst = r.read_u16::<LittleEndian>()?;
                 let r_arr = r.read_u16::<LittleEndian>()?;
                 let r_start = r.read_u16::<LittleEndian>()?;
                 let r_end = r.read_u16::<LittleEndian>()?;
-                Ok(Instruction::ArraySlice { r_dst, r_arr, r_start, r_end })
+                Ok(Instruction::ArraySlice {
+                    r_dst,
+                    r_arr,
+                    r_start,
+                    r_end,
+                })
             }
             0x0908 => {
                 let r_dst = r.read_u16::<LittleEndian>()?;
-                let elem_type = r.read_u32::<LittleEndian>()?;
+                let default_kind = r.read_u32::<LittleEndian>()?;
                 let r_len = r.read_u16::<LittleEndian>()?;
-                Ok(Instruction::NewArraySized { r_dst, elem_type, r_len })
+                Ok(Instruction::NewArraySized {
+                    r_dst,
+                    default_kind,
+                    r_len,
+                })
             }
             0x0909 => {
                 let r_dst = r.read_u16::<LittleEndian>()?;
-                let elem_type = r.read_u32::<LittleEndian>()?;
+                let default_kind = r.read_u32::<LittleEndian>()?;
                 let r_len = r.read_u16::<LittleEndian>()?;
                 let r_fill = r.read_u16::<LittleEndian>()?;
-                Ok(Instruction::NewArrayFilled { r_dst, elem_type, r_len, r_fill })
+                Ok(Instruction::NewArrayFilled {
+                    r_dst,
+                    default_kind,
+                    r_len,
+                    r_fill,
+                })
             }
 
             // ── 0x0A Type Operations — Option ──────────────────
@@ -1020,10 +1483,22 @@ impl Instruction {
             // ── 0x0A Type Operations — Result ──────────────────
             0x0A10 => read_rr(r).map(|(d, v)| Instruction::WrapOk { r_dst: d, r_val: v }),
             0x0A11 => read_rr(r).map(|(d, e)| Instruction::WrapErr { r_dst: d, r_err: e }),
-            0x0A12 => read_rr(r).map(|(d, res)| Instruction::UnwrapOk { r_dst: d, r_result: res }),
-            0x0A13 => read_rr(r).map(|(d, res)| Instruction::IsOk { r_dst: d, r_result: res }),
-            0x0A14 => read_rr(r).map(|(d, res)| Instruction::IsErr { r_dst: d, r_result: res }),
-            0x0A15 => read_rr(r).map(|(d, res)| Instruction::ExtractErr { r_dst: d, r_result: res }),
+            0x0A12 => read_rr(r).map(|(d, res)| Instruction::UnwrapOk {
+                r_dst: d,
+                r_result: res,
+            }),
+            0x0A13 => read_rr(r).map(|(d, res)| Instruction::IsOk {
+                r_dst: d,
+                r_result: res,
+            }),
+            0x0A14 => read_rr(r).map(|(d, res)| Instruction::IsErr {
+                r_dst: d,
+                r_result: res,
+            }),
+            0x0A15 => read_rr(r).map(|(d, res)| Instruction::ExtractErr {
+                r_dst: d,
+                r_result: res,
+            }),
 
             // ── 0x0A Type Operations — Enum ────────────────────
             0x0A20 => {
@@ -1032,14 +1507,27 @@ impl Instruction {
                 let tag = r.read_u16::<LittleEndian>()?;
                 let field_count = r.read_u16::<LittleEndian>()?;
                 let r_base = r.read_u16::<LittleEndian>()?;
-                Ok(Instruction::NewEnum { r_dst, type_idx, tag, field_count, r_base })
+                Ok(Instruction::NewEnum {
+                    r_dst,
+                    type_idx,
+                    tag,
+                    field_count,
+                    r_base,
+                })
             }
-            0x0A21 => read_rr(r).map(|(d, e)| Instruction::GetTag { r_dst: d, r_enum: e }),
+            0x0A21 => read_rr(r).map(|(d, e)| Instruction::GetTag {
+                r_dst: d,
+                r_enum: e,
+            }),
             0x0A22 => {
                 let r_dst = r.read_u16::<LittleEndian>()?;
                 let r_enum = r.read_u16::<LittleEndian>()?;
                 let field_idx = r.read_u16::<LittleEndian>()?;
-                Ok(Instruction::ExtractField { r_dst, r_enum, field_idx })
+                Ok(Instruction::ExtractField {
+                    r_dst,
+                    r_enum,
+                    field_idx,
+                })
             }
 
             // ── 0x0A Type Operations — Reflection ─────────────────
@@ -1055,17 +1543,20 @@ impl Instruction {
                 let method_idx = r.read_u32::<LittleEndian>()?;
                 let r_base = r.read_u16::<LittleEndian>()?;
                 let argc = r.read_u16::<LittleEndian>()?;
-                Ok(Instruction::SpawnTask { r_dst, method_idx, r_base, argc })
+                Ok(Instruction::SpawnTask {
+                    r_dst,
+                    method_idx,
+                    r_base,
+                    argc,
+                })
             }
-            0x0B01 => {
-                let r_dst = r.read_u16::<LittleEndian>()?;
-                let method_idx = r.read_u32::<LittleEndian>()?;
-                let r_base = r.read_u16::<LittleEndian>()?;
-                let argc = r.read_u16::<LittleEndian>()?;
-                Ok(Instruction::SpawnDetached { r_dst, method_idx, r_base, argc })
-            }
-            0x0B02 => read_rr(r).map(|(d, t)| Instruction::Join { r_dst: d, r_task: t }),
-            0x0B03 => Ok(Instruction::Cancel { r_task: r.read_u16::<LittleEndian>()? }),
+            0x0B02 => read_rr(r).map(|(d, t)| Instruction::Join {
+                r_dst: d,
+                r_task: t,
+            }),
+            0x0B03 => Ok(Instruction::Cancel {
+                r_task: r.read_u16::<LittleEndian>()?,
+            }),
             0x0B04 => {
                 let r_dst = r.read_u16::<LittleEndian>()?;
                 let method_idx = r.read_u32::<LittleEndian>()?;
@@ -1098,39 +1589,75 @@ impl Instruction {
                 let r_dst = r.read_u16::<LittleEndian>()?;
                 let r_src = r.read_u16::<LittleEndian>()?;
                 let target_type = r.read_u32::<LittleEndian>()?;
-                Ok(Instruction::Convert { r_dst, r_src, target_type })
+                Ok(Instruction::Convert {
+                    r_dst,
+                    r_src,
+                    target_type,
+                })
             }
             0x0D06 => read_rr(r).map(|(d, s)| Instruction::S2i { r_dst: d, r_src: s }),
             0x0D07 => read_rr(r).map(|(d, s)| Instruction::S2f { r_dst: d, r_src: s }),
             0x0D08 => read_rr(r).map(|(d, s)| Instruction::S2b { r_dst: d, r_src: s }),
 
             // ── 0x0E Strings ───────────────────────────────────
-            0x0E00 => read_rrr(r).map(|(d, a, b)| Instruction::StrConcat { r_dst: d, r_a: a, r_b: b }),
+            0x0E00 => read_rrr(r).map(|(d, a, b)| Instruction::StrConcat {
+                r_dst: d,
+                r_a: a,
+                r_b: b,
+            }),
             0x0E01 => {
                 let r_dst = r.read_u16::<LittleEndian>()?;
                 let count = r.read_u16::<LittleEndian>()?;
                 let r_base = r.read_u16::<LittleEndian>()?;
-                Ok(Instruction::StrBuild { r_dst, count, r_base })
+                Ok(Instruction::StrBuild {
+                    r_dst,
+                    count,
+                    r_base,
+                })
             }
             0x0E02 => read_rr(r).map(|(d, s)| Instruction::StrLen { r_dst: d, r_str: s }),
             0x0E03 => read_rr(r).map(|(d, s)| Instruction::StrTrim { r_dst: d, r_src: s }),
             0x0E04 => read_rr(r).map(|(d, s)| Instruction::StrToUpper { r_dst: d, r_src: s }),
             0x0E05 => read_rr(r).map(|(d, s)| Instruction::StrToLower { r_dst: d, r_src: s }),
-            0x0E06 => read_rrr(r).map(|(d, s, p)| Instruction::StrStartsWith { r_dst: d, r_str: s, r_prefix: p }),
-            0x0E07 => read_rrr(r).map(|(d, s, sf)| Instruction::StrEndsWith { r_dst: d, r_str: s, r_suffix: sf }),
-            0x0E08 => read_rrr(r).map(|(d, s, sub)| Instruction::StrContains { r_dst: d, r_str: s, r_sub: sub }),
-            0x0E09 => read_rrr(r).map(|(d, s, sep)| Instruction::StrSplit { r_dst: d, r_str: s, r_sep: sep }),
+            0x0E06 => read_rrr(r).map(|(d, s, p)| Instruction::StrStartsWith {
+                r_dst: d,
+                r_str: s,
+                r_prefix: p,
+            }),
+            0x0E07 => read_rrr(r).map(|(d, s, sf)| Instruction::StrEndsWith {
+                r_dst: d,
+                r_str: s,
+                r_suffix: sf,
+            }),
+            0x0E08 => read_rrr(r).map(|(d, s, sub)| Instruction::StrContains {
+                r_dst: d,
+                r_str: s,
+                r_sub: sub,
+            }),
+            0x0E09 => read_rrr(r).map(|(d, s, sep)| Instruction::StrSplit {
+                r_dst: d,
+                r_str: s,
+                r_sep: sep,
+            }),
             0x0E0A => {
                 let r_dst = r.read_u16::<LittleEndian>()?;
                 let r_str = r.read_u16::<LittleEndian>()?;
                 let r_from = r.read_u16::<LittleEndian>()?;
                 let r_to = r.read_u16::<LittleEndian>()?;
-                Ok(Instruction::StrReplace { r_dst, r_str, r_from, r_to })
+                Ok(Instruction::StrReplace {
+                    r_dst,
+                    r_str,
+                    r_from,
+                    r_to,
+                })
             }
 
             // ── 0x0F Boxing ────────────────────────────────────
             0x0F00 => read_rr(r).map(|(d, v)| Instruction::Box { r_dst: d, r_val: v }),
-            0x0F01 => read_rr(r).map(|(d, b)| Instruction::Unbox { r_dst: d, r_boxed: b }),
+            0x0F01 => read_rr(r).map(|(d, b)| Instruction::Unbox {
+                r_dst: d,
+                r_boxed: b,
+            }),
 
             _ => Err(DecodeError::InvalidOpcode(opcode)),
         }
@@ -1141,9 +1668,16 @@ impl Instruction {
 impl PartialEq for Instruction {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Instruction::LoadFloat { r_dst: d1, value: v1 }, Instruction::LoadFloat { r_dst: d2, value: v2 }) => {
-                d1 == d2 && v1.to_bits() == v2.to_bits()
-            }
+            (
+                Instruction::LoadFloat {
+                    r_dst: d1,
+                    value: v1,
+                },
+                Instruction::LoadFloat {
+                    r_dst: d2,
+                    value: v2,
+                },
+            ) => d1 == d2 && v1.to_bits() == v2.to_bits(),
             // For all other variants, use structural comparison
             _ => {
                 // Encode both and compare bytes (reliable for all variants)

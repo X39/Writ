@@ -12,13 +12,11 @@ pub fn cmd_assemble(input: String, output: Option<String>) -> Result<(), String>
         std::io::stdin()
             .read_to_end(&mut bytes)
             .map_err(|e| format!("failed to read stdin: {e}"))?;
-        strip_bom_and_decode(&bytes)
-            .map_err(|e| format!("failed to decode stdin: {e}"))?
+        strip_bom_and_decode(&bytes).map_err(|e| format!("failed to decode stdin: {e}"))?
     } else {
-        let bytes = std::fs::read(&input)
-            .map_err(|e| format!("failed to read '{}': {}", input, e))?;
-        strip_bom_and_decode(&bytes)
-            .map_err(|e| format!("failed to decode '{}': {}", input, e))?
+        let bytes =
+            std::fs::read(&input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
+        strip_bom_and_decode(&bytes).map_err(|e| format!("failed to decode '{}': {}", input, e))?
     };
 
     // Assemble
@@ -41,7 +39,9 @@ pub fn cmd_assemble(input: String, output: Option<String>) -> Result<(), String>
     });
 
     // Serialize
-    let bytes = module.to_bytes().map_err(|e| format!("serialization error: {e:?}"))?;
+    let bytes = module
+        .to_bytes()
+        .map_err(|e| format!("serialization error: {e:?}"))?;
 
     // Write output
     std::fs::write(&out_path, &bytes)

@@ -26,13 +26,14 @@ pub(super) fn try_collect_str_build_parts<'a>(
 ) -> Option<Vec<&'a TypedExpr>> {
     if let TypedExpr::Binary { op, ty, .. } = expr
         && *op == BinaryOp::Add
-            && matches!(interner.kind(*ty), TyKind::String) {
-                let mut parts = Vec::new();
-                collect_string_chain(expr, interner, &mut parts);
-                if parts.len() >= 3 {
-                    return Some(parts);
-                }
-            }
+        && matches!(interner.kind(*ty), TyKind::String)
+    {
+        let mut parts = Vec::new();
+        collect_string_chain(expr, interner, &mut parts);
+        if parts.len() >= 3 {
+            return Some(parts);
+        }
+    }
     None
 }
 
@@ -43,9 +44,13 @@ fn collect_string_chain<'a>(
     parts: &mut Vec<&'a TypedExpr>,
 ) {
     match expr {
-        TypedExpr::Binary { left, op, right, ty, .. }
-            if *op == BinaryOp::Add && matches!(interner.kind(*ty), TyKind::String) =>
-        {
+        TypedExpr::Binary {
+            left,
+            op,
+            right,
+            ty,
+            ..
+        } if *op == BinaryOp::Add && matches!(interner.kind(*ty), TyKind::String) => {
             // Recurse left (may be another string Add), push right leaf
             collect_string_chain(left, interner, parts);
             parts.push(right);
@@ -70,6 +75,10 @@ pub(super) fn emit_str_build(emitter: &mut BodyEmitter<'_>, ty: Ty, parts: &[&Ty
     let r_base = pack_args_consecutive(emitter, &part_regs);
 
     let r_dst = emitter.alloc_reg(ty);
-    emitter.emit(Instruction::StrBuild { r_dst, count, r_base });
+    emitter.emit(Instruction::StrBuild {
+        r_dst,
+        count,
+        r_base,
+    });
     r_dst
 }

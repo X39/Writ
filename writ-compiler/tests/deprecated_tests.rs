@@ -17,13 +17,21 @@ use writ_diagnostics::{Diagnostic, FileId, Severity};
 /// Returns (typed_ast, type_env, diagnostics).
 fn typecheck_src_with_env(
     src: &'static str,
-) -> (writ_compiler::check::ir::TypedAst, writ_compiler::check::env::TypeEnv, Vec<Diagnostic>) {
+) -> (
+    writ_compiler::check::ir::TypedAst,
+    writ_compiler::check::env::TypeEnv,
+    Vec<Diagnostic>,
+) {
     let (items, parse_errors) = writ_parser::parse(src);
     let items = items.expect("parse returned None");
     let error_msgs: Vec<String> = parse_errors.iter().map(|e| format!("{e:?}")).collect();
     assert!(error_msgs.is_empty(), "parse errors: {:?}", error_msgs);
     let (ast, lower_errors) = lower(items);
-    assert!(lower_errors.is_empty(), "lowering errors: {:?}", lower_errors);
+    assert!(
+        lower_errors.is_empty(),
+        "lowering errors: {:?}",
+        lower_errors
+    );
 
     let file_id = FileId(0);
     let asts: Vec<(FileId, &Ast)> = vec![(file_id, &ast)];
@@ -48,7 +56,11 @@ fn typecheck_src_with_env(
 /// Returns (typed_ast, type_env, diagnostics).
 fn typecheck_multi(
     files: &[(&str, &'static str)],
-) -> (writ_compiler::check::ir::TypedAst, writ_compiler::check::env::TypeEnv, Vec<Diagnostic>) {
+) -> (
+    writ_compiler::check::ir::TypedAst,
+    writ_compiler::check::env::TypeEnv,
+    Vec<Diagnostic>,
+) {
     let mut asts_owned = Vec::new();
     for (_, src) in files.iter() {
         let (items, parse_errors) = writ_parser::parse(src);
@@ -56,7 +68,11 @@ fn typecheck_multi(
         let error_msgs: Vec<String> = parse_errors.iter().map(|e| format!("{e:?}")).collect();
         assert!(error_msgs.is_empty(), "parse errors: {:?}", error_msgs);
         let (ast, lower_errors) = lower(items);
-        assert!(lower_errors.is_empty(), "lowering errors: {:?}", lower_errors);
+        assert!(
+            lower_errors.is_empty(),
+            "lowering errors: {:?}",
+            lower_errors
+        );
         asts_owned.push(ast);
     }
 

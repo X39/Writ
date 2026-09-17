@@ -1,0 +1,10 @@
+extern fn host_add_one(value: int) -> int;
+extern fn host_wait(message: string) -> string;
+
+pub fn main() -> int {
+    let answer = host_add_one(40);
+    ::log::info("The synchronous host call completed.");
+    let name = host_wait("Who should Writ greet?");
+    ::log::info(name);
+    answer + 1
+}

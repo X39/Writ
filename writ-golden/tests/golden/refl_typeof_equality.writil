@@ -1,12 +1,12 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
     .type "Alpha" struct {
-        .field "a" int
+        .field "a" int readonly
     }
     .type "Beta" struct {
-        .field "b" int
+        .field "b" int readonly
     }
-    .impl Alpha : contract_167772179 {
+    .impl Alpha : contract_50331684 {
         .method "get_type" () -> Type pub {
             .reg r0 int
             .reg r1 int
@@ -14,31 +14,31 @@
             RET r1
         }
     }
-    .impl Beta : contract_167772179 {
+    .impl Beta : contract_50331684 {
         .method "get_type" () -> Type pub {
             .reg r0 int
             .reg r1 int
             TYPEOF r1, 33554434
             RET r1
         }
-        .method "main" () -> bool mut {
-            .locals {
-                r2: bool "same" [24, 52)
-                r5: bool "diff" [48, 52)
-            }
-            .reg r0 ?
-            .reg r1 ?
-            .reg r2 bool
-            .reg r3 ?
-            .reg r4 ?
-            .reg r5 bool
-            TYPEOF r0, 33554433  ; line:5 col:5
-            TYPEOF r1, 33554433
-            CMP_EQ_I r2, r0, r1
-            TYPEOF r3, 33554433  ; line:6 col:5
-            TYPEOF r4, 33554434
-            CMP_EQ_I r5, r3, r4
-            RET r2  ; line:7 col:5
+    }
+    .method "main" () -> bool static {
+        .locals {
+            r2: bool "same" [24, 52)
+            r5: bool "diff" [48, 52)
         }
+        .reg r0 writ::Type<Alpha>
+        .reg r1 writ::Type<Alpha>
+        .reg r2 bool
+        .reg r3 writ::Type<Alpha>
+        .reg r4 writ::Type<Beta>
+        .reg r5 bool
+        TYPEOF r0, 33554433  ; line:5 col:5
+        TYPEOF r1, 33554433
+        CMP_EQ_I r2, r0, r1
+        TYPEOF r3, 33554433  ; line:6 col:5
+        TYPEOF r4, 33554434
+        CMP_EQ_I r5, r3, r4
+        RET r2  ; line:7 col:5
     }
 }

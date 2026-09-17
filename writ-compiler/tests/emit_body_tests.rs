@@ -5,25 +5,25 @@
 //! Task 3 (Plan 02) tests: Call dispatch and argument packing
 //! Task 4 (Plan 02) tests: Object model — struct/entity construction, GET_FIELD, SET_FIELD
 
+use chumsky::span::{SimpleSpan, Span as _};
 use rustc_hash::FxHashMap;
 use std::sync::LazyLock;
-use writ_compiler::check::ty::{Ty, TyInterner, TyKind};
-use writ_compiler::check::ir::{
-    TypedAst, TypedDecl, TypedExpr, TypedStmt, TypedLiteral,
-};
-use writ_compiler::resolve::def_map::{DefEntry, DefId, DefKind, DefMap, DefVis};
-use writ_compiler::emit::body::reg_alloc::RegisterAllocator;
-use writ_compiler::emit::body::labels::LabelAllocator;
-use writ_compiler::emit::body::{has_error_nodes, BodyEmitter};
-use writ_compiler::emit::body::expr::emit_expr;
-use writ_compiler::emit::body::stmt::emit_stmt;
-use writ_compiler::emit::body::call::{CallKind, emit_call, emit_call_indirect, emit_box_if_needed};
-use writ_compiler::emit::module_builder::ModuleBuilder;
-use writ_compiler::emit::metadata::{MetadataToken, TableId, TypeDefKind};
 use writ_compiler::ast::expr::BinaryOp;
-use writ_module::instruction::Instruction;
-use chumsky::span::{SimpleSpan, Span as _};
+use writ_compiler::check::ir::{TypedAst, TypedDecl, TypedExpr, TypedLiteral, TypedStmt};
+use writ_compiler::check::ty::{Ty, TyInterner, TyKind};
+use writ_compiler::emit::body::call::{
+    CallKind, emit_box_if_needed, emit_call, emit_call_indirect,
+};
+use writ_compiler::emit::body::expr::emit_expr;
+use writ_compiler::emit::body::labels::LabelAllocator;
+use writ_compiler::emit::body::reg_alloc::RegisterAllocator;
+use writ_compiler::emit::body::stmt::emit_stmt;
+use writ_compiler::emit::body::{BodyEmitter, has_error_nodes};
+use writ_compiler::emit::metadata::{MetadataToken, TableId, TypeDefKind};
+use writ_compiler::emit::module_builder::ModuleBuilder;
+use writ_compiler::resolve::def_map::{DefEntry, DefId, DefKind, DefMap, DefVis};
 use writ_diagnostics::FileId;
+use writ_module::instruction::Instruction;
 
 /// Static empty struct_field_types map for tests that don't exercise struct equality.
 static EMPTY_STRUCT_FIELD_TYPES: LazyLock<FxHashMap<DefId, Vec<(String, Ty)>>> =
@@ -117,7 +117,12 @@ fn test_label_allocator_forward_branch() {
     la.apply_fixups(&mut code);
 
     let offset_bytes = &code[14..18];
-    let offset = i32::from_le_bytes([offset_bytes[0], offset_bytes[1], offset_bytes[2], offset_bytes[3]]);
+    let offset = i32::from_le_bytes([
+        offset_bytes[0],
+        offset_bytes[1],
+        offset_bytes[2],
+        offset_bytes[3],
+    ]);
     assert_eq!(offset, 90);
 }
 
@@ -136,7 +141,12 @@ fn test_label_allocator_backward_branch() {
     la.apply_fixups(&mut code);
 
     let offset_bytes = &code[104..108]; // 100 + 4
-    let offset = i32::from_le_bytes([offset_bytes[0], offset_bytes[1], offset_bytes[2], offset_bytes[3]]);
+    let offset = i32::from_le_bytes([
+        offset_bytes[0],
+        offset_bytes[1],
+        offset_bytes[2],
+        offset_bytes[3],
+    ]);
     assert_eq!(offset, -80);
 }
 
@@ -227,7 +237,12 @@ fn test_has_error_nodes_with_error_stmt() {
 // ─── Task 2: Core instruction emission ───────────────────────────────────────
 
 fn make_emitter<'a>(builder: &'a ModuleBuilder, interner: &'a TyInterner) -> BodyEmitter<'a> {
-    static EMPTY_MAP: std::sync::OnceLock<FxHashMap<writ_compiler::resolve::def_map::DefId, Vec<(String, writ_compiler::check::ty::Ty)>>> = std::sync::OnceLock::new();
+    static EMPTY_MAP: std::sync::OnceLock<
+        FxHashMap<
+            writ_compiler::resolve::def_map::DefId,
+            Vec<(String, writ_compiler::check::ty::Ty)>,
+        >,
+    > = std::sync::OnceLock::new();
     let map = EMPTY_MAP.get_or_init(FxHashMap::default);
     BodyEmitter::new(builder, interner, map)
 }
@@ -342,9 +357,22 @@ fn test_emit_binary_int_add() {
     emit_expr(&mut emitter, &expr);
 
     assert_eq!(emitter.instructions.len(), 3);
-    assert!(matches!(&emitter.instructions[0], Instruction::LoadInt { r_dst: 0, value: 1 }));
-    assert!(matches!(&emitter.instructions[1], Instruction::LoadInt { r_dst: 1, value: 2 }));
-    assert!(matches!(&emitter.instructions[2], Instruction::AddI { r_dst: 2, r_a: 0, r_b: 1 }));
+    assert!(matches!(
+        &emitter.instructions[0],
+        Instruction::LoadInt { r_dst: 0, value: 1 }
+    ));
+    assert!(matches!(
+        &emitter.instructions[1],
+        Instruction::LoadInt { r_dst: 1, value: 2 }
+    ));
+    assert!(matches!(
+        &emitter.instructions[2],
+        Instruction::AddI {
+            r_dst: 2,
+            r_a: 0,
+            r_b: 1
+        }
+    ));
 }
 
 #[test]
@@ -373,7 +401,108 @@ fn test_emit_binary_float_mul() {
     emit_expr(&mut emitter, &expr);
 
     assert_eq!(emitter.instructions.len(), 3);
-    assert!(matches!(&emitter.instructions[2], Instruction::MulF { r_dst: 2, r_a: 0, r_b: 1 }));
+    assert!(matches!(
+        &emitter.instructions[2],
+        Instruction::MulF {
+            r_dst: 2,
+            r_a: 0,
+            r_b: 1
+        }
+    ));
+}
+
+#[test]
+fn test_emit_generic_equality_uses_eq_contract_dispatch() {
+    let mut builder = ModuleBuilder::new();
+    let runtime_ref = builder.add_module_ref("writ-runtime", "1.0.0");
+    let eq_ref = builder.add_type_ref(runtime_ref, "Eq", "writ");
+    let expected_eq_token = MetadataToken::new(TableId::TypeRef, (eq_ref + 1) as u32).0;
+
+    let mut interner = make_interner();
+    let ty_generic = interner.intern(TyKind::GenericParam(0));
+    let ty_bool = interner.bool_ty();
+    let mut emitter = make_emitter(&builder, &interner);
+    let r_a = emitter.alloc_reg(ty_generic);
+    let r_b = emitter.alloc_reg(ty_generic);
+    emitter.locals.insert("a".to_string(), r_a);
+    emitter.locals.insert("b".to_string(), r_b);
+
+    let expr = TypedExpr::Binary {
+        ty: ty_bool,
+        span: dummy_span(),
+        left: Box::new(TypedExpr::Var {
+            ty: ty_generic,
+            span: dummy_span(),
+            name: "a".to_string(),
+        }),
+        op: BinaryOp::Eq,
+        right: Box::new(TypedExpr::Var {
+            ty: ty_generic,
+            span: dummy_span(),
+            name: "b".to_string(),
+        }),
+    };
+
+    let r_result = emit_expr(&mut emitter, &expr);
+
+    assert_eq!(emitter.instructions.len(), 1);
+    assert!(matches!(
+        emitter.instructions[0],
+        Instruction::CallVirt {
+            r_dst,
+            r_obj,
+            contract_idx,
+            slot: 0,
+            r_base,
+            argc: 2,
+        } if r_dst == r_result
+            && r_obj == r_a
+            && r_base == r_a
+            && contract_idx == expected_eq_token
+    ));
+}
+
+#[test]
+fn test_emit_generic_inequality_negates_eq_contract_result() {
+    let mut builder = ModuleBuilder::new();
+    let runtime_ref = builder.add_module_ref("writ-runtime", "1.0.0");
+    builder.add_type_ref(runtime_ref, "Eq", "writ");
+
+    let mut interner = make_interner();
+    let ty_generic = interner.intern(TyKind::GenericParam(0));
+    let ty_bool = interner.bool_ty();
+    let mut emitter = make_emitter(&builder, &interner);
+    let r_a = emitter.alloc_reg(ty_generic);
+    let r_b = emitter.alloc_reg(ty_generic);
+    emitter.locals.insert("a".to_string(), r_a);
+    emitter.locals.insert("b".to_string(), r_b);
+
+    let expr = TypedExpr::Binary {
+        ty: ty_bool,
+        span: dummy_span(),
+        left: Box::new(TypedExpr::Var {
+            ty: ty_generic,
+            span: dummy_span(),
+            name: "a".to_string(),
+        }),
+        op: BinaryOp::NotEq,
+        right: Box::new(TypedExpr::Var {
+            ty: ty_generic,
+            span: dummy_span(),
+            name: "b".to_string(),
+        }),
+    };
+
+    let r_result = emit_expr(&mut emitter, &expr);
+
+    assert!(matches!(
+        emitter.instructions[0],
+        Instruction::CallVirt { argc: 2, .. }
+    ));
+    assert!(matches!(
+        emitter.instructions[1],
+        Instruction::Not { r_dst, r_src } if r_dst == r_result && r_src + 1 == r_dst
+    ));
 }
 
 #[test]
@@ -418,25 +547,57 @@ fn test_emit_if_else() {
     let r_result = emit_expr(&mut emitter, &expr);
 
     // Verify the instruction shape: condition, brfalse, then, mov, br, else, mov
-    assert!(emitter.instructions.len() >= 7,
+    assert!(
+        emitter.instructions.len() >= 7,
         "expected at least 7 instructions, got {}: {:?}",
-        emitter.instructions.len(), emitter.instructions);
-    assert!(matches!(&emitter.instructions[0], Instruction::LoadTrue { .. }),
-        "[0] expected LoadTrue, got {:?}", emitter.instructions[0]);
-    assert!(matches!(&emitter.instructions[1], Instruction::BrFalse { .. }),
-        "[1] expected BrFalse, got {:?}", emitter.instructions[1]);
-    assert!(matches!(&emitter.instructions[2], Instruction::LoadInt { value: 1, .. }),
-        "[2] expected LoadInt(1), got {:?}", emitter.instructions[2]);
+        emitter.instructions.len(),
+        emitter.instructions
+    );
+    assert!(
+        matches!(&emitter.instructions[0], Instruction::LoadTrue { .. }),
+        "[0] expected LoadTrue, got {:?}",
+        emitter.instructions[0]
+    );
+    assert!(
+        matches!(&emitter.instructions[1], Instruction::BrFalse { .. }),
+        "[1] expected BrFalse, got {:?}",
+        emitter.instructions[1]
+    );
+    assert!(
+        matches!(
+            &emitter.instructions[2],
+            Instruction::LoadInt { value: 1, .. }
+        ),
+        "[2] expected LoadInt(1), got {:?}",
+        emitter.instructions[2]
+    );
     // [3] = Mov(r_result, r_then) — the shared result write for then branch
-    assert!(matches!(&emitter.instructions[3], Instruction::Mov { r_dst, .. } if *r_dst == r_result),
-        "[3] expected Mov into r_result={}, got {:?}", r_result, emitter.instructions[3]);
-    assert!(matches!(&emitter.instructions[4], Instruction::Br { .. }),
-        "[4] expected Br, got {:?}", emitter.instructions[4]);
-    assert!(matches!(&emitter.instructions[5], Instruction::LoadInt { value: 2, .. }),
-        "[5] expected LoadInt(2), got {:?}", emitter.instructions[5]);
+    assert!(
+        matches!(&emitter.instructions[3], Instruction::Mov { r_dst, .. } if *r_dst == r_result),
+        "[3] expected Mov into r_result={}, got {:?}",
+        r_result,
+        emitter.instructions[3]
+    );
+    assert!(
+        matches!(&emitter.instructions[4], Instruction::Br { .. }),
+        "[4] expected Br, got {:?}",
+        emitter.instructions[4]
+    );
+    assert!(
+        matches!(
+            &emitter.instructions[5],
+            Instruction::LoadInt { value: 2, .. }
+        ),
+        "[5] expected LoadInt(2), got {:?}",
+        emitter.instructions[5]
+    );
     // [6] = Mov(r_result, r_else) — the shared result write for else branch
-    assert!(matches!(&emitter.instructions[6], Instruction::Mov { r_dst, .. } if *r_dst == r_result),
-        "[6] expected Mov into r_result={}, got {:?}", r_result, emitter.instructions[6]);
+    assert!(
+        matches!(&emitter.instructions[6], Instruction::Mov { r_dst, .. } if *r_dst == r_result),
+        "[6] expected Mov into r_result={}, got {:?}",
+        r_result,
+        emitter.instructions[6]
+    );
 }
 
 #[test]
@@ -488,9 +649,18 @@ fn test_emit_stmt_while_loop() {
     emit_stmt(&mut emitter, &stmt);
 
     assert!(emitter.instructions.len() >= 3);
-    assert!(matches!(&emitter.instructions[0], Instruction::LoadFalse { .. }));
-    assert!(matches!(&emitter.instructions[1], Instruction::BrFalse { .. }));
-    assert!(matches!(emitter.instructions.last().unwrap(), Instruction::Br { .. }));
+    assert!(matches!(
+        &emitter.instructions[0],
+        Instruction::LoadFalse { .. }
+    ));
+    assert!(matches!(
+        &emitter.instructions[1],
+        Instruction::BrFalse { .. }
+    ));
+    assert!(matches!(
+        emitter.instructions.last().unwrap(),
+        Instruction::Br { .. }
+    ));
 }
 
 #[test]
@@ -527,7 +697,10 @@ fn test_emit_stmt_return_value() {
     emit_stmt(&mut emitter, &stmt);
 
     assert_eq!(emitter.instructions.len(), 2);
-    assert!(matches!(&emitter.instructions[0], Instruction::LoadInt { value: 42, .. }));
+    assert!(matches!(
+        &emitter.instructions[0],
+        Instruction::LoadInt { value: 42, .. }
+    ));
     assert!(matches!(&emitter.instructions[1], Instruction::Ret { .. }));
 }
 
@@ -551,13 +724,23 @@ fn make_builder_with_extern(extern_def_id: DefId) -> ModuleBuilder {
 }
 
 /// Helper: build a ModuleBuilder with one TypeDef (struct) and method.
-fn make_builder_with_struct_method(
-    struct_def_id: DefId,
-    method_def_id: DefId,
-) -> ModuleBuilder {
+fn make_builder_with_struct_method(struct_def_id: DefId, method_def_id: DefId) -> ModuleBuilder {
     let mut builder = ModuleBuilder::new();
-    let type_handle = builder.add_typedef("TestStruct", "", TypeDefKind::Struct, 0, Some(struct_def_id));
-    builder.add_methoddef(Some(type_handle), "test_method", 0, 0, Some(method_def_id), 0);
+    let type_handle = builder.add_typedef(
+        "TestStruct",
+        "",
+        TypeDefKind::Struct,
+        0,
+        Some(struct_def_id),
+    );
+    builder.add_methoddef(
+        Some(type_handle),
+        "test_method",
+        0,
+        0,
+        Some(method_def_id),
+        0,
+    );
     builder.finalize();
     builder
 }
@@ -575,7 +758,10 @@ fn test_call_direct_free_function() {
     let builder = make_builder_with_fn(fn_def_id);
 
     // Verify token is in map
-    assert!(builder.token_for_def(fn_def_id).is_some(), "fn DefId should have token after finalize");
+    assert!(
+        builder.token_for_def(fn_def_id).is_some(),
+        "fn DefId should have token after finalize"
+    );
 
     let mut emitter = make_emitter(&builder, &interner);
 
@@ -590,20 +776,31 @@ fn test_call_direct_free_function() {
             span: dummy_span(),
             name: "test_fn".to_string(),
         }),
-        args: vec![
-            TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(42) },
-        ],
+        args: vec![TypedExpr::Literal {
+            ty: ty_int,
+            span: dummy_span(),
+            value: TypedLiteral::Int(42),
+        }],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let r_dst = emit_call(&mut emitter, &call_expr, fn_def_id, CallKind::Direct);
     // Should emit: LoadInt(42), then Call { r_dst, method_idx, r_base, argc:1 }
     let instrs = &emitter.instructions;
-    assert!(instrs.len() >= 2, "expected at least 2 instructions, got {}", instrs.len());
+    assert!(
+        instrs.len() >= 2,
+        "expected at least 2 instructions, got {}",
+        instrs.len()
+    );
     assert!(matches!(&instrs[0], Instruction::LoadInt { value: 42, .. }));
     // Last instruction should be a Call
     let last = instrs.last().unwrap();
-    assert!(matches!(last, Instruction::Call { .. }), "expected Call, got {:?}", last);
+    assert!(
+        matches!(last, Instruction::Call { .. }),
+        "expected Call, got {:?}",
+        last
+    );
 }
 
 #[test]
@@ -625,11 +822,16 @@ fn test_call_extern() {
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_call(&mut emitter, &call_expr, extern_def_id, CallKind::Extern);
     let last = emitter.instructions.last().unwrap();
-    assert!(matches!(last, Instruction::CallExtern { .. }), "expected CallExtern, got {:?}", last);
+    assert!(
+        matches!(last, Instruction::CallExtern { .. }),
+        "expected CallExtern, got {:?}",
+        last
+    );
 }
 
 #[test]
@@ -653,15 +855,22 @@ fn test_call_indirect_delegate() {
             span: dummy_span(),
             name: "fn_var".to_string(),
         }),
-        args: vec![
-            TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(10) },
-        ],
+        args: vec![TypedExpr::Literal {
+            ty: ty_int,
+            span: dummy_span(),
+            value: TypedLiteral::Int(10),
+        }],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_call_indirect(&mut emitter, &call_expr, 0);
     let last = emitter.instructions.last().unwrap();
-    assert!(matches!(last, Instruction::CallIndirect { .. }), "expected CallIndirect, got {:?}", last);
+    assert!(
+        matches!(last, Instruction::CallIndirect { .. }),
+        "expected CallIndirect, got {:?}",
+        last
+    );
 }
 
 #[test]
@@ -682,17 +891,34 @@ fn test_call_argument_packing_consecutive() {
             name: "test_fn".to_string(),
         }),
         args: vec![
-            TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(1) },
-            TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(2) },
-            TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(3) },
+            TypedExpr::Literal {
+                ty: ty_int,
+                span: dummy_span(),
+                value: TypedLiteral::Int(1),
+            },
+            TypedExpr::Literal {
+                ty: ty_int,
+                span: dummy_span(),
+                value: TypedLiteral::Int(2),
+            },
+            TypedExpr::Literal {
+                ty: ty_int,
+                span: dummy_span(),
+                value: TypedLiteral::Int(3),
+            },
         ],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_call(&mut emitter, &call_expr, fn_def_id, CallKind::Direct);
 
     // Find the Call instruction and check argc=3
-    let call_instr = emitter.instructions.iter().rev().find(|i| matches!(i, Instruction::Call { .. }));
+    let call_instr = emitter
+        .instructions
+        .iter()
+        .rev()
+        .find(|i| matches!(i, Instruction::Call { .. }));
     assert!(call_instr.is_some(), "should have emitted Call");
     if let Some(Instruction::Call { argc, .. }) = call_instr {
         assert_eq!(*argc, 3, "argc should be 3");
@@ -711,11 +937,20 @@ fn test_call_boxing_value_type_to_generic_param() {
 
     // An int literal arg going to a generic param should be boxed
     let r_val = emitter.alloc_reg(ty_int);
-    emitter.emit(Instruction::LoadInt { r_dst: r_val, value: 99 });
+    emitter.emit(Instruction::LoadInt {
+        r_dst: r_val,
+        value: 99,
+    });
     let r_result = emit_box_if_needed(&mut emitter, r_val, ty_int, ty_generic);
     // result register should have a Box instruction
-    let has_box = emitter.instructions.iter().any(|i| matches!(i, Instruction::Box { .. }));
-    assert!(has_box, "expected Box instruction when passing int to generic param");
+    let has_box = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Box { .. }));
+    assert!(
+        has_box,
+        "expected Box instruction when passing int to generic param"
+    );
     assert_ne!(r_result, r_val, "boxed reg should differ from original");
 }
 
@@ -751,26 +986,102 @@ fn test_call_virt_specialized_to_call_for_concrete_receiver() {
         callee: Box::new(TypedExpr::Field {
             ty: ty_int,
             span: dummy_span(),
-            receiver: Box::new(TypedExpr::SelfRef { ty: ty_struct, span: dummy_span() }),
+            receiver: Box::new(TypedExpr::SelfRef {
+                ty: ty_struct,
+                span: dummy_span(),
+            }),
             field: "test_method".to_string(),
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
     // Concrete receiver -> Direct call (EMIT-27 specialization)
     emit_call(&mut emitter, &call_expr, method_def_id, CallKind::Direct);
     let last = emitter.instructions.last().unwrap();
-    assert!(matches!(last, Instruction::Call { .. }),
-        "concrete struct receiver should use CALL not CALL_VIRT, got {:?}", last);
+    assert!(
+        matches!(last, Instruction::Call { .. }),
+        "concrete struct receiver should use CALL not CALL_VIRT, got {:?}",
+        last
+    );
 }
 
 // ─── Task 2: Object model ─────────────────────────────────────────────────────
 
+#[test]
+fn test_emit_expr_known_direct_instance_call_includes_self() {
+    let mut interner = make_interner();
+    let ty_int = interner.int();
+    let (mut def_map, struct_def_id) = make_def_id();
+    let method_def_id = def_map.arena.alloc(DefEntry {
+        id: None,
+        kind: DefKind::Fn,
+        vis: DefVis::Pub,
+        file_id: FileId(0),
+        namespace: String::new(),
+        name: "test_method".to_string(),
+        name_span: dummy_span(),
+        generics: vec![],
+        span: dummy_span(),
+    });
+    let ty_struct = interner.intern(TyKind::Struct(struct_def_id));
+    let callee_ty = interner.intern(TyKind::Func {
+        params: vec![ty_int],
+        ret: ty_int,
+    });
+    let builder = make_builder_with_struct_method(struct_def_id, method_def_id);
+    let mut emitter = make_emitter(&builder, &interner);
+    let r_self = emitter.alloc_reg(ty_struct);
+    emitter.locals.insert("value".to_string(), r_self);
+
+    let call_expr = TypedExpr::Call {
+        ty: ty_int,
+        span: dummy_span(),
+        callee: Box::new(TypedExpr::Field {
+            ty: callee_ty,
+            span: dummy_span(),
+            receiver: Box::new(TypedExpr::Var {
+                ty: ty_struct,
+                span: dummy_span(),
+                name: "value".to_string(),
+            }),
+            field: "test_method".to_string(),
+        }),
+        args: vec![TypedExpr::Literal {
+            ty: ty_int,
+            span: dummy_span(),
+            value: TypedLiteral::Int(7),
+        }],
+        callee_def_id: Some(method_def_id),
+        callee_has_receiver: Some(true),
+    };
+
+    emit_expr(&mut emitter, &call_expr);
+
+    let (r_base, argc) = emitter
+        .instructions
+        .iter()
+        .find_map(|instruction| match instruction {
+            Instruction::Call { r_base, argc, .. } => Some((*r_base, *argc)),
+            _ => None,
+        })
+        .expect("known instance method must emit CALL");
+    assert_eq!(
+        argc, 2,
+        "CALL argc must include self and one explicit argument"
+    );
+    assert!(
+        r_base == r_self
+            || emitter.instructions.iter().any(|instruction| matches!(
+                instruction,
+                Instruction::Mov { r_dst, r_src } if *r_dst == r_base && *r_src == r_self
+            )),
+        "CALL argument block must begin with self"
+    );
+}
+
 /// Helper: make a ModuleBuilder with a struct TypeDef and fields
-fn make_builder_with_struct_fields(
-    struct_def_id: DefId,
-    field_names: &[&str],
-) -> ModuleBuilder {
+fn make_builder_with_struct_fields(struct_def_id: DefId, field_names: &[&str]) -> ModuleBuilder {
     let mut builder = ModuleBuilder::new();
     let handle = builder.add_typedef("MyStruct", "", TypeDefKind::Struct, 0, Some(struct_def_id));
     for name in field_names {
@@ -781,10 +1092,7 @@ fn make_builder_with_struct_fields(
 }
 
 /// Helper: make a ModuleBuilder with an entity TypeDef and fields
-fn make_builder_with_entity_fields(
-    entity_def_id: DefId,
-    field_names: &[&str],
-) -> ModuleBuilder {
+fn make_builder_with_entity_fields(entity_def_id: DefId, field_names: &[&str]) -> ModuleBuilder {
     let mut builder = ModuleBuilder::new();
     let handle = builder.add_typedef("MyEntity", "", TypeDefKind::Entity, 0, Some(entity_def_id));
     for name in field_names {
@@ -796,7 +1104,7 @@ fn make_builder_with_entity_fields(
 
 #[test]
 fn test_object_model_struct_construction() {
-    // new MyStruct { x: 1, y: 2 } -> NEW + SET_FIELD(x) + SET_FIELD(y)
+    // new MyStruct { x: 1, y: 2 } -> evaluate values + one atomic NEW
     let mut interner = make_interner();
     let ty_int = interner.int();
     let (_, struct_def_id) = make_def_id();
@@ -810,31 +1118,93 @@ fn test_object_model_struct_construction() {
         span: dummy_span(),
         target_def_id: struct_def_id,
         fields: vec![
-            ("x".to_string(), TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(1) }),
-            ("y".to_string(), TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(2) }),
+            (
+                "x".to_string(),
+                TypedExpr::Literal {
+                    ty: ty_int,
+                    span: dummy_span(),
+                    value: TypedLiteral::Int(1),
+                },
+            ),
+            (
+                "y".to_string(),
+                TypedExpr::Literal {
+                    ty: ty_int,
+                    span: dummy_span(),
+                    value: TypedLiteral::Int(2),
+                },
+            ),
         ],
     };
 
     let r_obj = emit_expr(&mut emitter, &new_expr);
 
-    // Check instruction sequence: NEW, then 2x LoadInt + SET_FIELD, then SET_FIELD
     let instrs = &emitter.instructions;
-    assert!(instrs.len() >= 3, "expected at least NEW + 2 SET_FIELDs, got {} instructions", instrs.len());
-    assert!(matches!(&instrs[0], Instruction::New { .. }), "first instr should be New, got {:?}", &instrs[0]);
-    let set_fields: Vec<_> = instrs.iter().filter(|i| matches!(i, Instruction::SetField { .. })).collect();
-    assert_eq!(set_fields.len(), 2, "expected 2 SetField instructions, got {}", set_fields.len());
+    assert_eq!(instrs.len(), 3, "expected two values followed by NEW");
+    assert!(matches!(
+        instrs[0],
+        Instruction::LoadInt { r_dst: 0, value: 1 }
+    ));
+    assert!(matches!(
+        instrs[1],
+        Instruction::LoadInt { r_dst: 1, value: 2 }
+    ));
+    assert!(matches!(
+        instrs[2],
+        Instruction::New {
+            r_dst,
+            field_count: 2,
+            r_base: 0,
+            ..
+        } if r_dst == r_obj
+    ));
+    assert!(
+        !instrs
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::SetField { .. })),
+        "construction must not emit post-allocation field writes"
+    );
+}
+
+#[test]
+fn zero_field_construction_uses_canonical_zero_base() {
+    let mut interner = make_interner();
+    let ty_int = interner.int();
+    let (_, struct_def_id) = make_def_id();
+    let ty_struct = interner.intern(TyKind::Struct(struct_def_id));
+    let builder = make_builder_with_struct_fields(struct_def_id, &[]);
+    let mut emitter = make_emitter(&builder, &interner);
+
+    // Occupy a register so using the allocator cursor for an empty initializer
+    // block would produce a noncanonical operand.
+    emitter.alloc_reg(ty_int);
+    let expression = TypedExpr::New {
+        ty: ty_struct,
+        span: dummy_span(),
+        target_def_id: struct_def_id,
+        fields: vec![],
+    };
+    emit_expr(&mut emitter, &expression);
+
+    assert!(matches!(
+        emitter.instructions.as_slice(),
+        [Instruction::New {
+            field_count: 0,
+            r_base: 0,
+            ..
+        }]
+    ));
 }
 
 #[test]
 fn test_object_model_entity_construction_sequence() {
-    // new MyEntity { name: "x" } -> SPAWN_ENTITY + SET_FIELD(name) + INIT_ENTITY
-    // Default fields do NOT get SET_FIELD
+    // Normalized entity fields are initialized atomically before INIT_ENTITY.
     let mut interner = make_interner();
     let ty_int = interner.int();
     let (_, entity_def_id) = make_def_id();
     let ty_entity = interner.intern(TyKind::Entity(entity_def_id));
 
-    // Entity has fields: "health" (default), "name" (explicit)
+    // Entity has fields in declaration order: health, name.
     let builder = make_builder_with_entity_fields(entity_def_id, &["health", "name"]);
     let mut emitter = make_emitter(&builder, &interner);
 
@@ -843,23 +1213,93 @@ fn test_object_model_entity_construction_sequence() {
         span: dummy_span(),
         target_def_id: entity_def_id,
         fields: vec![
-            // Only "name" is explicitly provided; "health" uses default
-            ("name".to_string(), TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(42) }),
+            (
+                "health".to_string(),
+                TypedExpr::Literal {
+                    ty: ty_int,
+                    span: dummy_span(),
+                    value: TypedLiteral::Int(100),
+                },
+            ),
+            (
+                "name".to_string(),
+                TypedExpr::Literal {
+                    ty: ty_int,
+                    span: dummy_span(),
+                    value: TypedLiteral::Int(42),
+                },
+            ),
         ],
     };
 
     let _r = emit_expr(&mut emitter, &new_expr);
     let instrs = &emitter.instructions;
 
-    // Must have: SpawnEntity, ..., InitEntity at end
-    assert!(matches!(&instrs[0], Instruction::SpawnEntity { .. }),
-        "first instr should be SpawnEntity, got {:?}", &instrs[0]);
-    assert!(matches!(instrs.last().unwrap(), Instruction::InitEntity { .. }),
-        "last instr should be InitEntity, got {:?}", instrs.last().unwrap());
+    // Values are evaluated before one atomic SpawnEntity, followed by lifecycle init.
+    assert!(
+        matches!(
+            instrs[2],
+            Instruction::SpawnEntity {
+                field_count: 2,
+                r_base: 0,
+                ..
+            }
+        ),
+        "expected atomic SpawnEntity, got {:?}",
+        instrs
+    );
+    assert!(
+        matches!(instrs.last().unwrap(), Instruction::InitEntity { .. }),
+        "last instr should be InitEntity, got {:?}",
+        instrs.last().unwrap()
+    );
 
-    // Only 1 SET_FIELD (for "name", not "health")
-    let set_fields: Vec<_> = instrs.iter().filter(|i| matches!(i, Instruction::SetField { .. })).collect();
-    assert_eq!(set_fields.len(), 1, "only explicit fields get SET_FIELD, expected 1 got {}", set_fields.len());
+    assert!(
+        !instrs
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::SetField { .. })),
+        "entity construction must not emit post-spawn field writes"
+    );
+}
+
+#[test]
+fn test_generic_entity_spawn_keeps_base_typedef_token() {
+    let mut interner = make_interner();
+    let ty_int = interner.int();
+    let (_, entity_def_id) = make_def_id();
+    let entity_base = interner.intern(TyKind::Entity(entity_def_id));
+    let generic_entity = interner.intern(TyKind::GenericInstance {
+        base: entity_base,
+        namespace: String::new(),
+        name: "MyEntity".to_string(),
+        args: vec![ty_int],
+    });
+
+    let mut builder = ModuleBuilder::new();
+    builder.add_typedef("MyEntity", "", TypeDefKind::Entity, 0, Some(entity_def_id));
+    let type_spec = builder.add_type_spec(generic_entity, 0);
+    builder.finalize();
+    let mut emitter = make_emitter(&builder, &interner);
+    let expression = TypedExpr::New {
+        ty: generic_entity,
+        span: dummy_span(),
+        target_def_id: entity_def_id,
+        fields: vec![],
+    };
+
+    emit_expr(&mut emitter, &expression);
+    let Instruction::SpawnEntity { type_idx, .. } = emitter.instructions[0] else {
+        panic!("generic entity construction must emit SpawnEntity");
+    };
+    assert_ne!(
+        type_idx, type_spec.0,
+        "SpawnEntity cannot consume TypeSpec yet"
+    );
+    assert_eq!(
+        MetadataToken(type_idx).table(),
+        TableId::TypeDef,
+        "entity registry and lifecycle hooks require a base TypeDef token"
+    );
 }
 
 #[test]
@@ -888,8 +1328,14 @@ fn test_object_model_field_read() {
     };
 
     let _r = emit_expr(&mut emitter, &field_expr);
-    let has_get_field = emitter.instructions.iter().any(|i| matches!(i, Instruction::GetField { .. }));
-    assert!(has_get_field, "expected GetField instruction for field read");
+    let has_get_field = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::GetField { .. }));
+    assert!(
+        has_get_field,
+        "expected GetField instruction for field read"
+    );
 }
 
 #[test]
@@ -926,8 +1372,19 @@ fn test_object_model_field_write() {
     };
 
     let _r = emit_expr(&mut emitter, &assign_expr);
-    let has_set_field = emitter.instructions.iter().any(|i| matches!(i, Instruction::SetField { .. }));
-    assert!(has_set_field, "expected SetField instruction for field write");
+    let has_set_field = emitter.instructions.iter().any(|i| {
+        matches!(
+            i,
+            Instruction::SetField {
+                field_token: 0x0500_0001,
+                ..
+            }
+        )
+    });
+    assert!(
+        has_set_field,
+        "expected SetField instruction for field write"
+    );
 }
 
 #[test]
@@ -959,8 +1416,14 @@ fn test_object_model_component_access() {
     };
 
     let _r = emit_expr(&mut emitter, &comp_access);
-    let has_get_component = emitter.instructions.iter().any(|i| matches!(i, Instruction::GetComponent { .. }));
-    assert!(has_get_component, "expected GetComponent instruction for component access");
+    let has_get_component = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::GetComponent { .. }));
+    assert!(
+        has_get_component,
+        "expected GetComponent instruction for component access"
+    );
 }
 
 // ─── Entity namespace static methods (GET_OR_CREATE, FIND_ALL, etc.) ─────────
@@ -991,17 +1454,29 @@ fn test_entity_get_or_create_emits_instruction() {
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &call_expr);
     assert!(
-        emitter.instructions.iter().any(|i| matches!(i, Instruction::GetOrCreate { .. })),
-        "expected GetOrCreate instruction, got {:?}", emitter.instructions
+        emitter
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::GetOrCreate { .. })),
+        "expected GetOrCreate instruction, got {:?}",
+        emitter.instructions
     );
     // Verify the type_idx is non-zero (resolved from the entity TypeDef)
-    let get_or_create = emitter.instructions.iter().find(|i| matches!(i, Instruction::GetOrCreate { .. })).unwrap();
+    let get_or_create = emitter
+        .instructions
+        .iter()
+        .find(|i| matches!(i, Instruction::GetOrCreate { .. }))
+        .unwrap();
     if let Instruction::GetOrCreate { type_idx, .. } = get_or_create {
-        assert!(*type_idx != 0, "type_idx should be resolved from entity TypeDef, got 0");
+        assert!(
+            *type_idx != 0,
+            "type_idx should be resolved from entity TypeDef, got 0"
+        );
     }
 }
 
@@ -1032,12 +1507,17 @@ fn test_entity_find_all_emits_instruction() {
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &call_expr);
     assert!(
-        emitter.instructions.iter().any(|i| matches!(i, Instruction::FindAll { .. })),
-        "expected FindAll instruction, got {:?}", emitter.instructions
+        emitter
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::FindAll { .. })),
+        "expected FindAll instruction, got {:?}",
+        emitter.instructions
     );
 }
 
@@ -1069,16 +1549,23 @@ fn test_entity_destroy_emits_instruction() {
             }),
             field: "destroy".to_string(),
         }),
-        args: vec![
-            TypedExpr::Var { ty: ty_entity, span: dummy_span(), name: "e".to_string() },
-        ],
+        args: vec![TypedExpr::Var {
+            ty: ty_entity,
+            span: dummy_span(),
+            name: "e".to_string(),
+        }],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &call_expr);
     assert!(
-        emitter.instructions.iter().any(|i| matches!(i, Instruction::DestroyEntity { .. })),
-        "expected DestroyEntity instruction, got {:?}", emitter.instructions
+        emitter
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::DestroyEntity { .. })),
+        "expected DestroyEntity instruction, got {:?}",
+        emitter.instructions
     );
 }
 
@@ -1110,16 +1597,23 @@ fn test_entity_is_alive_emits_instruction() {
             }),
             field: "isAlive".to_string(),
         }),
-        args: vec![
-            TypedExpr::Var { ty: ty_entity, span: dummy_span(), name: "e".to_string() },
-        ],
+        args: vec![TypedExpr::Var {
+            ty: ty_entity,
+            span: dummy_span(),
+            name: "e".to_string(),
+        }],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &call_expr);
     assert!(
-        emitter.instructions.iter().any(|i| matches!(i, Instruction::EntityIsAlive { .. })),
-        "expected EntityIsAlive instruction, got {:?}", emitter.instructions
+        emitter
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::EntityIsAlive { .. })),
+        "expected EntityIsAlive instruction, got {:?}",
+        emitter.instructions
     );
 }
 
@@ -1127,7 +1621,8 @@ fn test_entity_is_alive_emits_instruction() {
 
 #[test]
 fn test_array_literal_emits_array_init() {
-    // [1, 2, 3] -> elements loaded, then ARRAY_INIT { r_dst, elem_type, count:3, r_base }
+    // [1, 2, 3] -> elements loaded, then
+    // ARRAY_INIT { r_dst, default_kind, count:3, r_base }
     let builder = ModuleBuilder::new();
     let mut interner = make_interner();
     let ty_int = interner.int();
@@ -1138,22 +1633,41 @@ fn test_array_literal_emits_array_init() {
         ty: ty_array,
         span: dummy_span(),
         elements: vec![
-            TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(1) },
-            TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(2) },
-            TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(3) },
+            TypedExpr::Literal {
+                ty: ty_int,
+                span: dummy_span(),
+                value: TypedLiteral::Int(1),
+            },
+            TypedExpr::Literal {
+                ty: ty_int,
+                span: dummy_span(),
+                value: TypedLiteral::Int(2),
+            },
+            TypedExpr::Literal {
+                ty: ty_int,
+                span: dummy_span(),
+                value: TypedLiteral::Int(3),
+            },
         ],
     };
 
     let _r = emit_expr(&mut emitter, &array_expr);
 
     // Should have 3 LoadInt instructions, then ArrayInit
-    let has_array_init = emitter.instructions.iter().any(|i| matches!(i, Instruction::ArrayInit { count: 3, .. }));
-    assert!(has_array_init, "expected ArrayInit with count=3, got {:?}", emitter.instructions);
+    let has_array_init = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ArrayInit { count: 3, .. }));
+    assert!(
+        has_array_init,
+        "expected ArrayInit with count=3, got {:?}",
+        emitter.instructions
+    );
 }
 
 #[test]
 fn test_empty_array_literal_emits_new_array() {
-    // [] -> NewArray { r_dst, elem_type: 0 }
+    // [] -> NewArray { r_dst, default_kind: 0 }
     let builder = ModuleBuilder::new();
     let mut interner = make_interner();
     let ty_int = interner.int();
@@ -1168,8 +1682,15 @@ fn test_empty_array_literal_emits_new_array() {
 
     let _r = emit_expr(&mut emitter, &array_expr);
 
-    let has_new_array = emitter.instructions.iter().any(|i| matches!(i, Instruction::NewArray { .. }));
-    assert!(has_new_array, "empty array should emit NewArray, got {:?}", emitter.instructions);
+    let has_new_array = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::NewArray { .. }));
+    assert!(
+        has_new_array,
+        "empty array should emit NewArray, got {:?}",
+        emitter.instructions
+    );
 }
 
 #[test]
@@ -1201,8 +1722,15 @@ fn test_array_index_read_emits_array_load() {
     };
 
     let _r = emit_expr(&mut emitter, &index_expr);
-    let has_array_load = emitter.instructions.iter().any(|i| matches!(i, Instruction::ArrayLoad { .. }));
-    assert!(has_array_load, "expected ArrayLoad, got {:?}", emitter.instructions);
+    let has_array_load = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ArrayLoad { .. }));
+    assert!(
+        has_array_load,
+        "expected ArrayLoad, got {:?}",
+        emitter.instructions
+    );
 }
 
 #[test]
@@ -1242,8 +1770,15 @@ fn test_array_index_write_emits_array_store() {
     };
 
     let _r = emit_expr(&mut emitter, &assign_expr);
-    let has_array_store = emitter.instructions.iter().any(|i| matches!(i, Instruction::ArrayStore { .. }));
-    assert!(has_array_store, "expected ArrayStore, got {:?}", emitter.instructions);
+    let has_array_store = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ArrayStore { .. }));
+    assert!(
+        has_array_store,
+        "expected ArrayStore, got {:?}",
+        emitter.instructions
+    );
 }
 
 #[test]
@@ -1279,11 +1814,19 @@ fn test_array_len_call_emits_array_len() {
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &len_call);
-    let has_array_len = emitter.instructions.iter().any(|i| matches!(i, Instruction::ArrayLen { .. }));
-    assert!(has_array_len, "expected ArrayLen for arr.len(), got {:?}", emitter.instructions);
+    let has_array_len = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ArrayLen { .. }));
+    assert!(
+        has_array_len,
+        "expected ArrayLen for arr.len(), got {:?}",
+        emitter.instructions
+    );
 }
 
 #[test]
@@ -1316,8 +1859,14 @@ fn test_for_loop_over_array_uses_counter_loop() {
 
     emit_stmt(&mut emitter, &for_stmt);
     // Should have ArrayLen, counter loop with BrFalse, ArrayLoad
-    let has_array_len = emitter.instructions.iter().any(|i| matches!(i, Instruction::ArrayLen { .. }));
-    let has_array_load = emitter.instructions.iter().any(|i| matches!(i, Instruction::ArrayLoad { .. }));
+    let has_array_len = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ArrayLen { .. }));
+    let has_array_load = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::ArrayLoad { .. }));
     assert!(has_array_len, "for loop over array should emit ArrayLen");
     assert!(has_array_load, "for loop over array should emit ArrayLoad");
 }
@@ -1342,15 +1891,25 @@ fn test_option_some_construction() {
             span: dummy_span(),
             segments: vec!["Some".to_string()],
         }),
-        args: vec![
-            TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(42) },
-        ],
+        args: vec![TypedExpr::Literal {
+            ty: ty_int,
+            span: dummy_span(),
+            value: TypedLiteral::Int(42),
+        }],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &some_call);
-    let has_wrap_some = emitter.instructions.iter().any(|i| matches!(i, Instruction::WrapSome { .. }));
-    assert!(has_wrap_some, "Some(val) should emit WrapSome, got {:?}", emitter.instructions);
+    let has_wrap_some = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::WrapSome { .. }));
+    assert!(
+        has_wrap_some,
+        "Some(val) should emit WrapSome, got {:?}",
+        emitter.instructions
+    );
 }
 
 #[test]
@@ -1372,11 +1931,19 @@ fn test_option_none_construction() {
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &none_call);
-    let has_load_null = emitter.instructions.iter().any(|i| matches!(i, Instruction::LoadNull { .. }));
-    assert!(has_load_null, "None should emit LoadNull, got {:?}", emitter.instructions);
+    let has_load_null = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::LoadNull { .. }));
+    assert!(
+        has_load_null,
+        "None should emit LoadNull, got {:?}",
+        emitter.instructions
+    );
 }
 
 #[test]
@@ -1407,11 +1974,19 @@ fn test_option_is_none_method() {
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &is_none_call);
-    let has_is_none = emitter.instructions.iter().any(|i| matches!(i, Instruction::IsNone { .. }));
-    assert!(has_is_none, "opt.is_none() should emit IsNone, got {:?}", emitter.instructions);
+    let has_is_none = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::IsNone { .. }));
+    assert!(
+        has_is_none,
+        "opt.is_none() should emit IsNone, got {:?}",
+        emitter.instructions
+    );
 }
 
 #[test]
@@ -1441,11 +2016,19 @@ fn test_option_unwrap_method() {
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &unwrap_call);
-    let has_unwrap = emitter.instructions.iter().any(|i| matches!(i, Instruction::Unwrap { .. }));
-    assert!(has_unwrap, "opt.unwrap() should emit Unwrap, got {:?}", emitter.instructions);
+    let has_unwrap = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Unwrap { .. }));
+    assert!(
+        has_unwrap,
+        "opt.unwrap() should emit Unwrap, got {:?}",
+        emitter.instructions
+    );
 }
 
 #[test]
@@ -1465,15 +2048,25 @@ fn test_result_ok_construction() {
             span: dummy_span(),
             segments: vec!["Ok".to_string()],
         }),
-        args: vec![
-            TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(42) },
-        ],
+        args: vec![TypedExpr::Literal {
+            ty: ty_int,
+            span: dummy_span(),
+            value: TypedLiteral::Int(42),
+        }],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &ok_call);
-    let has_wrap_ok = emitter.instructions.iter().any(|i| matches!(i, Instruction::WrapOk { .. }));
-    assert!(has_wrap_ok, "Ok(val) should emit WrapOk, got {:?}", emitter.instructions);
+    let has_wrap_ok = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::WrapOk { .. }));
+    assert!(
+        has_wrap_ok,
+        "Ok(val) should emit WrapOk, got {:?}",
+        emitter.instructions
+    );
 }
 
 #[test]
@@ -1504,11 +2097,19 @@ fn test_result_is_err_method() {
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &is_err_call);
-    let has_is_err = emitter.instructions.iter().any(|i| matches!(i, Instruction::IsErr { .. }));
-    assert!(has_is_err, "res.is_err() should emit IsErr, got {:?}", emitter.instructions);
+    let has_is_err = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::IsErr { .. }));
+    assert!(
+        has_is_err,
+        "res.is_err() should emit IsErr, got {:?}",
+        emitter.instructions
+    );
 }
 
 // ─── Task 2 (Plan 03): Closure/delegate emission ─────────────────────────────
@@ -1545,15 +2146,29 @@ fn test_lambda_no_captures_emits_load_null_and_new_delegate() {
     };
 
     let _r = emit_expr(&mut emitter, &lambda_expr);
-    let has_load_null = emitter.instructions.iter().any(|i| matches!(i, Instruction::LoadNull { .. }));
-    let has_new_delegate = emitter.instructions.iter().any(|i| matches!(i, Instruction::NewDelegate { .. }));
-    assert!(has_load_null, "zero-capture lambda should emit LoadNull, got {:?}", emitter.instructions);
-    assert!(has_new_delegate, "lambda should emit NewDelegate, got {:?}", emitter.instructions);
+    let has_load_null = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::LoadNull { .. }));
+    let has_new_delegate = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::NewDelegate { .. }));
+    assert!(
+        has_load_null,
+        "zero-capture lambda should emit LoadNull, got {:?}",
+        emitter.instructions
+    );
+    assert!(
+        has_new_delegate,
+        "lambda should emit NewDelegate, got {:?}",
+        emitter.instructions
+    );
 }
 
 #[test]
-fn test_lambda_with_captures_emits_new_set_field_new_delegate() {
-    // |x| x + 1 (captures x) -> NEW(capture_struct) + SET_FIELD(x) + NEW_DELEGATE
+fn test_lambda_with_captures_emits_atomic_new_and_new_delegate() {
+    // |x| x + 1 (captures x) -> atomic NEW(capture_struct) + NEW_DELEGATE
     let mut interner = make_interner();
     let ty_int = interner.int();
     let ty_func = interner.func(vec![ty_int], ty_int);
@@ -1576,14 +2191,12 @@ fn test_lambda_with_captures_emits_new_set_field_new_delegate() {
         span: dummy_span(),
         params: vec![("val".to_string(), ty_int)],
         ret_ty: ty_int,
-        captures: vec![
-            Capture {
-                name: "x".to_string(),
-                ty: ty_int,
-                mode: CaptureMode::ByValue,
-                binding_span: dummy_span(),
-            },
-        ],
+        captures: vec![Capture {
+            name: "x".to_string(),
+            ty: ty_int,
+            mode: CaptureMode::ByValue,
+            binding_span: dummy_span(),
+        }],
         body: Box::new(TypedExpr::Var {
             ty: ty_int,
             span: dummy_span(),
@@ -1592,12 +2205,39 @@ fn test_lambda_with_captures_emits_new_set_field_new_delegate() {
     };
 
     let _r = emit_expr(&mut emitter, &lambda_expr);
-    let has_new = emitter.instructions.iter().any(|i| matches!(i, Instruction::New { .. }));
-    let has_set_field = emitter.instructions.iter().any(|i| matches!(i, Instruction::SetField { .. }));
-    let has_new_delegate = emitter.instructions.iter().any(|i| matches!(i, Instruction::NewDelegate { .. }));
-    assert!(has_new, "capturing lambda should emit New (capture struct), got {:?}", emitter.instructions);
-    assert!(has_set_field, "capturing lambda should emit SetField per capture, got {:?}", emitter.instructions);
-    assert!(has_new_delegate, "lambda should emit NewDelegate, got {:?}", emitter.instructions);
+    let atomic_new = emitter
+        .instructions
+        .iter()
+        .find(|i| matches!(i, Instruction::New { .. }));
+    let has_new_delegate = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::NewDelegate { .. }));
+    assert!(
+        matches!(
+            atomic_new,
+            Some(Instruction::New {
+                field_count: 1,
+                r_base: 0,
+                ..
+            })
+        ),
+        "capturing lambda should atomically initialize its capture struct, got {:?}",
+        emitter.instructions
+    );
+    assert!(
+        !emitter
+            .instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::SetField { .. })),
+        "capturing lambda should not mutate its environment after allocation, got {:?}",
+        emitter.instructions
+    );
+    assert!(
+        has_new_delegate,
+        "lambda should emit NewDelegate, got {:?}",
+        emitter.instructions
+    );
 }
 
 // ─── Task 2 (Plan 03): Concurrency instruction emission ──────────────────────
@@ -1605,10 +2245,11 @@ fn test_lambda_with_captures_emits_new_set_field_new_delegate() {
 #[test]
 fn test_spawn_task_emits_spawn_task_instruction() {
     // spawn expr -> SpawnTask { r_dst, method_idx, r_base, argc }
-    let builder = ModuleBuilder::new();
     let mut interner = make_interner();
     let ty_int = interner.int();
     let ty_task = interner.intern(TyKind::TaskHandle(ty_int));
+    let (_, fn_def_id) = make_def_id();
+    let builder = make_builder_with_fn(fn_def_id);
     let mut emitter = make_emitter(&builder, &interner);
 
     // spawn(some_call()) -- the inner expr is a Call
@@ -1624,43 +2265,193 @@ fn test_spawn_task_emits_spawn_task_instruction() {
                 name: "some_fn".to_string(),
             }),
             args: vec![],
-            callee_def_id: None,
+            callee_def_id: Some(fn_def_id),
+            callee_has_receiver: Some(false),
         }),
     };
 
     let _r = emit_expr(&mut emitter, &spawn_expr);
-    let has_spawn = emitter.instructions.iter().any(|i| matches!(i, Instruction::SpawnTask { .. }));
-    assert!(has_spawn, "spawn expr should emit SpawnTask, got {:?}", emitter.instructions);
+    let expected = builder.token_for_def(fn_def_id).unwrap().0;
+    assert!(
+        matches!(
+            emitter.instructions.as_slice(),
+            [Instruction::SpawnTask { method_idx, argc: 0, .. }] if *method_idx == expected
+        ),
+        "spawn expr should emit a non-null SpawnTask, got {:?}",
+        emitter.instructions
+    );
+    assert_ne!(expected, 0);
+    assert_eq!(MetadataToken(expected).table(), TableId::MethodDef);
 }
 
 #[test]
-fn test_spawn_detached_emits_spawn_detached_instruction() {
-    let builder = ModuleBuilder::new();
+fn test_cross_module_overloaded_instance_spawn_packs_self_and_resolves_methodref() {
+    use writ_module::signature::{TypeSignature, encode_method_signature};
+
     let mut interner = make_interner();
     let ty_int = interner.int();
-    let ty_void = interner.void();
-    let ty_task = interner.intern(TyKind::TaskHandle(ty_void));
-    let mut emitter = make_emitter(&builder, &interner);
+    let ty_task = interner.intern(TyKind::TaskHandle(ty_int));
+    let (_, remote_type_def_id) = make_def_id();
+    let ty_remote = interner.intern(TyKind::Class(remote_type_def_id));
+    let callee_ty = interner.intern(TyKind::Func {
+        params: vec![ty_int],
+        ret: ty_int,
+    });
 
-    let spawn_expr = TypedExpr::SpawnDetached {
-        ty: ty_task,
+    let mut builder = ModuleBuilder::new();
+    let module_ref = builder.add_module_ref("workers", "1.0.0");
+    let type_ref = builder.add_type_ref(module_ref, "RemoteWorker", "");
+    let parent = MetadataToken::new(TableId::TypeRef, (type_ref + 1) as u32);
+    builder.def_token_map.insert(remote_type_def_id, parent);
+    let int_signature = encode_method_signature(&[TypeSignature::Int], &TypeSignature::Int)
+        .expect("valid int overload signature");
+    let string_signature = encode_method_signature(&[TypeSignature::String], &TypeSignature::Int)
+        .expect("valid string overload signature");
+    let expected_row =
+        builder.add_method_ref_with_origin(parent, "choose", &int_signature, true, true);
+    builder.add_method_ref_with_origin(parent, "choose", &string_signature, true, true);
+    builder.finalize();
+    let expected_token = MetadataToken::new(TableId::MethodRef, (expected_row + 1) as u32).0;
+
+    let call = TypedExpr::Call {
+        ty: ty_int,
         span: dummy_span(),
-        expr: Box::new(TypedExpr::Call {
-            ty: ty_void,
+        callee: Box::new(TypedExpr::Field {
+            ty: callee_ty,
             span: dummy_span(),
-            callee: Box::new(TypedExpr::Var {
-                ty: ty_void,
+            receiver: Box::new(TypedExpr::Var {
+                ty: ty_remote,
                 span: dummy_span(),
-                name: "bg_fn".to_string(),
+                name: "remote".to_string(),
             }),
-            args: vec![],
-            callee_def_id: None,
+            field: "choose".to_string(),
         }),
+        args: vec![TypedExpr::Literal {
+            ty: ty_int,
+            span: dummy_span(),
+            value: TypedLiteral::Int(7),
+        }],
+        callee_def_id: None,
+        callee_has_receiver: Some(true),
     };
 
-    let _r = emit_expr(&mut emitter, &spawn_expr);
-    let has_spawn_detached = emitter.instructions.iter().any(|i| matches!(i, Instruction::SpawnDetached { .. }));
-    assert!(has_spawn_detached, "spawn_detached should emit SpawnDetached, got {:?}", emitter.instructions);
+    let mut scoped = make_emitter(&builder, &interner);
+    let scoped_self = scoped.alloc_reg(ty_remote);
+    scoped.locals.insert("remote".to_string(), scoped_self);
+    emit_expr(
+        &mut scoped,
+        &TypedExpr::Spawn {
+            ty: ty_task,
+            span: dummy_span(),
+            expr: Box::new(call),
+        },
+    );
+
+    let scoped_operands = scoped
+        .instructions
+        .iter()
+        .find_map(|instruction| match instruction {
+            Instruction::SpawnTask {
+                method_idx,
+                r_base,
+                argc,
+                ..
+            } => Some((*method_idx, *r_base, *argc)),
+            _ => None,
+        })
+        .expect("scoped spawn instruction");
+    assert_eq!((scoped_operands.0, scoped_operands.2), (expected_token, 2));
+    assert!(
+        scoped_operands.1 == scoped_self
+            || scoped.instructions.iter().any(|instruction| matches!(
+                instruction,
+                Instruction::Mov { r_dst, r_src }
+                    if *r_dst == scoped_operands.1 && *r_src == scoped_self
+            )),
+        "scoped instance spawn argument block must begin with self",
+    );
+    assert_ne!(expected_token, 0);
+    assert_eq!(MetadataToken(expected_token).table(), TableId::MethodRef);
+}
+
+#[test]
+fn test_cross_module_static_qualified_spawn_excludes_qualifier() {
+    use writ_module::signature::{TypeSignature, encode_method_signature};
+
+    let mut interner = make_interner();
+    let ty_int = interner.int();
+    let ty_task = interner.intern(TyKind::TaskHandle(ty_int));
+    let (_, remote_type_def_id) = make_def_id();
+    let ty_remote = interner.intern(TyKind::Class(remote_type_def_id));
+    let callee_ty = interner.intern(TyKind::Func {
+        params: vec![ty_int],
+        ret: ty_int,
+    });
+
+    let mut builder = ModuleBuilder::new();
+    let module_ref = builder.add_module_ref("workers", "1.0.0");
+    let type_ref = builder.add_type_ref(module_ref, "RemoteWorker", "");
+    let parent = MetadataToken::new(TableId::TypeRef, (type_ref + 1) as u32);
+    builder.def_token_map.insert(remote_type_def_id, parent);
+    let signature = encode_method_signature(&[TypeSignature::Int], &TypeSignature::Int)
+        .expect("valid static method signature");
+    let expected_row =
+        builder.add_method_ref_with_origin(parent, "select", &signature, true, false);
+    builder.finalize();
+    let expected_token = MetadataToken::new(TableId::MethodRef, (expected_row + 1) as u32).0;
+
+    let call = TypedExpr::Call {
+        ty: ty_int,
+        span: dummy_span(),
+        callee: Box::new(TypedExpr::Field {
+            ty: callee_ty,
+            span: dummy_span(),
+            receiver: Box::new(TypedExpr::Var {
+                ty: ty_remote,
+                span: dummy_span(),
+                name: "remote".to_string(),
+            }),
+            field: "select".to_string(),
+        }),
+        args: vec![TypedExpr::Literal {
+            ty: ty_int,
+            span: dummy_span(),
+            value: TypedLiteral::Int(7),
+        }],
+        callee_def_id: None,
+        callee_has_receiver: Some(false),
+    };
+
+    let mut scoped = make_emitter(&builder, &interner);
+    let scoped_qualifier = scoped.alloc_reg(ty_remote);
+    scoped.locals.insert("remote".to_string(), scoped_qualifier);
+    emit_expr(
+        &mut scoped,
+        &TypedExpr::Spawn {
+            ty: ty_task,
+            span: dummy_span(),
+            expr: Box::new(call),
+        },
+    );
+
+    let scoped_operands = scoped
+        .instructions
+        .iter()
+        .find_map(|instruction| match instruction {
+            Instruction::SpawnTask {
+                method_idx,
+                r_base,
+                argc,
+                ..
+            } => Some((*method_idx, *r_base, *argc)),
+            _ => None,
+        })
+        .expect("scoped spawn instruction");
+    assert_eq!(scoped_operands.0, expected_token);
+    assert_eq!(scoped_operands.2, 1);
+    assert_ne!(scoped_operands.1, scoped_qualifier);
+    assert_ne!(expected_token, 0);
+    assert_eq!(MetadataToken(expected_token).table(), TableId::MethodRef);
 }
 
 #[test]
@@ -1686,8 +2477,15 @@ fn test_join_emits_join_instruction() {
     };
 
     let _r = emit_expr(&mut emitter, &join_expr);
-    let has_join = emitter.instructions.iter().any(|i| matches!(i, Instruction::Join { .. }));
-    assert!(has_join, "join(task) should emit Join, got {:?}", emitter.instructions);
+    let has_join = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Join { .. }));
+    assert!(
+        has_join,
+        "join(task) should emit Join, got {:?}",
+        emitter.instructions
+    );
 }
 
 #[test]
@@ -1714,8 +2512,15 @@ fn test_cancel_emits_cancel_instruction() {
     };
 
     let _r = emit_expr(&mut emitter, &cancel_expr);
-    let has_cancel = emitter.instructions.iter().any(|i| matches!(i, Instruction::Cancel { .. }));
-    assert!(has_cancel, "cancel(task) should emit Cancel, got {:?}", emitter.instructions);
+    let has_cancel = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Cancel { .. }));
+    assert!(
+        has_cancel,
+        "cancel(task) should emit Cancel, got {:?}",
+        emitter.instructions
+    );
 }
 
 #[test]
@@ -1738,19 +2543,40 @@ fn test_defer_emits_defer_push_pop_end() {
     };
 
     let _r = emit_expr(&mut emitter, &defer_expr);
-    let has_defer_push = emitter.instructions.iter().any(|i| matches!(i, Instruction::DeferPush { .. }));
-    let has_defer_pop = emitter.instructions.iter().any(|i| matches!(i, Instruction::DeferPop));
-    let has_defer_end = emitter.instructions.iter().any(|i| matches!(i, Instruction::DeferEnd));
-    assert!(has_defer_push, "defer should emit DeferPush, got {:?}", emitter.instructions);
-    assert!(has_defer_pop, "defer should emit DeferPop, got {:?}", emitter.instructions);
-    assert!(has_defer_end, "defer should emit DeferEnd, got {:?}", emitter.instructions);
+    let has_defer_push = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::DeferPush { .. }));
+    let has_defer_pop = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::DeferPop));
+    let has_defer_end = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::DeferEnd));
+    assert!(
+        has_defer_push,
+        "defer should emit DeferPush, got {:?}",
+        emitter.instructions
+    );
+    assert!(
+        has_defer_pop,
+        "defer should emit DeferPop, got {:?}",
+        emitter.instructions
+    );
+    assert!(
+        has_defer_end,
+        "defer should emit DeferEnd, got {:?}",
+        emitter.instructions
+    );
 }
 
 // ─── Task 1 (Plan 04): Enum match, type conversions, string ops, const folding ──
 
 use writ_compiler::check::ir::{TypedArm, TypedPattern};
-use writ_compiler::emit::body::patterns::emit_match;
 use writ_compiler::emit::body::const_fold::const_fold;
+use writ_compiler::emit::body::patterns::emit_match;
 
 /// Helper: make a ModuleBuilder with an enum TypeDef (no fields needed for tags)
 fn make_builder_with_enum(enum_def_id: DefId) -> ModuleBuilder {
@@ -1793,7 +2619,11 @@ fn test_enum_match_emits_get_tag_and_switch() {
                     bindings: vec![],
                     span: dummy_span(),
                 },
-                body: TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(1) },
+                body: TypedExpr::Literal {
+                    ty: ty_int,
+                    span: dummy_span(),
+                    value: TypedLiteral::Int(1),
+                },
                 span: dummy_span(),
             },
             TypedArm {
@@ -1803,7 +2633,11 @@ fn test_enum_match_emits_get_tag_and_switch() {
                     bindings: vec![],
                     span: dummy_span(),
                 },
-                body: TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(2) },
+                body: TypedExpr::Literal {
+                    ty: ty_int,
+                    span: dummy_span(),
+                    value: TypedLiteral::Int(2),
+                },
                 span: dummy_span(),
             },
         ],
@@ -1811,10 +2645,24 @@ fn test_enum_match_emits_get_tag_and_switch() {
 
     let _r = emit_match(&mut emitter, &match_expr);
 
-    let has_get_tag = emitter.instructions.iter().any(|i| matches!(i, Instruction::GetTag { .. }));
-    let has_switch = emitter.instructions.iter().any(|i| matches!(i, Instruction::Switch { .. }));
-    assert!(has_get_tag, "enum match should emit GetTag, got {:?}", emitter.instructions);
-    assert!(has_switch, "enum match should emit Switch, got {:?}", emitter.instructions);
+    let has_get_tag = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::GetTag { .. }));
+    let has_switch = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Switch { .. }));
+    assert!(
+        has_get_tag,
+        "enum match should emit GetTag, got {:?}",
+        emitter.instructions
+    );
+    assert!(
+        has_switch,
+        "enum match should emit Switch, got {:?}",
+        emitter.instructions
+    );
 }
 
 #[test]
@@ -1834,7 +2682,11 @@ fn test_enum_match_wildcard_arm() {
     let match_expr = TypedExpr::Match {
         ty: ty_int,
         span: dummy_span(),
-        scrutinee: Box::new(TypedExpr::Var { ty: ty_enum, span: dummy_span(), name: "e".to_string() }),
+        scrutinee: Box::new(TypedExpr::Var {
+            ty: ty_enum,
+            span: dummy_span(),
+            name: "e".to_string(),
+        }),
         arms: vec![
             TypedArm {
                 pattern: TypedPattern::EnumVariant {
@@ -1843,12 +2695,20 @@ fn test_enum_match_wildcard_arm() {
                     bindings: vec![],
                     span: dummy_span(),
                 },
-                body: TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(1) },
+                body: TypedExpr::Literal {
+                    ty: ty_int,
+                    span: dummy_span(),
+                    value: TypedLiteral::Int(1),
+                },
                 span: dummy_span(),
             },
             TypedArm {
                 pattern: TypedPattern::Wildcard { span: dummy_span() },
-                body: TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(99) },
+                body: TypedExpr::Literal {
+                    ty: ty_int,
+                    span: dummy_span(),
+                    value: TypedLiteral::Int(99),
+                },
                 span: dummy_span(),
             },
         ],
@@ -1856,8 +2716,15 @@ fn test_enum_match_wildcard_arm() {
 
     let _r = emit_match(&mut emitter, &match_expr);
     // Should emit GetTag + Switch without panic
-    let has_get_tag = emitter.instructions.iter().any(|i| matches!(i, Instruction::GetTag { .. }));
-    assert!(has_get_tag, "enum match with wildcard should emit GetTag, got {:?}", emitter.instructions);
+    let has_get_tag = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::GetTag { .. }));
+    assert!(
+        has_get_tag,
+        "enum match with wildcard should emit GetTag, got {:?}",
+        emitter.instructions
+    );
 }
 
 #[test]
@@ -1879,16 +2746,28 @@ fn test_enum_match_option_propagation_emits_is_none_br_ret() {
     let match_expr = TypedExpr::Match {
         ty: ty_int,
         span: dummy_span(),
-        scrutinee: Box::new(TypedExpr::Var { ty: ty_opt_int, span: dummy_span(), name: "opt".to_string() }),
+        scrutinee: Box::new(TypedExpr::Var {
+            ty: ty_opt_int,
+            span: dummy_span(),
+            name: "opt".to_string(),
+        }),
         arms: vec![
             TypedArm {
                 pattern: TypedPattern::EnumVariant {
                     enum_def_id: dummy_enum_def_id,
                     variant_name: "Some".to_string(),
-                    bindings: vec![TypedPattern::Variable { name: "v".to_string(), ty: ty_int, span: dummy_span() }],
+                    bindings: vec![TypedPattern::Variable {
+                        name: "v".to_string(),
+                        ty: ty_int,
+                        span: dummy_span(),
+                    }],
                     span: dummy_span(),
                 },
-                body: TypedExpr::Var { ty: ty_int, span: dummy_span(), name: "v".to_string() },
+                body: TypedExpr::Var {
+                    ty: ty_int,
+                    span: dummy_span(),
+                    name: "v".to_string(),
+                },
                 span: dummy_span(),
             },
             TypedArm {
@@ -1901,7 +2780,11 @@ fn test_enum_match_option_propagation_emits_is_none_br_ret() {
                 body: TypedExpr::Return {
                     ty: ty_int,
                     span: dummy_span(),
-                    value: Some(Box::new(TypedExpr::Literal { ty: ty_opt_int, span: dummy_span(), value: TypedLiteral::Int(0) })),
+                    value: Some(Box::new(TypedExpr::Literal {
+                        ty: ty_opt_int,
+                        span: dummy_span(),
+                        value: TypedLiteral::Int(0),
+                    })),
                 },
                 span: dummy_span(),
             },
@@ -1909,8 +2792,15 @@ fn test_enum_match_option_propagation_emits_is_none_br_ret() {
     };
 
     let _r = emit_match(&mut emitter, &match_expr);
-    let has_is_none = emitter.instructions.iter().any(|i| matches!(i, Instruction::IsNone { .. }));
-    assert!(has_is_none, "Option ? propagation should emit IsNone, got {:?}", emitter.instructions);
+    let has_is_none = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::IsNone { .. }));
+    assert!(
+        has_is_none,
+        "Option ? propagation should emit IsNone, got {:?}",
+        emitter.instructions
+    );
 }
 
 #[test]
@@ -1933,29 +2823,49 @@ fn test_result_propagation_emits_is_err() {
     let match_expr = TypedExpr::Match {
         ty: ty_int,
         span: dummy_span(),
-        scrutinee: Box::new(TypedExpr::Var { ty: ty_result, span: dummy_span(), name: "r".to_string() }),
+        scrutinee: Box::new(TypedExpr::Var {
+            ty: ty_result,
+            span: dummy_span(),
+            name: "r".to_string(),
+        }),
         arms: vec![
             TypedArm {
                 pattern: TypedPattern::EnumVariant {
                     enum_def_id: dummy_enum_def_id,
                     variant_name: "Ok".to_string(),
-                    bindings: vec![TypedPattern::Variable { name: "v".to_string(), ty: ty_int, span: dummy_span() }],
+                    bindings: vec![TypedPattern::Variable {
+                        name: "v".to_string(),
+                        ty: ty_int,
+                        span: dummy_span(),
+                    }],
                     span: dummy_span(),
                 },
-                body: TypedExpr::Var { ty: ty_int, span: dummy_span(), name: "v".to_string() },
+                body: TypedExpr::Var {
+                    ty: ty_int,
+                    span: dummy_span(),
+                    name: "v".to_string(),
+                },
                 span: dummy_span(),
             },
             TypedArm {
                 pattern: TypedPattern::EnumVariant {
                     enum_def_id: dummy_enum_def_id,
                     variant_name: "Err".to_string(),
-                    bindings: vec![TypedPattern::Variable { name: "e".to_string(), ty: ty_str, span: dummy_span() }],
+                    bindings: vec![TypedPattern::Variable {
+                        name: "e".to_string(),
+                        ty: ty_str,
+                        span: dummy_span(),
+                    }],
                     span: dummy_span(),
                 },
                 body: TypedExpr::Return {
                     ty: ty_int,
                     span: dummy_span(),
-                    value: Some(Box::new(TypedExpr::Var { ty: ty_str, span: dummy_span(), name: "e".to_string() })),
+                    value: Some(Box::new(TypedExpr::Var {
+                        ty: ty_str,
+                        span: dummy_span(),
+                        name: "e".to_string(),
+                    })),
                 },
                 span: dummy_span(),
             },
@@ -1963,8 +2873,15 @@ fn test_result_propagation_emits_is_err() {
     };
 
     let _r = emit_match(&mut emitter, &match_expr);
-    let has_is_err = emitter.instructions.iter().any(|i| matches!(i, Instruction::IsErr { .. }));
-    assert!(has_is_err, "Result try propagation should emit IsErr, got {:?}", emitter.instructions);
+    let has_is_err = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::IsErr { .. }));
+    assert!(
+        has_is_err,
+        "Result try propagation should emit IsErr, got {:?}",
+        emitter.instructions
+    );
 }
 
 #[test]
@@ -1994,11 +2911,19 @@ fn test_type_conversion_int_to_float() {
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &call_expr);
-    let has_i2f = emitter.instructions.iter().any(|i| matches!(i, Instruction::I2f { .. }));
-    assert!(has_i2f, "int.into<Float>() should emit I2f, got {:?}", emitter.instructions);
+    let has_i2f = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::I2f { .. }));
+    assert!(
+        has_i2f,
+        "int.into<Float>() should emit I2f, got {:?}",
+        emitter.instructions
+    );
 }
 
 #[test]
@@ -2025,11 +2950,19 @@ fn test_type_conversion_int_to_string() {
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &call_expr);
-    let has_i2s = emitter.instructions.iter().any(|i| matches!(i, Instruction::I2s { .. }));
-    assert!(has_i2s, "int.into<String>() should emit I2s, got {:?}", emitter.instructions);
+    let has_i2s = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::I2s { .. }));
+    assert!(
+        has_i2s,
+        "int.into<String>() should emit I2s, got {:?}",
+        emitter.instructions
+    );
 }
 
 #[test]
@@ -2056,11 +2989,19 @@ fn test_type_conversion_float_to_string() {
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &call_expr);
-    let has_f2s = emitter.instructions.iter().any(|i| matches!(i, Instruction::F2s { .. }));
-    assert!(has_f2s, "float.into<String>() should emit F2s, got {:?}", emitter.instructions);
+    let has_f2s = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::F2s { .. }));
+    assert!(
+        has_f2s,
+        "float.into<String>() should emit F2s, got {:?}",
+        emitter.instructions
+    );
 }
 
 #[test]
@@ -2087,11 +3028,19 @@ fn test_type_conversion_bool_to_string() {
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &call_expr);
-    let has_b2s = emitter.instructions.iter().any(|i| matches!(i, Instruction::B2s { .. }));
-    assert!(has_b2s, "bool.into<String>() should emit B2s, got {:?}", emitter.instructions);
+    let has_b2s = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::B2s { .. }));
+    assert!(
+        has_b2s,
+        "bool.into<String>() should emit B2s, got {:?}",
+        emitter.instructions
+    );
 }
 
 #[test]
@@ -2105,14 +3054,29 @@ fn test_string_concat_emits_str_concat() {
     let concat_expr = TypedExpr::Binary {
         ty: ty_str,
         span: dummy_span(),
-        left: Box::new(TypedExpr::Literal { ty: ty_str, span: dummy_span(), value: TypedLiteral::String("a".to_string()) }),
+        left: Box::new(TypedExpr::Literal {
+            ty: ty_str,
+            span: dummy_span(),
+            value: TypedLiteral::String("a".to_string()),
+        }),
         op: BinaryOp::Add,
-        right: Box::new(TypedExpr::Literal { ty: ty_str, span: dummy_span(), value: TypedLiteral::String("b".to_string()) }),
+        right: Box::new(TypedExpr::Literal {
+            ty: ty_str,
+            span: dummy_span(),
+            value: TypedLiteral::String("b".to_string()),
+        }),
     };
 
     let _r = emit_expr(&mut emitter, &concat_expr);
-    let has_str_concat = emitter.instructions.iter().any(|i| matches!(i, Instruction::StrConcat { .. }));
-    assert!(has_str_concat, "string + string should emit StrConcat, got {:?}", emitter.instructions);
+    let has_str_concat = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::StrConcat { .. }));
+    assert!(
+        has_str_concat,
+        "string + string should emit StrConcat, got {:?}",
+        emitter.instructions
+    );
 }
 
 #[test]
@@ -2133,16 +3097,28 @@ fn test_string_len_emits_str_len() {
         callee: Box::new(TypedExpr::Field {
             ty: ty_int,
             span: dummy_span(),
-            receiver: Box::new(TypedExpr::Var { ty: ty_str, span: dummy_span(), name: "s".to_string() }),
+            receiver: Box::new(TypedExpr::Var {
+                ty: ty_str,
+                span: dummy_span(),
+                name: "s".to_string(),
+            }),
             field: "len".to_string(),
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &call_expr);
-    let has_str_len = emitter.instructions.iter().any(|i| matches!(i, Instruction::StrLen { .. }));
-    assert!(has_str_len, "string.len() should emit StrLen, got {:?}", emitter.instructions);
+    let has_str_len = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::StrLen { .. }));
+    assert!(
+        has_str_len,
+        "string.len() should emit StrLen, got {:?}",
+        emitter.instructions
+    );
 }
 
 #[test]
@@ -2154,14 +3130,25 @@ fn test_const_fold_int_addition() {
     let expr = TypedExpr::Binary {
         ty: ty_int,
         span: dummy_span(),
-        left: Box::new(TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(2) }),
+        left: Box::new(TypedExpr::Literal {
+            ty: ty_int,
+            span: dummy_span(),
+            value: TypedLiteral::Int(2),
+        }),
         op: BinaryOp::Add,
-        right: Box::new(TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(3) }),
+        right: Box::new(TypedExpr::Literal {
+            ty: ty_int,
+            span: dummy_span(),
+            value: TypedLiteral::Int(3),
+        }),
     };
 
     let result = const_fold(&expr, &interner);
-    assert!(matches!(result, Some(TypedLiteral::Int(5))),
-        "const_fold(2 + 3) should yield Some(Int(5)), got {:?}", result);
+    assert!(
+        matches!(result, Some(TypedLiteral::Int(5))),
+        "const_fold(2 + 3) should yield Some(Int(5)), got {:?}",
+        result
+    );
 }
 
 #[test]
@@ -2173,14 +3160,25 @@ fn test_const_fold_float_multiplication() {
     let expr = TypedExpr::Binary {
         ty: ty_float,
         span: dummy_span(),
-        left: Box::new(TypedExpr::Literal { ty: ty_float, span: dummy_span(), value: TypedLiteral::Float(2.0) }),
+        left: Box::new(TypedExpr::Literal {
+            ty: ty_float,
+            span: dummy_span(),
+            value: TypedLiteral::Float(2.0),
+        }),
         op: BinaryOp::Mul,
-        right: Box::new(TypedExpr::Literal { ty: ty_float, span: dummy_span(), value: TypedLiteral::Float(3.0) }),
+        right: Box::new(TypedExpr::Literal {
+            ty: ty_float,
+            span: dummy_span(),
+            value: TypedLiteral::Float(3.0),
+        }),
     };
 
     let result = const_fold(&expr, &interner);
-    assert!(matches!(result, Some(TypedLiteral::Float(f)) if (f - 6.0).abs() < 1e-9),
-        "const_fold(2.0 * 3.0) should yield Some(Float(6.0)), got {:?}", result);
+    assert!(
+        matches!(result, Some(TypedLiteral::Float(f)) if (f - 6.0).abs() < 1e-9),
+        "const_fold(2.0 * 3.0) should yield Some(Float(6.0)), got {:?}",
+        result
+    );
 }
 
 #[test]
@@ -2192,13 +3190,25 @@ fn test_const_fold_non_constant_returns_none() {
     let expr = TypedExpr::Binary {
         ty: ty_int,
         span: dummy_span(),
-        left: Box::new(TypedExpr::Var { ty: ty_int, span: dummy_span(), name: "x".to_string() }),
+        left: Box::new(TypedExpr::Var {
+            ty: ty_int,
+            span: dummy_span(),
+            name: "x".to_string(),
+        }),
         op: BinaryOp::Add,
-        right: Box::new(TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(1) }),
+        right: Box::new(TypedExpr::Literal {
+            ty: ty_int,
+            span: dummy_span(),
+            value: TypedLiteral::Int(1),
+        }),
     };
 
     let result = const_fold(&expr, &interner);
-    assert!(result.is_none(), "const_fold(var + 1) should return None, got {:?}", result);
+    assert!(
+        result.is_none(),
+        "const_fold(var + 1) should return None, got {:?}",
+        result
+    );
 }
 
 #[test]
@@ -2210,14 +3220,25 @@ fn test_const_fold_subtraction() {
     let expr = TypedExpr::Binary {
         ty: ty_int,
         span: dummy_span(),
-        left: Box::new(TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(10) }),
+        left: Box::new(TypedExpr::Literal {
+            ty: ty_int,
+            span: dummy_span(),
+            value: TypedLiteral::Int(10),
+        }),
         op: BinaryOp::Sub,
-        right: Box::new(TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(3) }),
+        right: Box::new(TypedExpr::Literal {
+            ty: ty_int,
+            span: dummy_span(),
+            value: TypedLiteral::Int(3),
+        }),
     };
 
     let result = const_fold(&expr, &interner);
-    assert!(matches!(result, Some(TypedLiteral::Int(7))),
-        "const_fold(10 - 3) should yield Some(Int(7)), got {:?}", result);
+    assert!(
+        matches!(result, Some(TypedLiteral::Int(7))),
+        "const_fold(10 - 3) should yield Some(Int(7)), got {:?}",
+        result
+    );
 }
 
 #[test]
@@ -2242,14 +3263,21 @@ fn test_tail_call_for_dialogue_return() {
     };
 
     let _r = emit_expr(&mut emitter, &return_expr);
-    let has_ret = emitter.instructions.iter().any(|i| matches!(i, Instruction::Ret { .. }));
-    assert!(has_ret, "Return with value should emit Ret, got {:?}", emitter.instructions);
+    let has_ret = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Ret { .. }));
+    assert!(
+        has_ret,
+        "Return with value should emit Ret, got {:?}",
+        emitter.instructions
+    );
 }
 
 // ─── Plan 05, Task 1: SWITCH offset fixup and const_fold wiring ─────────────
 
-use writ_compiler::emit::body::emit_all_bodies;
 use writ_compiler::emit::body::closure::LambdaInfo;
+use writ_compiler::emit::body::emit_all_bodies;
 
 // ─── Plan 52-03: Per-function error skip in emit_all_bodies ──────────────────
 
@@ -2287,7 +3315,10 @@ fn make_two_fn_ast_error_first() -> (TypedAst, TyInterner, DefId, DefId) {
         decls: vec![
             TypedDecl::Fn {
                 def_id: fn_a_id,
-                body: TypedExpr::Error { ty: ty_error, span: dummy_span() },
+                body: TypedExpr::Error {
+                    ty: ty_error,
+                    span: dummy_span(),
+                },
                 param_name_spans: vec![],
             },
             TypedDecl::Fn {
@@ -2400,12 +3431,18 @@ fn make_two_fn_ast_both_error() -> (TypedAst, TyInterner) {
         decls: vec![
             TypedDecl::Fn {
                 def_id: fn_a_id,
-                body: TypedExpr::Error { ty: ty_error, span: dummy_span() },
+                body: TypedExpr::Error {
+                    ty: ty_error,
+                    span: dummy_span(),
+                },
                 param_name_spans: vec![],
             },
             TypedDecl::Fn {
                 def_id: fn_b_id,
-                body: TypedExpr::Error { ty: ty_error, span: dummy_span() },
+                body: TypedExpr::Error {
+                    ty: ty_error,
+                    span: dummy_span(),
+                },
                 param_name_spans: vec![],
             },
         ],
@@ -2422,10 +3459,16 @@ fn make_two_fn_ast_both_error() -> (TypedAst, TyInterner) {
 fn test_emit_all_bodies_skips_error_fn_emits_valid_fn() {
     let (ast, interner, _fn_a_id, fn_b_id) = make_two_fn_ast_error_first();
     let builder = ModuleBuilder::new();
-    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default(), &[]);
+    let (bodies, diags) =
+        emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default(), &[]);
 
     // Only fn_b should produce a body
-    assert_eq!(bodies.len(), 1, "expected 1 body for fn_b, got {}", bodies.len());
+    assert_eq!(
+        bodies.len(),
+        1,
+        "expected 1 body for fn_b, got {}",
+        bodies.len()
+    );
     assert_eq!(
         bodies[0].method_def_id,
         Some(fn_b_id),
@@ -2435,8 +3478,7 @@ fn test_emit_all_bodies_skips_error_fn_emits_valid_fn() {
     // Exactly one diagnostic for the skipped function
     assert_eq!(diags.len(), 1, "expected 1 diagnostic for the skipped fn_a");
     assert_eq!(
-        diags[0].code,
-        "E9001",
+        diags[0].code, "E9001",
         "diagnostic code should be E9001, got {:?}",
         diags[0].code
     );
@@ -2447,10 +3489,20 @@ fn test_emit_all_bodies_skips_error_fn_emits_valid_fn() {
 fn test_emit_all_bodies_both_valid_emits_both() {
     let (ast, interner) = make_two_fn_ast_both_valid();
     let builder = ModuleBuilder::new();
-    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default(), &[]);
+    let (bodies, diags) =
+        emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default(), &[]);
 
-    assert_eq!(bodies.len(), 2, "expected 2 bodies for valid functions, got {}", bodies.len());
-    assert!(diags.is_empty(), "expected no diagnostics for valid functions, got {:?}", diags);
+    assert_eq!(
+        bodies.len(),
+        2,
+        "expected 2 bodies for valid functions, got {}",
+        bodies.len()
+    );
+    assert!(
+        diags.is_empty(),
+        "expected no diagnostics for valid functions, got {:?}",
+        diags
+    );
 }
 
 /// Test 3: Both functions have errors — no bodies emitted, two E9001 diagnostics.
@@ -2458,10 +3510,19 @@ fn test_emit_all_bodies_both_valid_emits_both() {
 fn test_emit_all_bodies_all_error_fns_skipped() {
     let (ast, interner) = make_two_fn_ast_both_error();
     let builder = ModuleBuilder::new();
-    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default(), &[]);
+    let (bodies, diags) =
+        emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default(), &[]);
 
-    assert_eq!(bodies.len(), 0, "expected 0 bodies when all functions have errors");
-    assert_eq!(diags.len(), 2, "expected 2 diagnostics (one per skipped function)");
+    assert_eq!(
+        bodies.len(),
+        0,
+        "expected 0 bodies when all functions have errors"
+    );
+    assert_eq!(
+        diags.len(),
+        2,
+        "expected 2 diagnostics (one per skipped function)"
+    );
     for d in &diags {
         assert_eq!(d.code, "E9001", "all diagnostics should use code E9001");
     }
@@ -2491,7 +3552,11 @@ fn test_switch_offsets_are_nonzero_for_enum_match() {
                 bindings: vec![],
                 span: dummy_span(),
             },
-            body: TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(10) },
+            body: TypedExpr::Literal {
+                ty: ty_int,
+                span: dummy_span(),
+                value: TypedLiteral::Int(10),
+            },
             span: dummy_span(),
         },
         TypedArm {
@@ -2501,7 +3566,11 @@ fn test_switch_offsets_are_nonzero_for_enum_match() {
                 bindings: vec![],
                 span: dummy_span(),
             },
-            body: TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(20) },
+            body: TypedExpr::Literal {
+                ty: ty_int,
+                span: dummy_span(),
+                value: TypedLiteral::Int(20),
+            },
             span: dummy_span(),
         },
     ];
@@ -2509,19 +3578,33 @@ fn test_switch_offsets_are_nonzero_for_enum_match() {
     let match_expr = TypedExpr::Match {
         ty: ty_int,
         span: dummy_span(),
-        scrutinee: Box::new(TypedExpr::Var { ty: ty_enum, span: dummy_span(), name: "e".to_string() }),
+        scrutinee: Box::new(TypedExpr::Var {
+            ty: ty_enum,
+            span: dummy_span(),
+            name: "e".to_string(),
+        }),
         arms,
     };
 
     let _r = emit_match(&mut emitter, &match_expr);
 
     // Find the SWITCH instruction
-    let switch = emitter.instructions.iter().find(|i| matches!(i, Instruction::Switch { .. }));
-    assert!(switch.is_some(), "Expected a Switch instruction, got {:?}", emitter.instructions);
+    let switch = emitter
+        .instructions
+        .iter()
+        .find(|i| matches!(i, Instruction::Switch { .. }));
+    assert!(
+        switch.is_some(),
+        "Expected a Switch instruction, got {:?}",
+        emitter.instructions
+    );
     if let Some(Instruction::Switch { offsets, .. }) = switch {
         assert_eq!(offsets.len(), 2, "Expected 2 offset slots for 2 variants");
-        assert!(offsets[0] != 0 || offsets[1] != 0,
-            "At least one SWITCH offset must be non-zero; got {:?}", offsets);
+        assert!(
+            offsets[0] != 0 || offsets[1] != 0,
+            "At least one SWITCH offset must be non-zero; got {:?}",
+            offsets
+        );
     }
 }
 
@@ -2540,31 +3623,45 @@ fn test_switch_offset_arm0_points_to_first_arm() {
     emitter.locals.insert("e".to_string(), r_enum);
 
     // Single variant arm
-    let arms = vec![
-        TypedArm {
-            pattern: TypedPattern::EnumVariant {
-                enum_def_id,
-                variant_name: "A".to_string(),
-                bindings: vec![],
-                span: dummy_span(),
-            },
-            body: TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(42) },
+    let arms = vec![TypedArm {
+        pattern: TypedPattern::EnumVariant {
+            enum_def_id,
+            variant_name: "A".to_string(),
+            bindings: vec![],
             span: dummy_span(),
         },
-    ];
+        body: TypedExpr::Literal {
+            ty: ty_int,
+            span: dummy_span(),
+            value: TypedLiteral::Int(42),
+        },
+        span: dummy_span(),
+    }];
 
     let match_expr = TypedExpr::Match {
         ty: ty_int,
         span: dummy_span(),
-        scrutinee: Box::new(TypedExpr::Var { ty: ty_enum, span: dummy_span(), name: "e".to_string() }),
+        scrutinee: Box::new(TypedExpr::Var {
+            ty: ty_enum,
+            span: dummy_span(),
+            name: "e".to_string(),
+        }),
         arms,
     };
 
     let _r = emit_match(&mut emitter, &match_expr);
 
-    if let Some(Instruction::Switch { offsets, .. }) = emitter.instructions.iter().find(|i| matches!(i, Instruction::Switch { .. })) {
+    if let Some(Instruction::Switch { offsets, .. }) = emitter
+        .instructions
+        .iter()
+        .find(|i| matches!(i, Instruction::Switch { .. }))
+    {
         // offset[0] > 0: arm 0 is after the SWITCH instruction
-        assert!(offsets[0] > 0, "Arm 0 offset must be positive (arm is after SWITCH), got {}", offsets[0]);
+        assert!(
+            offsets[0] > 0,
+            "Arm 0 offset must be positive (arm is after SWITCH), got {}",
+            offsets[0]
+        );
     } else {
         panic!("Expected Switch instruction");
     }
@@ -2580,9 +3677,17 @@ fn test_const_decl_foldable_emits_load_int() {
     let value = TypedExpr::Binary {
         ty: ty_int,
         span: dummy_span(),
-        left: Box::new(TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(2) }),
+        left: Box::new(TypedExpr::Literal {
+            ty: ty_int,
+            span: dummy_span(),
+            value: TypedLiteral::Int(2),
+        }),
         op: BinaryOp::Add,
-        right: Box::new(TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(3) }),
+        right: Box::new(TypedExpr::Literal {
+            ty: ty_int,
+            span: dummy_span(),
+            value: TypedLiteral::Int(3),
+        }),
     };
 
     let ast = TypedAst {
@@ -2594,13 +3699,25 @@ fn test_const_decl_foldable_emits_load_int() {
     };
 
     let builder = ModuleBuilder::new();
-    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default(), &[]);
+    let (bodies, diags) =
+        emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default(), &[]);
     assert!(diags.is_empty(), "Expected no diagnostics, got {:?}", diags);
-    assert_eq!(bodies.len(), 1, "Expected 1 emitted body for the const decl");
+    assert_eq!(
+        bodies.len(),
+        1,
+        "Expected 1 emitted body for the const decl"
+    );
 
     let body = &bodies[0];
-    let has_load_int_5 = body.instructions.iter().any(|i| matches!(i, Instruction::LoadInt { value: 5, .. }));
-    assert!(has_load_int_5, "Expected LoadInt(5) from const_fold(2+3), got {:?}", body.instructions);
+    let has_load_int_5 = body
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::LoadInt { value: 5, .. }));
+    assert!(
+        has_load_int_5,
+        "Expected LoadInt(5) from const_fold(2+3), got {:?}",
+        body.instructions
+    );
 }
 
 #[test]
@@ -2614,9 +3731,17 @@ fn test_const_decl_non_foldable_emits_instructions() {
     let value = TypedExpr::Binary {
         ty: ty_int,
         span: dummy_span(),
-        left: Box::new(TypedExpr::Var { ty: ty_int, span: dummy_span(), name: "x".to_string() }),
+        left: Box::new(TypedExpr::Var {
+            ty: ty_int,
+            span: dummy_span(),
+            name: "x".to_string(),
+        }),
         op: BinaryOp::Add,
-        right: Box::new(TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(1) }),
+        right: Box::new(TypedExpr::Literal {
+            ty: ty_int,
+            span: dummy_span(),
+            value: TypedLiteral::Int(1),
+        }),
     };
 
     let ast = TypedAst {
@@ -2628,10 +3753,15 @@ fn test_const_decl_non_foldable_emits_instructions() {
     };
 
     let builder = ModuleBuilder::new();
-    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default(), &[]);
+    let (bodies, diags) =
+        emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default(), &[]);
     assert!(diags.is_empty(), "Expected no diagnostics");
     // Body is emitted (non-foldable path still produces a body)
-    assert_eq!(bodies.len(), 1, "Expected 1 emitted body for non-foldable const");
+    assert_eq!(
+        bodies.len(),
+        1,
+        "Expected 1 emitted body for non-foldable const"
+    );
 }
 
 // ─── Plan 05, Task 2: Closure body emission and string literal interning ─────
@@ -2680,12 +3810,565 @@ fn test_lambda_body_emitted_as_separate_body_entry() {
 
     assert_eq!(lambda_infos.len(), 1, "Expected 1 lambda info");
 
-    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &lambda_infos, &FxHashMap::default(), &[]);
+    let (bodies, diags) = emit_all_bodies(
+        &ast,
+        &interner,
+        &builder,
+        &lambda_infos,
+        &FxHashMap::default(),
+        &[],
+    );
     assert!(diags.is_empty(), "Expected no diagnostics, got {:?}", diags);
-    assert_eq!(bodies.len(), 2, "Expected 2 bodies: fn body + lambda body, got {}", bodies.len());
+    assert_eq!(
+        bodies.len(),
+        2,
+        "Expected 2 bodies: fn body + lambda body, got {}",
+        bodies.len()
+    );
 
     // The second body (lambda body) should have method_def_id: None
-    assert!(bodies[1].method_def_id.is_none(), "Lambda body should have no DefId");
+    assert!(
+        bodies[1].method_def_id.is_none(),
+        "Lambda body should have no DefId"
+    );
+}
+
+#[test]
+fn test_capturing_lambda_method_metadata_decodes_regular_signature_and_receiver() {
+    use writ_module::signature::{TypeSignature, decode_method_signature, decode_type_signature};
+
+    let mut interner = make_interner();
+    let ty_int = interner.int();
+    let ty_bool = interner.bool_ty();
+    let (mut def_map, fn_def_id) = make_def_id();
+    let capture_def_id = def_map.arena.alloc(DefEntry {
+        id: None,
+        kind: DefKind::Class,
+        vis: DefVis::Pub,
+        file_id: FileId(0),
+        namespace: String::new(),
+        name: "CapturedRef".to_string(),
+        name_span: dummy_span(),
+        generics: vec![],
+        span: dummy_span(),
+    });
+    let ty_capture = interner.intern(TyKind::Class(capture_def_id));
+    let ty_func = interner.func(vec![ty_int], ty_bool);
+
+    let lambda_expr = TypedExpr::Lambda {
+        ty: ty_func,
+        span: dummy_span(),
+        params: vec![("value".to_string(), ty_int)],
+        ret_ty: ty_bool,
+        captures: vec![Capture {
+            name: "state".to_string(),
+            ty: ty_capture,
+            mode: CaptureMode::ByValue,
+            binding_span: dummy_span(),
+        }],
+        body: Box::new(TypedExpr::Literal {
+            ty: ty_bool,
+            span: dummy_span(),
+            value: TypedLiteral::Bool(true),
+        }),
+    };
+    let ast = TypedAst {
+        decls: vec![
+            TypedDecl::Class {
+                def_id: capture_def_id,
+            },
+            TypedDecl::Fn {
+                def_id: fn_def_id,
+                body: lambda_expr,
+                param_name_spans: vec![],
+            },
+        ],
+        def_map,
+        struct_field_types: FxHashMap::default(),
+        conditional_fns: FxHashMap::default(),
+        fallback_for_conditional: FxHashMap::default(),
+    };
+
+    let mut builder = ModuleBuilder::new();
+    builder.add_typedef(
+        "CapturedRef",
+        "",
+        TypeDefKind::Class,
+        0,
+        Some(capture_def_id),
+    );
+    builder
+        .def_token_map
+        .insert(capture_def_id, MetadataToken::new(TableId::TypeDef, 1));
+    let infos = pre_scan_lambdas(&ast, &interner, &mut builder);
+    assert_eq!(infos.len(), 1);
+    builder.finalize();
+
+    let method = builder.finalized_method_defs().next().unwrap();
+    assert_eq!(builder.string_heap.get_str(method.name), "__invoke_0");
+    assert_eq!(method.owner.table(), TableId::TypeDef);
+    assert_eq!(method.param_count, 2, "r0 is env and r1 is value");
+    assert_eq!(
+        method.flags & (1 << 1),
+        0,
+        "capturing closure must be instance"
+    );
+
+    let signature =
+        writ_module::heap::read_blob(builder.blob_heap.data(), method.signature).unwrap();
+    let (params, ret) = decode_method_signature(signature).unwrap();
+    assert_eq!(params, vec![TypeSignature::Int]);
+    assert_eq!(ret, TypeSignature::Bool);
+
+    let param = builder.finalized_param_defs().next().unwrap();
+    assert_eq!(builder.string_heap.get_str(param.name), "value");
+    assert_eq!(param.sequence, 0);
+    let param_type =
+        writ_module::heap::read_blob(builder.blob_heap.data(), param.type_sig).unwrap();
+    assert_eq!(
+        decode_type_signature(param_type).unwrap(),
+        TypeSignature::Int
+    );
+
+    let capture_field = builder.finalized_field_defs().next().unwrap();
+    assert_eq!(builder.string_heap.get_str(capture_field.name), "state");
+    assert_eq!(
+        capture_field.flags & writ_module::tables::FIELD_FLAG_READONLY,
+        0,
+        "capture fields remain writable until Capture records mutability"
+    );
+    let capture_type =
+        writ_module::heap::read_blob(builder.blob_heap.data(), capture_field.type_sig).unwrap();
+    assert_eq!(
+        decode_type_signature(capture_type).unwrap(),
+        TypeSignature::Named(writ_module::MetadataToken(
+            ((TableId::TypeDef as u32) << 24) | 1
+        ))
+    );
+}
+
+#[test]
+fn test_zero_capture_lambda_method_metadata_decodes_static_signature() {
+    use writ_module::signature::{TypeSignature, decode_method_signature, decode_type_signature};
+
+    let mut interner = make_interner();
+    let ty_float = interner.float();
+    let ty_string = interner.string_ty();
+    let ty_func = interner.func(vec![ty_float], ty_string);
+    let (def_map, fn_def_id) = make_def_id();
+
+    let lambda_expr = TypedExpr::Lambda {
+        ty: ty_func,
+        span: dummy_span(),
+        params: vec![("value".to_string(), ty_float)],
+        ret_ty: ty_string,
+        captures: vec![],
+        body: Box::new(TypedExpr::Literal {
+            ty: ty_string,
+            span: dummy_span(),
+            value: TypedLiteral::String("done".to_string()),
+        }),
+    };
+    let ast = TypedAst {
+        decls: vec![TypedDecl::Fn {
+            def_id: fn_def_id,
+            body: lambda_expr,
+            param_name_spans: vec![],
+        }],
+        def_map,
+        struct_field_types: FxHashMap::default(),
+        conditional_fns: FxHashMap::default(),
+        fallback_for_conditional: FxHashMap::default(),
+    };
+
+    let mut builder = ModuleBuilder::new();
+    let infos = pre_scan_lambdas(&ast, &interner, &mut builder);
+    assert_eq!(infos.len(), 1);
+    builder.finalize();
+
+    let method = builder.finalized_method_defs().next().unwrap();
+    assert_eq!(method.param_count, 1, "first regular parameter is r0");
+    assert_ne!(
+        method.flags & (1 << 1),
+        0,
+        "zero-capture closure must be static"
+    );
+
+    let signature =
+        writ_module::heap::read_blob(builder.blob_heap.data(), method.signature).unwrap();
+    let (params, ret) = decode_method_signature(signature).unwrap();
+    assert_eq!(params, vec![TypeSignature::Float]);
+    assert_eq!(ret, TypeSignature::String);
+
+    let param = builder.finalized_param_defs().next().unwrap();
+    assert_eq!(builder.string_heap.get_str(param.name), "value");
+    assert_eq!(param.sequence, 0);
+    let param_type =
+        writ_module::heap::read_blob(builder.blob_heap.data(), param.type_sig).unwrap();
+    assert_eq!(
+        decode_type_signature(param_type).unwrap(),
+        TypeSignature::Float
+    );
+}
+
+#[test]
+fn test_capturing_lambda_body_places_params_before_capture_temporaries() {
+    let mut interner = make_interner();
+    let ty_int = interner.int();
+    let ty_func = interner.func(vec![ty_int], ty_int);
+    let (def_map, fn_def_id) = make_def_id();
+
+    let lambda_expr = TypedExpr::Lambda {
+        ty: ty_func,
+        span: dummy_span(),
+        params: vec![("value".to_string(), ty_int)],
+        ret_ty: ty_int,
+        captures: vec![Capture {
+            name: "bonus".to_string(),
+            ty: ty_int,
+            mode: CaptureMode::ByValue,
+            binding_span: dummy_span(),
+        }],
+        body: Box::new(TypedExpr::Binary {
+            ty: ty_int,
+            span: dummy_span(),
+            left: Box::new(TypedExpr::Var {
+                ty: ty_int,
+                span: dummy_span(),
+                name: "value".to_string(),
+            }),
+            op: BinaryOp::Add,
+            right: Box::new(TypedExpr::Var {
+                ty: ty_int,
+                span: dummy_span(),
+                name: "bonus".to_string(),
+            }),
+        }),
+    };
+    let ast = TypedAst {
+        decls: vec![TypedDecl::Fn {
+            def_id: fn_def_id,
+            body: lambda_expr,
+            param_name_spans: vec![],
+        }],
+        def_map,
+        struct_field_types: FxHashMap::default(),
+        conditional_fns: FxHashMap::default(),
+        fallback_for_conditional: FxHashMap::default(),
+    };
+
+    let mut builder = ModuleBuilder::new();
+    let infos = pre_scan_lambdas(&ast, &interner, &mut builder);
+    builder.finalize();
+    let (bodies, diags) = emit_all_bodies(
+        &ast,
+        &interner,
+        &builder,
+        &infos,
+        &FxHashMap::default(),
+        &[],
+    );
+
+    assert!(diags.is_empty(), "Expected no diagnostics, got {diags:?}");
+    let body = &bodies[1];
+    assert_eq!(
+        body.reg_types[1], ty_int,
+        "explicit value parameter must be r1"
+    );
+    assert_eq!(
+        body.reg_types[2], ty_int,
+        "captured bonus temporary must follow params"
+    );
+    assert!(matches!(
+        body.instructions.first(),
+        Some(Instruction::GetField {
+            r_dst: 2,
+            r_obj: 0,
+            ..
+        })
+    ));
+    assert!(body.instructions.iter().any(|instruction| matches!(
+        instruction,
+        Instruction::AddI {
+            r_dst: 3,
+            r_a: 1,
+            r_b: 2
+        }
+    )));
+    assert!(matches!(
+        body.instructions.last(),
+        Some(Instruction::Ret { r_src: 3 })
+    ));
+}
+
+#[test]
+fn test_zero_capture_lambda_body_starts_params_at_r0() {
+    let mut interner = make_interner();
+    let ty_int = interner.int();
+    let ty_func = interner.func(vec![ty_int], ty_int);
+    let (def_map, fn_def_id) = make_def_id();
+
+    let lambda_expr = TypedExpr::Lambda {
+        ty: ty_func,
+        span: dummy_span(),
+        params: vec![("value".to_string(), ty_int)],
+        ret_ty: ty_int,
+        captures: vec![],
+        body: Box::new(TypedExpr::Var {
+            ty: ty_int,
+            span: dummy_span(),
+            name: "value".to_string(),
+        }),
+    };
+    let ast = TypedAst {
+        decls: vec![TypedDecl::Fn {
+            def_id: fn_def_id,
+            body: lambda_expr,
+            param_name_spans: vec![],
+        }],
+        def_map,
+        struct_field_types: FxHashMap::default(),
+        conditional_fns: FxHashMap::default(),
+        fallback_for_conditional: FxHashMap::default(),
+    };
+
+    let mut builder = ModuleBuilder::new();
+    let infos = pre_scan_lambdas(&ast, &interner, &mut builder);
+    builder.finalize();
+    let (bodies, diags) = emit_all_bodies(
+        &ast,
+        &interner,
+        &builder,
+        &infos,
+        &FxHashMap::default(),
+        &[],
+    );
+
+    assert!(diags.is_empty(), "Expected no diagnostics, got {diags:?}");
+    let body = &bodies[1];
+    assert_eq!(body.reg_types, vec![ty_int]);
+    assert_eq!(body.reg_count, 1);
+    assert!(matches!(
+        body.instructions.as_slice(),
+        [Instruction::Ret { r_src: 0 }]
+    ));
+}
+
+#[test]
+fn test_lambdas_in_separate_functions_use_module_wide_method_tokens() {
+    let mut interner = make_interner();
+    let ty_int = interner.int();
+    let ty_func = interner.func(vec![], ty_int);
+    let (mut def_map, first_fn_id) = make_def_id();
+    let second_fn_id = def_map.arena.alloc(DefEntry {
+        id: None,
+        kind: DefKind::Fn,
+        vis: DefVis::Pub,
+        file_id: FileId(0),
+        namespace: String::new(),
+        name: "second".to_string(),
+        name_span: dummy_span(),
+        generics: vec![],
+        span: dummy_span(),
+    });
+    let make_lambda = |value| TypedExpr::Lambda {
+        ty: ty_func,
+        span: dummy_span(),
+        params: vec![],
+        ret_ty: ty_int,
+        captures: vec![],
+        body: Box::new(TypedExpr::Literal {
+            ty: ty_int,
+            span: dummy_span(),
+            value: TypedLiteral::Int(value),
+        }),
+    };
+    let ast = TypedAst {
+        decls: vec![
+            TypedDecl::Fn {
+                def_id: first_fn_id,
+                body: make_lambda(1),
+                param_name_spans: vec![],
+            },
+            TypedDecl::Fn {
+                def_id: second_fn_id,
+                body: make_lambda(2),
+                param_name_spans: vec![],
+            },
+        ],
+        def_map,
+        struct_field_types: FxHashMap::default(),
+        conditional_fns: FxHashMap::default(),
+        fallback_for_conditional: FxHashMap::default(),
+    };
+
+    let mut builder = ModuleBuilder::new();
+    let infos = pre_scan_lambdas(&ast, &interner, &mut builder);
+    builder.finalize();
+    let (bodies, diags) = emit_all_bodies(
+        &ast,
+        &interner,
+        &builder,
+        &infos,
+        &FxHashMap::default(),
+        &[],
+    );
+
+    assert!(diags.is_empty(), "Expected no diagnostics, got {diags:?}");
+    assert_eq!(bodies.len(), 4);
+    let delegate_token = |body_index: usize| {
+        bodies[body_index]
+            .instructions
+            .iter()
+            .find_map(|instruction| match instruction {
+                Instruction::NewDelegate { method_idx, .. } => Some(*method_idx),
+                _ => None,
+            })
+            .unwrap()
+    };
+    let first_token = builder.methoddef_token_by_name("__invoke_0").unwrap();
+    let second_token = builder.methoddef_token_by_name("__invoke_1").unwrap();
+    assert_ne!(first_token, second_token);
+    assert_eq!(delegate_token(0), first_token);
+    assert_eq!(delegate_token(1), second_token);
+}
+
+#[test]
+fn test_nested_lambda_body_uses_inner_method_token() {
+    let mut interner = make_interner();
+    let ty_int = interner.int();
+    let inner_func_ty = interner.func(vec![], ty_int);
+    let outer_func_ty = interner.func(vec![], inner_func_ty);
+    let (def_map, fn_def_id) = make_def_id();
+
+    let inner_lambda = TypedExpr::Lambda {
+        ty: inner_func_ty,
+        span: dummy_span(),
+        params: vec![],
+        ret_ty: ty_int,
+        captures: vec![],
+        body: Box::new(TypedExpr::Literal {
+            ty: ty_int,
+            span: dummy_span(),
+            value: TypedLiteral::Int(42),
+        }),
+    };
+    let outer_lambda = TypedExpr::Lambda {
+        ty: outer_func_ty,
+        span: dummy_span(),
+        params: vec![],
+        ret_ty: inner_func_ty,
+        captures: vec![],
+        body: Box::new(inner_lambda),
+    };
+    let ast = TypedAst {
+        decls: vec![TypedDecl::Fn {
+            def_id: fn_def_id,
+            body: outer_lambda,
+            param_name_spans: vec![],
+        }],
+        def_map,
+        struct_field_types: FxHashMap::default(),
+        conditional_fns: FxHashMap::default(),
+        fallback_for_conditional: FxHashMap::default(),
+    };
+
+    let mut builder = ModuleBuilder::new();
+    let infos = pre_scan_lambdas(&ast, &interner, &mut builder);
+    builder.finalize();
+    let (bodies, diags) = emit_all_bodies(
+        &ast,
+        &interner,
+        &builder,
+        &infos,
+        &FxHashMap::default(),
+        &[],
+    );
+
+    assert!(diags.is_empty(), "Expected no diagnostics, got {diags:?}");
+    assert_eq!(bodies.len(), 3);
+    let delegate_token = |body_index: usize| {
+        bodies[body_index]
+            .instructions
+            .iter()
+            .find_map(|instruction| match instruction {
+                Instruction::NewDelegate { method_idx, .. } => Some(*method_idx),
+                _ => None,
+            })
+            .unwrap()
+    };
+    let outer_token = builder.methoddef_token_by_name("__invoke_0").unwrap();
+    let inner_token = builder.methoddef_token_by_name("__invoke_1").unwrap();
+    assert_eq!(delegate_token(0), outer_token);
+    assert_eq!(delegate_token(1), inner_token);
+}
+
+#[test]
+fn test_nullable_lambda_tail_is_lifted_into_some() {
+    let mut interner = make_interner();
+    let ty_int = interner.int();
+    let ty_option_int = interner.option(ty_int);
+    let ty_func = interner.func(vec![], ty_option_int);
+    let (def_map, fn_def_id) = make_def_id();
+
+    let lambda_expr = TypedExpr::Lambda {
+        ty: ty_func,
+        span: dummy_span(),
+        params: vec![],
+        ret_ty: ty_option_int,
+        captures: vec![],
+        body: Box::new(TypedExpr::Literal {
+            ty: ty_int,
+            span: dummy_span(),
+            value: TypedLiteral::Int(42),
+        }),
+    };
+    let ast = TypedAst {
+        decls: vec![TypedDecl::Fn {
+            def_id: fn_def_id,
+            body: lambda_expr,
+            param_name_spans: vec![],
+        }],
+        def_map,
+        struct_field_types: FxHashMap::default(),
+        conditional_fns: FxHashMap::default(),
+        fallback_for_conditional: FxHashMap::default(),
+    };
+
+    let mut builder = ModuleBuilder::new();
+    let lambda_infos = pre_scan_lambdas(&ast, &interner, &mut builder);
+    builder.finalize();
+    let method = builder.finalized_method_defs().next().unwrap();
+    let signature =
+        writ_module::heap::read_blob(builder.blob_heap.data(), method.signature).unwrap();
+    let (_, metadata_return) = writ_module::signature::decode_method_signature(signature).unwrap();
+    assert_eq!(
+        metadata_return,
+        writ_module::signature::TypeSignature::Generic {
+            namespace: "writ".to_string(),
+            name: "Option".to_string(),
+            args: vec![writ_module::signature::TypeSignature::Int],
+        },
+        "lambda metadata and body must agree on the lifted Option return"
+    );
+    let (bodies, diags) = emit_all_bodies(
+        &ast,
+        &interner,
+        &builder,
+        &lambda_infos,
+        &FxHashMap::default(),
+        &[],
+    );
+
+    assert!(diags.is_empty(), "Expected no diagnostics, got {diags:?}");
+    assert!(
+        bodies[1]
+            .instructions
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::WrapSome { .. })),
+        "bare lambda tail must be represented as Some(int): {:?}",
+        bodies[1].instructions
+    );
 }
 
 #[test]
@@ -2714,7 +4397,11 @@ fn test_string_literal_interning_via_emit_bodies() {
     // emit_bodies does the full pipeline including string interning fixup
     let active_conditions = std::collections::HashSet::new();
     let result = emit_bodies(&ast, &interner, &[], true, &[], &active_conditions);
-    assert!(result.is_ok(), "emit_bodies should succeed, got {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "emit_bodies should succeed, got {:?}",
+        result.err()
+    );
     // Just check we get bytes back (string interning fixup produced a valid module)
     let bytes = result.unwrap();
     assert!(!bytes.is_empty(), "Expected non-empty output");
@@ -2744,13 +4431,21 @@ fn test_string_literal_pending_strings_populated() {
     };
 
     let builder = ModuleBuilder::new();
-    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default(), &[]);
+    let (bodies, diags) =
+        emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default(), &[]);
     assert!(diags.is_empty(), "Expected no diagnostics");
     assert_eq!(bodies.len(), 1, "Expected 1 body");
 
     // pending_strings should have one entry for "world"
-    assert_eq!(bodies[0].pending_strings.len(), 1, "Expected 1 pending string");
-    assert_eq!(bodies[0].pending_strings[0].1, "world", "Expected pending string to be 'world'");
+    assert_eq!(
+        bodies[0].pending_strings.len(),
+        1,
+        "Expected 1 pending string"
+    );
+    assert_eq!(
+        bodies[0].pending_strings[0].1, "world",
+        "Expected pending string to be 'world'"
+    );
 }
 
 #[test]
@@ -2813,29 +4508,46 @@ fn test_two_string_literals_produce_different_pending_entries() {
     };
 
     let builder = ModuleBuilder::new();
-    let (bodies, diags) = emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default(), &[]);
+    let (bodies, diags) =
+        emit_all_bodies(&ast, &interner, &builder, &[], &FxHashMap::default(), &[]);
     assert!(diags.is_empty(), "Expected no diagnostics");
     assert_eq!(bodies.len(), 1, "Expected 1 body");
 
     // Two different string literals -> two pending_strings entries with different values
-    assert_eq!(bodies[0].pending_strings.len(), 2, "Expected 2 pending strings");
-    let strings: Vec<&str> = bodies[0].pending_strings.iter().map(|(_, s)| s.as_str()).collect();
-    assert!(strings.contains(&"foo"), "Expected 'foo' in pending strings");
-    assert!(strings.contains(&"bar"), "Expected 'bar' in pending strings");
+    assert_eq!(
+        bodies[0].pending_strings.len(),
+        2,
+        "Expected 2 pending strings"
+    );
+    let strings: Vec<&str> = bodies[0]
+        .pending_strings
+        .iter()
+        .map(|(_, s)| s.as_str())
+        .collect();
+    assert!(
+        strings.contains(&"foo"),
+        "Expected 'foo' in pending strings"
+    );
+    assert!(
+        strings.contains(&"bar"),
+        "Expected 'bar' in pending strings"
+    );
     // Instruction indices must be different
-    assert_ne!(bodies[0].pending_strings[0].0, bodies[0].pending_strings[1].0,
-        "Two string literals must be at different instruction indices");
+    assert_ne!(
+        bodies[0].pending_strings[0].0, bodies[0].pending_strings[1].0,
+        "Two string literals must be at different instruction indices"
+    );
 }
 
 // ─── Plan 06, Task 1: TailCall and StrBuild emission ────────────────────────
 
 #[test]
-fn test_tail_call_return_call_emits_tail_call() {
-    // Return(Call(...)) -> TailCall instead of Call + Ret
-    // This is the key pattern for dialogue transitions.
+fn test_desugared_return_call_emits_call_then_ret() {
+    // TypedExpr::Return is used by desugaring and is never a dialogue transition.
     let mut interner = make_interner();
     let ty_int = interner.int();
-    let builder = ModuleBuilder::new();
+    let (_, fn_def_id) = make_def_id();
+    let builder = make_builder_with_fn(fn_def_id);
     let mut emitter = make_emitter(&builder, &interner);
 
     // TypedExpr::Return { value: Some(TypedExpr::Call { ... }) }
@@ -2850,29 +4562,240 @@ fn test_tail_call_return_call_emits_tail_call() {
                 span: dummy_span(),
                 name: "some_fn".to_string(),
             }),
-            args: vec![
-                TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(42) },
-            ],
-            callee_def_id: None,
+            args: vec![TypedExpr::Literal {
+                ty: ty_int,
+                span: dummy_span(),
+                value: TypedLiteral::Int(42),
+            }],
+            callee_def_id: Some(fn_def_id),
+            callee_has_receiver: Some(false),
         })),
     };
 
     let _r = emit_expr(&mut emitter, &return_call_expr);
-    let has_tail_call = emitter.instructions.iter().any(|i| matches!(i, Instruction::TailCall { .. }));
+    let has_tail_call = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::TailCall { .. }));
     let has_call_then_ret = {
         let instrs = &emitter.instructions;
-        instrs.windows(2).any(|w| matches!(&w[0], Instruction::Call { .. }) && matches!(&w[1], Instruction::Ret { .. }))
+        instrs.windows(2).any(|w| {
+            matches!(&w[0], Instruction::Call { .. }) && matches!(&w[1], Instruction::Ret { .. })
+        })
     };
-    assert!(has_tail_call, "Return(Call(...)) should emit TailCall, got {:?}", emitter.instructions);
-    assert!(!has_call_then_ret, "Return(Call(...)) must NOT emit Call+Ret sequence, got {:?}", emitter.instructions);
+    assert!(
+        !has_tail_call,
+        "desugared return-call must not emit TailCall: {:?}",
+        emitter.instructions
+    );
+    assert!(
+        has_call_then_ret,
+        "desugared return-call should emit Call+Ret: {:?}",
+        emitter.instructions
+    );
 }
 
 #[test]
-fn test_tail_call_stmt_return_call_emits_tail_call() {
-    // TypedStmt::Return { value: Some(Call(...)) } -> TailCall (not Call + Ret)
+fn test_dialogue_transition_emits_tail_call() {
     let mut interner = make_interner();
     let ty_int = interner.int();
-    let builder = ModuleBuilder::new();
+    let (_, fn_def_id) = make_def_id();
+    let builder = make_builder_with_fn(fn_def_id);
+    let mut emitter = make_emitter(&builder, &interner);
+
+    let transition = TypedStmt::Transition {
+        span: dummy_span(),
+        call: TypedExpr::Call {
+            ty: ty_int,
+            span: dummy_span(),
+            callee: Box::new(TypedExpr::Var {
+                ty: ty_int,
+                span: dummy_span(),
+                name: "some_fn".to_string(),
+            }),
+            args: vec![],
+            callee_def_id: Some(fn_def_id),
+            callee_has_receiver: None,
+        },
+    };
+
+    emit_stmt(&mut emitter, &transition);
+    let expected_token = builder.token_for_def(fn_def_id).unwrap().0;
+    assert!(
+        matches!(
+            emitter.instructions.as_slice(),
+            [Instruction::TailCall { method_idx, argc: 0, .. }] if *method_idx == expected_token
+        ),
+        "dialogue transition should emit one valid TailCall: {:?}",
+        emitter.instructions
+    );
+}
+
+#[test]
+fn test_cross_module_overloaded_instance_transition_packs_self_and_resolves_methodref() {
+    use writ_module::signature::{TypeSignature, encode_method_signature};
+
+    let mut interner = make_interner();
+    let ty_int = interner.int();
+    let (_, remote_type_def_id) = make_def_id();
+    let ty_remote = interner.intern(TyKind::Class(remote_type_def_id));
+    let callee_ty = interner.intern(TyKind::Func {
+        params: vec![ty_int],
+        ret: ty_int,
+    });
+
+    let mut builder = ModuleBuilder::new();
+    let module_ref = builder.add_module_ref("dialogues", "1.0.0");
+    let type_ref = builder.add_type_ref(module_ref, "RemoteDialogue", "");
+    let parent = MetadataToken::new(TableId::TypeRef, (type_ref + 1) as u32);
+    builder.def_token_map.insert(remote_type_def_id, parent);
+    let int_signature = encode_method_signature(&[TypeSignature::Int], &TypeSignature::Int)
+        .expect("valid int overload signature");
+    let string_signature = encode_method_signature(&[TypeSignature::String], &TypeSignature::Int)
+        .expect("valid string overload signature");
+    let expected_row =
+        builder.add_method_ref_with_origin(parent, "choose", &int_signature, true, true);
+    builder.add_method_ref_with_origin(parent, "choose", &string_signature, true, true);
+    builder.finalize();
+
+    let mut emitter = make_emitter(&builder, &interner);
+    let r_self = emitter.alloc_reg(ty_remote);
+    emitter.locals.insert("remote".to_string(), r_self);
+    let transition = TypedStmt::Transition {
+        span: dummy_span(),
+        call: TypedExpr::Call {
+            ty: ty_int,
+            span: dummy_span(),
+            callee: Box::new(TypedExpr::Field {
+                ty: callee_ty,
+                span: dummy_span(),
+                receiver: Box::new(TypedExpr::Var {
+                    ty: ty_remote,
+                    span: dummy_span(),
+                    name: "remote".to_string(),
+                }),
+                field: "choose".to_string(),
+            }),
+            args: vec![TypedExpr::Literal {
+                ty: ty_int,
+                span: dummy_span(),
+                value: TypedLiteral::Int(7),
+            }],
+            callee_def_id: None,
+            callee_has_receiver: Some(true),
+        },
+    };
+
+    emit_stmt(&mut emitter, &transition);
+    let expected_token = MetadataToken::new(TableId::MethodRef, (expected_row + 1) as u32).0;
+    let Instruction::TailCall {
+        method_idx,
+        r_base,
+        argc,
+    } = emitter
+        .instructions
+        .last()
+        .expect("transition must emit TailCall")
+    else {
+        panic!("expected TailCall, got {:?}", emitter.instructions);
+    };
+    assert_eq!(
+        *method_idx, expected_token,
+        "signature must select the int overload"
+    );
+    assert_ne!(*method_idx, 0);
+    assert_eq!(MetadataToken(*method_idx).table(), TableId::MethodRef);
+    assert_eq!(
+        *argc, 2,
+        "instance transition must pass self plus the explicit argument"
+    );
+    assert_eq!(*r_base, r_self, "self must start the packed argument block");
+}
+
+#[test]
+fn test_cross_module_static_qualified_transition_excludes_qualifier() {
+    use writ_module::signature::{TypeSignature, encode_method_signature};
+
+    let mut interner = make_interner();
+    let ty_int = interner.int();
+    let (_, remote_type_def_id) = make_def_id();
+    let ty_remote = interner.intern(TyKind::Class(remote_type_def_id));
+    let callee_ty = interner.intern(TyKind::Func {
+        params: vec![ty_int],
+        ret: ty_int,
+    });
+
+    let mut builder = ModuleBuilder::new();
+    let module_ref = builder.add_module_ref("dialogues", "1.0.0");
+    let type_ref = builder.add_type_ref(module_ref, "RemoteDialogue", "");
+    let parent = MetadataToken::new(TableId::TypeRef, (type_ref + 1) as u32);
+    builder.def_token_map.insert(remote_type_def_id, parent);
+    let signature = encode_method_signature(&[TypeSignature::Int], &TypeSignature::Int)
+        .expect("valid static method signature");
+    let expected_row =
+        builder.add_method_ref_with_origin(parent, "select", &signature, true, false);
+    builder.finalize();
+
+    let mut emitter = make_emitter(&builder, &interner);
+    let r_qualifier = emitter.alloc_reg(ty_remote);
+    emitter.locals.insert("remote".to_string(), r_qualifier);
+    let transition = TypedStmt::Transition {
+        span: dummy_span(),
+        call: TypedExpr::Call {
+            ty: ty_int,
+            span: dummy_span(),
+            callee: Box::new(TypedExpr::Field {
+                ty: callee_ty,
+                span: dummy_span(),
+                receiver: Box::new(TypedExpr::Var {
+                    ty: ty_remote,
+                    span: dummy_span(),
+                    name: "remote".to_string(),
+                }),
+                field: "select".to_string(),
+            }),
+            args: vec![TypedExpr::Literal {
+                ty: ty_int,
+                span: dummy_span(),
+                value: TypedLiteral::Int(7),
+            }],
+            callee_def_id: None,
+            callee_has_receiver: Some(false),
+        },
+    };
+
+    emit_stmt(&mut emitter, &transition);
+    let expected_token = MetadataToken::new(TableId::MethodRef, (expected_row + 1) as u32).0;
+    let Instruction::TailCall {
+        method_idx,
+        r_base,
+        argc,
+    } = emitter
+        .instructions
+        .last()
+        .expect("transition must emit TailCall")
+    else {
+        panic!("expected TailCall, got {:?}", emitter.instructions);
+    };
+    assert_eq!(*method_idx, expected_token);
+    assert_ne!(*method_idx, 0);
+    assert_eq!(MetadataToken(*method_idx).table(), TableId::MethodRef);
+    assert_eq!(
+        *argc, 1,
+        "static transition must pass only explicit arguments"
+    );
+    assert_ne!(
+        *r_base, r_qualifier,
+        "static qualifier must not enter the argument block"
+    );
+}
+
+#[test]
+fn test_ordinary_return_call_emits_call_then_ret() {
+    let mut interner = make_interner();
+    let ty_int = interner.int();
+    let (_, fn_def_id) = make_def_id();
+    let builder = make_builder_with_fn(fn_def_id);
     let mut emitter = make_emitter(&builder, &interner);
 
     let return_stmt = TypedStmt::Return {
@@ -2886,13 +4809,27 @@ fn test_tail_call_stmt_return_call_emits_tail_call() {
                 name: "some_fn".to_string(),
             }),
             args: vec![],
-            callee_def_id: None,
+            callee_def_id: Some(fn_def_id),
+            callee_has_receiver: None,
         }),
     };
 
     emit_stmt(&mut emitter, &return_stmt);
-    let has_tail_call = emitter.instructions.iter().any(|i| matches!(i, Instruction::TailCall { .. }));
-    assert!(has_tail_call, "TypedStmt::Return(Call(...)) should emit TailCall, got {:?}", emitter.instructions);
+    assert!(
+        !emitter
+            .instructions
+            .iter()
+            .any(|instruction| { matches!(instruction, Instruction::TailCall { .. }) })
+    );
+    assert!(
+        matches!(
+            emitter.instructions.as_slice(),
+            [Instruction::Call { method_idx, argc: 0, .. }, Instruction::Ret { .. }]
+                if *method_idx == builder.token_for_def(fn_def_id).unwrap().0
+        ),
+        "ordinary return-call should emit Call+Ret: {:?}",
+        emitter.instructions
+    );
 }
 
 #[test]
@@ -2914,10 +4851,24 @@ fn test_normal_return_non_call_still_emits_ret() {
     };
 
     let _r = emit_expr(&mut emitter, &return_expr);
-    let has_ret = emitter.instructions.iter().any(|i| matches!(i, Instruction::Ret { .. }));
-    let has_tail_call = emitter.instructions.iter().any(|i| matches!(i, Instruction::TailCall { .. }));
-    assert!(has_ret, "Return(literal) should emit Ret, got {:?}", emitter.instructions);
-    assert!(!has_tail_call, "Return(literal) must NOT emit TailCall, got {:?}", emitter.instructions);
+    let has_ret = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Ret { .. }));
+    let has_tail_call = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::TailCall { .. }));
+    assert!(
+        has_ret,
+        "Return(literal) should emit Ret, got {:?}",
+        emitter.instructions
+    );
+    assert!(
+        !has_tail_call,
+        "Return(literal) must NOT emit TailCall, got {:?}",
+        emitter.instructions
+    );
 }
 
 #[test]
@@ -2937,17 +4888,36 @@ fn test_str_build_three_part_chain_emits_str_build() {
         left: Box::new(TypedExpr::Binary {
             ty: ty_str,
             span: dummy_span(),
-            left: Box::new(TypedExpr::Literal { ty: ty_str, span: dummy_span(), value: TypedLiteral::String("a".to_string()) }),
+            left: Box::new(TypedExpr::Literal {
+                ty: ty_str,
+                span: dummy_span(),
+                value: TypedLiteral::String("a".to_string()),
+            }),
             op: BinaryOp::Add,
-            right: Box::new(TypedExpr::Literal { ty: ty_str, span: dummy_span(), value: TypedLiteral::String("b".to_string()) }),
+            right: Box::new(TypedExpr::Literal {
+                ty: ty_str,
+                span: dummy_span(),
+                value: TypedLiteral::String("b".to_string()),
+            }),
         }),
         op: BinaryOp::Add,
-        right: Box::new(TypedExpr::Literal { ty: ty_str, span: dummy_span(), value: TypedLiteral::String("c".to_string()) }),
+        right: Box::new(TypedExpr::Literal {
+            ty: ty_str,
+            span: dummy_span(),
+            value: TypedLiteral::String("c".to_string()),
+        }),
     };
 
     let _r = emit_expr(&mut emitter, &chain_expr);
-    let has_str_build = emitter.instructions.iter().any(|i| matches!(i, Instruction::StrBuild { count: 3, .. }));
-    assert!(has_str_build, "3-part string chain should emit StrBuild(count=3), got {:?}", emitter.instructions);
+    let has_str_build = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::StrBuild { count: 3, .. }));
+    assert!(
+        has_str_build,
+        "3-part string chain should emit StrBuild(count=3), got {:?}",
+        emitter.instructions
+    );
 }
 
 #[test]
@@ -2967,20 +4937,43 @@ fn test_str_build_four_part_chain_emits_str_build() {
             left: Box::new(TypedExpr::Binary {
                 ty: ty_str,
                 span: dummy_span(),
-                left: Box::new(TypedExpr::Literal { ty: ty_str, span: dummy_span(), value: TypedLiteral::String("a".to_string()) }),
+                left: Box::new(TypedExpr::Literal {
+                    ty: ty_str,
+                    span: dummy_span(),
+                    value: TypedLiteral::String("a".to_string()),
+                }),
                 op: BinaryOp::Add,
-                right: Box::new(TypedExpr::Literal { ty: ty_str, span: dummy_span(), value: TypedLiteral::String("b".to_string()) }),
+                right: Box::new(TypedExpr::Literal {
+                    ty: ty_str,
+                    span: dummy_span(),
+                    value: TypedLiteral::String("b".to_string()),
+                }),
             }),
             op: BinaryOp::Add,
-            right: Box::new(TypedExpr::Literal { ty: ty_str, span: dummy_span(), value: TypedLiteral::String("c".to_string()) }),
+            right: Box::new(TypedExpr::Literal {
+                ty: ty_str,
+                span: dummy_span(),
+                value: TypedLiteral::String("c".to_string()),
+            }),
         }),
         op: BinaryOp::Add,
-        right: Box::new(TypedExpr::Literal { ty: ty_str, span: dummy_span(), value: TypedLiteral::String("d".to_string()) }),
+        right: Box::new(TypedExpr::Literal {
+            ty: ty_str,
+            span: dummy_span(),
+            value: TypedLiteral::String("d".to_string()),
+        }),
     };
 
     let _r = emit_expr(&mut emitter, &chain_expr);
-    let has_str_build_4 = emitter.instructions.iter().any(|i| matches!(i, Instruction::StrBuild { count: 4, .. }));
-    assert!(has_str_build_4, "4-part string chain should emit StrBuild(count=4), got {:?}", emitter.instructions);
+    let has_str_build_4 = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::StrBuild { count: 4, .. }));
+    assert!(
+        has_str_build_4,
+        "4-part string chain should emit StrBuild(count=4), got {:?}",
+        emitter.instructions
+    );
 }
 
 #[test]
@@ -2995,16 +4988,38 @@ fn test_str_build_two_part_still_uses_str_concat() {
     let concat_expr = TypedExpr::Binary {
         ty: ty_str,
         span: dummy_span(),
-        left: Box::new(TypedExpr::Literal { ty: ty_str, span: dummy_span(), value: TypedLiteral::String("a".to_string()) }),
+        left: Box::new(TypedExpr::Literal {
+            ty: ty_str,
+            span: dummy_span(),
+            value: TypedLiteral::String("a".to_string()),
+        }),
         op: BinaryOp::Add,
-        right: Box::new(TypedExpr::Literal { ty: ty_str, span: dummy_span(), value: TypedLiteral::String("b".to_string()) }),
+        right: Box::new(TypedExpr::Literal {
+            ty: ty_str,
+            span: dummy_span(),
+            value: TypedLiteral::String("b".to_string()),
+        }),
     };
 
     let _r = emit_expr(&mut emitter, &concat_expr);
-    let has_str_concat = emitter.instructions.iter().any(|i| matches!(i, Instruction::StrConcat { .. }));
-    let has_str_build = emitter.instructions.iter().any(|i| matches!(i, Instruction::StrBuild { .. }));
-    assert!(has_str_concat, "2-part string chain should emit StrConcat, got {:?}", emitter.instructions);
-    assert!(!has_str_build, "2-part string chain must NOT emit StrBuild, got {:?}", emitter.instructions);
+    let has_str_concat = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::StrConcat { .. }));
+    let has_str_build = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::StrBuild { .. }));
+    assert!(
+        has_str_concat,
+        "2-part string chain should emit StrConcat, got {:?}",
+        emitter.instructions
+    );
+    assert!(
+        !has_str_build,
+        "2-part string chain must NOT emit StrBuild, got {:?}",
+        emitter.instructions
+    );
 }
 
 // ─── Task 2 (Plan 03): Atomic block emission ─────────────────────────────────
@@ -3019,20 +5034,26 @@ fn test_atomic_block_emits_atomic_begin_end() {
     let mut emitter = make_emitter(&builder, &interner);
 
     let atomic_stmt = TypedStmt::Atomic {
-        body: vec![
-            TypedStmt::Expr {
-                expr: TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(1) },
+        body: vec![TypedStmt::Expr {
+            expr: TypedExpr::Literal {
+                ty: ty_int,
                 span: dummy_span(),
+                value: TypedLiteral::Int(1),
             },
-        ],
+            span: dummy_span(),
+        }],
         span: dummy_span(),
     };
 
     emit_stmt(&mut emitter, &atomic_stmt);
-    assert!(matches!(&emitter.instructions[0], Instruction::AtomicBegin),
-        "first instr should be AtomicBegin");
-    assert!(matches!(emitter.instructions.last().unwrap(), Instruction::AtomicEnd),
-        "last instr should be AtomicEnd");
+    assert!(
+        matches!(&emitter.instructions[0], Instruction::AtomicBegin),
+        "first instr should be AtomicBegin"
+    );
+    assert!(
+        matches!(emitter.instructions.last().unwrap(), Instruction::AtomicEnd),
+        "last instr should be AtomicEnd"
+    );
 }
 
 // ─── Plan 26-04: FIX-02 compiler contract_idx emission (Task 2) ──────────────
@@ -3040,9 +5061,7 @@ fn test_atomic_block_emits_atomic_begin_end() {
 /// Helper: build a ModuleBuilder with a ContractDef and an impl method.
 /// Registers the impl method -> contract token mapping for CALL_VIRT emission.
 /// Returns (builder, method_def_id, contract_token).
-fn make_builder_with_virtual_contract(
-    method_def_id: DefId,
-) -> (ModuleBuilder, MetadataToken) {
+fn make_builder_with_virtual_contract(method_def_id: DefId) -> (ModuleBuilder, MetadataToken) {
     let mut builder = ModuleBuilder::new();
 
     // ContractDef "Into<Float>" at row 1 (no DefId for contract itself in tests)
@@ -3051,7 +5070,14 @@ fn make_builder_with_virtual_contract(
 
     // MethodDef for the impl method
     let type_handle = builder.add_typedef("Int", "writ", TypeDefKind::Struct, 0, None);
-    builder.add_methoddef(Some(type_handle), "int_into_float", 0, 0, Some(method_def_id), 0);
+    builder.add_methoddef(
+        Some(type_handle),
+        "int_into_float",
+        0,
+        0,
+        Some(method_def_id),
+        0,
+    );
 
     builder.finalize();
 
@@ -3077,30 +5103,57 @@ fn test_call_virt_emits_non_zero_contract_idx_when_registered() {
 
     let mut emitter = make_emitter(&builder, &interner);
 
-    // Self arg in r0
-    emitter.regs.alloc(ty_int); // r0 = self (Int)
+    // Self in r0, followed by one explicit argument.
+    let r_self = emitter.regs.alloc(ty_int);
+    emitter.locals.insert("self".to_string(), r_self);
 
     let call_expr = TypedExpr::Call {
         ty: ty_int,
         span: dummy_span(),
-        callee: Box::new(TypedExpr::Var {
+        callee: Box::new(TypedExpr::Field {
             ty: ty_int,
             span: dummy_span(),
-            name: "into".to_string(),
+            receiver: Box::new(TypedExpr::Var {
+                ty: ty_int,
+                span: dummy_span(),
+                name: "self".to_string(),
+            }),
+            field: "into".to_string(),
         }),
-        args: vec![
-            TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(42) },
-        ],
+        args: vec![TypedExpr::Literal {
+            ty: ty_int,
+            span: dummy_span(),
+            value: TypedLiteral::Int(42),
+        }],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
-    emit_call(&mut emitter, &call_expr, method_def_id, CallKind::Virtual { slot: 0 });
+    emit_call(
+        &mut emitter,
+        &call_expr,
+        method_def_id,
+        CallKind::Virtual { slot: 0 },
+    );
 
     // Find the CALL_VIRT instruction
-    let call_virt = emitter.instructions.iter().find(|i| matches!(i, Instruction::CallVirt { .. }));
-    assert!(call_virt.is_some(), "should have emitted a CALL_VIRT instruction");
+    let call_virt = emitter
+        .instructions
+        .iter()
+        .find(|i| matches!(i, Instruction::CallVirt { .. }));
+    assert!(
+        call_virt.is_some(),
+        "should have emitted a CALL_VIRT instruction"
+    );
 
-    if let Some(Instruction::CallVirt { contract_idx, .. }) = call_virt {
+    if let Some(Instruction::CallVirt {
+        contract_idx,
+        r_obj,
+        r_base,
+        argc,
+        ..
+    }) = call_virt
+    {
         assert_ne!(
             *contract_idx, 0,
             "CALL_VIRT should emit non-zero contract_idx when contract mapping is registered; got {}",
@@ -3110,6 +5163,14 @@ fn test_call_virt_emits_non_zero_contract_idx_when_registered() {
             *contract_idx, contract_token.0,
             "contract_idx should equal the registered contract token value; expected {}, got {}",
             contract_token.0, contract_idx
+        );
+        assert_eq!(
+            r_obj, r_base,
+            "CALL_VIRT receiver must start its argument block"
+        );
+        assert_eq!(
+            *argc, 2,
+            "CALL_VIRT argc must include self and the explicit argument"
         );
     }
 }
@@ -3125,30 +5186,66 @@ fn test_call_virt_emits_zero_contract_idx_when_no_mapping() {
     // Builder with no registered contract mapping for method_def_id
     let builder = make_builder_with_fn(method_def_id);
     let mut emitter = make_emitter(&builder, &interner);
+    let r_self = emitter.regs.alloc(ty_int);
+    emitter.locals.insert("self".to_string(), r_self);
 
     let call_expr = TypedExpr::Call {
         ty: ty_int,
         span: dummy_span(),
-        callee: Box::new(TypedExpr::Var {
+        callee: Box::new(TypedExpr::Field {
             ty: ty_int,
             span: dummy_span(),
-            name: "some_virtual".to_string(),
+            receiver: Box::new(TypedExpr::Var {
+                ty: ty_int,
+                span: dummy_span(),
+                name: "self".to_string(),
+            }),
+            field: "some_virtual".to_string(),
         }),
-        args: vec![
-            TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(1) },
-        ],
+        args: vec![TypedExpr::Literal {
+            ty: ty_int,
+            span: dummy_span(),
+            value: TypedLiteral::Int(1),
+        }],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
-    emit_call(&mut emitter, &call_expr, method_def_id, CallKind::Virtual { slot: 0 });
+    emit_call(
+        &mut emitter,
+        &call_expr,
+        method_def_id,
+        CallKind::Virtual { slot: 0 },
+    );
 
-    let call_virt = emitter.instructions.iter().find(|i| matches!(i, Instruction::CallVirt { .. }));
-    assert!(call_virt.is_some(), "should have emitted a CALL_VIRT instruction");
+    let call_virt = emitter
+        .instructions
+        .iter()
+        .find(|i| matches!(i, Instruction::CallVirt { .. }));
+    assert!(
+        call_virt.is_some(),
+        "should have emitted a CALL_VIRT instruction"
+    );
 
-    if let Some(Instruction::CallVirt { contract_idx, .. }) = call_virt {
+    if let Some(Instruction::CallVirt {
+        contract_idx,
+        r_obj,
+        r_base,
+        argc,
+        ..
+    }) = call_virt
+    {
         assert_eq!(
             *contract_idx, 0,
             "CALL_VIRT should emit contract_idx=0 when no contract mapping is registered (legacy fallback)"
+        );
+        assert_eq!(
+            r_obj, r_base,
+            "CALL_VIRT receiver must start its argument block"
+        );
+        assert_eq!(
+            *argc, 2,
+            "CALL_VIRT argc must include self and the explicit argument"
         );
     }
 }
@@ -3163,7 +5260,9 @@ fn test_call_virt_register_impl_method_contract_and_lookup() {
 
     // Before registration: lookup returns None
     assert!(
-        builder.contract_token_for_method_def_id(method_def_id).is_none(),
+        builder
+            .contract_token_for_method_def_id(method_def_id)
+            .is_none(),
         "should return None before registration"
     );
 
@@ -3175,20 +5274,27 @@ fn test_call_virt_register_impl_method_contract_and_lookup() {
     let result = builder.contract_token_for_method_def_id(method_def_id);
     assert!(result.is_some(), "should return Some after registration");
     assert_eq!(
-        result.unwrap(), contract_token,
+        result.unwrap(),
+        contract_token,
         "returned token should match the registered one"
     );
 }
 
 // ─── Phase 28 Plan 02: BF-02 Range construction + BF-03 DeferPush handler offset ─
 
+fn make_range_builder() -> ModuleBuilder {
+    let mut builder = ModuleBuilder::new();
+    let runtime_module = builder.add_module_ref("writ-runtime", "1.0.0");
+    builder.add_type_ref(runtime_module, "Range", "writ");
+    builder.finalize();
+    builder
+}
+
 /// BF-02: Range with start=0, end=10, inclusive=false should emit
-/// New + LoadInt(start) + SetField(0) + LoadInt(end) + SetField(1)
-/// + LoadTrue + SetField(2) + LoadFalse + SetField(3)
-/// and NO Nop instruction.
+/// its four values in field order followed by one atomic New.
 #[test]
-fn test_range_emits_new_and_set_field() {
-    let builder = ModuleBuilder::new();
+fn test_range_emits_atomic_new_with_ordered_fields() {
+    let builder = make_range_builder();
     let mut interner = make_interner();
     let ty_int = interner.int();
 
@@ -3218,43 +5324,55 @@ fn test_range_emits_new_and_set_field() {
     let has_nop = instrs.iter().any(|i| matches!(i, Instruction::Nop));
     assert!(!has_nop, "Range should NOT emit Nop, got: {:?}", instrs);
 
-    // Must contain a New instruction
-    let has_new = instrs.iter().any(|i| matches!(i, Instruction::New { .. }));
-    assert!(has_new, "Range should emit New, got: {:?}", instrs);
-
-    // Must contain 4 SetField instructions for fields 0..=3
-    let set_fields: Vec<u32> = instrs.iter().filter_map(|i| {
-        if let Instruction::SetField { field_idx, .. } = i { Some(*field_idx) } else { None }
-    }).collect();
-    assert_eq!(set_fields.len(), 4, "Range should emit exactly 4 SetField, got: {:?}", instrs);
-    assert!(set_fields.contains(&0), "should have SetField for field 0 (start)");
-    assert!(set_fields.contains(&1), "should have SetField for field 1 (end)");
-    assert!(set_fields.contains(&2), "should have SetField for field 2 (start_inclusive)");
-    assert!(set_fields.contains(&3), "should have SetField for field 3 (end_inclusive)");
-
-    // Field 3 (end_inclusive) for inclusive=false should use LoadFalse
-    // Find the SetField { field_idx: 3 } and check the register before it uses LoadFalse
-    let set_field_3_idx = instrs.iter().position(|i| {
-        matches!(i, Instruction::SetField { field_idx: 3, .. })
-    }).expect("should have SetField for field 3");
-
-    // The instruction immediately before SetField(3) should be LoadFalse (for inclusive=false)
     assert!(
-        set_field_3_idx > 0,
-        "SetField(3) should not be the first instruction"
+        !instrs
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::SetField { .. })),
+        "Range should not emit SetField, got: {:?}",
+        instrs
     );
-    let before_set_field_3 = &instrs[set_field_3_idx - 1];
-    assert!(
-        matches!(before_set_field_3, Instruction::LoadFalse { .. }),
-        "For inclusive=false, instruction before SetField(field_idx=3) should be LoadFalse, got: {:?}",
-        before_set_field_3
-    );
+    let new_idx = instrs
+        .iter()
+        .position(|instruction| matches!(instruction, Instruction::New { .. }))
+        .expect("Range should emit New");
+    let Instruction::New {
+        field_count,
+        r_base,
+        ..
+    } = instrs[new_idx]
+    else {
+        unreachable!()
+    };
+    assert_eq!(field_count, 4);
+    assert_eq!(new_idx, 4, "Range values should be evaluated before New");
+    assert!(matches!(
+        instrs[0],
+        Instruction::LoadInt {
+            r_dst,
+            value: 0
+        } if r_dst == r_base
+    ));
+    assert!(matches!(
+        instrs[1],
+        Instruction::LoadInt {
+            r_dst,
+            value: 10
+        } if r_dst == r_base + 1
+    ));
+    assert!(matches!(
+        instrs[2],
+        Instruction::LoadTrue { r_dst } if r_dst == r_base + 2
+    ));
+    assert!(matches!(
+        instrs[3],
+        Instruction::LoadFalse { r_dst } if r_dst == r_base + 3
+    ));
 }
 
-/// BF-02: Range with inclusive=true should emit LoadTrue for field 3 (end_inclusive).
+/// BF-02: Range with inclusive=true should emit LoadTrue for end_inclusive.
 #[test]
 fn test_range_inclusive_emits_load_true_for_end() {
-    let builder = ModuleBuilder::new();
+    let builder = make_range_builder();
     let mut interner = make_interner();
     let ty_int = interner.int();
 
@@ -3279,17 +5397,26 @@ fn test_range_inclusive_emits_load_true_for_end() {
 
     let instrs = &emitter.instructions;
 
-    // Field 3 (end_inclusive) for inclusive=true should use LoadTrue
-    let set_field_3_idx = instrs.iter().position(|i| {
-        matches!(i, Instruction::SetField { field_idx: 3, .. })
-    }).expect("should have SetField for field 3");
-
-    assert!(set_field_3_idx > 0, "SetField(3) should not be the first instruction");
-    let before_set_field_3 = &instrs[set_field_3_idx - 1];
+    let new_idx = instrs
+        .iter()
+        .position(|instruction| matches!(instruction, Instruction::New { .. }))
+        .expect("Range should emit New");
+    let Instruction::New {
+        field_count,
+        r_base,
+        ..
+    } = instrs[new_idx]
+    else {
+        unreachable!()
+    };
+    assert_eq!(field_count, 4);
     assert!(
-        matches!(before_set_field_3, Instruction::LoadTrue { .. }),
-        "For inclusive=true, instruction before SetField(field_idx=3) should be LoadTrue, got: {:?}",
-        before_set_field_3
+        matches!(
+            instrs[new_idx - 1],
+            Instruction::LoadTrue { r_dst } if r_dst == r_base + 3
+        ),
+        "inclusive Range should place true in the end_inclusive slot, got: {:?}",
+        instrs
     );
 }
 
@@ -3318,7 +5445,9 @@ fn test_defer_emits_correct_handler_offset() {
     let instrs = &emitter.instructions;
 
     // Find DeferPush
-    let defer_push_idx = instrs.iter().position(|i| matches!(i, Instruction::DeferPush { .. }))
+    let defer_push_idx = instrs
+        .iter()
+        .position(|i| matches!(i, Instruction::DeferPush { .. }))
         .expect("should emit DeferPush");
     let defer_push = &instrs[defer_push_idx];
 
@@ -3328,18 +5457,25 @@ fn test_defer_emits_correct_handler_offset() {
     } else {
         panic!("expected DeferPush");
     };
-    assert_ne!(method_idx, 0, "DeferPush.method_idx must not be 0 (should be handler instruction index)");
+    assert_ne!(
+        method_idx, 0,
+        "DeferPush.method_idx must not be 0 (should be handler instruction index)"
+    );
 
     // There should be a Br instruction (skips handler on normal path)
     let has_br = instrs.iter().any(|i| matches!(i, Instruction::Br { .. }));
-    assert!(has_br, "emit_defer should emit a Br to skip the handler on normal path");
+    assert!(
+        has_br,
+        "emit_defer should emit a Br to skip the handler on normal path"
+    );
 
     // DeferEnd must exist
     let has_defer_end = instrs.iter().any(|i| matches!(i, Instruction::DeferEnd));
     assert!(has_defer_end, "should emit DeferEnd");
 
     // The instruction at method_idx should be the handler body start (LoadInt { value: 42 })
-    let handler_instr = instrs.get(method_idx as usize)
+    let handler_instr = instrs
+        .get(method_idx as usize)
         .expect("method_idx should be a valid instruction index");
     assert!(
         matches!(handler_instr, Instruction::LoadInt { value: 42, .. }),
@@ -3380,22 +5516,55 @@ fn test_defer_handler_offset_matches_handler_start() {
     // [3] LoadInt { value: 99 }        (handler body)
     // [4] DeferEnd
     // [5] (after_handler_label target — Br points here after byte-offset conversion)
-    assert!(instrs.len() >= 5, "expected at least 5 instructions, got {:?}", instrs.len());
+    assert!(
+        instrs.len() >= 5,
+        "expected at least 5 instructions, got {:?}",
+        instrs.len()
+    );
 
-    assert!(matches!(instrs[0], Instruction::DeferPush { .. }), "instrs[0] should be DeferPush");
-    assert!(matches!(instrs[1], Instruction::DeferPop), "instrs[1] should be DeferPop");
-    assert!(matches!(instrs[2], Instruction::Br { .. }), "instrs[2] should be Br");
+    assert!(
+        matches!(instrs[0], Instruction::DeferPush { .. }),
+        "instrs[0] should be DeferPush"
+    );
+    assert!(
+        matches!(instrs[1], Instruction::DeferPop),
+        "instrs[1] should be DeferPop"
+    );
+    assert!(
+        matches!(instrs[2], Instruction::Br { .. }),
+        "instrs[2] should be Br"
+    );
 
-    let method_idx = if let Instruction::DeferPush { method_idx, .. } = instrs[0] { method_idx } else { panic!() };
-    assert_eq!(method_idx, 3, "DeferPush.method_idx should be 3 (handler starts at instruction index 3)");
+    let method_idx = if let Instruction::DeferPush { method_idx, .. } = instrs[0] {
+        method_idx
+    } else {
+        panic!()
+    };
+    assert_eq!(
+        method_idx, 3,
+        "DeferPush.method_idx should be 3 (handler starts at instruction index 3)"
+    );
 
-    assert!(matches!(instrs[3], Instruction::LoadInt { value: 99, .. }), "instrs[3] should be LoadInt(99)");
-    assert!(matches!(instrs[4], Instruction::DeferEnd), "instrs[4] should be DeferEnd");
+    assert!(
+        matches!(instrs[3], Instruction::LoadInt { value: 99, .. }),
+        "instrs[3] should be LoadInt(99)"
+    );
+    assert!(
+        matches!(instrs[4], Instruction::DeferEnd),
+        "instrs[4] should be DeferEnd"
+    );
 
     // Verify the Br uses the label fixup pipeline (offset=0 placeholder in emitter.instructions).
     // The actual byte-offset will be patched by serialize.rs Pass 3 via the label allocator.
-    let br_offset = if let Instruction::Br { offset } = instrs[2] { offset } else { panic!() };
-    assert_eq!(br_offset, 0, "Br offset should be 0 (placeholder) — byte offset patched by serialize.rs via label fixup");
+    let br_offset = if let Instruction::Br { offset } = instrs[2] {
+        offset
+    } else {
+        panic!()
+    };
+    assert_eq!(
+        br_offset, 0,
+        "Br offset should be 0 (placeholder) — byte offset patched by serialize.rs via label fixup"
+    );
 }
 
 // ─── Plan 28-01: MC-01 and BF-01 — callee_def_id propagation ─────────────────
@@ -3423,13 +5592,20 @@ fn test_call_with_callee_def_id_emits_correct_method_idx() {
         }),
         args: vec![],
         callee_def_id: Some(fn_def_id),
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &call_expr);
 
     // Find the Call instruction and verify method_idx is non-zero
-    let call_instr = emitter.instructions.iter().find(|i| matches!(i, Instruction::Call { .. }));
-    assert!(call_instr.is_some(), "should have emitted a CALL instruction");
+    let call_instr = emitter
+        .instructions
+        .iter()
+        .find(|i| matches!(i, Instruction::Call { .. }));
+    assert!(
+        call_instr.is_some(),
+        "should have emitted a CALL instruction"
+    );
     if let Some(Instruction::Call { method_idx, .. }) = call_instr {
         assert_ne!(
             *method_idx, 0,
@@ -3463,19 +5639,37 @@ fn test_call_virt_via_emit_expr_uses_callee_def_id_for_contract_idx() {
         callee: Box::new(TypedExpr::Field {
             ty: ty_int,
             span: dummy_span(),
-            receiver: Box::new(TypedExpr::SelfRef { ty: ty_generic, span: dummy_span() }),
+            receiver: Box::new(TypedExpr::SelfRef {
+                ty: ty_generic,
+                span: dummy_span(),
+            }),
             field: "into".to_string(),
         }),
         args: vec![],
         callee_def_id: Some(method_def_id),
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &call_expr);
 
     // Find CALL_VIRT and verify contract_idx is correct
-    let call_virt = emitter.instructions.iter().find(|i| matches!(i, Instruction::CallVirt { .. }));
-    assert!(call_virt.is_some(), "generic receiver call should emit CALL_VIRT, got {:?}", emitter.instructions);
-    if let Some(Instruction::CallVirt { contract_idx, .. }) = call_virt {
+    let call_virt = emitter
+        .instructions
+        .iter()
+        .find(|i| matches!(i, Instruction::CallVirt { .. }));
+    assert!(
+        call_virt.is_some(),
+        "generic receiver call should emit CALL_VIRT, got {:?}",
+        emitter.instructions
+    );
+    if let Some(Instruction::CallVirt {
+        contract_idx,
+        r_obj,
+        r_base,
+        argc,
+        ..
+    }) = call_virt
+    {
         assert_ne!(
             *contract_idx, 0,
             "CALL_VIRT should emit non-zero contract_idx when callee_def_id has registered contract mapping; got {}",
@@ -3486,20 +5680,26 @@ fn test_call_virt_via_emit_expr_uses_callee_def_id_for_contract_idx() {
             "CALL_VIRT contract_idx should equal the registered contract token; expected {}, got {}",
             contract_token.0, contract_idx
         );
+        assert_eq!(
+            r_obj, r_base,
+            "CALL_VIRT receiver must start its argument block"
+        );
+        assert_eq!(*argc, 1, "CALL_VIRT argc must include self");
     }
 }
 
 /// MC-01: When callee_def_id=None (legacy path / error path), CALL should emit
 /// method_idx=0 as backward-compatible fallback.
 #[test]
-fn test_call_with_none_callee_def_id_emits_zero_method_idx() {
+fn test_call_with_none_callee_def_id_fails_before_emitting_null_target() {
     let mut interner = make_interner();
     let ty_int = interner.int();
     let (_, fn_def_id) = make_def_id();
     let builder = make_builder_with_fn(fn_def_id);
     let mut emitter = make_emitter(&builder, &interner);
 
-    // callee_def_id: None — legacy/error path should fall back to method_idx=0
+    // This malformed checked IR has no declaration identity. Codegen must fail
+    // closed instead of encoding the null metadata token as a CALL target.
     let call_expr = TypedExpr::Call {
         ty: ty_int,
         span: dummy_span(),
@@ -3510,19 +5710,23 @@ fn test_call_with_none_callee_def_id_emits_zero_method_idx() {
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
-    let _r = emit_expr(&mut emitter, &call_expr);
-
-    let call_instr = emitter.instructions.iter().find(|i| matches!(i, Instruction::Call { .. }));
-    assert!(call_instr.is_some(), "should have emitted a CALL instruction");
-    if let Some(Instruction::Call { method_idx, .. }) = call_instr {
-        assert_eq!(
-            *method_idx, 0,
-            "CALL with callee_def_id=None should emit method_idx=0 (backward compat fallback); got {}",
-            method_idx
-        );
-    }
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _ = emit_expr(&mut emitter, &call_expr);
+    }));
+    assert!(
+        result.is_err(),
+        "missing direct-call identity must fail codegen"
+    );
+    assert!(
+        !emitter
+            .instructions
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::Call { method_idx: 0, .. })),
+        "codegen must never append a CALL with the null metadata token"
+    );
 }
 
 // ─── BUG-05: Extern dispatch via emit_expr ────────────────────────────────────
@@ -3540,7 +5744,9 @@ fn test_emit_expr_extern_call_emits_call_extern() {
     let builder = make_builder_with_extern(extern_def_id);
 
     // Verify the token is in ExternDef table (confirms test setup is correct).
-    let token = builder.token_for_def(extern_def_id).expect("extern def should have token");
+    let token = builder
+        .token_for_def(extern_def_id)
+        .expect("extern def should have token");
     assert_eq!(
         token.table(),
         TableId::ExternDef,
@@ -3559,19 +5765,27 @@ fn test_emit_expr_extern_call_emits_call_extern() {
             span: dummy_span(),
             name: "ext_fn".to_string(),
         }),
-        args: vec![
-            TypedExpr::Literal { ty: ty_int, span: dummy_span(), value: TypedLiteral::Int(99) },
-        ],
+        args: vec![TypedExpr::Literal {
+            ty: ty_int,
+            span: dummy_span(),
+            value: TypedLiteral::Int(99),
+        }],
         callee_def_id: Some(extern_def_id),
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &call_expr);
 
     // The last call-type instruction should be CALL_EXTERN, not CALL.
-    let call_instr = emitter.instructions.iter().find(|i| {
-        matches!(i, Instruction::Call { .. } | Instruction::CallExtern { .. })
-    });
-    assert!(call_instr.is_some(), "should have emitted a call instruction, got {:?}", emitter.instructions);
+    let call_instr = emitter
+        .instructions
+        .iter()
+        .find(|i| matches!(i, Instruction::Call { .. } | Instruction::CallExtern { .. }));
+    assert!(
+        call_instr.is_some(),
+        "should have emitted a call instruction, got {:?}",
+        emitter.instructions
+    );
     assert!(
         matches!(call_instr.unwrap(), Instruction::CallExtern { .. }),
         "extern fn callee_def_id should produce CALL_EXTERN via emit_expr, got {:?}",
@@ -3590,6 +5804,114 @@ fn test_emit_expr_extern_call_emits_call_extern() {
 
 // ─── Phase 85: CALL_VIRT for contract-typed receivers (EMIT-01, EMIT-02) ─────
 
+#[test]
+fn test_emit_expr_qualified_extern_call_keeps_explicit_argument_block() {
+    let mut interner = make_interner();
+    let ty_int = interner.int();
+    let (_, extern_def_id) = make_def_id();
+    let builder = make_builder_with_extern(extern_def_id);
+    let mut emitter = make_emitter(&builder, &interner);
+    let r_namespace = emitter.alloc_reg(ty_int);
+    emitter.locals.insert("namespace".to_string(), r_namespace);
+
+    let call_expr = TypedExpr::Call {
+        ty: ty_int,
+        span: dummy_span(),
+        callee: Box::new(TypedExpr::Field {
+            ty: ty_int,
+            span: dummy_span(),
+            receiver: Box::new(TypedExpr::Var {
+                ty: ty_int,
+                span: dummy_span(),
+                name: "namespace".to_string(),
+            }),
+            field: "ext_fn".to_string(),
+        }),
+        args: vec![TypedExpr::Literal {
+            ty: ty_int,
+            span: dummy_span(),
+            value: TypedLiteral::Int(99),
+        }],
+        callee_def_id: Some(extern_def_id),
+        callee_has_receiver: None,
+    };
+
+    emit_expr(&mut emitter, &call_expr);
+
+    assert!(matches!(
+        emitter.instructions.last(),
+        Some(Instruction::CallExtern { argc: 1, .. })
+    ));
+}
+
+#[test]
+fn test_emit_expr_static_field_call_keeps_explicit_argument_block() {
+    let mut interner = make_interner();
+    let ty_int = interner.int();
+    let (mut def_map, struct_def_id) = make_def_id();
+    let method_def_id = def_map.arena.alloc(DefEntry {
+        id: None,
+        kind: DefKind::Fn,
+        vis: DefVis::Pub,
+        file_id: FileId(0),
+        namespace: String::new(),
+        name: "test_method".to_string(),
+        name_span: dummy_span(),
+        generics: vec![],
+        span: dummy_span(),
+    });
+    let ty_struct = interner.intern(TyKind::Struct(struct_def_id));
+    let mut builder = ModuleBuilder::new();
+    let owner = builder.add_typedef(
+        "TestStruct",
+        "",
+        TypeDefKind::Struct,
+        0,
+        Some(struct_def_id),
+    );
+    builder.add_methoddef(
+        Some(owner),
+        "test_method",
+        0,
+        1 << 1,
+        Some(method_def_id),
+        1,
+    );
+    builder.finalize();
+    let mut emitter = make_emitter(&builder, &interner);
+    let r_type = emitter.alloc_reg(ty_struct);
+    emitter.locals.insert("type_name".to_string(), r_type);
+
+    let call_expr = TypedExpr::Call {
+        ty: ty_int,
+        span: dummy_span(),
+        callee: Box::new(TypedExpr::Field {
+            ty: ty_int,
+            span: dummy_span(),
+            receiver: Box::new(TypedExpr::Var {
+                ty: ty_struct,
+                span: dummy_span(),
+                name: "type_name".to_string(),
+            }),
+            field: "test_method".to_string(),
+        }),
+        args: vec![TypedExpr::Literal {
+            ty: ty_int,
+            span: dummy_span(),
+            value: TypedLiteral::Int(7),
+        }],
+        callee_def_id: Some(method_def_id),
+        callee_has_receiver: Some(false),
+    };
+
+    emit_expr(&mut emitter, &call_expr);
+
+    assert!(matches!(
+        emitter.instructions.last(),
+        Some(Instruction::Call { argc: 1, .. })
+    ));
+}
+
 /// Helper: build a ModuleBuilder with a ContractDef that has a DefId, plus methods and an impl.
 /// Returns a builder with vtable slots assigned and finalized.
 fn make_builder_with_contract_receiver(
@@ -3604,13 +5926,33 @@ fn make_builder_with_contract_receiver(
     builder.add_contract_method(contract_handle, "second_method", 0, 0);
 
     // TypeDef for the implementing struct
-    let type_handle = builder.add_typedef("MyClass", "test", TypeDefKind::Class, 0, Some(struct_def_id));
+    let type_handle = builder.add_typedef(
+        "MyClass",
+        "test",
+        TypeDefKind::Class,
+        0,
+        Some(struct_def_id),
+    );
 
     // MethodDef for the impl methods
     let (_, impl_method_def_id_1) = make_def_id();
-    builder.add_methoddef(Some(type_handle), "first_method", 0, 0, Some(impl_method_def_id_1), 0);
+    builder.add_methoddef(
+        Some(type_handle),
+        "first_method",
+        0,
+        0,
+        Some(impl_method_def_id_1),
+        0,
+    );
     let (_, impl_method_def_id_2) = make_def_id();
-    builder.add_methoddef(Some(type_handle), "second_method", 0, 0, Some(impl_method_def_id_2), 0);
+    builder.add_methoddef(
+        Some(type_handle),
+        "second_method",
+        0,
+        0,
+        Some(impl_method_def_id_2),
+        0,
+    );
 
     // Assign vtable slots before finalize
     writ_compiler::emit::slots::assign_vtable_slots(&mut builder);
@@ -3625,9 +5967,18 @@ fn test_contract_method_slot_by_name() {
     let (_, struct_def_id) = make_def_id();
     let builder = make_builder_with_contract_receiver(contract_def_id, struct_def_id);
 
-    assert_eq!(builder.contract_method_slot_by_name(contract_def_id, "first_method"), Some(0));
-    assert_eq!(builder.contract_method_slot_by_name(contract_def_id, "second_method"), Some(1));
-    assert_eq!(builder.contract_method_slot_by_name(contract_def_id, "nonexistent"), None);
+    assert_eq!(
+        builder.contract_method_slot_by_name(contract_def_id, "first_method"),
+        Some(0)
+    );
+    assert_eq!(
+        builder.contract_method_slot_by_name(contract_def_id, "second_method"),
+        Some(1)
+    );
+    assert_eq!(
+        builder.contract_method_slot_by_name(contract_def_id, "nonexistent"),
+        None
+    );
 }
 
 #[test]
@@ -3665,18 +6016,44 @@ fn test_contract_receiver_emits_call_virt() {
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     emit_expr(&mut emitter, &expr);
 
-    let call_virt = emitter.instructions.iter().find(|i| matches!(i, Instruction::CallVirt { .. }));
-    assert!(call_virt.is_some(), "contract-typed receiver call should emit CALL_VIRT, got: {:?}", emitter.instructions);
+    let call_virt = emitter
+        .instructions
+        .iter()
+        .find(|i| matches!(i, Instruction::CallVirt { .. }));
+    assert!(
+        call_virt.is_some(),
+        "contract-typed receiver call should emit CALL_VIRT, got: {:?}",
+        emitter.instructions
+    );
+    assert!(matches!(
+        call_virt,
+        Some(Instruction::CallVirt {
+            r_obj,
+            r_base,
+            argc: 1,
+            ..
+        }) if r_obj == r_base
+    ));
 
     // Should NOT have CALL or CALL_INDIRECT
-    let has_call = emitter.instructions.iter().any(|i| matches!(i, Instruction::Call { .. }));
-    let has_indirect = emitter.instructions.iter().any(|i| matches!(i, Instruction::CallIndirect { .. }));
+    let has_call = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Call { .. }));
+    let has_indirect = emitter
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::CallIndirect { .. }));
     assert!(!has_call, "contract-typed receiver should NOT emit CALL");
-    assert!(!has_indirect, "contract-typed receiver should NOT emit CALL_INDIRECT");
+    assert!(
+        !has_indirect,
+        "contract-typed receiver should NOT emit CALL_INDIRECT"
+    );
 }
 
 #[test]
@@ -3717,18 +6094,31 @@ fn test_contract_receiver_call_virt_correct_idx_and_slot() {
         }),
         args: vec![],
         callee_def_id: None,
+        callee_has_receiver: None,
     };
 
     emit_expr(&mut emitter, &expr);
 
-    let call_virt = emitter.instructions.iter().find(|i| matches!(i, Instruction::CallVirt { .. }));
+    let call_virt = emitter
+        .instructions
+        .iter()
+        .find(|i| matches!(i, Instruction::CallVirt { .. }));
     assert!(call_virt.is_some(), "should emit CALL_VIRT");
 
-    if let Some(Instruction::CallVirt { contract_idx, slot, .. }) = call_virt {
+    if let Some(Instruction::CallVirt {
+        contract_idx, slot, ..
+    }) = call_virt
+    {
         assert_ne!(*contract_idx, 0, "contract_idx must be non-zero");
-        assert_eq!(*contract_idx, expected_contract_token,
-            "contract_idx should match the contract's MetadataToken; expected {}, got {}", expected_contract_token, contract_idx);
-        assert_eq!(*slot, 1, "second_method should have slot=1 (0-based position in contract declaration)");
+        assert_eq!(
+            *contract_idx, expected_contract_token,
+            "contract_idx should match the contract's MetadataToken; expected {}, got {}",
+            expected_contract_token, contract_idx
+        );
+        assert_eq!(
+            *slot, 1,
+            "second_method should have slot=1 (0-based position in contract declaration)"
+        );
     }
 }
 
@@ -3742,7 +6132,9 @@ fn test_emit_expr_non_extern_call_emits_call() {
     let builder = make_builder_with_fn(fn_def_id);
 
     // Verify token is MethodDef, not ExternDef.
-    let token = builder.token_for_def(fn_def_id).expect("fn should have token");
+    let token = builder
+        .token_for_def(fn_def_id)
+        .expect("fn should have token");
     assert_ne!(
         token.table(),
         TableId::ExternDef,
@@ -3761,15 +6153,20 @@ fn test_emit_expr_non_extern_call_emits_call() {
         }),
         args: vec![],
         callee_def_id: Some(fn_def_id),
+        callee_has_receiver: None,
     };
 
     let _r = emit_expr(&mut emitter, &call_expr);
 
     // Should emit CALL, not CALL_EXTERN.
-    let call_instr = emitter.instructions.iter().find(|i| {
-        matches!(i, Instruction::Call { .. } | Instruction::CallExtern { .. })
-    });
-    assert!(call_instr.is_some(), "should have emitted a call instruction");
+    let call_instr = emitter
+        .instructions
+        .iter()
+        .find(|i| matches!(i, Instruction::Call { .. } | Instruction::CallExtern { .. }));
+    assert!(
+        call_instr.is_some(),
+        "should have emitted a call instruction"
+    );
     assert!(
         matches!(call_instr.unwrap(), Instruction::Call { .. }),
         "regular fn callee_def_id should produce CALL (not CALL_EXTERN), got {:?}",
@@ -3782,14 +6179,11 @@ fn test_emit_expr_non_extern_call_emits_call() {
 #[test]
 fn attribute_decl_emits_def_row() {
     // Compile a source file with a user-defined attribute declaration.
-    let bytes = writ_compiler::compile_source(
-        r#"pub attribute Quest(name: string, level: int);"#,
-    )
-    .expect("compile should succeed");
+    let bytes = writ_compiler::compile_source(r#"pub attribute Quest(name: string, level: int);"#)
+        .expect("compile should succeed");
 
     // Parse the binary module.
-    let module = writ_module::module::Module::from_bytes(&bytes)
-        .expect("module should parse");
+    let module = writ_module::module::Module::from_bytes(&bytes).expect("module should parse");
 
     // Find the AttributeDef row for "Quest".
     let quest_row = module.attribute_defs.iter().find(|row| {
@@ -3798,7 +6192,11 @@ fn attribute_decl_emits_def_row() {
             .unwrap_or(false)
     });
 
-    assert!(quest_row.is_some(), "AttributeDef row for 'Quest' not found; rows: {:?}", module.attribute_defs);
+    assert!(
+        quest_row.is_some(),
+        "AttributeDef row for 'Quest' not found; rows: {:?}",
+        module.attribute_defs
+    );
     let quest_row = quest_row.unwrap();
 
     // owner_kind = 3 = ATTR_OWNER_KIND_DECL
@@ -3846,7 +6244,8 @@ fn emit_typeof_struct() {
     builder.add_typedef("MyStruct", "", TypeDefKind::Struct, 0, Some(struct_def_id));
     builder.finalize();
 
-    let expected_token = builder.token_for_def(struct_def_id)
+    let expected_token = builder
+        .token_for_def(struct_def_id)
         .expect("struct should have a token after finalize");
     let expected_type_idx = expected_token.0;
 
@@ -3864,7 +6263,8 @@ fn emit_typeof_struct() {
     let r_dst = emit_expr(&mut emitter, &expr);
 
     assert_eq!(
-        emitter.instructions.len(), 1,
+        emitter.instructions.len(),
+        1,
         "typeof(struct) should emit exactly 1 instruction, got {:?}",
         emitter.instructions
     );
@@ -3898,7 +6298,10 @@ fn emit_typeof_primitive_int() {
     builder.finalize();
 
     let expected_type_idx = builder.type_ref_token_by_name("Int");
-    assert_ne!(expected_type_idx, 0, "Int TypeRef token should be non-zero after registration");
+    assert_ne!(
+        expected_type_idx, 0,
+        "Int TypeRef token should be non-zero after registration"
+    );
 
     let ty_int = interner.int();
     let ty_reflection = interner.reflection_type(ty_int);
@@ -3913,7 +6316,8 @@ fn emit_typeof_primitive_int() {
     let r_dst = emit_expr(&mut emitter, &expr);
 
     assert_eq!(
-        emitter.instructions.len(), 1,
+        emitter.instructions.len(),
+        1,
         "typeof(int) should emit exactly 1 instruction, got {:?}",
         emitter.instructions
     );
@@ -3924,5 +6328,44 @@ fn emit_typeof_primitive_int() {
         ),
         "expected TypeOf {{ r_dst: {r_dst}, type_idx: {expected_type_idx} }}, got {:?}",
         emitter.instructions[0]
+    );
+}
+
+#[test]
+fn nullable_function_tail_is_lifted_into_some() {
+    let bytes = writ_compiler::compile_source(
+        r#"
+fn maybe_value() -> int? {
+    7
+}
+"#,
+    )
+    .expect("nullable function should compile");
+    let module = writ_module::module::Module::from_bytes(&bytes).expect("module should parse");
+    let method_idx = module
+        .method_defs
+        .iter()
+        .position(|method| {
+            writ_module::heap::read_string(&module.string_heap, method.name)
+                .is_ok_and(|name| name == "maybe_value")
+        })
+        .expect("maybe_value MethodDef should exist");
+    let body = &module.method_bodies[method_idx];
+    let mut cursor = std::io::Cursor::new(body.code.as_slice());
+    let mut instructions = Vec::new();
+    while (cursor.position() as usize) < body.code.len() {
+        instructions
+            .push(Instruction::decode(&mut cursor).expect("method instruction should decode"));
+    }
+
+    assert!(
+        instructions
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::WrapSome { .. })),
+        "bare int tail must be represented as Some(int): {instructions:?}"
+    );
+    assert!(
+        matches!(instructions.last(), Some(Instruction::Ret { .. })),
+        "nullable function should return the wrapped register: {instructions:?}"
     );
 }
