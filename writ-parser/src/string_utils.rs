@@ -205,6 +205,34 @@ pub fn process_escapes(content: &str) -> Result<String, EscapeError> {
                     result.push('"');
                     i += 1;
                 }
+                b'\n' => {
+                    let mut boundary = i - 1;
+                    while boundary > 0
+                        && (bytes[boundary - 1] == b' ' || bytes[boundary - 1] == b'\t')
+                    {
+                        result.pop();
+                        boundary -= 1;
+                    }
+                    result.push(' ');
+                    i += 1;
+                    while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t') {
+                        i += 1;
+                    }
+                }
+                b'\r' if i + 1 < bytes.len() && bytes[i + 1] == b'\n' => {
+                    let mut boundary = i - 1;
+                    while boundary > 0
+                        && (bytes[boundary - 1] == b' ' || bytes[boundary - 1] == b'\t')
+                    {
+                        result.pop();
+                        boundary -= 1;
+                    }
+                    result.push(' ');
+                    i += 2;
+                    while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t') {
+                        i += 1;
+                    }
+                }
                 b'u' => {
                     i += 1; // skip 'u'
 
@@ -226,8 +254,9 @@ pub fn process_escapes(content: &str) -> Result<String, EscapeError> {
                         return Err(EscapeError::InvalidUnicodeHex(hex_str));
                     }
 
-                    let hex_str =
-                        std::str::from_utf8(&bytes[hex_start..i]).unwrap_or("").to_string();
+                    let hex_str = std::str::from_utf8(&bytes[hex_start..i])
+                        .unwrap_or("")
+                        .to_string();
                     i += 1; // skip '}'
 
                     // Validate: must have 1-6 hex digits
@@ -246,10 +275,8 @@ pub fn process_escapes(content: &str) -> Result<String, EscapeError> {
 
                     // Parse as u32 and convert to char
                     // (range validation deferred to semantic pass)
-                    let codepoint =
-                        u32::from_str_radix(&hex_str, 16).map_err(|_| {
-                            EscapeError::InvalidUnicodeHex(hex_str.clone())
-                        })?;
+                    let codepoint = u32::from_str_radix(&hex_str, 16)
+                        .map_err(|_| EscapeError::InvalidUnicodeHex(hex_str.clone()))?;
 
                     match char::from_u32(codepoint) {
                         Some(c) => result.push(c),

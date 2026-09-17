@@ -1,7 +1,7 @@
 //! Type error definitions and conversion to diagnostics.
 
 use chumsky::span::SimpleSpan;
-use writ_diagnostics::{code, Diagnostic, FileId};
+use writ_diagnostics::{Diagnostic, FileId, code};
 
 /// Type errors produced during type checking.
 #[derive(Debug, Clone)]
@@ -58,6 +58,18 @@ pub enum TypeError {
         mutation_kind: String,
         file: FileId,
     },
+    ImmutableFieldMutation {
+        field_name: String,
+        field_span: SimpleSpan,
+        mutation_span: SimpleSpan,
+        mutation_kind: String,
+        file: FileId,
+    },
+    NonPlaceMutation {
+        mutation_span: SimpleSpan,
+        mutation_kind: String,
+        file: FileId,
+    },
     ImmutableReassignment {
         binding_name: String,
         binding_span: SimpleSpan,
@@ -110,6 +122,24 @@ pub enum TypeError {
         span: SimpleSpan,
         file: FileId,
     },
+    DuplicateConstructionField {
+        field_name: String,
+        first_span: SimpleSpan,
+        duplicate_span: SimpleSpan,
+        file: FileId,
+    },
+    UnavailableImportedFieldDefault {
+        type_name: String,
+        field_name: String,
+        span: SimpleSpan,
+        file: FileId,
+    },
+    GetOrCreateEntityHasFields {
+        type_name: String,
+        field_count: usize,
+        span: SimpleSpan,
+        file: FileId,
+    },
     NotIterable {
         ty_name: String,
         span: SimpleSpan,
@@ -140,6 +170,23 @@ pub enum TypeError {
         call_span: SimpleSpan,
         file: FileId,
     },
+    AmbiguousImpl {
+        target_name: String,
+        member_name: String,
+        candidate_count: usize,
+        span: SimpleSpan,
+        file: FileId,
+    },
+    UnsupportedSpawnTarget {
+        reason: String,
+        span: SimpleSpan,
+        file: FileId,
+    },
+    InvalidDialogueTransitionTarget {
+        reason: String,
+        span: SimpleSpan,
+        file: FileId,
+    },
 }
 
 impl From<TypeError> for Diagnostic {
@@ -158,7 +205,11 @@ impl From<TypeError> for Diagnostic {
                     format!("type mismatch: expected `{}`, found `{}`", expected, found),
                 )
                 .with_primary(file, found_span, format!("found `{}` here", found))
-                .with_secondary(file, expected_span, format!("expected `{}`", expected));
+                .with_secondary(
+                    file,
+                    expected_span,
+                    format!("expected `{}`", expected),
+                );
 
                 if let Some(h) = help {
                     builder = builder.with_help(h);
@@ -186,12 +237,11 @@ impl From<TypeError> for Diagnostic {
                 format!("`{}` defined with {} parameter(s)", fn_name, expected),
             )
             .build(),
-            TypeError::UndefinedVariable { name, span, file } => Diagnostic::error(
-                code::E0102,
-                format!("undefined variable `{}`", name),
-            )
-            .with_primary(file, span, "not found in this scope")
-            .build(),
+            TypeError::UndefinedVariable { name, span, file } => {
+                Diagnostic::error(code::E0102, format!("undefined variable `{}`", name))
+                    .with_primary(file, span, "not found in this scope")
+                    .build()
+            }
             TypeError::UnsatisfiedBound {
                 ty_name,
                 bound_name,
@@ -207,24 +257,28 @@ impl From<TypeError> for Diagnostic {
                 ),
             )
             .with_primary(file, call_span, "unsatisfied bound here")
-            .with_secondary(bound_decl_file, bound_decl_span, format!("bound `{}` declared here", bound_name))
+            .with_secondary(
+                bound_decl_file,
+                bound_decl_span,
+                format!("bound `{}` declared here", bound_name),
+            )
             .with_help(format!(
                 "consider adding `impl {} for {} {{ ... }}`",
                 bound_name, ty_name
             ))
             .build(),
-            TypeError::NotCallable { ty_name, span, file } => Diagnostic::error(
-                code::E0104,
-                format!("type `{}` is not callable", ty_name),
-            )
-            .with_primary(file, span, "not a function")
-            .build(),
-            TypeError::CannotInferType { name, span, file } => Diagnostic::error(
-                code::E0105,
-                format!("cannot infer type for `{}`", name),
-            )
-            .with_primary(file, span, "type annotation needed")
-            .build(),
+            TypeError::NotCallable {
+                ty_name,
+                span,
+                file,
+            } => Diagnostic::error(code::E0104, format!("type `{}` is not callable", ty_name))
+                .with_primary(file, span, "not a function")
+                .build(),
+            TypeError::CannotInferType { name, span, file } => {
+                Diagnostic::error(code::E0105, format!("cannot infer type for `{}`", name))
+                    .with_primary(file, span, "type annotation needed")
+                    .build()
+            }
             TypeError::UnknownField {
                 ty_name,
                 field_name,
@@ -256,6 +310,37 @@ impl From<TypeError> for Diagnostic {
                 format!("`{}` declared as immutable", binding_name),
             )
             .with_help(format!("consider changing to `let mut {}`", binding_name))
+            .build(),
+            TypeError::ImmutableFieldMutation {
+                field_name,
+                field_span,
+                mutation_span,
+                mutation_kind,
+                file,
+            } => Diagnostic::error(
+                code::E0107,
+                format!(
+                    "cannot {} through read-only field `{}`",
+                    mutation_kind, field_name
+                ),
+            )
+            .with_primary(file, mutation_span, format!("{} here", mutation_kind))
+            .with_secondary(file, field_span, format!("`{}` is read-only", field_name))
+            .with_help(format!(
+                "declare the field as `mut {}` if post-construction mutation is intended",
+                field_name
+            ))
+            .build(),
+            TypeError::NonPlaceMutation {
+                mutation_span,
+                mutation_kind,
+                file,
+            } => Diagnostic::error(
+                code::E0107,
+                format!("cannot {} on a temporary or non-mutable value", mutation_kind),
+            )
+            .with_primary(file, mutation_span, "a mutable place is required here")
+            .with_help("bind the value with `let mut` before mutating it".to_string())
             .build(),
             TypeError::ImmutableReassignment {
                 binding_name,
@@ -321,10 +406,7 @@ impl From<TypeError> for Diagnostic {
                 file,
             } => Diagnostic::error(
                 code::E0113,
-                format!(
-                    "`?` operator requires `Option<T>`, found `{}`",
-                    found_ty
-                ),
+                format!("`?` operator requires `Option<T>`, found `{}`", found_ty),
             )
             .with_primary(file, span, "not an Option type")
             .build(),
@@ -348,10 +430,7 @@ impl From<TypeError> for Diagnostic {
                 file,
             } => Diagnostic::error(
                 code::E0115,
-                format!(
-                    "`try` requires `Result<T, E>`, found `{}`",
-                    found_ty
-                ),
+                format!("`try` requires `Result<T, E>`, found `{}`", found_ty),
             )
             .with_primary(file, span, "not a Result type")
             .build(),
@@ -386,16 +465,59 @@ impl From<TypeError> for Diagnostic {
             )
             .with_primary(file, span, format!("missing `{}`", field_name))
             .build(),
+            TypeError::DuplicateConstructionField {
+                field_name,
+                first_span,
+                duplicate_span,
+                file,
+            } => Diagnostic::error(
+                code::E0128,
+                format!("field `{}` is initialized more than once", field_name),
+            )
+            .with_primary(file, duplicate_span, "duplicate initializer")
+            .with_secondary(file, first_span, "first initialized here")
+            .build(),
+            TypeError::UnavailableImportedFieldDefault {
+                type_name,
+                field_name,
+                span,
+                file,
+            } => Diagnostic::error(
+                code::E0129,
+                format!(
+                    "cannot materialize default for imported field `{}` on `{}`",
+                    field_name, type_name
+                ),
+            )
+            .with_primary(file, span, "provide this field explicitly")
+            .with_help(
+                "the current dependency format records that a default exists, but not its expression"
+                    .to_string(),
+            )
+            .build(),
+            TypeError::GetOrCreateEntityHasFields {
+                type_name,
+                field_count,
+                span,
+                file,
+            } => Diagnostic::error(
+                code::E0130,
+                format!(
+                    "`Entity.getOrCreate<{type_name}>()` requires a zero-script-field entity, but `{type_name}` declares {field_count} script field(s)"
+                ),
+            )
+            .with_primary(file, span, "these fields cannot be initialized by getOrCreate")
+            .with_help(format!(
+                "construct `{type_name}` with `new` and field initializers, or remove its script fields"
+            ))
+            .build(),
             TypeError::NotIterable {
                 ty_name,
                 span,
                 file,
-            } => Diagnostic::error(
-                code::E0118,
-                format!("type `{}` is not iterable", ty_name),
-            )
-            .with_primary(file, span, "not iterable")
-            .build(),
+            } => Diagnostic::error(code::E0118, format!("type `{}` is not iterable", ty_name))
+                .with_primary(file, span, "not iterable")
+                .build(),
             TypeError::NoneWithoutAnnotation { span, file } => Diagnostic::error(
                 code::E0120,
                 "cannot infer type for `None` -- add a type annotation: `let x: T? = None`"
@@ -410,10 +532,15 @@ impl From<TypeError> for Diagnostic {
                 file,
             } => Diagnostic::error(
                 code::E0121,
-                format!("recursive struct `{}` has infinite size: {}", struct_name, chain),
+                format!(
+                    "recursive struct `{}` has infinite size: {}",
+                    struct_name, chain
+                ),
             )
             .with_primary(file, span, "recursive struct defined here")
-            .with_help("consider using `class` instead of `struct` for reference semantics".to_string())
+            .with_help(
+                "consider using `class` instead of `struct` for reference semantics".to_string(),
+            )
             .build(),
             TypeError::IncompleteContractImpl {
                 ty_name,
@@ -429,10 +556,7 @@ impl From<TypeError> for Diagnostic {
                 ),
             )
             .with_primary(file, span, "impl block defined here")
-            .with_help(format!(
-                "missing methods: {}",
-                missing_methods.join(", ")
-            ))
+            .with_help(format!("missing methods: {}", missing_methods.join(", ")))
             .build(),
             TypeError::AmbiguousOverload {
                 fn_name,
@@ -449,6 +573,39 @@ impl From<TypeError> for Diagnostic {
             .with_primary(file, call_span, "ambiguous call")
             .with_help("add explicit type annotations to disambiguate")
             .build(),
+            TypeError::AmbiguousImpl {
+                target_name,
+                member_name,
+                candidate_count,
+                span,
+                file,
+            } => Diagnostic::error(
+                code::E0125,
+                format!(
+                    "ambiguous implementation of `{member_name}` for `{target_name}`: {candidate_count} candidates match"
+                ),
+            )
+            .with_primary(file, span, "overlapping implementations match here")
+            .with_help("remove or narrow one of the overlapping impl blocks")
+            .build(),
+            TypeError::UnsupportedSpawnTarget { reason, span, file } => Diagnostic::error(
+                code::E0126,
+                format!("unsupported spawn target: {reason}"),
+            )
+            .with_primary(file, span, "this expression cannot start a task")
+            .with_help(
+                "spawn a direct bytecode function or a method on a concrete struct, class, entity, or enum",
+            )
+            .build(),
+            TypeError::InvalidDialogueTransitionTarget { reason, span, file } => {
+                Diagnostic::error(
+                    code::E0127,
+                    format!("invalid dialogue transition target: {reason}"),
+                )
+                .with_primary(file, span, "this transition does not target a dialogue")
+                .with_help("use `->` with the name of a `dlg` declaration")
+                .build()
+            }
         }
     }
 }

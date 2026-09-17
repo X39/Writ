@@ -10,9 +10,9 @@
 
 use chumsky::span::SimpleSpan;
 
-use super::check_expr::{check_expr, CheckCtx};
+use super::check_expr::{CheckCtx, check_expr};
 use super::error::TypeError;
-use super::ir::{TypedExpr, TypedArm, TypedPattern};
+use super::ir::{TypedArm, TypedExpr, TypedPattern};
 use super::ty::TyKind;
 use crate::ast::expr::AstExpr;
 
@@ -91,12 +91,8 @@ pub fn desugar_unwrap(ctx: &mut CheckCtx, inner_expr: &AstExpr, span: SimpleSpan
     }
 
     match ctx.interner.kind(inner_ty).clone() {
-        TyKind::Option(value_ty) => {
-            build_unwrap_match(ctx, typed_inner, value_ty, span)
-        }
-        TyKind::Result(ok_ty, _err_ty) => {
-            build_unwrap_match(ctx, typed_inner, ok_ty, span)
-        }
+        TyKind::Option(value_ty) => build_unwrap_match(ctx, typed_inner, value_ty, span),
+        TyKind::Result(ok_ty, _err_ty) => build_unwrap_match(ctx, typed_inner, ok_ty, span),
         _ => {
             let err_ty = ctx.emit_error(TypeError::QuestionOnNonOption {
                 found_ty: ctx.display_ty(inner_ty),

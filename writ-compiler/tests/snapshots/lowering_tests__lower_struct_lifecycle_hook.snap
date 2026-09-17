@@ -15,6 +15,7 @@ Ast {
                     Field(
                         AstStructField {
                             vis: None,
+                            is_mutable: false,
                             name: "x",
                             name_span: 12..13,
                             ty: Named {

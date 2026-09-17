@@ -1,11 +1,8 @@
-use chumsky::span::SimpleSpan;
-use writ_parser::cst::{
-    EntityDecl, EntityMember, FnDecl, Param, Spanned, Stmt, UseField, Visibility,
-};
+use super::{lower_attrs, lower_fn, lower_param, lower_vis};
 use crate::ast::AstDecl;
 use crate::ast::decl::{
-    AstComponentSlot, AstEntityDecl, AstEntityHook, AstFnDecl, AstFnParam,
-    AstImplDecl, AstImplMember, AstStructField,
+    AstComponentSlot, AstEntityDecl, AstEntityHook, AstFnDecl, AstFnParam, AstImplDecl,
+    AstImplMember, AstStructField,
 };
 use crate::ast::expr::AstExpr;
 use crate::ast::stmt::AstStmt;
@@ -15,7 +12,10 @@ use crate::lower::error::LoweringError;
 use crate::lower::expr::lower_expr;
 use crate::lower::optional::lower_type;
 use crate::lower::stmt::lower_stmt;
-use super::{lower_fn, lower_param, lower_vis, lower_attrs};
+use chumsky::span::SimpleSpan;
+use writ_parser::cst::{
+    EntityDecl, EntityMember, FnDecl, Param, Spanned, Stmt, UseField, Visibility,
+};
 
 // =========================================================
 // Intermediate types for partition_entity_members
@@ -23,6 +23,7 @@ use super::{lower_fn, lower_param, lower_vis, lower_attrs};
 
 struct EntityProperty<'src> {
     vis: Option<Visibility>,
+    is_mutable: bool,
     name: Spanned<&'src str>,
     ty: Spanned<writ_parser::cst::TypeExpr<'src>>,
     default: Option<Spanned<writ_parser::cst::Expr<'src>>>,
@@ -76,7 +77,13 @@ fn partition_entity_members<'src>(
 
     for (member, member_span) in members {
         match member {
-            EntityMember::Property { vis, name, ty, default } => {
+            EntityMember::Property {
+                vis,
+                is_mutable,
+                name,
+                ty,
+                default,
+            } => {
                 let prop_name = name.0.to_string();
 
                 // Check duplicate property
@@ -100,7 +107,14 @@ fn partition_entity_members<'src>(
                 }
 
                 seen_props.push(prop_name);
-                properties.push(EntityProperty { vis, name, ty, default, span: member_span });
+                properties.push(EntityProperty {
+                    vis,
+                    is_mutable,
+                    name,
+                    ty,
+                    default,
+                    span: member_span,
+                });
             }
 
             EntityMember::Use { component, fields } => {
@@ -127,18 +141,32 @@ fn partition_entity_members<'src>(
                 }
 
                 seen_components.push(comp_name);
-                use_clauses.push(EntityUseClause { component, fields, span: member_span });
+                use_clauses.push(EntityUseClause {
+                    component,
+                    fields,
+                    span: member_span,
+                });
             }
 
             EntityMember::Fn((fn_decl, fn_span)) => {
                 methods.push((fn_decl, fn_span));
             }
 
-            EntityMember::On { event, params, body } => {
+            EntityMember::On {
+                event,
+                params,
+                body,
+            } => {
                 let event_name = event.0;
                 match event_name {
-                    "create" | "interact" | "destroy" | "finalize" | "serialize" | "deserialize" => {
-                        hooks.push(EntityHook { event, params, body, span: member_span });
+                    "create" | "interact" | "destroy" | "finalize" | "serialize"
+                    | "deserialize" => {
+                        hooks.push(EntityHook {
+                            event,
+                            params,
+                            body,
+                            span: member_span,
+                        });
                     }
                     _ => {
                         ctx.emit_error(LoweringError::UnknownLifecycleEvent {
@@ -152,7 +180,12 @@ fn partition_entity_members<'src>(
         }
     }
 
-    PartitionedMembers { properties, use_clauses, methods, hooks }
+    PartitionedMembers {
+        properties,
+        use_clauses,
+        methods,
+        hooks,
+    }
 }
 
 // =========================================================
@@ -185,12 +218,15 @@ pub(crate) fn lower_entity(
     // =========================================================
     // Properties: regular typed fields
     // =========================================================
-    let properties: Vec<AstStructField> = partitioned.properties.iter()
+    let properties: Vec<AstStructField> = partitioned
+        .properties
+        .iter()
         .map(|prop| {
             let lowered_ty = lower_type(prop.ty.clone());
             let lowered_default = prop.default.clone().map(|d| lower_expr(d, ctx));
             AstStructField {
                 vis: lower_vis(prop.vis.clone()),
+                is_mutable: prop.is_mutable,
                 name: prop.name.0.to_string(),
                 name_span: prop.name.1,
                 ty: lowered_ty,
@@ -203,12 +239,16 @@ pub(crate) fn lower_entity(
     // =========================================================
     // Component slots: host-managed descriptors (ENT-02)
     // =========================================================
-    let component_slots: Vec<AstComponentSlot> = partitioned.use_clauses.iter()
+    let component_slots: Vec<AstComponentSlot> = partitioned
+        .use_clauses
+        .iter()
         .map(|use_clause| {
             let comp_name = use_clause.component.0.to_string();
             let comp_span = use_clause.component.1;
 
-            let overrides: Vec<(String, SimpleSpan, AstExpr)> = use_clause.fields.iter()
+            let overrides: Vec<(String, SimpleSpan, AstExpr)> = use_clause
+                .fields
+                .iter()
                 .map(|(uf, _uf_span)| {
                     let field_name = uf.name.0.to_string();
                     let field_name_span = uf.name.1;
@@ -230,17 +270,19 @@ pub(crate) fn lower_entity(
     // Hooks: lifecycle event registrations (ENT-01, ENT-03)
     // All hooks get implicit `mut self` as first parameter
     // =========================================================
-    let hooks: Vec<AstEntityHook> = partitioned.hooks.into_iter()
+    let hooks: Vec<AstEntityHook> = partitioned
+        .hooks
+        .into_iter()
         .map(|hook| {
             let event_name = hook.event.0;
             let event_span = hook.event.1;
 
             let (contract_name, method_name) = match event_name {
-                "create"      => ("OnCreate",      "on_create"),
-                "interact"    => ("OnInteract",    "on_interact"),
-                "destroy"     => ("OnDestroy",     "on_destroy"),
-                "finalize"    => ("OnFinalize",    "on_finalize"),
-                "serialize"   => ("OnSerialize",   "on_serialize"),
+                "create" => ("OnCreate", "on_create"),
+                "interact" => ("OnInteract", "on_interact"),
+                "destroy" => ("OnDestroy", "on_destroy"),
+                "finalize" => ("OnFinalize", "on_finalize"),
+                "serialize" => ("OnSerialize", "on_serialize"),
                 "deserialize" => ("OnDeserialize", "on_deserialize"),
                 // Unreachable: partition_entity_members already filtered unknown events
                 _ => unreachable!("unknown lifecycle event passed validation: {}", event_name),
@@ -249,7 +291,10 @@ pub(crate) fn lower_entity(
             // Build params with implicit mut self injection (ENT-03, spec §14.6)
             let mut params: Vec<AstFnParam> = Vec::new();
             // Inject implicit mut self as first parameter
-            params.push(AstFnParam::SelfParam { mutable: true, span: event_span });
+            params.push(AstFnParam::SelfParam {
+                mutable: true,
+                span: event_span,
+            });
             // Then add any explicit params (e.g., `who: Entity` for interact)
             if let Some(explicit_params) = hook.params {
                 for (param, param_span) in explicit_params {
@@ -258,10 +303,7 @@ pub(crate) fn lower_entity(
             }
 
             // Lower hook body
-            let body: Vec<AstStmt> = hook.body
-                .into_iter()
-                .map(|s| lower_stmt(s, ctx))
-                .collect();
+            let body: Vec<AstStmt> = hook.body.into_iter().map(|s| lower_stmt(s, ctx)).collect();
 
             let method = AstFnDecl {
                 attrs: vec![],
@@ -273,6 +315,7 @@ pub(crate) fn lower_entity(
                 return_type: None,
                 body,
                 span: hook.span,
+                is_dialogue: false,
             };
 
             AstEntityHook {
@@ -288,7 +331,8 @@ pub(crate) fn lower_entity(
     // Inherent impl: methods (if any)
     // =========================================================
     let inherent_impl = if !partitioned.methods.is_empty() {
-        let members: Vec<AstImplMember> = partitioned.methods
+        let members: Vec<AstImplMember> = partitioned
+            .methods
             .into_iter()
             .map(|(fn_decl, fn_span)| AstImplMember::Fn(lower_fn(fn_decl, fn_span, ctx)))
             .collect();
@@ -296,7 +340,10 @@ pub(crate) fn lower_entity(
         Some(AstImplDecl {
             generics: vec![],
             contract: None,
-            target: AstType::Named { name: entity_name.clone(), span: entity_name_span },
+            target: AstType::Named {
+                name: entity_name.clone(),
+                span: entity_name_span,
+            },
             members,
             span: entity_span,
         })

@@ -1,6 +1,6 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
-    .method "factorial" (n: int) -> int pub mut {
+    .method "factorial" (n: int) -> int pub static {
         .locals {
             r0: int "n" [0, 110)
         }
@@ -28,7 +28,7 @@
         MOV r4, r9
         RET r4
     }
-    .method "main" () -> void pub mut {
+    .method "main" () -> void pub static {
         .locals {
             r0: int "result" [24, 26)
         }

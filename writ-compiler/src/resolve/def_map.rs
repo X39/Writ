@@ -5,7 +5,7 @@
 
 use chumsky::span::SimpleSpan;
 use id_arena::Arena;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use writ_diagnostics::{Diagnostic, FileId};
 
 use crate::resolve::error::ResolutionError;
@@ -29,6 +29,9 @@ pub struct DefMap {
     pub impl_blocks: Vec<DefId>,
     /// Function overload sets indexed by FQN. Present only when a name has 2+ overloads.
     pub fn_overloads: FxHashMap<String, Vec<DefId>>,
+    /// Functions originating from `dlg` declarations, including injected
+    /// dependency methods carrying the dialogue metadata flag.
+    pub dialogue_defs: FxHashSet<DefId>,
 }
 
 impl DefMap {
@@ -41,6 +44,7 @@ impl DefMap {
             namespace_members: FxHashMap::default(),
             impl_blocks: Vec::new(),
             fn_overloads: FxHashMap::default(),
+            dialogue_defs: FxHashSet::default(),
         }
     }
 
@@ -74,12 +78,12 @@ impl DefMap {
             DefVis::Pub => {
                 if let Some(&existing_id) = self.by_fqn.get(&fqn) {
                     let existing = &self.arena[existing_id];
-                    let existing_is_fn =
-                        matches!(existing.kind, DefKind::Fn | DefKind::ExternFn);
+                    let existing_is_fn = matches!(existing.kind, DefKind::Fn | DefKind::ExternFn);
 
                     if is_fn && existing_is_fn {
                         // Function overloading: add to overload set
-                        let overloads = self.fn_overloads
+                        let overloads = self
+                            .fn_overloads
                             .entry(fqn.clone())
                             .or_insert_with(|| vec![existing_id]);
                         overloads.push(id);
@@ -113,15 +117,14 @@ impl DefMap {
                 if is_fn {
                     // For private functions, also support overloading via fn_overloads.
                     // file_private stores one DefId per name; overloads go in fn_overloads.
-                    let privates = self.file_private
-                        .entry(entry.file_id)
-                        .or_default();
+                    let privates = self.file_private.entry(entry.file_id).or_default();
                     if let Some(&existing_id) = privates.get(&entry.name) {
                         let existing = &self.arena[existing_id];
                         if matches!(existing.kind, DefKind::Fn | DefKind::ExternFn) {
                             // Private function overload
                             let key = format!("{}@{}", entry.name, entry.file_id.0);
-                            let overloads = self.fn_overloads
+                            let overloads = self
+                                .fn_overloads
                                 .entry(key)
                                 .or_insert_with(|| vec![existing_id]);
                             overloads.push(id);
@@ -146,21 +149,31 @@ impl DefMap {
         self.by_fqn.get(fqn).copied()
     }
 
-    /// Look up a public definition by FQN, disambiguating overloads by name_span.
-    pub fn get_by_span(&self, fqn: &str, name_span: SimpleSpan) -> Option<DefId> {
+    /// Look up one public or private function overload by declaration identity.
+    ///
+    /// Spans are file-local offsets, so both the file and span must match.
+    pub fn get_fn_by_span(
+        &self,
+        fqn: &str,
+        file_id: FileId,
+        name: &str,
+        name_span: SimpleSpan,
+    ) -> Option<DefId> {
         if let Some(overloads) = self.fn_overloads.get(fqn) {
             for &id in overloads {
-                if self.arena[id].name_span == name_span {
+                if self.arena[id].file_id == file_id && self.arena[id].name_span == name_span {
                     return Some(id);
                 }
             }
         }
         if let Some(&id) = self.by_fqn.get(fqn) {
-            if self.arena[id].name_span == name_span {
+            if self.arena[id].file_id == file_id && self.arena[id].name_span == name_span {
                 return Some(id);
             }
         }
-        None
+        self.get_private_fn_candidates(file_id, name)
+            .into_iter()
+            .find(|id| self.arena[*id].file_id == file_id && self.arena[*id].name_span == name_span)
     }
 
     /// Get the entry for a DefId.

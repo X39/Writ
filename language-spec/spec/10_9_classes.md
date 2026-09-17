@@ -7,7 +7,7 @@ Classes are what `struct` meant in prior versions of the language.
 ```writ
 class Merchant {
     name: string,
-    gold: int,
+    mut gold: int,
     reputation: float = 0.5,
 }
 
@@ -24,7 +24,8 @@ let m = new Merchant { name: "Old Tim", gold: 100 };
 ## 1.9.1 Construction
 
 Classes are constructed with the `new` keyword followed by the type name and brace-enclosed field initializers. Fields
-with default values may be omitted. Fields without defaults are required at every construction site.
+with default values may be omitted when the compiler has the default expression available. Fields without defaults are
+required at every construction site. Version 9's cross-module limitation is specified in Section 2.11.
 
 `new` for a class **allocates memory on the GC heap**. The variable holds a reference (pointer) to the heap object.
 Assigning a class value copies the reference — both variables refer to the same object. This contrasts with structs,
@@ -34,8 +35,9 @@ where `new` initializes a value inline with no heap allocation (see Section 1.8)
 let m = new Merchant { name: "Old Tim", gold: 100 };   // reputation defaults to 0.5
 let m2 = new Merchant { name: "Sue", gold: 50, reputation: 0.9 };
 
-let m3 = m;       // m3 and m point to the same Merchant object on the heap
-// modifying m3.gold DOES affect m.gold — they are the same object
+let mut m3 = m;   // m3 and m point to the same Merchant object on the heap
+m3.gold = 80;     // allowed because m3 and Merchant.gold are both mutable
+// m.gold is now also 80 — they are the same object
 ```
 
 The `new` keyword disambiguates construction from block expressions, making the syntax unambiguous for the parser.
@@ -60,7 +62,7 @@ Classes may define lifecycle hooks using the `on` keyword directly in the class 
 ```writ
 class NativeConnection {
     url: string,
-    handle: int = 0,
+    mut handle: int = 0,
 
     on create {
         self.handle = native_connect(self.url);
@@ -80,6 +82,9 @@ class NativeConnection {
 }
 ```
 
+The hooks' implicit `mut self` permits mutation through the receiver, but it does not override field metadata:
+`handle` must also be declared `mut`. Fields such as `url` remain read-only after construction.
+
 | Hook             | When                              | Purpose                                                 |
 |------------------|-----------------------------------|---------------------------------------------------------|
 | `on create`      | After all fields are initialized  | Post-initialization logic                               |
@@ -98,8 +103,8 @@ is non-deterministic. Storing `self` in a reachable location during `on finalize
 unwinds and terminates the calling task's entire call stack. The runtime must log the failure to the host via the
 runtime logging interface (see IL spec §1.14.7). Specific consequences by hook:
 
-- `on create` crash: The object is left in a partially initialized state. The crash terminates the task that called
-  `new`.
+- `on create` crash: The object has already been fully initialized, but construction does not return it to the caller.
+  The crash terminates the task that called `new`.
 - `on serialize` crash: The runtime logs the error. Whether the save proceeds without this object or fails entirely is
   runtime-defined.
 - `on deserialize` crash: The runtime logs the error. The object exists but may have unrecovered native state.
@@ -112,23 +117,24 @@ Value-type structs have no lifecycle hooks. If lifecycle hooks are needed, use a
 `new Merchant { name: "Tim", gold: 100 }` compiles to the following IL:
 
 ```writ
-NEW           r0, Merchant_type       // allocate on GC heap
-LOAD_FLOAT    r1, 0.5
-SET_FIELD     r0, reputation_field, r1
 LOAD_STRING   r1, "Tim"_idx
-SET_FIELD     r0, name_field, r1
-LOAD_INT      r1, 100
-SET_FIELD     r0, gold_field, r1
+LOAD_INT      r2, 100
+LOAD_FLOAT    r3, 0.5
+NEW           r0, Merchant_type, 3, r1 // allocate with name, gold, reputation
 CALL          r_, Merchant::__on_create, r0
 ```
 
 The full sequence:
 
-1. **NEW** — allocate zeroed memory on the GC heap for the class instance.
-2. **SET_FIELD** — apply default values for all fields that have them.
-3. **SET_FIELD** — apply construction-site overrides (these overwrite defaults where specified).
-4. **CALL `__on_create`** — run the user-defined `on create` body, if present. At this point, all fields are fully
+1. Evaluate exactly one initializer for every field in declaration order. Explicit values replace defaults, and the
+   resulting values are placed in consecutive registers.
+2. **NEW** validates the type, exact field count, and initializer register range before allocation, then allocates the
+   class with its complete field vector. No zeroed, partially initialized class reference is exposed.
+3. **CALL `__on_create`** — run the user-defined `on create` body, if present. At this point, all fields are fully
    initialized.
+
+Construction may establish read-only fields. Once `NEW` returns, every write is an ordinary post-construction write;
+`SET_FIELD` must crash before changing a field whose metadata is read-only.
 
 Entities are specialized classes with additional capabilities. See Section 1.15 (Entities) for entity-specific lifecycle
 hooks (`on destroy`, `on interact`) and the component system.

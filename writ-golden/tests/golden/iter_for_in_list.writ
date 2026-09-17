@@ -1,6 +1,6 @@
 pub class ListIterator<T> {
     source: T[],
-    index: int
+    mut index: int
 }
 
 impl<T> ListIterator<T> {
@@ -26,7 +26,7 @@ impl<T> Iterator<T> for ListIterator<T> {
 }
 
 pub class List<T> {
-    items: T[]
+    mut items: T[]
 }
 
 impl<T> List<T> {
@@ -48,7 +48,7 @@ impl<T> Iterable<T> for List<T> {
 }
 
 fn main() {
-    let list: List<int> = new List<int> { items: [] };
+    let mut list: List<int> = new List<int> { items: [] };
     list.add(10);
     list.add(20);
     list.add(30);

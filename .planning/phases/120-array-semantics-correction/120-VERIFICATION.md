@@ -99,8 +99,8 @@ Note: `cargo test --workspace` was not re-run within this verification session. 
 | Requirement | Source Plan(s) | Description | Status | Evidence |
 |-------------|---------------|-------------|--------|----------|
 | ARR-01 | Plans 01, 02, 03 | T[] does NOT support add, remove_at, or insert — compiler rejects as unknown methods | SATISFIED | Old opcodes removed from instruction.rs; builtins.rs and access.rs TyKind::Array blocks cleaned; automated test `test_array_removed_methods_produce_error` proves rejection |
-| ARR-02 | Plans 01, 02, 03 | T[] supports resize(new_len: int) to reallocate | SATISFIED | ArrayResize (0x0905) in instruction.rs; compiler emits it from "resize" dot-call; runtime exec_array_resize handles grow/shrink; spec documents it |
-| ARR-03 | Plans 01, 02, 03 | T[] supports copy(dst_idx, src, src_idx, len) for bulk element transfer | SATISFIED | ArrayCopy (0x0906) in instruction.rs; compiler emits it from "copy_from" dot-call; runtime exec_array_copy handles same-array overlap via copy_within; spec documents it |
+| ARR-02 | Plans 01, 02, 03 | T[] supports resize(new_len: int) to reallocate; growth requires an available element default | SATISFIED WITH PRECONDITION | ArrayResize (0x0905) is emitted from the "resize" dot-call; runtime growth crashes for an unavailable erased-generic/value-struct default, now documented in the source and IL specs |
+| ARR-03 | Plans 01, 02, 03 | T[] supports copy_from(src, src_idx, dst_idx, len) for bulk element transfer | SATISFIED | ArrayCopy (0x0906) in instruction.rs; compiler emits it from "copy_from" dot-call; runtime exec_array_copy handles same-array overlap via copy_within; spec documents it |
 | ARR-04 | Plans 01, 02, 03 | T[] retains len(), slice(start, end), and indexed access as only other built-in operations | SATISFIED | len/slice arms retained in builtins.rs and access.rs; spec operations table lists exactly len, slice, resize, copy_from plus indexed read/write |
 | ARR-05 | Plans 01, 02, 03 | contains removed from T[] (deferred to Iterable default impl) | SATISFIED | ArrayContains opcode removed; "contains" absent from TyKind::Array in both builtins.rs and access.rs; "contains" at access.rs:318 is in the string branch |
 | ARR-06 | Plan 03 | Language spec describes arrays as "fixed-size" with resize/copy as explicit operations | SATISFIED | 07_6_primitive_types.md: "allocation-explicit" terminology, resize(n) model documented, "growable" absent, old methods absent from operations list and examples |
@@ -134,11 +134,11 @@ None. All acceptance criteria are verifiable through static code analysis and th
 
 ### Gaps Summary
 
-No gaps. All 12 observable truths verified, all 19 artifacts substantive and wired, all 4 key links confirmed, all 6 requirements satisfied. The phase goal is achieved:
+No unaddressed gaps. All 12 observable truths verified, all 19 artifacts substantive and wired, all 4 key links confirmed, and all 6 requirements are satisfied with ARR-02's runtime-default precondition documented. The phase goal is achieved:
 
 - T[] is a fixed-size array with explicit allocation semantics
 - Growth methods (add, remove_at, insert, contains) are removed at every layer: instruction enum, compiler emitter, compiler type checker, runtime dispatch, assembler/disassembler
-- resize and copy_from are the explicit reallocation operations, wired end-to-end from source language through IL encoding to runtime execution
+- resize and copy_from are the explicit reallocation operations, wired end-to-end from source language through IL encoding to runtime execution; growth crashes when no runtime element default is available
 - The spec (language spec and IL spec) matches the implementation
 
 One notable deviation from the original plans was correctly handled during execution: `writ-compiler/src/emit/serialize.rs` had a hardcoded `format_version = 4` that Plan 01 missed — Plan 02 fixed it and the fix is verified in place.

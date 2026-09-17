@@ -7,13 +7,14 @@
 //! - TASK-06: Atomic section isolation and limit exemption
 //! - TASK-07: SPAWN/JOIN/CANCEL task lifecycle
 
-use writ_module::module::MethodBody;
-use writ_module::tables::TypeDefKind;
 use writ_module::Instruction;
 use writ_module::ModuleBuilder;
+use writ_module::module::MethodBody;
+use writ_module::signature::{TypeSignature, encode_method_signature};
+use writ_module::tables::TypeDefKind;
 use writ_runtime::{
-    ExecutionLimit, HostRequest, HostResponse, LogLevel, NullHost, RequestId,
-    Runtime, RuntimeBuilder, RuntimeHost, TaskState, TickResult, Value,
+    ExecutionLimit, HostRequest, HostResponse, LogLevel, NullHost, RequestId, Runtime,
+    RuntimeBuilder, RuntimeHost, TaskState, TickResult, Value,
 };
 
 // ── Encoding helpers ─────────────────────────────────────────────
@@ -25,6 +26,10 @@ fn encode(instrs: &[Instruction]) -> Vec<u8> {
         instr.encode(&mut code).unwrap();
     }
     code
+}
+
+fn methoddef_token(index: u32) -> u32 {
+    0x0700_0000 | (index + 1)
 }
 
 /// Compute the byte offset of instruction at index `n` in a sequence.
@@ -63,16 +68,33 @@ fn build_multi_method_runtime_with_globals(
     methods: Vec<(&str, &[Instruction], u16)>,
     global_count: usize,
 ) -> Runtime<NullHost> {
+    let parameter_counts = vec![0; methods.len()];
+    build_multi_method_runtime_with_globals_and_params(methods, global_count, &parameter_counts)
+}
+
+fn build_multi_method_runtime_with_globals_and_params(
+    methods: Vec<(&str, &[Instruction], u16)>,
+    global_count: usize,
+    parameter_counts: &[usize],
+) -> Runtime<NullHost> {
+    assert_eq!(methods.len(), parameter_counts.len());
     let mut builder = ModuleBuilder::new("test");
     builder.add_type_def("TestType", "", TypeDefKind::Struct, 0);
-    for (name, instrs, reg_count) in &methods {
+    for ((name, instrs, reg_count), parameter_count) in
+        methods.iter().zip(parameter_counts.iter().copied())
+    {
         let body = MethodBody {
             register_types: vec![0; *reg_count as usize],
             code: encode(instrs),
             debug_locals: vec![],
             source_spans: vec![],
         };
-        builder.add_method(name, &[0], 0, *reg_count, body);
+        let signature = encode_method_signature(
+            &vec![TypeSignature::Int; parameter_count],
+            &TypeSignature::Void,
+        )
+        .expect("encode test method signature");
+        builder.add_method(name, &signature, 0, *reg_count, body);
     }
     for i in 0..global_count {
         builder.add_global_def(&format!("g{}", i), &[0x01], 0, &[]);
@@ -176,23 +198,41 @@ fn defer_lifo_on_ret() {
 
     let instrs = vec![
         // 0: DeferPush -> handler_A (placeholder byte offset, will be computed)
-        Instruction::DeferPush { r_dst: 0, method_idx: 0 }, // placeholder
+        Instruction::DeferPush {
+            r_dst: 0,
+            method_idx: 0,
+        }, // placeholder
         // 1: DeferPush -> handler_B (placeholder)
-        Instruction::DeferPush { r_dst: 0, method_idx: 0 }, // placeholder
+        Instruction::DeferPush {
+            r_dst: 0,
+            method_idx: 0,
+        }, // placeholder
         // 2: LoadInt r0, 0
         Instruction::LoadInt { r_dst: 0, value: 0 },
         // 3: Ret r0
         Instruction::Ret { r_src: 0 },
         // 4: handler B start
-        Instruction::LoadInt { r_dst: 1, value: 20 },
+        Instruction::LoadInt {
+            r_dst: 1,
+            value: 20,
+        },
         // 5: StoreGlobal 0, r1
-        Instruction::StoreGlobal { global_idx: 0, r_src: 1 },
+        Instruction::StoreGlobal {
+            global_idx: 0,
+            r_src: 1,
+        },
         // 6: DeferEnd
         Instruction::DeferEnd,
         // 7: handler A start
-        Instruction::LoadInt { r_dst: 1, value: 10 },
+        Instruction::LoadInt {
+            r_dst: 1,
+            value: 10,
+        },
         // 8: StoreGlobal 0, r1
-        Instruction::StoreGlobal { global_idx: 0, r_src: 1 },
+        Instruction::StoreGlobal {
+            global_idx: 0,
+            r_src: 1,
+        },
         // 9: DeferEnd
         Instruction::DeferEnd,
     ];
@@ -202,8 +242,14 @@ fn defer_lifo_on_ret() {
     let handler_a_offset = byte_offset_of(&instrs, 7);
 
     let mut fixed_instrs = instrs.clone();
-    fixed_instrs[0] = Instruction::DeferPush { r_dst: 0, method_idx: handler_a_offset };
-    fixed_instrs[1] = Instruction::DeferPush { r_dst: 0, method_idx: handler_b_offset };
+    fixed_instrs[0] = Instruction::DeferPush {
+        r_dst: 0,
+        method_idx: handler_a_offset,
+    };
+    fixed_instrs[1] = Instruction::DeferPush {
+        r_dst: 0,
+        method_idx: handler_b_offset,
+    };
 
     let mut runtime = build_runtime_with_globals(&fixed_instrs, 4, 1);
     let task_id = runtime.spawn_task(0, vec![]).unwrap();
@@ -236,21 +282,33 @@ fn defer_lifo_ordering_proven_by_two_globals() {
 
     let instrs = vec![
         // 0: DeferPush -> handler_A
-        Instruction::DeferPush { r_dst: 0, method_idx: 0 }, // placeholder
+        Instruction::DeferPush {
+            r_dst: 0,
+            method_idx: 0,
+        }, // placeholder
         // 1: DeferPush -> handler_B
-        Instruction::DeferPush { r_dst: 0, method_idx: 0 }, // placeholder
+        Instruction::DeferPush {
+            r_dst: 0,
+            method_idx: 0,
+        }, // placeholder
         // 2: RetVoid
         Instruction::RetVoid,
         // 3: handler B: set global[0] = 1
         Instruction::LoadInt { r_dst: 0, value: 1 },
         // 4:
-        Instruction::StoreGlobal { global_idx: 0, r_src: 0 },
+        Instruction::StoreGlobal {
+            global_idx: 0,
+            r_src: 0,
+        },
         // 5:
         Instruction::DeferEnd,
         // 6: handler A: set global[0] = 2
         Instruction::LoadInt { r_dst: 0, value: 2 },
         // 7:
-        Instruction::StoreGlobal { global_idx: 0, r_src: 0 },
+        Instruction::StoreGlobal {
+            global_idx: 0,
+            r_src: 0,
+        },
         // 8:
         Instruction::DeferEnd,
     ];
@@ -259,20 +317,26 @@ fn defer_lifo_ordering_proven_by_two_globals() {
     let handler_a_offset = byte_offset_of(&instrs, 6);
 
     let mut fixed = instrs.clone();
-    fixed[0] = Instruction::DeferPush { r_dst: 0, method_idx: handler_a_offset };
-    fixed[1] = Instruction::DeferPush { r_dst: 0, method_idx: handler_b_offset };
+    fixed[0] = Instruction::DeferPush {
+        r_dst: 0,
+        method_idx: handler_a_offset,
+    };
+    fixed[1] = Instruction::DeferPush {
+        r_dst: 0,
+        method_idx: handler_b_offset,
+    };
 
     // Build a two-method module: method 0 is main, method 1 reads global[0] and returns it
     let reader_instrs = vec![
-        Instruction::LoadGlobal { r_dst: 0, global_idx: 0 },
+        Instruction::LoadGlobal {
+            r_dst: 0,
+            global_idx: 0,
+        },
         Instruction::Ret { r_src: 0 },
     ];
 
     let mut runtime = build_multi_method_runtime_with_globals(
-        vec![
-            ("main", &fixed, 4),
-            ("reader", &reader_instrs, 1),
-        ],
+        vec![("main", &fixed, 4), ("reader", &reader_instrs, 1)],
         1,
     );
 
@@ -294,23 +358,38 @@ fn defer_executes_on_normal_return() {
 
     let instrs = vec![
         // 0: DeferPush -> handler
-        Instruction::DeferPush { r_dst: 0, method_idx: 0 }, // placeholder
+        Instruction::DeferPush {
+            r_dst: 0,
+            method_idx: 0,
+        }, // placeholder
         // 1: RetVoid
         Instruction::RetVoid,
         // 2: handler: set global[0] = 42
-        Instruction::LoadInt { r_dst: 0, value: 42 },
+        Instruction::LoadInt {
+            r_dst: 0,
+            value: 42,
+        },
         // 3:
-        Instruction::StoreGlobal { global_idx: 0, r_src: 0 },
+        Instruction::StoreGlobal {
+            global_idx: 0,
+            r_src: 0,
+        },
         // 4:
         Instruction::DeferEnd,
     ];
 
     let handler_offset = byte_offset_of(&instrs, 2);
     let mut fixed = instrs.clone();
-    fixed[0] = Instruction::DeferPush { r_dst: 0, method_idx: handler_offset };
+    fixed[0] = Instruction::DeferPush {
+        r_dst: 0,
+        method_idx: handler_offset,
+    };
 
     let reader = vec![
-        Instruction::LoadGlobal { r_dst: 0, global_idx: 0 },
+        Instruction::LoadGlobal {
+            r_dst: 0,
+            global_idx: 0,
+        },
         Instruction::Ret { r_src: 0 },
     ];
 
@@ -346,18 +425,35 @@ fn crash_unwinds_all_frames_with_defers() {
     //   5: DeferEnd
 
     let main_instrs_raw = vec![
-        Instruction::DeferPush { r_dst: 0, method_idx: 0 }, // placeholder
-        Instruction::Call { r_dst: 0, method_idx: 2, r_base: 0, argc: 0 },
+        Instruction::DeferPush {
+            r_dst: 0,
+            method_idx: 0,
+        }, // placeholder
+        Instruction::Call {
+            r_dst: 0,
+            method_idx: methoddef_token(1),
+            r_base: 0,
+            argc: 0,
+        },
         Instruction::RetVoid,
         // handler:
-        Instruction::LoadInt { r_dst: 0, value: 100 },
-        Instruction::StoreGlobal { global_idx: 0, r_src: 0 },
+        Instruction::LoadInt {
+            r_dst: 0,
+            value: 100,
+        },
+        Instruction::StoreGlobal {
+            global_idx: 0,
+            r_src: 0,
+        },
         Instruction::DeferEnd,
     ];
 
     let main_handler_offset = byte_offset_of(&main_instrs_raw, 3);
     let mut main_instrs = main_instrs_raw.clone();
-    main_instrs[0] = Instruction::DeferPush { r_dst: 0, method_idx: main_handler_offset };
+    main_instrs[0] = Instruction::DeferPush {
+        r_dst: 0,
+        method_idx: main_handler_offset,
+    };
 
     // Method 1 layout:
     //   0: DeferPush -> handler at 2
@@ -368,24 +464,42 @@ fn crash_unwinds_all_frames_with_defers() {
     //   4: DeferEnd
 
     let callee_instrs_raw = vec![
-        Instruction::DeferPush { r_dst: 0, method_idx: 0 }, // placeholder
+        Instruction::DeferPush {
+            r_dst: 0,
+            method_idx: 0,
+        }, // placeholder
         Instruction::Crash { r_msg: 0 },
         // handler:
-        Instruction::LoadInt { r_dst: 0, value: 200 },
-        Instruction::StoreGlobal { global_idx: 1, r_src: 0 },
+        Instruction::LoadInt {
+            r_dst: 0,
+            value: 200,
+        },
+        Instruction::StoreGlobal {
+            global_idx: 1,
+            r_src: 0,
+        },
         Instruction::DeferEnd,
     ];
 
     let callee_handler_offset = byte_offset_of(&callee_instrs_raw, 2);
     let mut callee_instrs = callee_instrs_raw.clone();
-    callee_instrs[0] = Instruction::DeferPush { r_dst: 0, method_idx: callee_handler_offset };
+    callee_instrs[0] = Instruction::DeferPush {
+        r_dst: 0,
+        method_idx: callee_handler_offset,
+    };
 
     let reader0 = vec![
-        Instruction::LoadGlobal { r_dst: 0, global_idx: 0 },
+        Instruction::LoadGlobal {
+            r_dst: 0,
+            global_idx: 0,
+        },
         Instruction::Ret { r_src: 0 },
     ];
     let reader1 = vec![
-        Instruction::LoadGlobal { r_dst: 0, global_idx: 1 },
+        Instruction::LoadGlobal {
+            r_dst: 0,
+            global_idx: 1,
+        },
         Instruction::Ret { r_src: 0 },
     ];
 
@@ -418,7 +532,12 @@ fn crash_info_has_stack_trace() {
     // Method 0 calls method 1, method 1 crashes.
 
     let main_instrs = vec![
-        Instruction::Call { r_dst: 0, method_idx: 2, r_base: 0, argc: 0 },
+        Instruction::Call {
+            r_dst: 0,
+            method_idx: methoddef_token(1),
+            r_base: 0,
+            argc: 0,
+        },
         Instruction::RetVoid,
     ];
 
@@ -427,10 +546,7 @@ fn crash_info_has_stack_trace() {
     ];
 
     let mut runtime = build_multi_method_runtime_with_globals(
-        vec![
-            ("main", &main_instrs, 2),
-            ("callee", &callee_instrs, 1),
-        ],
+        vec![("main", &main_instrs, 2), ("callee", &callee_instrs, 1)],
         0,
     );
 
@@ -466,14 +582,26 @@ fn secondary_crash_in_defer_is_swallowed() {
     //   6: DeferEnd
 
     let instrs_raw = vec![
-        Instruction::DeferPush { r_dst: 0, method_idx: 0 }, // A placeholder
-        Instruction::DeferPush { r_dst: 0, method_idx: 0 }, // B placeholder
+        Instruction::DeferPush {
+            r_dst: 0,
+            method_idx: 0,
+        }, // A placeholder
+        Instruction::DeferPush {
+            r_dst: 0,
+            method_idx: 0,
+        }, // B placeholder
         Instruction::RetVoid,
         // handler B (crashes):
         Instruction::Crash { r_msg: 0 },
         // handler A (good):
-        Instruction::LoadInt { r_dst: 0, value: 99 },
-        Instruction::StoreGlobal { global_idx: 0, r_src: 0 },
+        Instruction::LoadInt {
+            r_dst: 0,
+            value: 99,
+        },
+        Instruction::StoreGlobal {
+            global_idx: 0,
+            r_src: 0,
+        },
         Instruction::DeferEnd,
     ];
 
@@ -481,20 +609,26 @@ fn secondary_crash_in_defer_is_swallowed() {
     let handler_a_offset = byte_offset_of(&instrs_raw, 4);
 
     let mut fixed = instrs_raw.clone();
-    fixed[0] = Instruction::DeferPush { r_dst: 0, method_idx: handler_a_offset };
-    fixed[1] = Instruction::DeferPush { r_dst: 0, method_idx: handler_b_offset };
+    fixed[0] = Instruction::DeferPush {
+        r_dst: 0,
+        method_idx: handler_a_offset,
+    };
+    fixed[1] = Instruction::DeferPush {
+        r_dst: 0,
+        method_idx: handler_b_offset,
+    };
 
     let reader = vec![
-        Instruction::LoadGlobal { r_dst: 0, global_idx: 0 },
+        Instruction::LoadGlobal {
+            r_dst: 0,
+            global_idx: 0,
+        },
         Instruction::Ret { r_src: 0 },
     ];
 
     let host = RecordingHost::new();
-    let mut runtime = build_runtime_with_host(
-        vec![("main", &fixed, 4), ("reader", &reader, 1)],
-        1,
-        host,
-    );
+    let mut runtime =
+        build_runtime_with_host(vec![("main", &fixed, 4), ("reader", &reader, 1)], 1, host);
 
     let task_id = runtime.spawn_task(0, vec![]).unwrap();
     runtime.tick(0.0, ExecutionLimit::None);
@@ -508,9 +642,11 @@ fn secondary_crash_in_defer_is_swallowed() {
 
     // Verify the secondary crash was logged (check log messages contain "secondary crash")
     assert!(
-        runtime.host().log_messages.iter().any(|(level, msg)| {
-            *level == LogLevel::Error && msg.contains("secondary crash")
-        }),
+        runtime
+            .host()
+            .log_messages
+            .iter()
+            .any(|(level, msg)| { *level == LogLevel::Error && msg.contains("secondary crash") }),
         "expected secondary crash to be logged at Error level, got: {:?}",
         runtime.host().log_messages
     );
@@ -532,9 +668,18 @@ fn atomic_section_exempt_from_execution_limit() {
 
     let instrs = vec![
         Instruction::AtomicBegin,
-        Instruction::LoadInt { r_dst: 0, value: 42 },
-        Instruction::LoadInt { r_dst: 1, value: 43 },
-        Instruction::LoadInt { r_dst: 2, value: 44 },
+        Instruction::LoadInt {
+            r_dst: 0,
+            value: 42,
+        },
+        Instruction::LoadInt {
+            r_dst: 1,
+            value: 43,
+        },
+        Instruction::LoadInt {
+            r_dst: 2,
+            value: 44,
+        },
         Instruction::AtomicEnd,
         Instruction::Ret { r_src: 0 },
     ];
@@ -578,20 +723,29 @@ fn atomic_section_runs_to_completion_under_tight_limit() {
     // Method: AtomicBegin, [5 x Nop], StoreGlobal 0 = 77, AtomicEnd, Ret
 
     let instrs = vec![
-        Instruction::AtomicBegin,           // 0
-        Instruction::Nop,                   // 1
-        Instruction::Nop,                   // 2
-        Instruction::Nop,                   // 3
-        Instruction::Nop,                   // 4
-        Instruction::Nop,                   // 5
-        Instruction::LoadInt { r_dst: 0, value: 77 },  // 6
-        Instruction::StoreGlobal { global_idx: 0, r_src: 0 }, // 7
-        Instruction::AtomicEnd,             // 8
-        Instruction::RetVoid,               // 9
+        Instruction::AtomicBegin, // 0
+        Instruction::Nop,         // 1
+        Instruction::Nop,         // 2
+        Instruction::Nop,         // 3
+        Instruction::Nop,         // 4
+        Instruction::Nop,         // 5
+        Instruction::LoadInt {
+            r_dst: 0,
+            value: 77,
+        }, // 6
+        Instruction::StoreGlobal {
+            global_idx: 0,
+            r_src: 0,
+        }, // 7
+        Instruction::AtomicEnd,   // 8
+        Instruction::RetVoid,     // 9
     ];
 
     let reader = vec![
-        Instruction::LoadGlobal { r_dst: 0, global_idx: 0 },
+        Instruction::LoadGlobal {
+            r_dst: 0,
+            global_idx: 0,
+        },
         Instruction::Ret { r_src: 0 },
     ];
 
@@ -628,24 +782,30 @@ fn atomic_section_prevents_interleaving() {
     let task_a_instrs = vec![
         Instruction::AtomicBegin,
         Instruction::LoadInt { r_dst: 0, value: 1 },
-        Instruction::StoreGlobal { global_idx: 0, r_src: 0 },
+        Instruction::StoreGlobal {
+            global_idx: 0,
+            r_src: 0,
+        },
         Instruction::LoadInt { r_dst: 0, value: 2 },
-        Instruction::StoreGlobal { global_idx: 0, r_src: 0 },
+        Instruction::StoreGlobal {
+            global_idx: 0,
+            r_src: 0,
+        },
         Instruction::AtomicEnd,
         Instruction::RetVoid,
     ];
 
     // Task B (method 1): LoadGlobal(0), store in r0, Ret r0
     let task_b_instrs = vec![
-        Instruction::LoadGlobal { r_dst: 0, global_idx: 0 },
+        Instruction::LoadGlobal {
+            r_dst: 0,
+            global_idx: 0,
+        },
         Instruction::Ret { r_src: 0 },
     ];
 
     let mut runtime = build_multi_method_runtime_with_globals(
-        vec![
-            ("taskA", &task_a_instrs, 4),
-            ("taskB", &task_b_instrs, 1),
-        ],
+        vec![("taskA", &task_a_instrs, 4), ("taskB", &task_b_instrs, 1)],
         1,
     );
 
@@ -687,20 +847,25 @@ fn spawn_task_creates_child() {
     // Method 1 (child): LoadInt r0 42, Ret r0
 
     let main_instrs = vec![
-        Instruction::SpawnTask { r_dst: 0, method_idx: 2, r_base: 0, argc: 0 },
+        Instruction::SpawnTask {
+            r_dst: 0,
+            method_idx: methoddef_token(1),
+            r_base: 0,
+            argc: 0,
+        },
         Instruction::RetVoid,
     ];
 
     let child_instrs = vec![
-        Instruction::LoadInt { r_dst: 0, value: 42 },
+        Instruction::LoadInt {
+            r_dst: 0,
+            value: 42,
+        },
         Instruction::Ret { r_src: 0 },
     ];
 
     let mut runtime = build_multi_method_runtime_with_globals(
-        vec![
-            ("main", &main_instrs, 2),
-            ("child", &child_instrs, 1),
-        ],
+        vec![("main", &main_instrs, 2), ("child", &child_instrs, 1)],
         0,
     );
 
@@ -721,53 +886,6 @@ fn spawn_task_creates_child() {
 }
 
 #[test]
-fn spawn_detached_survives_parent_completion() {
-    // Method 0 (parent): SpawnDetached to method 1, then immediately RetVoid
-    // Method 1 (detached child): many Nops then RetVoid
-    // After parent completes, child should still be ready/running.
-
-    let parent_instrs = vec![
-        Instruction::SpawnDetached { r_dst: 0, method_idx: 2, r_base: 0, argc: 0 },
-        Instruction::RetVoid,
-    ];
-
-    let child_instrs = vec![
-        Instruction::Nop,
-        Instruction::Nop,
-        Instruction::Nop,
-        Instruction::LoadInt { r_dst: 0, value: 55 },
-        Instruction::Ret { r_src: 0 },
-    ];
-
-    let mut runtime = build_multi_method_runtime_with_globals(
-        vec![
-            ("parent", &parent_instrs, 2),
-            ("detached_child", &child_instrs, 1),
-        ],
-        0,
-    );
-
-    let parent_id = runtime.spawn_task(0, vec![]).unwrap();
-
-    // Run one tick with limit so parent finishes but child may still be running
-    runtime.tick(0.0, ExecutionLimit::Instructions(3));
-
-    // Parent should be completed
-    assert_eq!(runtime.task_state(parent_id), Some(TaskState::Completed));
-
-    // Continue running - child should eventually complete too
-    loop {
-        match runtime.tick(0.0, ExecutionLimit::None) {
-            TickResult::AllCompleted | TickResult::Empty => break,
-            _ => continue,
-        }
-    }
-
-    // At least 2 tasks existed
-    assert!(runtime.task_count() >= 2);
-}
-
-#[test]
 fn join_waits_for_child_completion() {
     // Method 0 (main): SpawnTask to method 1, Join on child, read child's result.
     // Method 1 (child): LoadInt r0 42, Ret r0
@@ -775,21 +893,38 @@ fn join_waits_for_child_completion() {
 
     let main_instrs = vec![
         // r0 = spawn child (method 1)
-        Instruction::SpawnTask { r_dst: 0, method_idx: 2, r_base: 0, argc: 0 },
+        Instruction::SpawnTask {
+            r_dst: 0,
+            method_idx: methoddef_token(1),
+            r_base: 0,
+            argc: 0,
+        },
         // r1 = join(r0) -- waits for child, gets return value
-        Instruction::Join { r_dst: 1, r_task: 0 },
+        Instruction::Join {
+            r_dst: 1,
+            r_task: 0,
+        },
         // Store child result in global[0]
-        Instruction::StoreGlobal { global_idx: 0, r_src: 1 },
+        Instruction::StoreGlobal {
+            global_idx: 0,
+            r_src: 1,
+        },
         Instruction::RetVoid,
     ];
 
     let child_instrs = vec![
-        Instruction::LoadInt { r_dst: 0, value: 42 },
+        Instruction::LoadInt {
+            r_dst: 0,
+            value: 42,
+        },
         Instruction::Ret { r_src: 0 },
     ];
 
     let reader = vec![
-        Instruction::LoadGlobal { r_dst: 0, global_idx: 0 },
+        Instruction::LoadGlobal {
+            r_dst: 0,
+            global_idx: 0,
+        },
         Instruction::Ret { r_src: 0 },
     ];
 
@@ -832,7 +967,12 @@ fn cancel_triggers_defer_handlers() {
 
     let main_instrs = vec![
         // r0 = spawn child (method 1)
-        Instruction::SpawnTask { r_dst: 0, method_idx: 2, r_base: 0, argc: 0 },
+        Instruction::SpawnTask {
+            r_dst: 0,
+            method_idx: methoddef_token(1),
+            r_base: 0,
+            argc: 0,
+        },
         // Nops so the child gets a chance to run its DeferPush
         Instruction::Nop,
         Instruction::Nop,
@@ -844,7 +984,10 @@ fn cancel_triggers_defer_handlers() {
 
     // Method 1 (child): defer handler sets global[0] = 88, then waits
     let child_instrs_raw = vec![
-        Instruction::DeferPush { r_dst: 0, method_idx: 0 }, // placeholder
+        Instruction::DeferPush {
+            r_dst: 0,
+            method_idx: 0,
+        }, // placeholder
         Instruction::Nop,
         Instruction::Nop,
         Instruction::Nop,
@@ -855,17 +998,29 @@ fn cancel_triggers_defer_handlers() {
         Instruction::Nop,
         Instruction::RetVoid,
         // handler:
-        Instruction::LoadInt { r_dst: 0, value: 88 },
-        Instruction::StoreGlobal { global_idx: 0, r_src: 0 },
+        Instruction::LoadInt {
+            r_dst: 0,
+            value: 88,
+        },
+        Instruction::StoreGlobal {
+            global_idx: 0,
+            r_src: 0,
+        },
         Instruction::DeferEnd,
     ];
 
     let handler_offset = byte_offset_of(&child_instrs_raw, 10);
     let mut child_instrs = child_instrs_raw.clone();
-    child_instrs[0] = Instruction::DeferPush { r_dst: 0, method_idx: handler_offset };
+    child_instrs[0] = Instruction::DeferPush {
+        r_dst: 0,
+        method_idx: handler_offset,
+    };
 
     let reader = vec![
-        Instruction::LoadGlobal { r_dst: 0, global_idx: 0 },
+        Instruction::LoadGlobal {
+            r_dst: 0,
+            global_idx: 0,
+        },
         Instruction::Ret { r_src: 0 },
     ];
 
@@ -910,9 +1065,17 @@ fn scoped_cancel_recursive_on_parent_crash() {
 
     let parent_raw = vec![
         // 0: DeferPush -> parent handler
-        Instruction::DeferPush { r_dst: 0, method_idx: 0 }, // placeholder
+        Instruction::DeferPush {
+            r_dst: 0,
+            method_idx: 0,
+        }, // placeholder
         // 1: SpawnTask child
-        Instruction::SpawnTask { r_dst: 0, method_idx: 2, r_base: 0, argc: 0 },
+        Instruction::SpawnTask {
+            r_dst: 0,
+            method_idx: methoddef_token(1),
+            r_base: 0,
+            argc: 0,
+        },
         // 2-4: Nops to let child run via round-robin
         Instruction::Nop,
         Instruction::Nop,
@@ -923,20 +1086,32 @@ fn scoped_cancel_recursive_on_parent_crash() {
         Instruction::RetVoid,
         // parent handler:
         // 7: LoadInt r1, 222
-        Instruction::LoadInt { r_dst: 1, value: 222 },
+        Instruction::LoadInt {
+            r_dst: 1,
+            value: 222,
+        },
         // 8: StoreGlobal 1, r1
-        Instruction::StoreGlobal { global_idx: 1, r_src: 1 },
+        Instruction::StoreGlobal {
+            global_idx: 1,
+            r_src: 1,
+        },
         // 9: DeferEnd
         Instruction::DeferEnd,
     ];
 
     let parent_handler_offset = byte_offset_of(&parent_raw, 7);
     let mut parent_instrs = parent_raw.clone();
-    parent_instrs[0] = Instruction::DeferPush { r_dst: 0, method_idx: parent_handler_offset };
+    parent_instrs[0] = Instruction::DeferPush {
+        r_dst: 0,
+        method_idx: parent_handler_offset,
+    };
 
     let child_raw = vec![
         // 0: DeferPush -> child handler
-        Instruction::DeferPush { r_dst: 0, method_idx: 0 }, // placeholder
+        Instruction::DeferPush {
+            r_dst: 0,
+            method_idx: 0,
+        }, // placeholder
         // 1-6: Nops (will be cancelled before completing)
         Instruction::Nop,
         Instruction::Nop,
@@ -948,23 +1123,38 @@ fn scoped_cancel_recursive_on_parent_crash() {
         Instruction::RetVoid,
         // child handler:
         // 8: LoadInt r0, 111
-        Instruction::LoadInt { r_dst: 0, value: 111 },
+        Instruction::LoadInt {
+            r_dst: 0,
+            value: 111,
+        },
         // 9: StoreGlobal 0, r0
-        Instruction::StoreGlobal { global_idx: 0, r_src: 0 },
+        Instruction::StoreGlobal {
+            global_idx: 0,
+            r_src: 0,
+        },
         // 10: DeferEnd
         Instruction::DeferEnd,
     ];
 
     let child_handler_offset = byte_offset_of(&child_raw, 8);
     let mut child_instrs = child_raw.clone();
-    child_instrs[0] = Instruction::DeferPush { r_dst: 0, method_idx: child_handler_offset };
+    child_instrs[0] = Instruction::DeferPush {
+        r_dst: 0,
+        method_idx: child_handler_offset,
+    };
 
     let reader0 = vec![
-        Instruction::LoadGlobal { r_dst: 0, global_idx: 0 },
+        Instruction::LoadGlobal {
+            r_dst: 0,
+            global_idx: 0,
+        },
         Instruction::Ret { r_src: 0 },
     ];
     let reader1 = vec![
-        Instruction::LoadGlobal { r_dst: 0, global_idx: 1 },
+        Instruction::LoadGlobal {
+            r_dst: 0,
+            global_idx: 1,
+        },
         Instruction::Ret { r_src: 0 },
     ];
 
@@ -994,9 +1184,17 @@ fn scoped_cancel_recursive_on_parent_crash() {
 
     // Both defers should have executed
     let g0 = runtime.call_sync(2, vec![]).unwrap();
-    assert_eq!(g0, Value::Int(111), "child defer should have set global[0] = 111");
+    assert_eq!(
+        g0,
+        Value::Int(111),
+        "child defer should have set global[0] = 111"
+    );
     let g1 = runtime.call_sync(3, vec![]).unwrap();
-    assert_eq!(g1, Value::Int(222), "parent defer should have set global[1] = 222");
+    assert_eq!(
+        g1,
+        Value::Int(222),
+        "parent defer should have set global[1] = 222"
+    );
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -1060,7 +1258,11 @@ fn call_sync_returns_value() {
     let instrs = vec![
         Instruction::LoadInt { r_dst: 0, value: 5 },
         Instruction::LoadInt { r_dst: 1, value: 3 },
-        Instruction::AddI { r_dst: 2, r_a: 0, r_b: 1 },
+        Instruction::AddI {
+            r_dst: 2,
+            r_a: 0,
+            r_b: 1,
+        },
         Instruction::Ret { r_src: 2 },
     ];
 
@@ -1091,8 +1293,14 @@ fn round_robin_no_starvation() {
         Instruction::Nop,
         Instruction::Nop,
         Instruction::Nop,
-        Instruction::LoadInt { r_dst: 0, value: 10 },
-        Instruction::StoreGlobal { global_idx: 0, r_src: 0 },
+        Instruction::LoadInt {
+            r_dst: 0,
+            value: 10,
+        },
+        Instruction::StoreGlobal {
+            global_idx: 0,
+            r_src: 0,
+        },
         Instruction::RetVoid,
     ];
 
@@ -1100,17 +1308,29 @@ fn round_robin_no_starvation() {
         Instruction::Nop,
         Instruction::Nop,
         Instruction::Nop,
-        Instruction::LoadInt { r_dst: 0, value: 20 },
-        Instruction::StoreGlobal { global_idx: 1, r_src: 0 },
+        Instruction::LoadInt {
+            r_dst: 0,
+            value: 20,
+        },
+        Instruction::StoreGlobal {
+            global_idx: 1,
+            r_src: 0,
+        },
         Instruction::RetVoid,
     ];
 
     let reader0 = vec![
-        Instruction::LoadGlobal { r_dst: 0, global_idx: 0 },
+        Instruction::LoadGlobal {
+            r_dst: 0,
+            global_idx: 0,
+        },
         Instruction::Ret { r_src: 0 },
     ];
     let reader1 = vec![
-        Instruction::LoadGlobal { r_dst: 0, global_idx: 1 },
+        Instruction::LoadGlobal {
+            r_dst: 0,
+            global_idx: 1,
+        },
         Instruction::Ret { r_src: 0 },
     ];
 
@@ -1162,10 +1382,7 @@ fn run_task_targets_specific_task() {
     ];
 
     let mut runtime = build_multi_method_runtime_with_globals(
-        vec![
-            ("taskA", &instrs_a, 1),
-            ("taskB", &instrs_b, 1),
-        ],
+        vec![("taskA", &instrs_a, 1), ("taskB", &instrs_b, 1)],
         0,
     );
 
@@ -1188,35 +1405,57 @@ fn spawn_task_with_arguments() {
 
     let main_instrs = vec![
         // Load argument value into r1
-        Instruction::LoadInt { r_dst: 1, value: 10 },
+        Instruction::LoadInt {
+            r_dst: 1,
+            value: 10,
+        },
         // Spawn child, passing r1 as argument (r_base=1, argc=1)
-        Instruction::SpawnTask { r_dst: 0, method_idx: 2, r_base: 1, argc: 1 },
+        Instruction::SpawnTask {
+            r_dst: 0,
+            method_idx: methoddef_token(1),
+            r_base: 1,
+            argc: 1,
+        },
         // Join on child
-        Instruction::Join { r_dst: 2, r_task: 0 },
+        Instruction::Join {
+            r_dst: 2,
+            r_task: 0,
+        },
         // Store result
-        Instruction::StoreGlobal { global_idx: 0, r_src: 2 },
+        Instruction::StoreGlobal {
+            global_idx: 0,
+            r_src: 2,
+        },
         Instruction::RetVoid,
     ];
 
     let child_instrs = vec![
         // r0 = argument (10)
         Instruction::LoadInt { r_dst: 1, value: 5 },
-        Instruction::AddI { r_dst: 2, r_a: 0, r_b: 1 },
+        Instruction::AddI {
+            r_dst: 2,
+            r_a: 0,
+            r_b: 1,
+        },
         Instruction::Ret { r_src: 2 },
     ];
 
     let reader = vec![
-        Instruction::LoadGlobal { r_dst: 0, global_idx: 0 },
+        Instruction::LoadGlobal {
+            r_dst: 0,
+            global_idx: 0,
+        },
         Instruction::Ret { r_src: 0 },
     ];
 
-    let mut runtime = build_multi_method_runtime_with_globals(
+    let mut runtime = build_multi_method_runtime_with_globals_and_params(
         vec![
             ("main", &main_instrs, 4),
             ("child", &child_instrs, 4),
             ("reader", &reader, 1),
         ],
         1,
+        &[0, 1, 0],
     );
 
     let main_id = runtime.spawn_task(0, vec![]).unwrap();
@@ -1228,7 +1467,12 @@ fn spawn_task_with_arguments() {
         }
     }
 
-    assert_eq!(runtime.task_state(main_id), Some(TaskState::Completed));
+    assert_eq!(
+        runtime.task_state(main_id),
+        Some(TaskState::Completed),
+        "main task crash: {:?}",
+        runtime.crash_info(main_id)
+    );
 
     let val = runtime.call_sync(2, vec![]).unwrap();
     assert_eq!(val, Value::Int(15));
@@ -1241,32 +1485,64 @@ fn multiple_children_all_join() {
 
     let main_instrs = vec![
         // Spawn child A (method 1)
-        Instruction::SpawnTask { r_dst: 0, method_idx: 2, r_base: 0, argc: 0 },
+        Instruction::SpawnTask {
+            r_dst: 0,
+            method_idx: methoddef_token(1),
+            r_base: 0,
+            argc: 0,
+        },
         // Spawn child B (method 2)
-        Instruction::SpawnTask { r_dst: 1, method_idx: 3, r_base: 0, argc: 0 },
+        Instruction::SpawnTask {
+            r_dst: 1,
+            method_idx: methoddef_token(2),
+            r_base: 0,
+            argc: 0,
+        },
         // Join child A -> r2
-        Instruction::Join { r_dst: 2, r_task: 0 },
+        Instruction::Join {
+            r_dst: 2,
+            r_task: 0,
+        },
         // Join child B -> r3
-        Instruction::Join { r_dst: 3, r_task: 1 },
+        Instruction::Join {
+            r_dst: 3,
+            r_task: 1,
+        },
         // r4 = r2 + r3
-        Instruction::AddI { r_dst: 4, r_a: 2, r_b: 3 },
+        Instruction::AddI {
+            r_dst: 4,
+            r_a: 2,
+            r_b: 3,
+        },
         // Store sum in global[0]
-        Instruction::StoreGlobal { global_idx: 0, r_src: 4 },
+        Instruction::StoreGlobal {
+            global_idx: 0,
+            r_src: 4,
+        },
         Instruction::RetVoid,
     ];
 
     let child_a = vec![
-        Instruction::LoadInt { r_dst: 0, value: 10 },
+        Instruction::LoadInt {
+            r_dst: 0,
+            value: 10,
+        },
         Instruction::Ret { r_src: 0 },
     ];
 
     let child_b = vec![
-        Instruction::LoadInt { r_dst: 0, value: 20 },
+        Instruction::LoadInt {
+            r_dst: 0,
+            value: 20,
+        },
         Instruction::Ret { r_src: 0 },
     ];
 
     let reader = vec![
-        Instruction::LoadGlobal { r_dst: 0, global_idx: 0 },
+        Instruction::LoadGlobal {
+            r_dst: 0,
+            global_idx: 0,
+        },
         Instruction::Ret { r_src: 0 },
     ];
 
@@ -1306,24 +1582,27 @@ fn cancel_already_completed_task_is_noop() {
     // The cancel_task_tree checks for terminal states and returns early.
 
     let main_instrs = vec![
-        Instruction::SpawnTask { r_dst: 0, method_idx: 2, r_base: 0, argc: 0 },
+        Instruction::SpawnTask {
+            r_dst: 0,
+            method_idx: methoddef_token(1),
+            r_base: 0,
+            argc: 0,
+        },
         // We need child to complete first. With the scheduler, child is added to ready
         // queue but hasn't run yet when cancel executes. So cancel runs on a non-terminal child.
         // Let's test a different scenario: use Join first to ensure child completes.
-        Instruction::Join { r_dst: 1, r_task: 0 },
+        Instruction::Join {
+            r_dst: 1,
+            r_task: 0,
+        },
         Instruction::Cancel { r_task: 0 },
         Instruction::RetVoid,
     ];
 
-    let child_instrs = vec![
-        Instruction::RetVoid,
-    ];
+    let child_instrs = vec![Instruction::RetVoid];
 
     let mut runtime = build_multi_method_runtime_with_globals(
-        vec![
-            ("main", &main_instrs, 4),
-            ("child", &child_instrs, 1),
-        ],
+        vec![("main", &main_instrs, 4), ("child", &child_instrs, 1)],
         0,
     );
 
@@ -1349,22 +1628,41 @@ fn defer_on_tail_call() {
     // After execution, global[0] should be 77.
 
     let main_raw = vec![
-        Instruction::DeferPush { r_dst: 0, method_idx: 0 }, // placeholder
-        Instruction::TailCall { method_idx: 2, r_base: 0, argc: 0 },
+        Instruction::DeferPush {
+            r_dst: 0,
+            method_idx: 0,
+        }, // placeholder
+        Instruction::TailCall {
+            method_idx: methoddef_token(1),
+            r_base: 0,
+            argc: 0,
+        },
         // handler:
-        Instruction::LoadInt { r_dst: 0, value: 77 },
-        Instruction::StoreGlobal { global_idx: 0, r_src: 0 },
+        Instruction::LoadInt {
+            r_dst: 0,
+            value: 77,
+        },
+        Instruction::StoreGlobal {
+            global_idx: 0,
+            r_src: 0,
+        },
         Instruction::DeferEnd,
     ];
 
     let handler_offset = byte_offset_of(&main_raw, 2);
     let mut main_instrs = main_raw.clone();
-    main_instrs[0] = Instruction::DeferPush { r_dst: 0, method_idx: handler_offset };
+    main_instrs[0] = Instruction::DeferPush {
+        r_dst: 0,
+        method_idx: handler_offset,
+    };
 
     let callee = vec![Instruction::RetVoid];
 
     let reader = vec![
-        Instruction::LoadGlobal { r_dst: 0, global_idx: 0 },
+        Instruction::LoadGlobal {
+            r_dst: 0,
+            global_idx: 0,
+        },
         Instruction::Ret { r_src: 0 },
     ];
 

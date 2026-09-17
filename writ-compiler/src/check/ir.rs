@@ -41,6 +41,17 @@ pub enum TypedExpr {
         span: SimpleSpan,
         name: String,
     },
+    /// A source-module constant or global resolved to its declaration identity.
+    ///
+    /// Keeping the DefId prevents body emission from accidentally binding this
+    /// reference to a same-named local at the expression's use site. Constants
+    /// and globals both occupy GlobalDef rows in the module format.
+    GlobalRef {
+        ty: Ty,
+        span: SimpleSpan,
+        name: String,
+        def_id: DefId,
+    },
     SelfRef {
         ty: Ty,
         span: SimpleSpan,
@@ -51,6 +62,10 @@ pub enum TypedExpr {
         callee: Box<TypedExpr>,
         args: Vec<TypedExpr>,
         callee_def_id: Option<DefId>,
+        /// Selected direct-call ABI for a concrete member call. `Some(true)`
+        /// means the target consumes an implicit receiver; `Some(false)` means
+        /// it is static. Other call forms leave this unset.
+        callee_has_receiver: Option<bool>,
     },
     Field {
         ty: Ty,
@@ -139,11 +154,6 @@ pub enum TypedExpr {
         span: SimpleSpan,
         expr: Box<TypedExpr>,
     },
-    SpawnDetached {
-        ty: Ty,
-        span: SimpleSpan,
-        expr: Box<TypedExpr>,
-    },
     Join {
         ty: Ty,
         span: SimpleSpan,
@@ -195,6 +205,7 @@ impl TypedExpr {
         match self {
             TypedExpr::Literal { ty, .. }
             | TypedExpr::Var { ty, .. }
+            | TypedExpr::GlobalRef { ty, .. }
             | TypedExpr::SelfRef { ty, .. }
             | TypedExpr::Call { ty, .. }
             | TypedExpr::Field { ty, .. }
@@ -211,7 +222,6 @@ impl TypedExpr {
             | TypedExpr::ArrayLit { ty, .. }
             | TypedExpr::Range { ty, .. }
             | TypedExpr::Spawn { ty, .. }
-            | TypedExpr::SpawnDetached { ty, .. }
             | TypedExpr::Join { ty, .. }
             | TypedExpr::Cancel { ty, .. }
             | TypedExpr::Defer { ty, .. }
@@ -227,6 +237,7 @@ impl TypedExpr {
         match self {
             TypedExpr::Literal { span, .. }
             | TypedExpr::Var { span, .. }
+            | TypedExpr::GlobalRef { span, .. }
             | TypedExpr::SelfRef { span, .. }
             | TypedExpr::Call { span, .. }
             | TypedExpr::Field { span, .. }
@@ -243,7 +254,6 @@ impl TypedExpr {
             | TypedExpr::ArrayLit { span, .. }
             | TypedExpr::Range { span, .. }
             | TypedExpr::Spawn { span, .. }
-            | TypedExpr::SpawnDetached { span, .. }
             | TypedExpr::Join { span, .. }
             | TypedExpr::Cancel { span, .. }
             | TypedExpr::Defer { span, .. }
@@ -306,6 +316,11 @@ pub enum TypedStmt {
     },
     Return {
         value: Option<TypedExpr>,
+        span: SimpleSpan,
+    },
+    /// Terminal dialogue transition preserved from source `->`.
+    Transition {
+        call: TypedExpr,
         span: SimpleSpan,
     },
     Atomic {

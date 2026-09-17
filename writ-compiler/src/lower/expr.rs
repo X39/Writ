@@ -1,7 +1,3 @@
-use writ_parser::cst::{
-    Arg, AssignOp, BinaryOp as CstBinaryOp, Expr, LambdaParam, MatchArm, Pattern,
-    PostfixOp as CstPostfixOp, PrefixOp as CstPrefixOp, RangeKind as CstRangeKind, Spanned,
-};
 use crate::ast::expr::{
     AstArg, AstExpr, AstLambdaParam, AstMatchArm, AstNewField, AstPattern, BinaryOp, PostfixOp,
     PrefixOp, RangeKind,
@@ -10,6 +6,10 @@ use crate::lower::context::LoweringContext;
 use crate::lower::fmt_string::lower_fmt_string;
 use crate::lower::optional::lower_type;
 use crate::lower::stmt::lower_stmt;
+use writ_parser::cst::{
+    Arg, AssignOp, BinaryOp as CstBinaryOp, Expr, LambdaParam, MatchArm, Pattern,
+    PostfixOp as CstPostfixOp, PrefixOp as CstPrefixOp, RangeKind as CstRangeKind, Spanned,
+};
 
 /// Parses an integer literal string into an `i64`, handling decimal, hex (`0x`/`0X`),
 /// and binary (`0b`/`0B`) prefixes. Underscore separators are stripped before parsing.
@@ -42,7 +42,6 @@ pub(crate) fn lower_expr(spanned: Spanned<Expr<'_>>, ctx: &mut LoweringContext) 
     let (expr, span) = spanned;
     match expr {
         // --- Literals ---
-
         Expr::IntLit(s) => AstExpr::IntLit {
             value: parse_int_literal(s),
             span,
@@ -77,7 +76,6 @@ pub(crate) fn lower_expr(spanned: Spanned<Expr<'_>>, ctx: &mut LoweringContext) 
         Expr::SelfLit => AstExpr::SelfLit { span },
 
         // --- Identifiers and paths ---
-
         Expr::Ident(s) => AstExpr::Ident {
             name: s.to_string(),
             span,
@@ -85,7 +83,8 @@ pub(crate) fn lower_expr(spanned: Spanned<Expr<'_>>, ctx: &mut LoweringContext) 
 
         Expr::Path { segments, rooted } => AstExpr::Path {
             segments: {
-                let mut segs: Vec<String> = segments.into_iter().map(|(s, _)| s.to_string()).collect();
+                let mut segs: Vec<String> =
+                    segments.into_iter().map(|(s, _)| s.to_string()).collect();
                 if rooted && !segs.is_empty() {
                     segs[0] = format!("::{}", segs[0]);
                 }
@@ -95,7 +94,6 @@ pub(crate) fn lower_expr(spanned: Spanned<Expr<'_>>, ctx: &mut LoweringContext) 
         },
 
         // --- Binary and unary operations ---
-
         Expr::Binary(lhs, op, rhs) => AstExpr::Binary {
             left: Box::new(lower_expr(*lhs, ctx)),
             op: lower_binop(op),
@@ -116,7 +114,6 @@ pub(crate) fn lower_expr(spanned: Spanned<Expr<'_>>, ctx: &mut LoweringContext) 
         },
 
         // --- Access ---
-
         Expr::MemberAccess(obj, (field, field_span)) => AstExpr::MemberAccess {
             object: Box::new(lower_expr(*obj, ctx)),
             field: field.to_string(),
@@ -131,7 +128,6 @@ pub(crate) fn lower_expr(spanned: Spanned<Expr<'_>>, ctx: &mut LoweringContext) 
         },
 
         // --- Calls ---
-
         Expr::Call(callee, args) => AstExpr::Call {
             callee: Box::new(lower_expr(*callee, ctx)),
             args: args.into_iter().map(|a| lower_arg(a, ctx)).collect(),
@@ -146,61 +142,45 @@ pub(crate) fn lower_expr(spanned: Spanned<Expr<'_>>, ctx: &mut LoweringContext) 
         },
 
         // --- Control flow (expression forms) ---
-
         Expr::If {
             condition,
             then_block,
             else_block,
-        } => {
-            AstExpr::If {
-                condition: Box::new(lower_expr(*condition, ctx)),
-                then_block: then_block
-                    .into_iter()
-                    .map(|s| lower_stmt(s, ctx))
-                    .collect(),
-                else_block: else_block.map(|e| Box::new(lower_expr(*e, ctx))),
-                span,
-            }
-        }
+        } => AstExpr::If {
+            condition: Box::new(lower_expr(*condition, ctx)),
+            then_block: then_block.into_iter().map(|s| lower_stmt(s, ctx)).collect(),
+            else_block: else_block.map(|e| Box::new(lower_expr(*e, ctx))),
+            span,
+        },
 
         Expr::IfLet {
             pattern,
             value,
             then_block,
             else_block,
-        } => {
-            AstExpr::IfLet {
-                pattern: Box::new(lower_pattern(*pattern, ctx)),
-                value: Box::new(lower_expr(*value, ctx)),
-                then_block: then_block
-                    .into_iter()
-                    .map(|s| lower_stmt(s, ctx))
-                    .collect(),
-                else_block: else_block.map(|e| Box::new(lower_expr(*e, ctx))),
-                span,
-            }
-        }
+        } => AstExpr::IfLet {
+            pattern: Box::new(lower_pattern(*pattern, ctx)),
+            value: Box::new(lower_expr(*value, ctx)),
+            then_block: then_block.into_iter().map(|s| lower_stmt(s, ctx)).collect(),
+            else_block: else_block.map(|e| Box::new(lower_expr(*e, ctx))),
+            span,
+        },
 
-        Expr::Match { scrutinee, arms } => {
-            AstExpr::Match {
-                scrutinee: Box::new(lower_expr(*scrutinee, ctx)),
-                arms: arms
-                    .into_iter()
-                    .map(|(arm, arm_span)| lower_match_arm(arm, arm_span, ctx))
-                    .collect(),
-                span,
-            }
-        }
+        Expr::Match { scrutinee, arms } => AstExpr::Match {
+            scrutinee: Box::new(lower_expr(*scrutinee, ctx)),
+            arms: arms
+                .into_iter()
+                .map(|(arm, arm_span)| lower_match_arm(arm, arm_span, ctx))
+                .collect(),
+            span,
+        },
 
-        Expr::Block(stmts) => {
-            AstExpr::Block {
-                stmts: stmts.into_iter().map(|s| lower_stmt(s, ctx)).collect(),
-                span,
-            }
-        }
+        Expr::Block(stmts) => AstExpr::Block {
+            stmts: stmts.into_iter().map(|s| lower_stmt(s, ctx)).collect(),
+            span,
+        },
 
         // --- Range ---
-
         Expr::Range(start, kind, end) => AstExpr::Range {
             start: start.map(|s| Box::new(lower_expr(*s, ctx))),
             kind: lower_range_kind(kind),
@@ -214,31 +194,22 @@ pub(crate) fn lower_expr(spanned: Spanned<Expr<'_>>, ctx: &mut LoweringContext) 
         },
 
         // --- Lambda ---
-
         Expr::Lambda {
             params,
             return_type,
             body,
-        } => {
-            AstExpr::Lambda {
-                params: params
-                    .into_iter()
-                    .map(|(lp, lp_span)| lower_lambda_param(lp, lp_span))
-                    .collect(),
-                return_type: return_type.map(|rt| Box::new(lower_type(*rt))),
-                body: body.into_iter().map(|s| lower_stmt(s, ctx)).collect(),
-                span,
-            }
-        }
-
-        // --- Concurrency pass-through ---
-
-        Expr::Spawn(e) => AstExpr::Spawn {
-            expr: Box::new(lower_expr(*e, ctx)),
+        } => AstExpr::Lambda {
+            params: params
+                .into_iter()
+                .map(|(lp, lp_span)| lower_lambda_param(lp, lp_span))
+                .collect(),
+            return_type: return_type.map(|rt| Box::new(lower_type(*rt))),
+            body: body.into_iter().map(|s| lower_stmt(s, ctx)).collect(),
             span,
         },
 
-        Expr::SpawnDetached(e) => AstExpr::SpawnDetached {
+        // --- Concurrency pass-through ---
+        Expr::Spawn(e) => AstExpr::Spawn {
             expr: Box::new(lower_expr(*e, ctx)),
             span,
         },
@@ -269,13 +240,11 @@ pub(crate) fn lower_expr(spanned: Spanned<Expr<'_>>, ctx: &mut LoweringContext) 
         },
 
         // --- R4: Formattable strings → left-associative Add chain ---
-
         Expr::FormattableString(segs) => lower_fmt_string(segs, span, false, ctx),
 
         Expr::FormattableRawString(segs) => lower_fmt_string(segs, span, true, ctx),
 
         // --- New construction ---
-
         Expr::New { ty, fields } => AstExpr::New {
             ty: lower_type(*ty),
             fields: fields
@@ -291,17 +260,12 @@ pub(crate) fn lower_expr(spanned: Spanned<Expr<'_>>, ctx: &mut LoweringContext) 
         },
 
         // --- Array literal ---
-
         Expr::ArrayLit(elems) => AstExpr::ArrayLit {
-            elements: elems
-                .into_iter()
-                .map(|e| lower_expr(e, ctx))
-                .collect(),
+            elements: elems.into_iter().map(|e| lower_expr(e, ctx)).collect(),
             span,
         },
 
         // --- R5: Assignment and compound assignment ---
-
         Expr::Assign(lhs, op, rhs) => {
             let lowered_lhs = lower_expr(*lhs, ctx);
             let lowered_rhs = lower_expr(*rhs, ctx);
@@ -371,7 +335,6 @@ pub(crate) fn lower_expr(spanned: Spanned<Expr<'_>>, ctx: &mut LoweringContext) 
         }
 
         // --- Error recovery sentinel ---
-
         Expr::Error => AstExpr::Error { span },
     }
 }
@@ -470,7 +433,10 @@ fn lower_match_arm(
 // =========================================================
 
 /// Lowers a CST `Pattern` into a lowered `AstPattern`.
-pub(crate) fn lower_pattern(spanned: Spanned<Pattern<'_>>, ctx: &mut LoweringContext) -> AstPattern {
+pub(crate) fn lower_pattern(
+    spanned: Spanned<Pattern<'_>>,
+    ctx: &mut LoweringContext,
+) -> AstPattern {
     let (pattern, span) = spanned;
     match pattern {
         Pattern::Literal(expr) => AstPattern::Literal {
@@ -487,10 +453,7 @@ pub(crate) fn lower_pattern(spanned: Spanned<Pattern<'_>>, ctx: &mut LoweringCon
 
         Pattern::EnumDestructure(path_segs, fields) => AstPattern::EnumDestructure {
             path: path_segs.into_iter().map(|(s, _)| s.to_string()).collect(),
-            fields: fields
-                .into_iter()
-                .map(|p| lower_pattern(p, ctx))
-                .collect(),
+            fields: fields.into_iter().map(|p| lower_pattern(p, ctx)).collect(),
             span,
         },
 

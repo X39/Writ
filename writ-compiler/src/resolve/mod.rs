@@ -11,8 +11,8 @@
 pub mod collector;
 pub mod def_map;
 pub(crate) mod error;
-pub mod ir;
 pub(crate) mod inject_library;
+pub mod ir;
 pub mod prelude;
 pub(crate) mod resolver;
 pub(crate) mod scope;
@@ -34,7 +34,11 @@ fn inject_log_namespace(def_map: &mut def_map::DefMap) {
     use chumsky::span::SimpleSpan;
     use def_map::{DefEntry, DefKind, DefVis};
 
-    let synthetic_span = SimpleSpan { start: 0, end: 0, context: () };
+    let synthetic_span = SimpleSpan {
+        start: 0,
+        end: 0,
+        context: (),
+    };
     for &level_name in prelude::LOG_NAMESPACE_LEVELS {
         let fqn = format!("log::{}", level_name);
         // Skip if already present (e.g. user declared `extern fn log::trace`)
@@ -65,7 +69,11 @@ fn inject_dialogue_namespace(def_map: &mut def_map::DefMap) {
     use chumsky::span::SimpleSpan;
     use def_map::{DefEntry, DefKind, DefVis};
 
-    let synthetic_span = SimpleSpan { start: 0, end: 0, context: () };
+    let synthetic_span = SimpleSpan {
+        start: 0,
+        end: 0,
+        context: (),
+    };
     for &builtin_name in prelude::DIALOGUE_BUILTINS {
         // Skip if already present (e.g. user declared `extern fn say`)
         if def_map.by_fqn.contains_key(builtin_name) {
@@ -93,7 +101,8 @@ fn inject_dialogue_namespace(def_map: &mut def_map::DefMap) {
 /// and produces a `NameResolvedAst` with all names resolved to `DefId`s.
 ///
 /// `library_modules` is a slice of pre-compiled module binaries whose type definitions
-/// should be available to user code. Pass `&[]` when compiling without library dependencies.
+/// should be available to user code. The canonical `writ-runtime` module is appended
+/// automatically when the supplied slice does not already contain a core module.
 /// Library types are injected into the DefMap BEFORE Pass 1 (collect_declarations) so
 /// they are visible during all resolution passes.
 ///
@@ -106,10 +115,16 @@ pub fn resolve(
     // Step 0: Create empty DefMap
     let mut def_map = def_map::DefMap::new();
 
+    // Every public compiler boundary is self-contained: callers do not need to
+    // know that writ-runtime is represented by an in-memory module.
+    let canonical_core = writ_module::build_writ_runtime_module();
+    let library_modules =
+        crate::core_library::normalize_libraries(library_modules, &canonical_core);
+
     // Step 1: Inject library module types FIRST -- they must be in DefMap before
     // collect_declarations so that Pass 2 body resolution can see them. User code
     // re-declaring a library type will produce a duplicate-definition error (correct).
-    inject_library::inject_module_types(library_modules, &mut def_map);
+    inject_library::inject_module_types(&library_modules, &mut def_map);
 
     // Step 2: Pass 1 -- collect user declarations into the same DefMap
     let mut diags = collector::collect_declarations(asts, file_paths, &mut def_map);

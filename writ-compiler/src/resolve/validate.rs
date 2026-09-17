@@ -5,20 +5,17 @@
 
 use rustc_hash::FxHashSet;
 
-use crate::ast::decl::{AstDecl, AstEntityDecl, AstAttribute, AstExternDecl, AstNamespaceDecl};
+use crate::ast::Ast;
+use crate::ast::decl::{AstAttribute, AstDecl, AstEntityDecl, AstExternDecl, AstNamespaceDecl};
 use crate::ast::expr::AstExpr;
 use crate::ast::stmt::AstStmt;
 use crate::ast::types::AstType;
-use crate::ast::Ast;
 use crate::resolve::def_map::DefMap;
 use crate::resolve::error::ResolutionError;
 use writ_diagnostics::{Diagnostic, FileId};
 
 /// Known attribute names and their valid targets.
-const KNOWN_ATTRS: &[(&str, &[&str])] = &[
-    ("Singleton", &["entity"]),
-    ("Conditional", &["fn"]),
-];
+const KNOWN_ATTRS: &[(&str, &[&str])] = &[("Singleton", &["entity"]), ("Conditional", &["fn"])];
 
 /// Validate attribute targets across all files.
 ///
@@ -72,20 +69,26 @@ fn validate_attrs_in_items(items: &[AstDecl], file_id: FileId, diags: &mut Vec<D
     }
 }
 
-fn check_attrs(attrs: &[AstAttribute], decl_kind: &str, file_id: FileId, diags: &mut Vec<Diagnostic>) {
+fn check_attrs(
+    attrs: &[AstAttribute],
+    decl_kind: &str,
+    file_id: FileId,
+    diags: &mut Vec<Diagnostic>,
+) {
     for attr in attrs {
         if let Some((_, valid_kinds)) = KNOWN_ATTRS.iter().find(|(name, _)| *name == attr.name)
-            && !valid_kinds.contains(&decl_kind) {
-                diags.push(
-                    ResolutionError::InvalidAttributeTarget {
-                        attr_name: attr.name.clone(),
-                        target_kind: format!("{decl_kind} declaration"),
-                        file: file_id,
-                        span: attr.span,
-                    }
-                    .into(),
-                );
-            }
+            && !valid_kinds.contains(&decl_kind)
+        {
+            diags.push(
+                ResolutionError::InvalidAttributeTarget {
+                    attr_name: attr.name.clone(),
+                    target_kind: format!("{decl_kind} declaration"),
+                    file: file_id,
+                    span: attr.span,
+                }
+                .into(),
+            );
+        }
         // Unknown attributes: we don't warn for them currently (future-proofing)
         // If we wanted to warn:
         // else if !KNOWN_ATTRS.iter().any(|(name, _)| *name == attr.name) { ... }
@@ -106,11 +109,7 @@ fn check_attrs(attrs: &[AstAttribute], decl_kind: &str, file_id: FileId, diags: 
 /// Contract-typed param speakers (`dlg greet(npc: Entity)`) are lowered
 /// differently (no hoisted let) so they are naturally invisible to this pass,
 /// which means no false positives for them.
-pub fn validate_speakers(
-    asts: &[(FileId, &Ast)],
-    _def_map: &DefMap,
-    diags: &mut Vec<Diagnostic>,
-) {
+pub fn validate_speakers(asts: &[(FileId, &Ast)], _def_map: &DefMap, diags: &mut Vec<Diagnostic>) {
     // Build entity name sets from all ASTs.
     let (singleton_entities, all_entities) = collect_entity_sets(asts);
 
@@ -226,7 +225,12 @@ fn check_stmts_for_speakers(
 ) {
     for stmt in stmts {
         match stmt {
-            AstStmt::Let { name, name_span, value, .. } if name.starts_with('_') => {
+            AstStmt::Let {
+                name,
+                name_span,
+                value,
+                ..
+            } if name.starts_with('_') => {
                 // Try to match `Entity.getOrCreate<EntityName>()`
                 if let Some(entity_name) = extract_get_or_create_entity(value) {
                     if !all_entities.contains(&entity_name) {
@@ -270,7 +274,13 @@ fn check_stmts_for_speakers(
 /// If `expr` is the pattern `Entity.getOrCreate<Name>()`, return `Some(Name)`.
 /// Otherwise return `None`.
 fn extract_get_or_create_entity(expr: &AstExpr) -> Option<String> {
-    if let AstExpr::GenericCall { callee, type_args, args, .. } = expr {
+    if let AstExpr::GenericCall {
+        callee,
+        type_args,
+        args,
+        ..
+    } = expr
+    {
         if !args.is_empty() || type_args.len() != 1 {
             return None;
         }
@@ -282,7 +292,10 @@ fn extract_get_or_create_entity(expr: &AstExpr) -> Option<String> {
                 if obj_name != "Entity" {
                     return None;
                 }
-                if let AstType::Named { name: entity_name, .. } = &type_args[0] {
+                if let AstType::Named {
+                    name: entity_name, ..
+                } = &type_args[0]
+                {
                     return Some(entity_name.clone());
                 }
             }

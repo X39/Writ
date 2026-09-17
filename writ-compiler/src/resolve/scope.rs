@@ -135,9 +135,10 @@ impl<'def> ScopeChain<'def> {
 
         // 4b. Check file-private in current file
         if let Some(privates) = self.def_map.file_private.get(&self.current_file)
-            && let Some(&def_id) = privates.get(name) {
-                return LookupResult::Def(def_id);
-            }
+            && let Some(&def_id) = privates.get(name)
+        {
+            return LookupResult::Def(def_id);
+        }
 
         // 5. Check using imports
         let mut using_matches: Vec<(DefId, String)> = Vec::new();
@@ -156,7 +157,8 @@ impl<'def> ScopeChain<'def> {
                     } else {
                         // Fallback: try as a qualified path (handles enum variants like Status::Active
                         // which resolve to the enum DefId via resolve_qualified_path)
-                        let segments: Vec<String> = target_fqn.split("::").map(|s| s.to_string()).collect();
+                        let segments: Vec<String> =
+                            target_fqn.split("::").map(|s| s.to_string()).collect();
                         match self.resolve_qualified_path(&segments) {
                             LookupResult::Def(def_id) => {
                                 let def = self.def_map.get_entry(def_id);
@@ -214,7 +216,8 @@ impl<'def> ScopeChain<'def> {
         }
 
         // Handle root-anchored path (first segment is empty string from `::`)
-        let (segments, _root_anchored) = if segments.first().map(|s| s.is_empty()).unwrap_or(false) {
+        let (segments, _root_anchored) = if segments.first().map(|s| s.is_empty()).unwrap_or(false)
+        {
             (&segments[1..], true)
         } else {
             (segments, false)

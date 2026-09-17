@@ -6,6 +6,8 @@
 
 A game scripting language with first-class dialogue support, C-style syntax, a Rust-inspired type system, and an entity-component architecture.
 
+Precompiled Writ programs can run as bounded tasks in browsers and Web Workers through the dedicated [`writ-runtime-wasm`](book/src/embedding/wasm-runtime.md) adapter and its JavaScript-safe host request protocol.
+
 ## Overview
 
 Writ is designed specifically for game development, combining familiar scripting syntax with powerful features for interactive storytelling and gameplay logic. It provides native constructs for branching conversations, speaker management, and localization — making dialogue a first-class language construct rather than an afterthought.

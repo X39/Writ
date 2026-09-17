@@ -35,7 +35,10 @@ pub(super) enum TypePostfix<'src> {
 #[derive(Clone)]
 pub(super) enum ExprPostfix<'src> {
     /// `.field` or `.method(args)` -- field name, optional args
-    MemberOrMethod(cst::Spanned<&'src str>, Option<Vec<cst::Spanned<cst::Arg<'src>>>>),
+    MemberOrMethod(
+        cst::Spanned<&'src str>,
+        Option<Vec<cst::Spanned<cst::Arg<'src>>>>,
+    ),
     /// `[expr]` -- bracket access / indexing
     Bracket(cst::Spanned<cst::Expr<'src>>),
     /// `(args)` -- function call
@@ -53,9 +56,9 @@ pub(super) enum ExprPostfix<'src> {
 }
 
 pub mod generic_params;
-pub mod type_expr;
 mod pattern;
 mod program;
+pub mod type_expr;
 
 pub use generic_params::generic_params;
 pub use program::{parse, program_parser};

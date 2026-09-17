@@ -1,3 +1,4 @@
+use std::fs;
 /// Integration test for compile_and_load (DAP-01) and compile_and_load_project (DAP-02).
 ///
 /// Verifies that `compile_and_load` can compile a real .writ source file
@@ -9,7 +10,6 @@
 use writ_dap::launch::compile_and_load;
 use writ_dap::launch::compile_and_load_project;
 use writ_module::heap::read_string;
-use std::fs;
 
 /// Resolve a path relative to the workspace root from this crate's manifest dir.
 /// CARGO_MANIFEST_DIR = writ-dap/
@@ -66,10 +66,7 @@ fn test_compile_and_load_produces_module_with_methods() {
     );
 
     // The leaked source text must be non-empty and contain the expected function.
-    assert!(
-        !src.is_empty(),
-        "returned source text should not be empty"
-    );
+    assert!(!src.is_empty(), "returned source text should not be empty");
     assert!(
         src.contains("fn main"),
         "returned source text should contain the source program"
@@ -170,7 +167,10 @@ version = "0.1.0"
             .map(|n| n == "add")
             .unwrap_or(false)
     });
-    assert!(has_add, "module should contain an 'add' method from helpers.writ");
+    assert!(
+        has_add,
+        "module should contain an 'add' method from helpers.writ"
+    );
 }
 
 /// Verify that compile_and_load_project returns an error for a directory without writ.toml.

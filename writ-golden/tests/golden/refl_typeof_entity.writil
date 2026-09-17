@@ -1,22 +1,22 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
     .type "Goblin" entity {
-        .field "health" int mut
+        .field "health" int has_default readonly
     }
-    .impl Goblin : contract_167772179 {
+    .impl Goblin : contract_50331684 {
         .method "get_type" () -> Type pub {
             .reg r0 int
             .reg r1 int
             TYPEOF r1, 33554433
             RET r1
         }
-        .method "main" () -> void mut {
-            .locals {
-                r0: ? "t" [8, 10)
-            }
-            .reg r0 ?
-            TYPEOF r0, 33554433  ; line:6 col:5
-            RET_VOID
+    }
+    .method "main" () -> void static {
+        .locals {
+            r0: writ::Type<Goblin> "t" [8, 10)
         }
+        .reg r0 writ::Type<Goblin>
+        TYPEOF r0, 33554433  ; line:6 col:5
+        RET_VOID
     }
 }

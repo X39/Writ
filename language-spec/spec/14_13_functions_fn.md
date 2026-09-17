@@ -136,7 +136,8 @@ for i in 0..10 {
 }
 
 for member in party.members {
-    if let Option::Some(hp) = member[Health] {
+    if let Option::Some(found_hp) = member[Health] {
+        let mut hp = found_hp;
         hp.current = min(hp.current + 10, hp.max);
     }
 }
@@ -164,7 +165,8 @@ for item in inventory {
 }
 
 for member in party.members {
-    if let Option::Some(hp) = member[Health] {
+    if let Option::Some(found_hp) = member[Health] {
+        let mut hp = found_hp;
         if hp.current <= 0 {
             continue;
         }
@@ -180,12 +182,14 @@ The compiler resolves calls based on argument types at the call site.
 
 ```writ
 fn damage(target: Entity, amount: int) {
-    target[Health]!.current -= amount;
+    let mut hp = target[Health]!;
+    hp.current -= amount;
 }
 
 fn damage(target: Entity, amount: int, type: DamageType) {
     let modified = applyResistance(amount, target, type);
-    target[Health]!.current -= modified;
+    let mut hp = target[Health]!;
+    hp.current -= modified;
 }
 
 // Resolved by argument count / types
@@ -303,11 +307,12 @@ fn greet(self) -> string {
 }
 
 fn damage(mut self, amount: int) {
-    self.current -= amount;          // OK — mut self allows field writes
+    self.current -= amount;          // OK only when `current` is also a `mut` field
 }
 ```
 
-The caller's binding must be mutable to call a `mut self` method:
+The caller's binding must be mutable to call a `mut self` method. Receiver mutability and field mutability are separate:
+`mut self` supplies a mutable receiver path, while only a field declared with `mut` may be changed through that path.
 
 ```writ
 let guard = new Guard {};
@@ -342,6 +347,7 @@ operand for unary operators). Mutability is determined by the operator kind:
 - Write operators (`[]=`): implicit mutable `self`.
 
 ```writ
+// vec2.x and vec2.y are mutable fields.
 impl vec2 {
     operator +(other: vec2) -> vec2 {          // implicit self (immutable)
         vec2(self.x + other.x, self.y + other.y)

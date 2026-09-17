@@ -10,18 +10,16 @@ use writ_compiler::check::ty::{Ty, TyInterner, TyKind};
 /// Static empty struct_field_types map for tests that don't exercise struct equality.
 static EMPTY_STRUCT_FIELD_TYPES: LazyLock<FxHashMap<DefId, Vec<(String, Ty)>>> =
     LazyLock::new(FxHashMap::default);
-use writ_compiler::check::ir::{
-    TypedAst, TypedDecl, TypedExpr, TypedLiteral,
-};
-use writ_compiler::resolve::def_map::{DefEntry, DefId, DefKind, DefMap, DefVis};
-use writ_compiler::emit::body::{BodyEmitter, EmittedBody};
+use chumsky::span::{SimpleSpan, Span as _};
+use writ_compiler::check::ir::{TypedAst, TypedDecl, TypedExpr, TypedLiteral};
 use writ_compiler::emit::body::debug::{emit_debug_locals, emit_source_spans};
+use writ_compiler::emit::body::{BodyEmitter, EmittedBody};
 use writ_compiler::emit::module_builder::ModuleBuilder;
 use writ_compiler::emit::serialize;
-use writ_module::module::{DebugLocal, SourceSpan};
-use writ_module::instruction::Instruction;
-use chumsky::span::{SimpleSpan, Span as _};
+use writ_compiler::resolve::def_map::{DefEntry, DefId, DefKind, DefMap, DefVis};
 use writ_diagnostics::FileId;
+use writ_module::instruction::Instruction;
+use writ_module::module::{DebugLocal, SourceSpan};
 
 fn dummy_span() -> SimpleSpan {
     SimpleSpan::new((), 0..0)
@@ -64,8 +62,12 @@ fn test_debug_locals_all_registers_have_entries() {
     emitter.regs.alloc(ty_int);
 
     let locals = emit_debug_locals(&emitter, 100);
-    assert_eq!(locals.len(), 3,
-        "should emit one DebugLocal per register, got {}", locals.len());
+    assert_eq!(
+        locals.len(),
+        3,
+        "should emit one DebugLocal per register, got {}",
+        locals.len()
+    );
 
     // All registers should be covered
     let covered: Vec<u16> = locals.iter().map(|l| l.register).collect();
@@ -121,7 +123,11 @@ fn test_source_spans_from_emitter() {
     emitter.source_spans.push((5, SimpleSpan::new((), 30..40)));
 
     let spans = emit_source_spans(&emitter);
-    assert_eq!(spans.len(), 2, "should emit one SourceSpan per recorded span");
+    assert_eq!(
+        spans.len(),
+        2,
+        "should emit one SourceSpan per recorded span"
+    );
     assert_eq!(spans[0].pc, 0);
     assert_eq!(spans[0].line, 10); // span.start stored as line (Phase 25)
     assert_eq!(spans[1].pc, 5);
@@ -138,7 +144,11 @@ fn test_serialize_empty_module_produces_bytes() {
     let bodies: Vec<EmittedBody> = Vec::new();
 
     let result = serialize::serialize(&mut builder, &bodies, &interner, true, &[]);
-    assert!(result.is_ok(), "serialize of empty module should succeed, got {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "serialize of empty module should succeed, got {:?}",
+        result.err()
+    );
     let bytes = result.unwrap();
     assert!(!bytes.is_empty(), "serialized module should not be empty");
 }
@@ -153,8 +163,12 @@ fn test_serialize_produces_correct_magic_bytes() {
 
     let bytes = serialize::serialize(&mut builder, &bodies, &interner, true, &[]).unwrap();
     assert!(bytes.len() >= 4, "module must be at least 4 bytes");
-    assert_eq!(&bytes[0..4], b"WRIT",
-        "first 4 bytes should be magic WRIT, got {:?}", &bytes[0..4]);
+    assert_eq!(
+        &bytes[0..4],
+        b"WRIT",
+        "first 4 bytes should be magic WRIT, got {:?}",
+        &bytes[0..4]
+    );
 }
 
 #[test]
@@ -166,7 +180,11 @@ fn test_serialize_with_module_def() {
     let bodies: Vec<EmittedBody> = Vec::new();
 
     let result = serialize::serialize(&mut builder, &bodies, &interner, true, &[]);
-    assert!(result.is_ok(), "module with ModuleDef should serialize, got {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "module with ModuleDef should serialize, got {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -185,7 +203,10 @@ fn test_serialize_module_with_body_produces_bytes() {
     let body = EmittedBody {
         method_def_id: Some(fn_def_id),
         instructions: vec![
-            Instruction::LoadInt { r_dst: 0, value: 42 },
+            Instruction::LoadInt {
+                r_dst: 0,
+                value: 42,
+            },
             Instruction::Ret { r_src: 0 },
         ],
         reg_count: 1,
@@ -197,9 +218,16 @@ fn test_serialize_module_with_body_produces_bytes() {
     };
 
     let result = serialize::serialize(&mut builder, &[body], &interner, true, &[]);
-    assert!(result.is_ok(), "module with body should serialize, got {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "module with body should serialize, got {:?}",
+        result.err()
+    );
     let bytes = result.unwrap();
-    assert!(bytes.len() > 200, "module with body should be > 200 bytes (header size)");
+    assert!(
+        bytes.len() > 200,
+        "module with body should be > 200 bytes (header size)"
+    );
 }
 
 #[test]
@@ -230,7 +258,11 @@ fn test_emit_returns_bytes_for_valid_ast() {
 
     let active_conditions = std::collections::HashSet::new();
     let result = emit::emit_bodies(&typed_ast, &interner, &[], true, &[], &active_conditions);
-    assert!(result.is_ok(), "emit_bodies should return Ok for valid AST, got {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "emit_bodies should return Ok for valid AST, got {:?}",
+        result.err()
+    );
     let bytes = result.unwrap();
     assert!(!bytes.is_empty(), "emitted bytes should not be empty");
 }
@@ -261,5 +293,8 @@ fn test_emit_returns_err_for_error_nodes() {
 
     let active_conditions = std::collections::HashSet::new();
     let result = emit::emit_bodies(&typed_ast, &interner, &[], true, &[], &active_conditions);
-    assert!(result.is_err(), "emit_bodies should return Err for AST with Error nodes");
+    assert!(
+        result.is_err(),
+        "emit_bodies should return Err for AST with Error nodes"
+    );
 }

@@ -1,5 +1,5 @@
 // === Test: Concurrency ===
-// Validates spawn, detached, join, cancel, defer (Section 20)
+// Validates spawn, join, cancel, defer (Section 20)
 
 namespace test_concurrency;
 
@@ -8,12 +8,6 @@ pub fn spawnAndJoin() {
     let task = spawn loadChunk(x, y);
     // ... do other work ...
     let chunk = join task;
-}
-
-// --- Detached tasks ---
-pub fn detachedTask() {
-    spawn detached playAmbientSound("forest");
-    // fire and forget — no handle returned
 }
 
 // --- Multiple spawns ---
@@ -62,10 +56,10 @@ pub fn deferNested() {
     // disconnectDB runs at function exit (outer defer)
 }
 
-// --- Dialogue choice with concurrent background ---
+// --- Dialogue choice with concurrent work ---
 dlg explorationDialog(player: Entity) {
     @Narrator You enter the cavern.
-    $ spawn detached playAmbientSound("cave_drip");
+    $ spawn playAmbientSound("cave_drip");
     $ choice {
         "Go deeper" {
             @Narrator You venture further in.

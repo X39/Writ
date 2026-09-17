@@ -3,16 +3,19 @@
 use rustc_hash::FxHashMap;
 use writ_diagnostics::{Diagnostic, FileId};
 
-use crate::ast::decl::{AstStructMember, AstVisibility};
 use crate::ast::Ast;
+use crate::ast::decl::{AstStructMember, AstVisibility};
 use crate::check::ty::TyInterner;
 use crate::resolve::def_map::{DefId, DefMap, DefVis};
 
-use crate::emit::metadata::{TypeDefKind, HookKind, field_flags, method_flags};
+use crate::emit::metadata::{HookKind, TypeDefKind, field_flags, method_flags};
 use crate::emit::module_builder::{ModuleBuilder, TypeDefHandle};
 
-use super::encoding::{encode_type_from_ast, encode_empty_sig, emit_generics_for_typedef, encode_hook_sig};
-use super::lookup::{find_struct_decl, find_entity_decl, find_enum_decl, find_class_decl};
+use super::encoding::{
+    emit_generics_for_typedef, encode_empty_sig, encode_hook_sig, encode_type_from_ast,
+    method_param_register_count,
+};
+use super::lookup::{find_class_decl, find_entity_decl, find_enum_decl, find_struct_decl};
 
 pub(super) fn collect_struct(
     def_id: DefId,
@@ -43,17 +46,30 @@ pub(super) fn collect_struct(
                 AstStructMember::Field(f) => {
                     let is_field_pub = matches!(f.vis, Some(AstVisibility::Pub));
                     let has_default = f.default.is_some();
-                    let flags = field_flags(is_field_pub, has_default, false);
+                    let flags = field_flags(is_field_pub, has_default, false, f.is_mutable);
                     // Encode type signature as blob.
-                    let type_blob = encode_type_from_ast(&f.ty, interner, &entry.generics, builder);
+                    let type_blob =
+                        encode_type_from_ast(&f.ty, interner, &entry.generics, def_map, builder);
                     builder.add_fielddef(handle, &f.name, type_blob, flags);
                 }
-                AstStructMember::OnHook { event, body: _, span: _, .. } => {
+                AstStructMember::OnHook {
+                    event,
+                    body: _,
+                    span: _,
+                    ..
+                } => {
                     let hook = HookKind::from_event_name(event);
                     let flags = method_flags(false, false, true, hook);
                     // Hook methods have no params and void return.
                     let sig_blob = encode_empty_sig(builder);
-                    builder.add_methoddef(Some(handle), &format!("on_{}", event), sig_blob, flags, None, 0);
+                    builder.add_methoddef(
+                        Some(handle),
+                        &format!("on_{}", event),
+                        sig_blob,
+                        flags,
+                        None,
+                        1,
+                    );
                 }
             }
         }
@@ -89,8 +105,9 @@ pub(super) fn collect_entity(
         for prop in &entity_decl.properties {
             let is_field_pub = matches!(prop.vis, Some(AstVisibility::Pub));
             let has_default = prop.default.is_some();
-            let flags = field_flags(is_field_pub, has_default, false);
-            let type_blob = encode_type_from_ast(&prop.ty, interner, &entry.generics, builder);
+            let flags = field_flags(is_field_pub, has_default, false, prop.is_mutable);
+            let type_blob =
+                encode_type_from_ast(&prop.ty, interner, &entry.generics, def_map, builder);
             builder.add_fielddef(handle, &prop.name, type_blob, flags);
         }
 
@@ -98,14 +115,15 @@ pub(super) fn collect_entity(
         for hook in &entity_decl.hooks {
             let hook_kind = HookKind::from_event_name(&hook.contract);
             let flags = method_flags(false, false, true, hook_kind);
-            let sig_blob = encode_hook_sig(&hook.method, interner, &entry.generics, builder);
+            let sig_blob =
+                encode_hook_sig(&hook.method, interner, &entry.generics, def_map, builder);
             builder.add_methoddef(
                 Some(handle),
                 &format!("on_{}", hook.contract),
                 sig_blob,
                 flags,
                 None,
-                0, // hook methods have no params besides implicit self
+                method_param_register_count(&hook.method),
             );
         }
     }
@@ -137,9 +155,15 @@ pub(super) fn collect_enum(
         for variant in &enum_decl.variants {
             if let Some(fields) = &variant.fields {
                 for field in fields {
-                    let type_blob = encode_type_from_ast(&field.ty, interner, &entry.generics, builder);
+                    let type_blob = encode_type_from_ast(
+                        &field.ty,
+                        interner,
+                        &entry.generics,
+                        def_map,
+                        builder,
+                    );
                     // Enum fields are implicitly pub (accessed by pattern matching).
-                    let flags = field_flags(true, false, false);
+                    let flags = field_flags(true, false, false, false);
                     builder.add_fielddef(handle, &field.name, type_blob, flags);
                 }
             }
@@ -177,15 +201,28 @@ pub(super) fn collect_class(
                 AstStructMember::Field(f) => {
                     let is_field_pub = matches!(f.vis, Some(AstVisibility::Pub));
                     let has_default = f.default.is_some();
-                    let flags = field_flags(is_field_pub, has_default, false);
-                    let type_blob = encode_type_from_ast(&f.ty, interner, &entry.generics, builder);
+                    let flags = field_flags(is_field_pub, has_default, false, f.is_mutable);
+                    let type_blob =
+                        encode_type_from_ast(&f.ty, interner, &entry.generics, def_map, builder);
                     builder.add_fielddef(handle, &f.name, type_blob, flags);
                 }
-                AstStructMember::OnHook { event, body: _, span: _, .. } => {
+                AstStructMember::OnHook {
+                    event,
+                    body: _,
+                    span: _,
+                    ..
+                } => {
                     let hook = HookKind::from_event_name(event);
                     let flags = method_flags(false, false, true, hook);
                     let sig_blob = encode_empty_sig(builder);
-                    builder.add_methoddef(Some(handle), &format!("on_{}", event), sig_blob, flags, None, 0);
+                    builder.add_methoddef(
+                        Some(handle),
+                        &format!("on_{}", event),
+                        sig_blob,
+                        flags,
+                        None,
+                        1,
+                    );
                 }
             }
         }
@@ -193,4 +230,3 @@ pub(super) fn collect_class(
         emit_generics_for_typedef(def_id, &entry.generics, handle, builder);
     }
 }
-

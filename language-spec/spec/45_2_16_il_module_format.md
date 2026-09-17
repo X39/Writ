@@ -14,7 +14,7 @@ Bytes 4–5:   u16 format_version    (starts at 1, bumps on incompatible layout 
 Bytes 6–7:   u16 flags             (bit 0 = debug info present, rest reserved)
 ```
 
-**Format version history:** Version 1 — initial format (MethodDef row: 20 bytes). Version 2 — added `param_count(u16)` to MethodDef (row: 24 bytes, padded from 22). Version 3 — TypeDef.kind=4 (class) added; kind=0 (struct) now means value type. Version 4 — TYPEOF opcode added (reflection; section 3.10, section 4.2 0x0A30); format_version=3 modules are rejected at load time with UnsupportedVersion.
+**Format version history:** Version 1 — initial format (MethodDef row: 20 bytes). Version 2 — added `param_count(u16)` to MethodDef (row: 24 bytes, padded from 22). Version 3 — TypeDef.kind=4 (class) added; kind=0 (struct) now means value type. Version 4 — TYPEOF opcode added (reflection; section 3.10, section 4.2 0x0A30). Version 5 — array opcode overhaul (`ARRAY_RESIZE`, `ARRAY_COPY`, sized and filled array construction). Version 6 — appended `owner(token)` to MethodDef (row: 28 bytes), making method ownership explicit. Version 7 — made generic-instance (`0x11`) and function (`0x30`) TypeRef payloads recursive and self-contained, replacing TypeSpec-row and blob-offset indirection. Version 8 — appended `flags(u16)` plus two bytes of padding to MethodRef (row: 16 bytes), recording the receiver ABI in cross-module method identity. Version 9 — removed `SPAWN_DETACHED`; made `GET_FIELD`/`SET_FIELD` operands strict FieldDef-or-FieldRef metadata tokens; expanded `NEW` and `SPAWN_ENTITY` to carry an exact, consecutive field-initializer block; and made FieldDef `READONLY` apply to every post-construction write. Raw field ordinals and the older two-operand construction encodings are no longer valid. Readers reject modules from older format versions with `UnsupportedVersion`.
 
 **Module header** (fixed layout, immediately after the magic):
 
@@ -52,10 +52,46 @@ resolves cross-module references at load time.
 
 - **TypeRef** rows reference a type in another module by `(ModuleRef, namespace, name)`. At load time, the runtime
   resolves each TypeRef to a TypeDef in the target module.
-- **MethodRef** rows reference a method by `(parent type, name, signature)`. Resolved to a MethodDef at load time.
-- **FieldRef** rows reference a field by `(parent type, name, type signature)`. Resolved to a FieldDef at load time.
+- **MethodRef** rows reference a method by `(parent, name, signature, has_receiver)`. The parent is a ModuleRef for a top-level
+  function, a bare TypeDef/TypeRef for methods declared on the nominal type, or a TypeSpec for a method declared by a
+  matching specialized ImplDef target. Resolution first retains inherent candidates when any exist, then retains the
+  candidates with the most-specific matching target, and finally requires exactly one candidate; a remaining tie is
+  an ambiguity error.
+  The complete tuple is the method identity and is resolved to one MethodDef at load time; name-only overload selection
+  is invalid.
+- **FieldRef** rows reference a field by `(parent type, name, type signature)`. The parent is a TypeDef or TypeRef;
+  loaders must reject unsupported parent tables rather than interpreting the reference as a field ordinal. Resolution
+  compares complete canonical type signatures (including remapped nominal tokens) and produces both the owning TypeDef
+  and the field's local offset within that type.
   This provides ABI-safe cross-module field access — recompiling a dependency that reorders fields does not break
   dependent modules as long as field names and types are preserved.
+
+`GET_FIELD` and `SET_FIELD` take a non-null metadata token, never a physical field ordinal. The only valid token
+tables are FieldDef (table 5) and FieldRef (table 6):
+
+- A FieldDef token names an absolute, 1-based row in the currently executing module's FieldDef table. The runtime uses
+  the TypeDef `field_list` ranges to recover that row's declaring TypeDef and its zero-based physical offset within the
+  declaring type.
+- A FieldRef token names a 1-based row in the currently executing module's FieldRef table. Its load-time resolution
+  supplies the target module, declaring TypeDef, absolute FieldDef row, and physical offset.
+
+Before reading or writing object storage, the runtime validates the token table, its non-zero row, row bounds,
+resolution state, and the receiver's canonical runtime type identity against the field's declaring TypeDef. Any
+failure is a runtime error and therefore crashes the current task. There is no compatibility interpretation of an
+unqualified integer as a field ordinal and no fallback to field zero. Since this operand contract is incompatible
+with older binaries, version 9 readers reject all older module versions instead of attempting to reinterpret them.
+
+Entity allocation resolves its module-relative type operand before creating the instance. The runtime retains the
+resolved `(module, TypeDef)` identity with the entity for its complete lifetime, including the pending-construction
+state, and uses that identity for FieldRef owner checks and lifecycle-hook dispatch.
+
+`NEW` and `SPAWN_ENTITY` encode `r_dst:u16, type_token:u32, field_count:u16, r_base:u16` (12 bytes including the
+opcode). The initializer block contains one value per resolved TypeDef field in declaration/layout order. Before any
+allocation or destination write, the runtime must resolve the type token, validate the permitted type kind, require
+`field_count` to equal the resolved field range exactly, validate the whole register span, and copy the values. A zero
+field count makes `r_base` irrelevant. A malformed instruction crashes the current task without construction side
+effects. Because `field_count` is `u16`, a source type with more than 65,535 fields is not constructible and the
+compiler must reject its declaration or any attempted construction; it must never truncate the count.
 
 After load-time resolution, cross-module references are equivalent to direct local references. The resolution cost is
 paid once at load time.
@@ -69,12 +105,16 @@ dependency modules, and the compiler reads their metadata tables.
 Each module declares its version as a **Semantic Versioning 3.0.0** (semver) string in the format `MAJOR.MINOR.PATCH`:
 
 - **MAJOR** — incremented for breaking changes (removed types, changed signatures, incompatible behavior).
-- **MINOR** — incremented for backwards-compatible additions (new types, new methods, new fields with defaults).
+- **MINOR** — incremented for backwards-compatible additions (for example new types or new methods).
 - **PATCH** — incremented for backwards-compatible bug fixes.
 
 Semantic Versioning is a widely adopted convention that encodes compatibility information in a version number. The key
 principle is that consumers can safely upgrade within the same major version. A change from `2.2.0` to `2.3.0` is safe
 (new features, nothing removed). A change from `1.x` to `3.0.0` signals breaking changes that require consumer updates.
+
+In format version 9, adding any field is a semantic-MAJOR change. Atomic construction encodes an exact field count, and
+FieldDef's `has_default` bit does not serialize code capable of supplying the new value to an already-compiled
+consumer. A future format with callable default initializer metadata may relax this rule.
 
 **Compatibility rule:** A loaded module with version `A.B.C` satisfies a dependency requirement of `>=X.Y.Z` when
 `A == X` and `(A, B, C) >= (X, Y, Z)` by lexicographic comparison. The major version must match exactly (a major
@@ -82,8 +122,10 @@ version change signals breaking incompatibility); the minor and patch versions m
 requirement.
 
 **ModuleRef** entries include a `min_version` field. At load time, the runtime checks that each dependency's version
-satisfies the requirement. On failure, the runtime logs the mismatch (§2.14.7) and may refuse to load or proceed at the
-host's discretion.
+satisfies the requirement and refuses resolution on a mismatch. Module and minimum-version strings that are not exactly
+three dot-separated, non-negative decimal components are invalid; leading zeroes are permitted only for the component
+`0`. If more than one loaded module with the requested name satisfies the same ModuleRef, resolution fails as ambiguous
+rather than selecting a module based on load order.
 
 ## 2.16.4 Metadata Tokens
 
@@ -112,8 +154,13 @@ storage/interchange format — the runtime's internal representation is implemen
 ## 2.16.5 Metadata Tables
 
 All tables have **fixed-size rows**. References to heaps are u32 offsets. References to other tables are metadata tokens
-(§2.16.4). Tables use the **list ownership** pattern: a parent's `xxx_list` field gives the index of the first child
-row, and the range extends to the next parent's `xxx_list` value (or end of table).
+(§2.16.4). Tables generally use the **list ownership** pattern: a parent's `xxx_list` field gives the index of the first
+child row, and the range extends to the next parent's `xxx_list` value (or end of table). MethodDef is the format-version
+6 exception: its explicit `owner` token is authoritative, because top-level functions share the same table and cannot be
+represented unambiguously by adjacent parent ranges.
+`TypeDef.field_list` is always a valid 1-based range start, including the one-past-end sentinel and types with no fields.
+An empty type repeats the next type's start; an empty type at the end stores `FieldDef row count + 1`. Thus a TypeDef
+with no fields has an empty range without using `field_list = 0`; zero is not a valid finalized `field_list` value.
 
 | #  | Table                 | Key Fields                                                                               | Purpose                                               |
 |----|-----------------------|------------------------------------------------------------------------------------------|-------------------------------------------------------|
@@ -121,11 +168,11 @@ row, and the range extends to the next parent's `xxx_list` value (or end of tabl
 | 1  | **ModuleRef**         | name(str), min_version(str)                                                              | Dependencies on other modules                         |
 | 2  | **TypeDef**           | name(str), namespace(str), kind(u8), flags(u16), field_list, method_list                 | Types defined in this module (kind distinguishes struct/class/enum/entity/component) |
 | 3  | **TypeRef**           | scope(token:ModuleRef), name(str), namespace(str)                                        | Types in other modules (resolved at load time)        |
-| 4  | **TypeSpec**          | signature(blob)                                                                          | Instantiated generic types (TypeDef + type arguments) |
+| 4  | **TypeSpec**          | signature(blob)                                                                          | Addressable instantiated type using a complete TypeRef descriptor |
 | 5  | **FieldDef**          | name(str), type_sig(blob), flags(u16)                                                    | Fields on types defined here                          |
-| 6  | **FieldRef**          | parent(token), name(str), type_sig(blob)                                                 | Fields in other modules (resolved at load time)       |
-| 7  | **MethodDef**         | name(str), signature(blob), flags(u16), body_offset(u32), body_size(u32), reg_count(u16), param_count(u16) | Methods/functions defined here                        |
-| 8  | **MethodRef**         | parent(token), name(str), signature(blob)                                                | Methods in other modules (resolved at load time)      |
+| 6  | **FieldRef**          | parent(token:TypeDef/TypeRef), name(str), type_sig(blob)                                 | Fields resolved by complete identity at load time     |
+| 7  | **MethodDef**         | name(str), signature(blob), flags(u16), body_offset(u32), body_size(u32), reg_count(u16), param_count(u16), owner(token) | Methods/functions defined here                        |
+| 8  | **MethodRef**         | parent(token:ModuleRef/TypeDef/TypeRef/TypeSpec), name(str), signature(blob), flags(u16) | Functions/methods in other modules (resolved by complete identity) |
 | 9  | **ParamDef**          | name(str), type_sig(blob), sequence(u16)                                                 | Method parameters                                     |
 | 10 | **ContractDef**       | name(str), namespace(str), method_list, generic_param_list                               | Contract declarations                                 |
 | 11 | **ContractMethod**    | name(str), signature(blob), slot(u16)                                                    | Method slots within a contract                        |
@@ -141,14 +188,41 @@ row, and the range extends to the next parent's `xxx_list` value (or end of tabl
 
 **TypeDef.kind:** `0 = struct (value type)`, `1 = enum`, `2 = entity`, `3 = component`, `4 = class (reference type)`.
 
-**MethodDef.flags** includes: visibility (pub/private), is_static, is_mut_self, hook_kind (0=none, 1=create, 2=destroy,
-3=finalize, 4=serialize, 5=deserialize, 6=interact), and an **intrinsic** flag for `writ-runtime` native
-implementations (§2.16.8).
+**MethodDef.flags** includes: bit 0 = public visibility, bit 1 = static, bit 2 = mutable `self`, bits 3–5 = hook kind
+(0=none, 1=create, 2=destroy, 3=finalize, 4=serialize, 5=deserialize, 6=interact), bit 7 = **intrinsic** for
+`writ-runtime` native implementations (§2.16.8), and bit 8 = **dialogue**, preserving that a top-level MethodDef
+originated from a `dlg` declaration so dependent modules can validate `->` targets.
 
-**FieldDef.flags** includes: visibility (pub/private), has_default, is_component_field.
+**MethodRef.flags** is a `u16` bitset: bit 0 = `has_receiver`, meaning the referenced MethodDef consumes an implicit
+instance receiver in its call argument block. A clear bit denotes a static method or top-level function. Remaining bits
+are reserved and readers must reject a MethodRef that sets them. The row is padded with two zero bytes to 16 bytes.
+
+**FieldDef.flags** is a `u16` bitset: bit 0 = public visibility, bit 1 = has_default, bit 2 =
+is_component_field, and bit 3 = read-only after construction. Remaining bits are reserved. The source field grammar is
+`[visibility] [mut] name: type [= default]`: the compiler sets bit 3 for an unqualified field and clears it only when
+`mut` is present. Runtime-provided and programmatically-authored modules use the same bit, for example on
+`Array.length`. The bit is enforced by ordinary `SET_FIELD` as well as reflection; visibility does not affect
+mutability.
 
 **MethodDef.param_count:** The number of parameter registers at method entry — registers `r0` through `r(param_count-1)` hold argument values as described in §2.16.6. For methods with an explicit `self`, `r0` is `self` and counts toward `param_count`. For free functions, `r0` is the first regular parameter. This field allows tooling to determine the register layout without parsing the method body or counting entries in the ParamDef table.
 
+**MethodDef.owner:** The authoritative owner of the method. A null token denotes a top-level function, a TypeDef token denotes a method declared directly on that type (including lifecycle hooks), and an ImplDef token denotes a method supplied by that implementation. The `method_list` fields retained on TypeDef and ImplDef are legacy display/index hints only; ownership and top-level classification must use `MethodDef.owner`.
+
+**ImplDef type tokens:** `ImplDef.type` names the implementation target. It is a TypeDef or TypeRef token for a bare nominal target and a TypeSpec token for an instantiated generic target. `ImplDef.contract` is null for an inherent implementation, a ContractDef or contract-resolving TypeRef token for a bare contract, and a TypeSpec token for an instantiated generic contract. A TypeSpec used in either field contains the complete recursive TypeRef descriptor, including any GenericParam occurrences for an open generic implementation. Consumers resolve the descriptor's constructor to the underlying TypeDef or ContractDef while retaining its arguments for specialization matching and dispatch.
+
+### Method signature blobs
+
+The `signature` fields on MethodDef, MethodRef, ContractMethod, and ExternDef rows point to a complete blob with this layout:
+
+```text
+regular_param_count: u16
+parameter_types:     TypeRef[regular_param_count]
+return_type:         TypeRef
+```
+
+`regular_param_count` is little-endian. Each parameter and the return value uses the recursive TypeRef encoding from §2.15.3, and the return TypeRef must end at the end of the blob; truncated or trailing data is invalid.
+
+The signature count covers regular source parameters only and excludes an explicit `self`. It is therefore distinct from `MethodDef.param_count`, which counts runtime parameter registers and includes `self` at `r0` for instance methods. For a free function the two counts are equal; for a method with `self`, the signature count is one less than `MethodDef.param_count`.
 ## 2.16.6 Method Body Layout
 
 Each method body starts at the MethodDef's `body_offset` and occupies `body_size` bytes:
@@ -233,29 +307,23 @@ Debuggers and disassemblers use SourceSpan to display source context alongside i
 No defer table or exception table is needed in the method body. The defer stack is runtime state managed by
 `DEFER_PUSH`/`DEFER_POP` instructions. Writ has no try/catch, so no exception handler table.
 
-## 2.16.7 Entity Construction Buffering
-
-During entity construction, component field writes are **buffered** by the runtime and delivered to the host as a single
-batch when `INIT_ENTITY` executes. This avoids per-field round-trips through suspend-and-confirm (§2.14.2) during
-construction.
+## 2.16.7 Atomic Entity Construction
 
 **Construction sequence:**
 
-1. `SPAWN_ENTITY r, type_token` — Allocate entity in the runtime's heap. Set the entity's internal "under construction"
-   flag. Notify the host with the component list (from the ComponentSlot table) so it can prepare native
-   representations.
-2. `SET_FIELD r, field_token, r_val` on **script fields** — Written directly to the script heap. No host involvement.
-3. `SET_FIELD r, field_token, r_val` on **component fields** — **Buffered** by the runtime. Not sent to host.
-4. `INIT_ENTITY r` — Flush all buffered component field values to the host as a single batch. Clear the "under
-   construction" flag. Fire the `on_create` lifecycle hook.
+1. Evaluate and pack one value per script field in declaration order.
+2. `SPAWN_ENTITY r, type_token, field_count, r_base` — Validate every operand before side effects. Allocate pending
+   entity storage already containing the complete script-field vector, retain its canonical type identity, and notify
+   the host to provision the ComponentSlot declarations. The entity is not yet alive and `on_create` has not run.
+3. `INIT_ENTITY r` — Transition the pending entity to alive, complete host initialization, and fire `on_create`.
 
 **Safety invariant:** Every `SPAWN_ENTITY` must be followed by exactly one `INIT_ENTITY` for the same entity before the
-enclosing frame returns. If a frame exits with an entity still in "under construction" state, the runtime crashes the
-task and logs the error (§2.14.7). The compiler guarantees this pairing — `INIT_ENTITY` is always emitted as part of
-the `new Entity { ... }` lowering.
+enclosing construction completes. The compiler guarantees this pairing for `new Entity { ... }`. `INIT_ENTITY` on an
+invalid, already-initialized, or non-pending handle is a runtime error and crashes the current task.
 
-**After construction:** `SET_FIELD` on component fields goes to the host immediately via suspend-and-confirm (§2.14.2).
-Buffering applies only during the SPAWN_ENTITY → INIT_ENTITY construction window.
+There is no privileged `SET_FIELD` interval between the two instructions. Script fields, including read-only fields,
+are complete when `SPAWN_ENTITY` returns. Post-construction component writes go to the host through the normal
+suspend-and-confirm path (§2.14.2).
 
 ## 2.16.8 The `writ-runtime` Module
 
@@ -264,19 +332,24 @@ instructions depend on. Unlike normal modules, `writ-runtime` is not compiled fr
 it as part of its implementation. The spec mandates what types this module must contain and what layouts they must have.
 The runtime is free to implement them however it chooses internally.
 
+Every compiler frontend entry point MUST make exactly one `writ-runtime` module available during name resolution, type
+checking, and IL emission. If a caller supplies one or more modules whose ModuleDef name is
+`writ-runtime`, the first supplied module is authoritative and later duplicates are ignored. If none is supplied, the
+compiler appends its canonical spec-conforming virtual module after the caller's explicit dependencies. This behavior is
+part of the compiler pipeline and MUST NOT depend on a particular CLI or build-system wrapper.
+
 Methods on `writ-runtime` types may carry an **intrinsic** flag on their MethodDef entries, indicating that the runtime
 provides a native implementation rather than IL bytecode. This allows core operations (such as contract implementations
 on primitive types) to execute as optimized native code while appearing as normal methods in the metadata for generic
 dispatch, reflection, and cross-module referencing.
-
 A separate **`writ-std`** module (a standard library written in Writ) may provide utility types like `List<T>`,
 `Map<K, V>`, and common helper functions. Unlike `writ-runtime`, `writ-std` is ordinary Writ code compiled to a normal
 module. It imports from `writ-runtime` via standard ModuleRef resolution. `writ-std` is not required for the language to
 function — it is a convenience library that can be implemented incrementally.
 
 From the module format's perspective, `writ-runtime` is an ordinary module — its specialness is that the runtime
+
 provides it and the spec mandates its contents.
 
 **Contents of `writ-runtime`:** See §2.18 for the complete manifest of types, contracts, and intrinsic methods that
 this module must provide.
-
