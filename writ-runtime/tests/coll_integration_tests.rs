@@ -41,9 +41,26 @@ fn find_main_idx(module: &writ_module::Module) -> usize {
         .expect("no main method found")
 }
 
+fn assert_task_result(
+    runtime: &writ_runtime::Runtime,
+    task_id: writ_runtime::TaskId,
+    expected: i64,
+) {
+    assert_eq!(
+        runtime.task_state(task_id),
+        Some(writ_runtime::TaskState::Completed),
+        "task did not complete: {:?}",
+        runtime.crash_info(task_id)
+    );
+    assert_eq!(
+        runtime.return_value(task_id),
+        Some(writ_runtime::Value::Int(expected))
+    );
+}
+
 /// Compile and execute Writ source with instruction-limited execution.
-/// Panics on infinite loop (> MAX_INSTRUCTIONS) or VM crash.
-fn run_to_completion(src: &str) {
+/// Panics on infinite loop, VM crash, or an incorrect observable result.
+fn run_to_completion(src: &str, expected: i64) {
     let bytes = compile(src);
     let module = writ_module::Module::from_bytes(&bytes).unwrap();
     let main_idx = find_main_idx(&module);
@@ -51,14 +68,21 @@ fn run_to_completion(src: &str) {
         .with_gc()
         .build()
         .unwrap();
-    runtime.spawn_task(main_idx, vec![]).unwrap();
-    match runtime.tick(0.0, writ_runtime::ExecutionLimit::Instructions(MAX_INSTRUCTIONS)) {
+    let task_id = runtime.spawn_task(main_idx, vec![]).unwrap();
+    match runtime.tick(
+        0.0,
+        writ_runtime::ExecutionLimit::Instructions(MAX_INSTRUCTIONS),
+    ) {
         writ_runtime::TickResult::AllCompleted | writ_runtime::TickResult::Empty => {}
         writ_runtime::TickResult::ExecutionLimitReached => {
-            panic!("INFINITE LOOP DETECTED: test exceeded {} instructions — likely an infinite recursion or unresolvable method dispatch", MAX_INSTRUCTIONS);
+            panic!(
+                "INFINITE LOOP DETECTED: test exceeded {} instructions — likely an infinite recursion or unresolvable method dispatch",
+                MAX_INSTRUCTIONS
+            );
         }
         other => panic!("unexpected tick result: {:?}", other),
     }
+    assert_task_result(&runtime, task_id, expected);
 }
 
 /// Run user_src with writ-std loaded as a SEPARATE library module via with_library().
@@ -66,7 +90,7 @@ fn run_to_completion(src: &str) {
 ///
 /// Uses `compile_with_libraries` so user code can reference types defined in
 /// writ-std (e.g. `List<int>`) without inlining the class definition.
-fn run_with_library(user_src: &str) {
+fn run_with_library(user_src: &str, expected: i64) {
     let std_bytes = compile(WRIT_STD_SRC);
     let std_module = writ_module::Module::from_bytes(&std_bytes).unwrap();
     // Use compile_with_libraries so user code can reference types from std_module
@@ -90,14 +114,21 @@ fn run_with_library(user_src: &str) {
         .with_gc()
         .build()
         .unwrap();
-    runtime.spawn_task(main_idx, vec![]).unwrap();
-    match runtime.tick(0.0, writ_runtime::ExecutionLimit::Instructions(MAX_INSTRUCTIONS)) {
+    let task_id = runtime.spawn_task(main_idx, vec![]).unwrap();
+    match runtime.tick(
+        0.0,
+        writ_runtime::ExecutionLimit::Instructions(MAX_INSTRUCTIONS),
+    ) {
         writ_runtime::TickResult::AllCompleted | writ_runtime::TickResult::Empty => {}
         writ_runtime::TickResult::ExecutionLimitReached => {
-            panic!("INFINITE LOOP DETECTED: test exceeded {} instructions", MAX_INSTRUCTIONS);
+            panic!(
+                "INFINITE LOOP DETECTED: test exceeded {} instructions",
+                MAX_INSTRUCTIONS
+            );
         }
         other => panic!("unexpected tick result: {:?}", other),
     }
+    assert_task_result(&runtime, task_id, expected);
 }
 
 // ── with_library path test ─────────────────────────────────────────────────────
@@ -112,51 +143,76 @@ fn run_with_library(user_src: &str) {
 fn coll_with_library_separate_modules() {
     run_with_library(
         r#"
-fn main() {
-    let list: List<int> = new List<int> { items: [] };
+fn main() -> int {
+    let mut list: List<int> = new List<int> { items: [] };
     list.add(42);
-    let _v: int = list.get(0);
+    list.get(0)
 }
 "#,
+        42,
     );
 }
 
 // ── List<T> tests ─────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "stdlib uses removed array methods (add/remove_at); Phase 121 will rewrite writ-std"]
 fn coll_list_add_get_len() {
-    run_to_completion(r#"
-pub class List<T> { items: T[] }
+    run_to_completion(
+        r#"
+pub class List<T> { mut items: T[] }
 impl<T> List<T> {
-    pub fn add(mut self, item: T) { self.items.add(item); }
+    pub fn add(mut self, item: T) {
+        let old_len: int = self.items.len();
+        self.items.resize(old_len + 1);
+        self.items[old_len] = item;
+    }
     pub fn get(self, index: int) -> T { self.items[index] }
     pub fn set(mut self, index: int, item: T) { self.items[index] = item; }
     pub fn len(self) -> int { self.items.len() }
-    pub fn remove_at(mut self, index: int) { self.items.remove_at(index); }
-    pub fn has(self, item: T) -> bool { self.items.contains(item) }
+    pub fn remove_at(mut self, index: int) {
+        let old_len: int = self.items.len();
+        let mut j: int = index;
+        while j < old_len - 1 {
+            self.items[j] = self.items[j + 1];
+            j = j + 1;
+        }
+        self.items.resize(old_len - 1);
+    }
+    pub fn has(self, item: T) -> bool {
+        let mut i: int = 0;
+        while i < self.items.len() {
+            if self.items[i] == item { return true; }
+            i = i + 1;
+        }
+        false
+    }
 }
-fn main() {
-    let list: List<int> = new List<int> { items: [] };
+fn main() -> int {
+    let mut list: List<int> = new List<int> { items: [] };
     list.add(10);
     list.add(20);
     list.add(30);
-    let _v: int = list.get(0);
-    let _len: int = list.len();
-    let _has: bool = list.has(20);
     list.set(1, 25);
     list.remove_at(0);
+    if list.len() != 2 { return -1; }
+    if list.get(0) != 25 { return -2; }
+    if list.get(1) != 30 { return -3; }
+    if list.has(20) { return -4; }
+    if !list.has(25) { return -5; }
+    203
 }
-"#);
+"#,
+        203,
+    );
 }
 
 // ── Map<K, V> tests ───────────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "stdlib uses removed array methods (add/remove_at); Phase 121 will rewrite writ-std"]
 fn coll_map_set_get_remove() {
-    run_to_completion(r#"
-pub class Map<K: Ord + Eq, V> { keys: K[], values: V[] }
+    run_to_completion(
+        r#"
+pub class Map<K: Ord + Eq, V> { mut keys: K[], mut values: V[] }
 impl<K: Ord + Eq, V> Map<K, V> {
     pub fn len(self) -> int { self.keys.len() }
     pub fn has(self, key: K) -> bool {
@@ -181,74 +237,140 @@ impl<K: Ord + Eq, V> Map<K, V> {
             if self.keys[i] == key { self.values[i] = value; return; }
             i = i + 1;
         }
-        self.keys.add(key);
-        self.values.add(value);
+        let old_len: int = self.keys.len();
+        self.keys.resize(old_len + 1);
+        self.values.resize(old_len + 1);
+        self.keys[old_len] = key;
+        self.values[old_len] = value;
     }
     pub fn remove(mut self, key: K) {
         let mut i: int = 0;
         while i < self.keys.len() {
             if self.keys[i] == key {
-                self.keys.remove_at(i);
-                self.values.remove_at(i);
+                let old_len: int = self.keys.len();
+                let mut j: int = i;
+                while j < old_len - 1 {
+                    self.keys[j] = self.keys[j + 1];
+                    self.values[j] = self.values[j + 1];
+                    j = j + 1;
+                }
+                self.keys.resize(old_len - 1);
+                self.values.resize(old_len - 1);
                 return;
             }
             i = i + 1;
         }
     }
 }
-fn main() {
-    let map: Map<string, int> = new Map<string, int> { keys: [], values: [] };
+fn main() -> int {
+    let mut map: Map<string, int> = new Map<string, int> { keys: [], values: [] };
     map.set("a", 1);
     map.set("b", 2);
-    let _v: int = map.get("a");
-    let _has: bool = map.has("b");
-    let _len: int = map.len();
     map.remove("a");
+    if map.len() != 1 { return -1; }
+    if map.has("a") { return -2; }
+    if !map.has("b") { return -3; }
+    map.get("b")
 }
-"#);
+"#,
+        2,
+    );
 }
 
 // ── Set<T> tests ──────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "stdlib uses removed array methods (add/remove_at); Phase 121 will rewrite writ-std"]
+fn coll_map_distinguishes_different_string_keys() {
+    run_to_completion(
+        r#"
+pub class Map<K: Ord + Eq, V> { mut keys: K[], mut values: V[] }
+impl<K: Ord + Eq, V> Map<K, V> {
+    pub fn set(mut self, key: K, value: V) {
+        let mut i: int = 0;
+        while i < self.keys.len() {
+            if self.keys[i] == key { self.values[i] = value; return; }
+            i = i + 1;
+        }
+        let old_len: int = self.keys.len();
+        self.keys.resize(old_len + 1);
+        self.values.resize(old_len + 1);
+        self.keys[old_len] = key;
+        self.values[old_len] = value;
+    }
+    pub fn len(self) -> int { self.keys.len() }
+}
+fn main() -> int {
+    let mut map: Map<string, int> = new Map<string, int> { keys: [], values: [] };
+    map.set("alpha", 1);
+    map.set("beta", 2);
+    map.len()
+}
+"#,
+        2,
+    );
+}
+
+#[test]
 fn coll_set_add_dedup_remove() {
-    run_to_completion(r#"
-pub class Set<T: Eq> { items: T[] }
+    run_to_completion(
+        r#"
+pub class Set<T: Eq> { mut items: T[] }
 impl<T: Eq> Set<T> {
     pub fn add(mut self, item: T) {
         if self.has(item) { return; }
-        self.items.add(item);
+        let old_len: int = self.items.len();
+        self.items.resize(old_len + 1);
+        self.items[old_len] = item;
     }
     pub fn remove(mut self, item: T) {
         let mut i: int = 0;
         while i < self.items.len() {
-            if self.items[i] == item { self.items.remove_at(i); return; }
+            if self.items[i] == item {
+                let old_len: int = self.items.len();
+                let mut j: int = i;
+                while j < old_len - 1 {
+                    self.items[j] = self.items[j + 1];
+                    j = j + 1;
+                }
+                self.items.resize(old_len - 1);
+                return;
+            }
             i = i + 1;
         }
     }
-    pub fn has(self, item: T) -> bool { self.items.contains(item) }
+    pub fn has(self, item: T) -> bool {
+        let mut i: int = 0;
+        while i < self.items.len() {
+            if self.items[i] == item { return true; }
+            i = i + 1;
+        }
+        false
+    }
     pub fn len(self) -> int { self.items.len() }
 }
-fn main() {
-    let s: Set<int> = new Set<int> { items: [] };
+fn main() -> int {
+    let mut s: Set<int> = new Set<int> { items: [] };
     s.add(1);
     s.add(2);
     s.add(1);
-    let _has: bool = s.has(1);
-    let _len: int = s.len();
     s.remove(1);
+    if s.len() != 1 { return -1; }
+    if s.has(1) { return -2; }
+    if !s.has(2) { return -3; }
+    s.len()
 }
-"#);
+"#,
+        1,
+    );
 }
 
 // ── HashMap<K, V> tests ───────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "stdlib uses removed array methods (add/remove_at); Phase 121 will rewrite writ-std"]
 fn coll_hashmap_set_get_remove() {
-    run_to_completion(r#"
-pub class HashMap<K: Hashable, V> { keys: K[], values: V[] }
+    run_to_completion(
+        r#"
+pub class HashMap<K: Hashable, V> { mut keys: K[], mut values: V[] }
 impl<K: Hashable, V> HashMap<K, V> {
     pub fn len(self) -> int { self.keys.len() }
     pub fn has(self, key: K) -> bool {
@@ -273,43 +395,87 @@ impl<K: Hashable, V> HashMap<K, V> {
             if self.keys[i] == key { self.values[i] = value; return; }
             i = i + 1;
         }
-        self.keys.add(key);
-        self.values.add(value);
+        let old_len: int = self.keys.len();
+        self.keys.resize(old_len + 1);
+        self.values.resize(old_len + 1);
+        self.keys[old_len] = key;
+        self.values[old_len] = value;
     }
     pub fn remove(mut self, key: K) {
         let mut i: int = 0;
         while i < self.keys.len() {
             if self.keys[i] == key {
-                self.keys.remove_at(i);
-                self.values.remove_at(i);
+                let old_len: int = self.keys.len();
+                let mut j: int = i;
+                while j < old_len - 1 {
+                    self.keys[j] = self.keys[j + 1];
+                    self.values[j] = self.values[j + 1];
+                    j = j + 1;
+                }
+                self.keys.resize(old_len - 1);
+                self.values.resize(old_len - 1);
                 return;
             }
             i = i + 1;
         }
     }
 }
-fn main() {
-    let hm: HashMap<string, int> = new HashMap<string, int> { keys: [], values: [] };
+fn main() -> int {
+    let mut hm: HashMap<string, int> = new HashMap<string, int> { keys: [], values: [] };
     hm.set("x", 10);
     hm.set("y", 20);
-    let _v: int = hm.get("x");
-    let _has: bool = hm.has("y");
-    let _len: int = hm.len();
     hm.remove("x");
+    if hm.len() != 1 { return -1; }
+    if hm.has("x") { return -2; }
+    if !hm.has("y") { return -3; }
+    hm.get("y")
 }
-"#);
+"#,
+        20,
+    );
 }
 
 // ── Iterator protocol tests (Phase 118) ───────────────────────────────────────
 
+#[test]
+fn coll_hashmap_distinguishes_different_string_keys() {
+    run_to_completion(
+        r#"
+pub class HashMap<K: Hashable, V> { mut keys: K[], mut values: V[] }
+impl<K: Hashable, V> HashMap<K, V> {
+    pub fn set(mut self, key: K, value: V) {
+        let mut i: int = 0;
+        while i < self.keys.len() {
+            if self.keys[i] == key { self.values[i] = value; return; }
+            i = i + 1;
+        }
+        let old_len: int = self.keys.len();
+        self.keys.resize(old_len + 1);
+        self.values.resize(old_len + 1);
+        self.keys[old_len] = key;
+        self.values[old_len] = value;
+    }
+    pub fn len(self) -> int { self.keys.len() }
+}
+fn main() -> int {
+    let mut map: HashMap<string, int> = new HashMap<string, int> { keys: [], values: [] };
+    map.set("alpha", 1);
+    map.set("beta", 2);
+    map.len()
+}
+"#,
+        2,
+    );
+}
+
 /// ITER-01: for-in loop over List<T> using Iterable<T> protocol.
 #[test]
-#[ignore = "stdlib uses removed array methods (add/remove_at); Phase 121 will rewrite writ-std"]
 fn iter_for_in_list() {
-    run_to_completion(r#"
+    run_to_completion(
+        r#"
 pub class ListIterator<T> {
     source: T[],
-    index: int
+    mut index: int
 }
 impl<T> ListIterator<T> {
     pub fn next(mut self) -> T? {
@@ -327,9 +493,13 @@ impl<T> Iterator<T> for ListIterator<T> {
         item
     }
 }
-pub class List<T> { items: T[] }
+pub class List<T> { mut items: T[] }
 impl<T> List<T> {
-    pub fn add(mut self, item: T) { self.items.add(item); }
+    pub fn add(mut self, item: T) {
+        let old_len: int = self.items.len();
+        self.items.resize(old_len + 1);
+        self.items[old_len] = item;
+    }
     pub fn len(self) -> int { self.items.len() }
 }
 impl<T> Iterable<T> for List<T> {
@@ -337,8 +507,8 @@ impl<T> Iterable<T> for List<T> {
         new ListIterator<T> { source: self.items, index: 0 }
     }
 }
-fn main() {
-    let list: List<int> = new List<int> { items: [] };
+fn main() -> int {
+    let mut list: List<int> = new List<int> { items: [] };
     list.add(10);
     list.add(20);
     list.add(30);
@@ -346,19 +516,21 @@ fn main() {
     for x in list {
         sum = sum + x;
     }
-    let _result: int = sum;
+    sum
 }
-"#);
+"#,
+        60,
+    );
 }
 
 /// ITER-02: for-in loop over Set<T> using Iterable<T> protocol.
 #[test]
-#[ignore = "stdlib uses removed array methods (add/remove_at); Phase 121 will rewrite writ-std"]
 fn iter_for_in_set() {
-    run_to_completion(r#"
+    run_to_completion(
+        r#"
 pub class SetIterator<T: Eq> {
     source: T[],
-    index: int
+    mut index: int
 }
 impl<T: Eq> SetIterator<T> {
     pub fn next(mut self) -> T? {
@@ -376,13 +548,22 @@ impl<T: Eq> Iterator<T> for SetIterator<T> {
         item
     }
 }
-pub class Set<T: Eq> { items: T[] }
+pub class Set<T: Eq> { mut items: T[] }
 impl<T: Eq> Set<T> {
     pub fn add(mut self, item: T) {
         if self.has(item) { return; }
-        self.items.add(item);
+        let old_len: int = self.items.len();
+        self.items.resize(old_len + 1);
+        self.items[old_len] = item;
     }
-    pub fn has(self, item: T) -> bool { self.items.contains(item) }
+    pub fn has(self, item: T) -> bool {
+        let mut i: int = 0;
+        while i < self.items.len() {
+            if self.items[i] == item { return true; }
+            i = i + 1;
+        }
+        false
+    }
     pub fn len(self) -> int { self.items.len() }
 }
 impl<T: Eq> Iterable<T> for Set<T> {
@@ -390,8 +571,8 @@ impl<T: Eq> Iterable<T> for Set<T> {
         new SetIterator<T> { source: self.items, index: 0 }
     }
 }
-fn main() {
-    let s: Set<int> = new Set<int> { items: [] };
+fn main() -> int {
+    let mut s: Set<int> = new Set<int> { items: [] };
     s.add(1);
     s.add(2);
     s.add(1);
@@ -399,20 +580,22 @@ fn main() {
     for x in s {
         sum = sum + x;
     }
-    let _result: int = sum;
+    sum
 }
-"#);
+"#,
+        3,
+    );
 }
 
 /// ITER-03: iterate Map keys using get_keys() which returns K[] (array path).
 /// Uses string keys to avoid GenericParam resolution limitations (Phase 119+).
 #[test]
-#[ignore = "stdlib uses removed array methods (add/remove_at); Phase 121 will rewrite writ-std"]
 fn iter_for_map_keys() {
-    run_to_completion(r#"
+    run_to_completion(
+        r#"
 pub class Map<K: Ord + Eq, V> {
-    keys: K[],
-    values: V[]
+    mut keys: K[],
+    mut values: V[]
 }
 impl<K: Ord + Eq, V> Map<K, V> {
     pub fn set(mut self, key: K, value: V) {
@@ -421,14 +604,17 @@ impl<K: Ord + Eq, V> Map<K, V> {
             if self.keys[i] == key { self.values[i] = value; return; }
             i = i + 1;
         }
-        self.keys.add(key);
-        self.values.add(value);
+        let old_len: int = self.keys.len();
+        self.keys.resize(old_len + 1);
+        self.values.resize(old_len + 1);
+        self.keys[old_len] = key;
+        self.values[old_len] = value;
     }
     pub fn get_keys(self) -> K[] { self.keys }
     pub fn len(self) -> int { self.keys.len() }
 }
-fn main() {
-    let map: Map<string, int> = new Map<string, int> { keys: [], values: [] };
+fn main() -> int {
+    let mut map: Map<string, int> = new Map<string, int> { keys: [], values: [] };
     map.set("a", 10);
     map.set("b", 20);
     map.set("c", 30);
@@ -437,17 +623,20 @@ fn main() {
         let _k: string = k;
         key_count = key_count + 1;
     }
-    let _result: int = key_count;
+    key_count
 }
-"#);
+"#,
+        3,
+    );
 }
 
 /// ITER-04: custom class implementing Iterable<T> works in for-in loop.
 #[test]
 fn iter_custom_iterable() {
-    run_to_completion(r#"
+    run_to_completion(
+        r#"
 pub class CounterIterator {
-    current: int,
+    mut current: int,
     max: int
 }
 impl CounterIterator {
@@ -474,28 +663,34 @@ impl Iterable<int> for Counter {
         new CounterIterator { current: 0, max: self.max }
     }
 }
-fn main() {
+fn main() -> int {
     let counter: Counter = new Counter { max: 5 };
     let mut sum: int = 0;
     for x in counter {
         sum = sum + x;
     }
-    let _result: int = sum;
+    sum
 }
-"#);
+"#,
+        10,
+    );
 }
 
 /// COLL-04: List map/filter/reduce chain produces correct results.
 #[test]
-#[ignore = "stdlib uses removed array methods (add/remove_at); Phase 121 will rewrite writ-std"]
 fn coll_list_map_filter_reduce() {
-    run_to_completion(r#"
-pub class List<T> { items: T[] }
+    run_to_completion(
+        r#"
+pub class List<T> { mut items: T[] }
 impl<T> List<T> {
-    pub fn add(mut self, item: T) { self.items.add(item); }
+    pub fn add(mut self, item: T) {
+        let old_len: int = self.items.len();
+        self.items.resize(old_len + 1);
+        self.items[old_len] = item;
+    }
     pub fn len(self) -> int { self.items.len() }
     pub fn map(self, f: fn(T) -> T) -> List<T> {
-        let result: List<T> = new List<T> { items: [] };
+        let mut result: List<T> = new List<T> { items: self.items.slice(0, 0) };
         let mut i: int = 0;
         while i < self.items.len() {
             result.add(f(self.items[i]));
@@ -504,7 +699,7 @@ impl<T> List<T> {
         result
     }
     pub fn filter(self, f: fn(T) -> bool) -> List<T> {
-        let result: List<T> = new List<T> { items: [] };
+        let mut result: List<T> = new List<T> { items: self.items.slice(0, 0) };
         let mut i: int = 0;
         while i < self.items.len() {
             if f(self.items[i]) { result.add(self.items[i]); }
@@ -522,8 +717,8 @@ impl<T> List<T> {
         acc
     }
 }
-fn main() {
-    let list: List<int> = new List<int> { items: [] };
+fn main() -> int {
+    let mut list: List<int> = new List<int> { items: [] };
     list.add(1);
     list.add(2);
     list.add(3);
@@ -531,8 +726,9 @@ fn main() {
     list.add(5);
     let doubled: List<int> = list.map(fn(x: int) -> int { x * 2 });
     let filtered: List<int> = doubled.filter(fn(x: int) -> bool { x > 4 });
-    let _result: int = filtered.reduce(0, fn(acc: int, x: int) -> int { acc + x });
+    filtered.reduce(0, fn(acc: int, x: int) -> int { acc + x })
 }
-"#);
+"#,
+        24,
+    );
 }
-

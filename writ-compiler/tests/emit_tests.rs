@@ -11,6 +11,7 @@ use writ_compiler::emit::module_builder::ModuleBuilder;
 use writ_compiler::lower::lower;
 use writ_compiler::resolve;
 use writ_diagnostics::{Diagnostic, FileId, Severity};
+use writ_module::tables::{FIELD_FLAG_PUBLIC, FIELD_FLAG_READONLY};
 
 // =========================================================
 // Test helpers
@@ -24,7 +25,11 @@ fn emit_src(src: &'static str) -> (ModuleBuilder, Vec<Diagnostic>) {
     let error_msgs: Vec<String> = parse_errors.iter().map(|e| format!("{e:?}")).collect();
     assert!(error_msgs.is_empty(), "parse errors: {:?}", error_msgs);
     let (ast, lower_errors) = lower(items);
-    assert!(lower_errors.is_empty(), "lowering errors: {:?}", lower_errors);
+    assert!(
+        lower_errors.is_empty(),
+        "lowering errors: {:?}",
+        lower_errors
+    );
 
     let file_id = FileId(0);
     let asts: Vec<(FileId, &Ast)> = vec![(file_id, &ast)];
@@ -46,11 +51,7 @@ fn emit_src(src: &'static str) -> (ModuleBuilder, Vec<Diagnostic>) {
         .iter()
         .filter(|d| d.severity == Severity::Error)
         .collect();
-    assert!(
-        type_errors.is_empty(),
-        "type errors: {:?}",
-        type_errors
-    );
+    assert!(type_errors.is_empty(), "type errors: {:?}", type_errors);
 
     let (builder, emit_diags) = emit::emit(&typed_ast, &asts, &interner);
     (builder, emit_diags)
@@ -64,7 +65,10 @@ fn emit_src(src: &'static str) -> (ModuleBuilder, Vec<Diagnostic>) {
 fn module_def_always_present() {
     let (builder, diags) = emit_src("fn main() {}");
     assert!(diags.is_empty(), "unexpected emit diags: {:?}", diags);
-    assert!(builder.module_def.is_some(), "ModuleDef row must be present");
+    assert!(
+        builder.module_def.is_some(),
+        "ModuleDef row must be present"
+    );
 }
 
 // =========================================================
@@ -75,7 +79,11 @@ fn module_def_always_present() {
 fn struct_emits_typedef() {
     let (builder, diags) = emit_src("struct Point { x: int, y: int }");
     assert!(diags.is_empty(), "unexpected emit diags: {:?}", diags);
-    assert_eq!(builder.type_def_count(), 1, "should have 1 TypeDef for Point");
+    assert_eq!(
+        builder.type_def_count(),
+        1,
+        "should have 1 TypeDef for Point"
+    );
     assert_eq!(
         builder.typedef_kind(0),
         TypeDefKind::Struct as u8,
@@ -87,7 +95,65 @@ fn struct_emits_typedef() {
 fn struct_fields_emit_fielddefs() {
     let (builder, diags) = emit_src("struct Point { x: int, y: int }");
     assert!(diags.is_empty());
-    assert_eq!(builder.field_def_count(), 2, "Point should have 2 FieldDefs");
+    assert_eq!(
+        builder.field_def_count(),
+        2,
+        "Point should have 2 FieldDefs"
+    );
+}
+
+#[test]
+fn source_field_flags_keep_visibility_distinct_from_readonly() {
+    let (builder, diags) = emit_src("struct Point { pub mut x: int, y: int }");
+    assert!(diags.is_empty());
+
+    let flags: Vec<u16> = builder
+        .finalized_field_defs()
+        .map(|field| field.flags)
+        .collect();
+    assert_eq!(flags.len(), 2);
+    assert_ne!(
+        flags[0] & FIELD_FLAG_PUBLIC,
+        0,
+        "pub field must carry visibility bit"
+    );
+    assert_eq!(
+        flags[1] & FIELD_FLAG_PUBLIC,
+        0,
+        "private field must not carry visibility bit"
+    );
+    assert_eq!(
+        flags[0] & FIELD_FLAG_READONLY,
+        0,
+        "`mut` source field must remain writable after construction"
+    );
+    assert_ne!(
+        flags[1] & FIELD_FLAG_READONLY,
+        0,
+        "unqualified source field must be read-only after construction"
+    );
+}
+
+#[test]
+fn compiler_builder_finalizes_empty_field_ranges_with_next_indices() {
+    let mut builder = ModuleBuilder::new();
+    builder.add_typedef("LeadingEmpty", "", TypeDefKind::Class, 0, None);
+    let list = builder.add_typedef("List", "", TypeDefKind::Class, 0, None);
+    builder.add_fielddef(list, "items", 0, 0);
+    builder.add_typedef("__closure_0", "", TypeDefKind::Class, 0, None);
+    let pair = builder.add_typedef("Pair", "", TypeDefKind::Struct, 0, None);
+    builder.add_fielddef(pair, "left", 0, 0);
+    builder.add_fielddef(pair, "right", 0, 0);
+    builder.add_typedef("TrailingEmpty", "", TypeDefKind::Class, 0, None);
+
+    builder.finalize();
+
+    let starts: Vec<u32> = (0..builder.type_def_count())
+        .map(|idx| builder.typedef_field_list(idx))
+        .collect();
+    assert_eq!(starts, vec![1, 1, 2, 2, 4]);
+    assert!(starts.iter().all(|start| *start > 0));
+    assert!(starts.windows(2).all(|pair| pair[0] <= pair[1]));
 }
 
 #[test]
@@ -100,7 +166,11 @@ fn entity_emits_typedef() {
         "#,
     );
     assert!(diags.is_empty(), "unexpected emit diags: {:?}", diags);
-    assert_eq!(builder.type_def_count(), 1, "should have 1 TypeDef for Guard");
+    assert_eq!(
+        builder.type_def_count(),
+        1,
+        "should have 1 TypeDef for Guard"
+    );
     assert_eq!(
         builder.typedef_kind(0),
         TypeDefKind::Entity as u8,
@@ -120,7 +190,11 @@ fn enum_emits_typedef() {
         "#,
     );
     assert!(diags.is_empty(), "unexpected emit diags: {:?}", diags);
-    assert_eq!(builder.type_def_count(), 1, "should have 1 TypeDef for Color");
+    assert_eq!(
+        builder.type_def_count(),
+        1,
+        "should have 1 TypeDef for Color"
+    );
     assert_eq!(
         builder.typedef_kind(0),
         TypeDefKind::Enum as u8,
@@ -136,7 +210,11 @@ fn enum_emits_typedef() {
 fn fn_emits_methoddef() {
     let (builder, diags) = emit_src("fn greet(name: string) -> string { name }");
     assert!(diags.is_empty(), "unexpected emit diags: {:?}", diags);
-    assert_eq!(builder.method_def_count(), 1, "should have 1 MethodDef for greet");
+    assert_eq!(
+        builder.method_def_count(),
+        1,
+        "should have 1 MethodDef for greet"
+    );
 }
 
 #[test]
@@ -144,6 +222,40 @@ fn fn_params_emit_paramdefs() {
     let (builder, diags) = emit_src("fn add(a: int, b: int) -> int { a }");
     assert!(diags.is_empty());
     assert_eq!(builder.param_def_count(), 2, "add should have 2 ParamDefs");
+}
+
+#[test]
+fn methoddef_param_count_matches_entry_register_layout() {
+    let (builder, diags) = emit_src(
+        r#"
+        struct Counter {}
+
+        impl Counter {
+            fn instance(self, value: int) -> int { return value; }
+            fn static_method(value: int) -> int { return value; }
+        }
+
+        fn free_function(value: int) -> int { return value; }
+        "#,
+    );
+    assert!(diags.is_empty(), "unexpected emit diags: {:?}", diags);
+
+    let param_count = |name: &str| {
+        builder
+            .finalized_method_defs()
+            .find(|row| builder.string_heap.get_str(row.name) == name)
+            .unwrap_or_else(|| panic!("missing MethodDef for {name}"))
+            .param_count
+    };
+
+    assert_eq!(param_count("instance"), 2, "r0=self, r1=value");
+    assert_eq!(param_count("static_method"), 1, "r0=value");
+    assert_eq!(param_count("free_function"), 1, "r0=value");
+    assert_eq!(
+        param_count("get_type"),
+        1,
+        "r0=self for synthetic Reflectable method"
+    );
 }
 
 // =========================================================
@@ -181,8 +293,87 @@ fn contract_method_slots_assigned() {
     );
     assert!(diags.is_empty());
     // Slots should be 0 and 1 in declaration order
-    assert_eq!(builder.contract_method_slot(0), 0, "first method slot should be 0");
-    assert_eq!(builder.contract_method_slot(1), 1, "second method slot should be 1");
+    assert_eq!(
+        builder.contract_method_slot(0),
+        0,
+        "first method slot should be 0"
+    );
+    assert_eq!(
+        builder.contract_method_slot(1),
+        1,
+        "second method slot should be 1"
+    );
+}
+
+#[test]
+fn compiler_builder_finalizes_contract_child_ranges_with_next_indices() {
+    let mut builder = ModuleBuilder::new();
+
+    // Keep a non-contract GenericParam ahead of the contract-owned rows to
+    // verify that generic_param_list stores an absolute table row index.
+    let generic_type = builder.add_typedef("Box", "", TypeDefKind::Class, 0, None);
+    builder.add_generic_param(TableId::TypeDef, generic_type.0, 0, "T");
+
+    let first = builder.add_contract_def("First", "", None);
+    let _middle_empty = builder.add_contract_def("MiddleEmpty", "", None);
+    let third = builder.add_contract_def("Third", "", None);
+    let _trailing_empty = builder.add_contract_def("TrailingEmpty", "", None);
+
+    // Deliberately collect children out of parent order; finalize must group
+    // them while retaining correct starts for the intervening empty contracts.
+    builder.add_contract_method(third, "third", 0, 17);
+    builder.add_contract_method(first, "first_a", 0, 17);
+    builder.add_contract_method(first, "first_b", 0, 17);
+    builder.add_generic_param(TableId::ContractDef, third.0, 0, "U");
+    builder.add_generic_param(TableId::ContractDef, first.0, 0, "T");
+    builder.add_generic_param(TableId::ContractDef, first.0, 1, "E");
+
+    writ_compiler::emit::slots::assign_vtable_slots(&mut builder);
+    builder.finalize();
+
+    let contract_defs = builder.finalized_contract_defs();
+    let method_starts: Vec<u32> = contract_defs.iter().map(|row| row.method_list).collect();
+    let generic_starts: Vec<u32> = contract_defs
+        .iter()
+        .map(|row| row.generic_param_list)
+        .collect();
+
+    assert_eq!(method_starts, vec![1, 3, 3, 4]);
+    assert_eq!(generic_starts, vec![2, 4, 4, 5]);
+    assert!(method_starts.iter().all(|start| *start > 0));
+    assert!(generic_starts.iter().all(|start| *start > 0));
+
+    let method_counts: Vec<u32> = method_starts
+        .iter()
+        .enumerate()
+        .map(|(idx, start)| {
+            let end = method_starts
+                .get(idx + 1)
+                .copied()
+                .unwrap_or(builder.contract_method_count() as u32 + 1);
+            end - start
+        })
+        .collect();
+    let generic_counts: Vec<u32> = generic_starts
+        .iter()
+        .enumerate()
+        .map(|(idx, start)| {
+            let end = generic_starts
+                .get(idx + 1)
+                .copied()
+                .unwrap_or(builder.generic_param_count() as u32 + 1);
+            end - start
+        })
+        .collect();
+
+    assert_eq!(method_counts, vec![2, 0, 1, 0]);
+    assert_eq!(generic_counts, vec![2, 0, 1, 0]);
+    assert_eq!(
+        (0..builder.contract_method_count())
+            .map(|idx| builder.contract_method_slot(idx))
+            .collect::<Vec<_>>(),
+        vec![0, 1, 0]
+    );
 }
 
 // =========================================================
@@ -202,7 +393,11 @@ fn impl_emits_impldef() {
     );
     assert!(diags.is_empty(), "unexpected emit diags: {:?}", diags);
     // ImplDef rows: 1 user impl + 1 Reflectable auto-impl for struct Foo = 2
-    assert_eq!(builder.impl_def_count(), 2, "should have 2 ImplDefs (1 user + 1 Reflectable auto-impl)");
+    assert_eq!(
+        builder.impl_def_count(),
+        2,
+        "should have 2 ImplDefs (1 user + 1 Reflectable auto-impl)"
+    );
 }
 
 // =========================================================
@@ -220,17 +415,36 @@ fn reflectable_auto_impl_three_types() {
     );
     assert!(diags.is_empty(), "unexpected emit diags: {:?}", diags);
     // 3 user types -> 3 Reflectable auto-impls (no user impls in this source)
-    assert_eq!(builder.impl_def_count(), 3, "should have 3 Reflectable auto-impls");
+    assert_eq!(
+        builder.impl_def_count(),
+        3,
+        "should have 3 Reflectable auto-impls"
+    );
     // 3 synthetic get_type() MethodDefs (one per user type)
-    assert_eq!(builder.method_def_count(), 3, "should have 3 get_type() MethodDefs");
+    assert_eq!(
+        builder.method_def_count(),
+        3,
+        "should have 3 get_type() MethodDefs"
+    );
+    let reflectable_token = MetadataToken(builder.type_ref_token_by_name("Reflectable"));
+    assert!(
+        !reflectable_token.is_null(),
+        "Reflectable TypeRef is missing"
+    );
+    assert!(
+        builder
+            .finalized_impl_defs()
+            .iter()
+            .all(|implementation| implementation.contract_token == reflectable_token),
+        "auto-impls must reference writ-runtime::Reflectable through a TypeRef"
+    );
 }
 
 #[test]
-fn method_list_invariant_holds() {
-    // After Phase 105, each user TypeDef's Reflectable ImplDef.method_list must be
-    // non-zero (pointing to the get_type() MethodDef row in the finalized table).
-    // Verified at the metadata level: impl_def_count() == type_def_count() == 2,
-    // method_defs have get_type() before any user impl methods.
+fn method_owner_invariant_holds() {
+    // Reflectable methods belong to their ImplDef, not directly to the user TypeDef.
+    // Version 6 records that relationship on each MethodDef row, so method_list is
+    // only a derived first-row index on the actual owner.
     let (builder, diags) = emit_src(
         r#"
         struct Foo { x: int }
@@ -240,11 +454,28 @@ fn method_list_invariant_holds() {
     assert!(diags.is_empty(), "unexpected emit diags: {:?}", diags);
     assert_eq!(builder.impl_def_count(), 2, "2 Reflectable auto-impls");
     assert_eq!(builder.type_def_count(), 2, "2 TypeDefs");
-    // method_list values are non-zero (tested indirectly: golden tests verify correct
-    // TYPEOF emission in disassembled output; domain_dispatch.rs uses method_list).
-    // Structural check: each TypeDef has a method_list pointing into the MethodDef table.
-    assert!(builder.typedef_method_list(0) > 0, "Foo.method_list must be non-zero after finalize");
-    assert!(builder.typedef_method_list(1) > 0, "Bar.method_list must be non-zero after finalize");
+    assert_eq!(
+        builder.typedef_method_list(0),
+        0,
+        "Foo has no direct methods"
+    );
+    assert_eq!(
+        builder.typedef_method_list(1),
+        0,
+        "Bar has no direct methods"
+    );
+
+    let impls = builder.finalized_impl_defs();
+    assert!(impls.iter().all(|row| row.method_list > 0));
+
+    let owners: Vec<_> = builder
+        .finalized_method_defs()
+        .map(|row| row.owner)
+        .collect();
+    assert_eq!(owners.len(), 2);
+    assert!(owners.iter().all(|owner| owner.table() == TableId::ImplDef));
+    assert_eq!(owners[0].row(), 1);
+    assert_eq!(owners[1].row(), 2);
 }
 
 // =========================================================
@@ -255,14 +486,22 @@ fn method_list_invariant_holds() {
 fn const_emits_globaldef() {
     let (builder, diags) = emit_src("const MAX: int = 100;");
     assert!(diags.is_empty(), "unexpected emit diags: {:?}", diags);
-    assert_eq!(builder.global_def_count(), 1, "should have 1 GlobalDef for MAX");
+    assert_eq!(
+        builder.global_def_count(),
+        1,
+        "should have 1 GlobalDef for MAX"
+    );
 }
 
 #[test]
 fn global_mut_emits_globaldef() {
     let (builder, diags) = emit_src("global mut counter: int = 0;");
     assert!(diags.is_empty(), "unexpected emit diags: {:?}", diags);
-    assert_eq!(builder.global_def_count(), 1, "should have 1 GlobalDef for counter");
+    assert_eq!(
+        builder.global_def_count(),
+        1,
+        "should have 1 GlobalDef for counter"
+    );
 }
 
 // =========================================================
@@ -274,7 +513,11 @@ fn extern_fn_emits_externdef() {
     let (builder, diags) = emit_src("extern fn print(msg: string);");
     assert!(diags.is_empty(), "unexpected emit diags: {:?}", diags);
     // 1 user-declared extern (print). Log-level externs are only emitted when referenced.
-    assert_eq!(builder.extern_def_count(), 1, "should have 1 ExternDef: print");
+    assert_eq!(
+        builder.extern_def_count(),
+        1,
+        "should have 1 ExternDef: print"
+    );
     // The user-declared extern must be present by name
     let has_print = builder
         .extern_defs
@@ -331,14 +574,9 @@ fn typedef_tokens_are_one_based() {
         "#,
     );
     assert!(diags.is_empty());
-    // After finalize, DefIds have tokens: 3 TypeDef (A/B/C). Log-level externs are
-    // only emitted when referenced, so they don't contribute tokens here.
-    assert_eq!(
-        builder.def_token_map.len(),
-        3,
-        "should have 3 tokens: 3 structs (no log refs)"
-    );
-    // The 3 struct tokens should be TypeDef table with 1-based rows
+    // Canonical core declarations are injected into every compilation and also
+    // contribute entries to def_token_map. Restrict this assertion to the three
+    // user TypeDefs; their rows must remain one-based regardless of core size.
     let typedef_tokens: Vec<_> = builder
         .def_token_map
         .values()
@@ -346,7 +584,11 @@ fn typedef_tokens_are_one_based() {
         .collect();
     assert_eq!(typedef_tokens.len(), 3, "should have 3 TypeDef tokens");
     for token in &typedef_tokens {
-        assert!(token.row() >= 1 && token.row() <= 3, "row should be 1-3, got {}", token.row());
+        assert!(
+            token.row() >= 1 && token.row() <= 3,
+            "row should be 1-3, got {}",
+            token.row()
+        );
     }
 }
 
@@ -368,7 +610,11 @@ fn fn_tokens_are_methoddef() {
         .collect();
     assert_eq!(method_tokens.len(), 2, "should have 2 MethodDef tokens");
     for token in &method_tokens {
-        assert!(token.row() >= 1 && token.row() <= 2, "row should be 1-2, got {}", token.row());
+        assert!(
+            token.row() >= 1 && token.row() <= 2,
+            "row should be 1-2, got {}",
+            token.row()
+        );
     }
 }
 
@@ -385,11 +631,24 @@ fn pub_items_emit_exportdef() {
         "#,
     );
     assert!(diags.is_empty());
-    // Only the pub item should produce an ExportDef (synthetic log-level externs are excluded).
+    // Canonical core exports are injected into every compilation. Assert the
+    // visibility behavior of this source without depending on the core's size.
+    let export_names: Vec<_> = builder
+        .export_defs
+        .iter()
+        .map(|row| builder.string_heap.get_str(row.name))
+        .collect();
     assert_eq!(
-        builder.export_def_count(),
+        export_names
+            .iter()
+            .filter(|name| **name == "Visible")
+            .count(),
         1,
-        "should have 1 ExportDef for Visible"
+        "Visible should be exported exactly once"
+    );
+    assert!(
+        !export_names.contains(&"Hidden"),
+        "Hidden must not be exported"
     );
 }
 
@@ -410,7 +669,11 @@ fn combined_struct_fn_const() {
     assert_eq!(builder.type_def_count(), 1, "1 TypeDef (Circle)");
     assert_eq!(builder.field_def_count(), 1, "1 FieldDef (radius)");
     // 2 MethodDefs: 1 user fn (area) + 1 Reflectable get_type() for Circle
-    assert_eq!(builder.method_def_count(), 2, "2 MethodDefs (area + Circle.get_type)");
+    assert_eq!(
+        builder.method_def_count(),
+        2,
+        "2 MethodDefs (area + Circle.get_type)"
+    );
     assert_eq!(builder.param_def_count(), 1, "1 ParamDef (r)");
     assert_eq!(builder.global_def_count(), 1, "1 GlobalDef (PI)");
 }
@@ -445,7 +708,10 @@ fn string_heap_deduplication() {
     let off2 = heap.intern("hello");
     let off3 = heap.intern("world");
     assert_eq!(off1, off2, "duplicate strings should have same offset");
-    assert_ne!(off1, off3, "different strings should have different offsets");
+    assert_ne!(
+        off1, off3,
+        "different strings should have different offsets"
+    );
 }
 
 #[test]
@@ -520,6 +786,10 @@ fn entity_hooks_emit_methoddefs() {
             on create {
                 let x: int = 1;
             }
+
+            on interact(who: Entity) {
+                let x: int = 2;
+            }
         }
         "#,
     );
@@ -529,6 +799,32 @@ fn entity_hooks_emit_methoddefs() {
         builder.method_def_count() >= 1,
         "should have at least 1 MethodDef for on_create hook"
     );
+
+    let hook_param_count = |name: &str| {
+        builder
+            .finalized_method_defs()
+            .find(|row| builder.string_heap.get_str(row.name) == name)
+            .unwrap_or_else(|| panic!("missing MethodDef for {name}"))
+            .param_count
+    };
+    assert_eq!(hook_param_count("on_OnCreate"), 1, "r0=implicit self");
+    assert_eq!(
+        hook_param_count("on_OnInteract"),
+        2,
+        "r0=implicit self, r1=who"
+    );
+}
+
+#[test]
+fn class_hook_param_count_includes_implicit_self() {
+    let (builder, diags) = emit_src("class Panel { on create { } }");
+    assert!(diags.is_empty(), "unexpected emit diags: {:?}", diags);
+
+    let hook = builder
+        .finalized_method_defs()
+        .find(|row| builder.string_heap.get_str(row.name) == "on_create")
+        .expect("missing class hook MethodDef");
+    assert_eq!(hook.param_count, 1, "r0=implicit self");
 }
 
 // =========================================================
@@ -539,7 +835,10 @@ fn entity_hooks_emit_methoddefs() {
 fn empty_program_has_module_def() {
     let (builder, diags) = emit_src("");
     assert!(diags.is_empty());
-    assert!(builder.module_def.is_some(), "even empty programs have a ModuleDef");
+    assert!(
+        builder.module_def.is_some(),
+        "even empty programs have a ModuleDef"
+    );
     assert_eq!(builder.type_def_count(), 0);
     assert_eq!(builder.method_def_count(), 0);
 }
@@ -640,9 +939,18 @@ fn emit_generic_constraint_table() {
     );
     assert!(diags.is_empty(), "unexpected diags: {:?}", diags);
     let constraints: Vec<_> = builder.finalized_generic_constraints().to_vec();
-    assert_eq!(constraints.len(), 1, "expected 1 GenericConstraint row, got {}", constraints.len());
+    assert_eq!(
+        constraints.len(),
+        1,
+        "expected 1 GenericConstraint row, got {}",
+        constraints.len()
+    );
     assert_eq!(constraints[0].param_row, 1, "param_row should be 1-based");
-    assert_ne!(constraints[0].constraint, MetadataToken::NULL, "constraint token should be resolved");
+    assert_ne!(
+        constraints[0].constraint,
+        MetadataToken::NULL,
+        "constraint token should be resolved"
+    );
 }
 
 /// A function with two bounds `<T: Equivalent + Comparable>` produces exactly 2 GenericConstraint rows.
@@ -663,5 +971,10 @@ fn emit_generic_multi_constraint() {
     );
     assert!(diags.is_empty(), "unexpected diags: {:?}", diags);
     let constraints: Vec<_> = builder.finalized_generic_constraints().to_vec();
-    assert_eq!(constraints.len(), 2, "expected 2 GenericConstraint rows for Equivalent + Comparable, got {}", constraints.len());
+    assert_eq!(
+        constraints.len(),
+        2,
+        "expected 2 GenericConstraint rows for Equivalent + Comparable, got {}",
+        constraints.len()
+    );
 }

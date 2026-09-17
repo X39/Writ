@@ -4,26 +4,27 @@
 //! register containing the result. Variants not handled in this plan (Match,
 //! Lambda, etc.) emit a Nop placeholder and return a void register.
 
-mod literal;
 mod binary;
-mod control;
-mod construction;
 mod builtins;
-mod string;
+mod construction;
+mod control;
 mod eq;
+mod literal;
+mod string;
 
-use literal::emit_literal;
 use binary::emit_binary;
-use control::{emit_if, emit_spawn, emit_defer};
-use construction::{emit_range, emit_array_lit, emit_new};
 use builtins::try_emit_builtin_method;
-use string::{try_collect_str_build_parts, emit_str_build};
+use construction::{emit_array_lit, emit_new, emit_range};
+use control::{emit_defer, emit_if, emit_spawn};
+use literal::emit_literal;
+use string::{emit_str_build, try_collect_str_build_parts};
 
 use writ_module::instruction::Instruction;
 
 use crate::ast::expr::PrefixOp;
 use crate::check::ir::TypedExpr;
 use crate::check::ty::{Ty, TyKind};
+use crate::emit::metadata::TableId;
 
 use super::BodyEmitter;
 use super::call::{emit_call_indirect, pack_args_consecutive};
@@ -64,6 +65,23 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
                 emitter.alloc_reg(*ty)
             }
         }
+        TypedExpr::GlobalRef { ty, def_id, .. } => {
+            let token = emitter
+                .builder
+                .token_for_def(*def_id)
+                .expect("checked source global must have a metadata operand");
+            assert_eq!(
+                token.table(),
+                TableId::GlobalDef,
+                "checked source global must resolve to a GlobalDef"
+            );
+            let r_dst = emitter.alloc_reg(*ty);
+            emitter.emit(Instruction::LoadGlobal {
+                r_dst,
+                global_idx: token.row() - 1,
+            });
+            r_dst
+        }
 
         TypedExpr::SelfRef { .. } => {
             // self is always in r0
@@ -72,7 +90,13 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
         }
 
         // ── Binary operations ──────────────────────────────────────────────────
-        TypedExpr::Binary { left, op, right, ty, .. } => {
+        TypedExpr::Binary {
+            left,
+            op,
+            right,
+            ty,
+            ..
+        } => {
             let operand_ty = left.ty();
             let r_a = emit_expr(emitter, left);
             let r_b = emit_expr(emitter, right);
@@ -80,17 +104,20 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
         }
 
         // ── Unary prefix ──────────────────────────────────────────────────────
-        TypedExpr::UnaryPrefix { op, expr: inner, ty, .. } => {
+        TypedExpr::UnaryPrefix {
+            op,
+            expr: inner,
+            ty,
+            ..
+        } => {
             let r_src = emit_expr(emitter, inner);
             let r_dst = emitter.alloc_reg(*ty);
             match op {
-                PrefixOp::Neg => {
-                    match emitter.interner.kind(*ty) {
-                        TyKind::Int => emitter.emit(Instruction::NegI { r_dst, r_src }),
-                        TyKind::Float => emitter.emit(Instruction::NegF { r_dst, r_src }),
-                        _ => emitter.emit(Instruction::NegI { r_dst, r_src }),
-                    }
-                }
+                PrefixOp::Neg => match emitter.interner.kind(*ty) {
+                    TyKind::Int => emitter.emit(Instruction::NegI { r_dst, r_src }),
+                    TyKind::Float => emitter.emit(Instruction::NegF { r_dst, r_src }),
+                    _ => emitter.emit(Instruction::NegI { r_dst, r_src }),
+                },
                 PrefixOp::Not => {
                     emitter.emit(Instruction::Not { r_dst, r_src });
                 }
@@ -103,12 +130,18 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
         }
 
         // ── If expression ─────────────────────────────────────────────────────
-        TypedExpr::If { condition, then_branch, else_branch, ty, .. } => {
-            emit_if(emitter, *ty, condition, then_branch, else_branch.as_deref())
-        }
+        TypedExpr::If {
+            condition,
+            then_branch,
+            else_branch,
+            ty,
+            ..
+        } => emit_if(emitter, *ty, condition, then_branch, else_branch.as_deref()),
 
         // ── Block expression ──────────────────────────────────────────────────
-        TypedExpr::Block { stmts, tail, ty, .. } => {
+        TypedExpr::Block {
+            stmts, tail, ty, ..
+        } => {
             use super::stmt::emit_stmt;
             // BUG-10 fix: the typechecker always sets tail=None and puts the
             // final expression as the last TypedStmt::Expr in stmts. Detect
@@ -124,7 +157,12 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
                 emit_expr(emitter, tail_expr)
             } else if let Some((last, rest)) = stmts.split_last() {
                 // Check if the last statement is a bare expression (value-producing).
-                if let crate::check::ir::TypedStmt::Expr { expr: last_expr, span, .. } = last {
+                if let crate::check::ir::TypedStmt::Expr {
+                    expr: last_expr,
+                    span,
+                    ..
+                } = last
+                {
                     for stmt in rest {
                         emit_stmt(emitter, stmt);
                     }
@@ -146,50 +184,96 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
                     // BUG-16 fix: skip register allocation for void blocks — the
                     // caller emits RetVoid without using the register, so allocating
                     // a void register here produces a spurious .reg r0 void in the IL.
-                    if *ty == Ty(4) { 0 } else { emitter.alloc_void_reg() }
+                    if *ty == Ty(4) {
+                        0
+                    } else {
+                        emitter.alloc_void_reg()
+                    }
                 }
             } else {
                 // Empty block — void.
                 // BUG-16 fix: skip register allocation for void blocks — the
                 // caller emits RetVoid without using the register, so allocating
                 // a void register here produces a spurious .reg r0 void in the IL.
-                if *ty == Ty(4) { 0 } else { emitter.alloc_void_reg() }
+                if *ty == Ty(4) {
+                    0
+                } else {
+                    emitter.alloc_void_reg()
+                }
             }
         }
 
         // ── Assignment ────────────────────────────────────────────────────────
-        TypedExpr::Assign { target, value, ty, .. } => {
+        TypedExpr::Assign {
+            target, value, ty, ..
+        } => {
             let r_val = emit_expr(emitter, value);
             match target.as_ref() {
                 TypedExpr::Var { name, .. } => {
                     if let Some(&r_dst) = emitter.locals.get(name) {
-                        emitter.emit(Instruction::Mov { r_dst, r_src: r_val });
+                        emitter.emit(Instruction::Mov {
+                            r_dst,
+                            r_src: r_val,
+                        });
                         r_dst
                     } else {
                         // New assignment target not in locals — treat as alloc
                         let r_dst = emitter.alloc_reg(*ty);
                         emitter.locals.insert(name.clone(), r_dst);
-                        emitter.emit(Instruction::Mov { r_dst, r_src: r_val });
+                        emitter.emit(Instruction::Mov {
+                            r_dst,
+                            r_src: r_val,
+                        });
                         r_dst
                     }
                 }
-                TypedExpr::Field { receiver, field, .. } => {
-                    // Emit receiver, then SET_FIELD
-                    let r_obj = emit_expr(emitter, receiver);
-                    let receiver_def_id = extract_type_def_id(emitter, receiver.ty());
-                    let field_idx = if let Some(def_id) = receiver_def_id {
-                        emitter.builder.field_token_by_name(def_id, field).unwrap_or(0)
-                    } else {
-                        0
-                    };
-                    emitter.emit(Instruction::SetField { r_obj, field_idx, r_val });
+                TypedExpr::GlobalRef { def_id, .. } => {
+                    let token = emitter
+                        .builder
+                        .token_for_def(*def_id)
+                        .expect("checked source global must have a metadata operand");
+                    assert_eq!(
+                        token.table(),
+                        TableId::GlobalDef,
+                        "checked source global must resolve to a GlobalDef"
+                    );
+                    emitter.emit(Instruction::StoreGlobal {
+                        global_idx: token.row() - 1,
+                        r_src: r_val,
+                    });
                     r_val
                 }
-                TypedExpr::Index { receiver, index, .. } => {
+                TypedExpr::Field {
+                    receiver, field, ..
+                } => {
+                    // Emit receiver, then SET_FIELD
+                    let r_obj = emit_expr(emitter, receiver);
+                    let receiver_def_id = extract_type_def_id(emitter, receiver.ty())
+                        .expect("checked field assignment must have a nominal receiver type");
+                    let field_token = emitter
+                        .builder
+                        .field_token_by_name(receiver_def_id, field)
+                        .unwrap_or_else(|| {
+                            panic!("checked field assignment `{field}` has no metadata operand")
+                        });
+                    emitter.emit(Instruction::SetField {
+                        r_obj,
+                        field_token,
+                        r_val,
+                    });
+                    r_val
+                }
+                TypedExpr::Index {
+                    receiver, index, ..
+                } => {
                     // Array index write: ARRAY_STORE { r_arr, r_idx, r_val }
                     let r_arr = emit_expr(emitter, receiver);
                     let r_idx = emit_expr(emitter, index);
-                    emitter.emit(Instruction::ArrayStore { r_arr, r_idx, r_val });
+                    emitter.emit(Instruction::ArrayStore {
+                        r_arr,
+                        r_idx,
+                        r_val,
+                    });
                     r_val
                 }
                 _ => {
@@ -202,12 +286,6 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
         // ── Return expression ──────────────────────────────────────────────────
         TypedExpr::Return { value, .. } => {
             if let Some(v) = value {
-                // EMIT-24: Tail-call optimization — Return(Call(...)) emits TailCall
-                // instead of Call + Ret. This is required for dialogue transitions
-                // which produce recursive state machine patterns.
-                if let TypedExpr::Call { callee, args, callee_def_id, .. } = v.as_ref() {
-                    return emit_tail_call(emitter, callee, args, *callee_def_id);
-                }
                 let r_src = emit_expr(emitter, v);
                 emitter.emit(Instruction::Ret { r_src });
             } else {
@@ -238,7 +316,10 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
             // Load crash message as a string constant, then emit Crash instruction.
             let r_msg = emitter.alloc_reg(Ty(3)); // String type is Ty(3)
             let instr_idx = emitter.instructions.len();
-            emitter.emit(Instruction::LoadString { r_dst: r_msg, string_idx: 0 }); // placeholder
+            emitter.emit(Instruction::LoadString {
+                r_dst: r_msg,
+                string_idx: 0,
+            }); // placeholder
             emitter.pending_strings.push((instr_idx, message.clone()));
             emitter.emit(Instruction::Crash { r_msg });
             // Allocate result register for type continuity (unreachable at runtime)
@@ -251,8 +332,21 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
         }
 
         // ── Call dispatch (EMIT-09, EMIT-21, EMIT-27) ─────────────────────────
-        TypedExpr::Call { callee, ty, callee_def_id, .. } => {
+        TypedExpr::Call {
+            callee,
+            ty,
+            callee_def_id,
+            callee_has_receiver,
+            ..
+        } => {
             let callee_ty = callee.ty();
+            let concrete_target = resolve_concrete_call_target(
+                emitter,
+                callee,
+                callee_ty,
+                *callee_def_id,
+                *callee_has_receiver,
+            );
 
             // ── Built-in shortcut: Option/Result/Array methods ────────────────
             // Before standard dispatch, check if this is a built-in method call
@@ -273,9 +367,17 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
             // - callee type IS TyKind::Func (Branch A matches! check passes)
             // - extract_type_def_id returns None for TyKind::Contract (falls to CALL_INDIRECT)
             if !is_static_call {
-                if let TypedExpr::Field { receiver, field, .. } = callee.as_ref() {
-                    if let TyKind::Contract(contract_def_id) = emitter.interner.kind(receiver.ty()).clone() {
-                        let TypedExpr::Call { ty, args, .. } = expr else { unreachable!() };
+                if let TypedExpr::Field {
+                    receiver, field, ..
+                } = callee.as_ref()
+                {
+                    let receiver_ty = emitter.interner.resolve_infer(receiver.ty());
+                    if let TyKind::Contract(contract_def_id) =
+                        emitter.interner.kind(receiver_ty).clone()
+                    {
+                        let TypedExpr::Call { ty, args, .. } = expr else {
+                            unreachable!()
+                        };
                         let r_dst_call = emitter.alloc_reg(*ty);
 
                         // Emit self (receiver) first, then remaining args
@@ -286,23 +388,26 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
                         let r_base = pack_args_consecutive(emitter, &arg_regs);
 
                         // Resolve contract token and slot by name (callee_def_id is None on this path)
-                        let contract_token = emitter.builder.token_for_def(contract_def_id)
+                        let contract_token = emitter
+                            .builder
+                            .type_spec_token_for_encoded_ty(receiver_ty, emitter.interner)
+                            .or_else(|| emitter.builder.token_for_def(contract_def_id))
                             .map(|t| t.0)
                             .unwrap_or(0);
-                        let slot = emitter.builder.contract_method_slot_by_name(contract_def_id, field)
+                        let slot = emitter
+                            .builder
+                            .contract_method_slot_by_name(contract_def_id, field)
                             .unwrap_or(0);
 
-                        // CALL_VIRT layout: r_obj = receiver, r_base = first extra arg, argc = n-1
+                        // CALL_VIRT's argument block starts with the receiver.
                         let r_obj = r_base;
-                        let r_args_base = if arg_regs.len() > 1 { r_base + 1 } else { r_base };
-                        let n_args = (arg_regs.len() as u16).saturating_sub(1);
                         emitter.emit(Instruction::CallVirt {
                             r_dst: r_dst_call,
                             r_obj,
                             contract_idx: contract_token,
                             slot,
-                            r_base: r_args_base,
-                            argc: n_args,
+                            r_base,
+                            argc: arg_regs.len() as u16,
                         });
                         return r_dst_call;
                     }
@@ -314,23 +419,22 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
             // from `impl Contract for Foo`), look up the MethodDef by type+name
             // and emit a direct CALL rather than CALL_INDIRECT.
             if !is_static_call && matches!(emitter.interner.kind(callee_ty), TyKind::Func { .. }) {
-                if let TypedExpr::Field { receiver, field, .. } = callee.as_ref() {
-                    let receiver_def_id = extract_type_def_id(emitter, receiver.ty());
-                    if let Some(rdid) = receiver_def_id {
-                        if let Some(method_token) = emitter.builder.methoddef_token_by_type_and_name(rdid, field) {
-                            // Found a MethodDef: emit direct CALL (not CALL_INDIRECT).
-                            let r_dst_call = emitter.alloc_reg(*ty);
-                            let TypedExpr::Call { args, .. } = expr else { unreachable!() };
-                            // First arg is self (the receiver object).
-                            let r_self = emit_expr(emitter, receiver);
-                            let arg_regs: Vec<u16> = std::iter::once(r_self)
-                                .chain(args.iter().map(|arg| emit_expr(emitter, arg)))
-                                .collect();
-                            let argc = arg_regs.len() as u16;
-                            let r_base = pack_args_consecutive(emitter, &arg_regs);
-                            emitter.emit(Instruction::Call { r_dst: r_dst_call, method_idx: method_token, r_base, argc });
-                            return r_dst_call;
-                        }
+                if let TypedExpr::Field { .. } = callee.as_ref() {
+                    if let Some(target) = concrete_target {
+                        // Found a MethodDef: emit direct CALL (not CALL_INDIRECT).
+                        let r_dst_call = emitter.alloc_reg(*ty);
+                        let TypedExpr::Call { args, .. } = expr else {
+                            unreachable!()
+                        };
+                        let (r_base, argc) = pack_concrete_call_args(emitter, callee, args, target)
+                            .expect("resolved instance call must have a field receiver");
+                        emitter.emit(Instruction::Call {
+                            r_dst: r_dst_call,
+                            method_idx: target.token,
+                            r_base,
+                            argc,
+                        });
+                        return r_dst_call;
                     }
                 }
 
@@ -340,43 +444,70 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
                 // MC-01 fix: use the DefId stored directly in callee_def_id (populated by
                 // check_call_with_sig and check_generic_call during type checking).
                 let maybe_def_id = *callee_def_id;
+                let declared_token = maybe_def_id.and_then(|id| emitter.builder.token_for_def(id));
+                let is_extern = declared_token.is_some_and(|token| {
+                    use crate::emit::metadata::TableId;
+                    token.table() == TableId::ExternDef
+                });
 
-                let kind = match callee.as_ref() {
-                    TypedExpr::Field { receiver, .. } => {
-                        // Dispatch based on receiver's concrete/generic type
-                        match emitter.interner.kind(receiver.ty()) {
-                            TyKind::Struct(_) | TyKind::Class(_) | TyKind::Entity(_) => {
-                                super::call::CallKind::Direct
+                let kind = if is_extern {
+                    super::call::CallKind::Extern
+                } else {
+                    match callee.as_ref() {
+                        TypedExpr::Field { receiver, .. } => {
+                            // Dispatch based on receiver's concrete/generic type
+                            match emitter.interner.kind(receiver.ty()) {
+                                TyKind::Struct(_) | TyKind::Class(_) | TyKind::Entity(_) => {
+                                    super::call::CallKind::Direct
+                                }
+                                TyKind::GenericParam(_) => {
+                                    super::call::CallKind::Virtual { slot: 0 }
+                                }
+                                _ => super::call::CallKind::Direct,
                             }
-                            TyKind::GenericParam(_) => {
-                                super::call::CallKind::Virtual { slot: 0 }
-                            }
-                            _ => super::call::CallKind::Direct,
                         }
-                    }
-                    _ => {
-                        // Check if callee_def_id maps to an ExternDef token (BUG-05 fix).
-                        let is_extern = maybe_def_id
-                            .and_then(|id| emitter.builder.token_for_def(id))
-                            .map(|t| {
-                                use crate::emit::metadata::TableId;
-                                t.table() == TableId::ExternDef
-                            })
-                            .unwrap_or(false);
-                        if is_extern {
-                            super::call::CallKind::Extern
-                        } else {
-                            super::call::CallKind::Direct
-                        }
+                        _ => super::call::CallKind::Direct,
                     }
                 };
 
                 let r_dst_call = emitter.alloc_reg(*ty);
 
-                let TypedExpr::Call { args, .. } = expr else { unreachable!() };
-                let arg_regs: Vec<u16> = args.iter().map(|arg| emit_expr(emitter, arg)).collect();
-                let argc = arg_regs.len() as u16;
-                let r_base = pack_args_consecutive(emitter, &arg_regs);
+                let TypedExpr::Call { args, .. } = expr else {
+                    unreachable!()
+                };
+                let packed_concrete_args = match (kind, concrete_target) {
+                    (super::call::CallKind::Direct, Some(target)) => {
+                        pack_concrete_call_args(emitter, callee, args, target)
+                    }
+                    _ => None,
+                };
+                let (r_base, argc) = if let Some(packed) = packed_concrete_args {
+                    packed
+                } else {
+                    let arg_regs: Vec<u16> = match (kind, callee.as_ref()) {
+                        (super::call::CallKind::Direct, TypedExpr::Field { receiver, .. })
+                            if declared_token
+                                .and_then(|token| emitter.builder.method_has_receiver(token))
+                                .unwrap_or(true) =>
+                        {
+                            std::iter::once(emit_expr(emitter, receiver))
+                                .chain(args.iter().map(|arg| emit_expr(emitter, arg)))
+                                .collect()
+                        }
+                        (
+                            super::call::CallKind::Virtual { .. },
+                            TypedExpr::Field { receiver, .. },
+                        ) => std::iter::once(emit_expr(emitter, receiver))
+                            .chain(args.iter().map(|arg| emit_expr(emitter, arg)))
+                            .collect(),
+                        (super::call::CallKind::Virtual { .. }, _) => {
+                            panic!("virtual call requires a field receiver");
+                        }
+                        _ => args.iter().map(|arg| emit_expr(emitter, arg)).collect(),
+                    };
+                    let argc = arg_regs.len() as u16;
+                    (pack_args_consecutive(emitter, &arg_regs), argc)
+                };
 
                 // IMPL-METHOD-TOKEN fix: impl methods share the impl_def_id as their callee_def_id
                 // (all methods in an impl block have the same DefId — the impl block's DefId).
@@ -388,53 +519,69 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
                 // (receiver_type_def_id, method_name) which is always unique and correct.
                 // Fall back to token_for_def only for free-function calls where the def_id
                 // uniquely identifies a single method.
-                let method_idx = if let TypedExpr::Field { receiver, field, .. } = callee.as_ref() {
+                let method_idx = if let TypedExpr::Field { receiver, .. } = callee.as_ref() {
                     match emitter.interner.kind(receiver.ty()) {
-                        TyKind::Struct(rdid) | TyKind::Class(rdid) | TyKind::Entity(rdid) => {
-                            let rdid = *rdid;
-                            emitter.builder.methoddef_token_by_type_and_name(rdid, field)
-                                .unwrap_or_else(|| {
-                                    // Fallback: token_for_def (works for non-impl methods)
-                                    maybe_def_id
-                                        .and_then(|id| emitter.builder.token_for_def(id))
-                                        .map(|t| t.0)
-                                        .unwrap_or(0)
-                                })
+                        TyKind::Struct(_) | TyKind::Class(_) | TyKind::Entity(_) => {
+                            concrete_target
+                                .expect(
+                                    "checked concrete method call has no non-null metadata target",
+                                )
+                                .token
                         }
-                        _ => {
-                            maybe_def_id
-                                .and_then(|id| emitter.builder.token_for_def(id))
-                                .map(|t| t.0)
-                                .unwrap_or(0)
-                        }
+                        _ => maybe_def_id
+                            .and_then(|id| emitter.builder.token_for_def(id))
+                            .filter(|token| !token.is_null())
+                            .map(|t| t.0)
+                            .expect("checked direct call has no non-null metadata target"),
                     }
                 } else {
                     maybe_def_id
                         .and_then(|id| emitter.builder.token_for_def(id))
+                        .filter(|token| !token.is_null())
                         .map(|t| t.0)
-                        .unwrap_or(0)
+                        .expect("checked direct call has no non-null metadata target")
                 };
 
                 match kind {
                     super::call::CallKind::Direct => {
-                        emitter.emit(Instruction::Call { r_dst: r_dst_call, method_idx, r_base, argc });
+                        emitter.emit(Instruction::Call {
+                            r_dst: r_dst_call,
+                            method_idx,
+                            r_base,
+                            argc,
+                        });
                     }
                     super::call::CallKind::Virtual { slot } => {
                         let r_obj = r_base;
-                        let r_args_base = if argc > 0 { r_base + 1 } else { r_base };
-                        let n_args = argc.saturating_sub(1);
                         let contract_idx: u32 = maybe_def_id
                             .and_then(|id| emitter.builder.contract_token_for_method_def_id(id))
                             .map(|t| t.0)
                             .unwrap_or(0);
-                        emitter.emit(Instruction::CallVirt { r_dst: r_dst_call, r_obj, contract_idx, slot, r_base: r_args_base, argc: n_args });
+                        emitter.emit(Instruction::CallVirt {
+                            r_dst: r_dst_call,
+                            r_obj,
+                            contract_idx,
+                            slot,
+                            r_base,
+                            argc,
+                        });
                     }
                     super::call::CallKind::Extern => {
-                        emitter.emit(Instruction::CallExtern { r_dst: r_dst_call, extern_idx: method_idx, r_base, argc });
+                        emitter.emit(Instruction::CallExtern {
+                            r_dst: r_dst_call,
+                            extern_idx: method_idx,
+                            r_base,
+                            argc,
+                        });
                     }
                     super::call::CallKind::Indirect => {
                         let r_delegate = emitter.regs.next().saturating_sub(1);
-                        emitter.emit(Instruction::CallIndirect { r_dst: r_dst_call, r_delegate, r_base, argc });
+                        emitter.emit(Instruction::CallIndirect {
+                            r_dst: r_dst_call,
+                            r_delegate,
+                            r_base,
+                            argc,
+                        });
                     }
                 }
                 r_dst_call
@@ -442,16 +589,27 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
         }
 
         // ── Field access (GET_FIELD) ───────────────────────────────────────────
-        TypedExpr::Field { receiver, field, ty, .. } => {
+        TypedExpr::Field {
+            receiver,
+            field,
+            ty,
+            ..
+        } => {
             let r_obj = emit_expr(emitter, receiver);
-            let receiver_def_id = extract_type_def_id(emitter, receiver.ty());
-            let field_idx = if let Some(def_id) = receiver_def_id {
-                emitter.builder.field_token_by_name(def_id, field).unwrap_or(0)
-            } else {
-                0
-            };
+            let receiver_def_id = extract_type_def_id(emitter, receiver.ty())
+                .expect("checked field access must have a nominal receiver type");
+            let field_token = emitter
+                .builder
+                .field_token_by_name(receiver_def_id, field)
+                .unwrap_or_else(|| {
+                    panic!("checked field access `{field}` has no metadata operand")
+                });
             let r_dst = emitter.alloc_reg(*ty);
-            emitter.emit(Instruction::GetField { r_dst, r_obj, field_idx });
+            emitter.emit(Instruction::GetField {
+                r_dst,
+                r_obj,
+                field_token,
+            });
             r_dst
         }
 
@@ -464,52 +622,64 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
                 .map(|t| t.0)
                 .unwrap_or(0);
             let r_dst = emitter.alloc_reg(*ty);
-            emitter.emit(Instruction::GetComponent { r_dst, r_entity, comp_type_idx: comp_idx });
+            emitter.emit(Instruction::GetComponent {
+                r_dst,
+                r_entity,
+                comp_type_idx: comp_idx,
+            });
             r_dst
         }
 
         // ── Index access — ARRAY_LOAD ─────────────────────────────────────────
-        TypedExpr::Index { ty, receiver, index, .. } => {
+        TypedExpr::Index {
+            ty,
+            receiver,
+            index,
+            ..
+        } => {
             let r_arr = emit_expr(emitter, receiver);
             let r_idx = emit_expr(emitter, index);
             let r_dst = emitter.alloc_reg(*ty);
-            emitter.emit(Instruction::ArrayLoad { r_dst, r_arr, r_idx });
+            emitter.emit(Instruction::ArrayLoad {
+                r_dst,
+                r_arr,
+                r_idx,
+            });
             r_dst
         }
 
         // ── Match — enum/option/result pattern lowering (EMIT-17, EMIT-23) ───
-        TypedExpr::Match { .. } => {
-            super::patterns::emit_match(emitter, expr)
-        }
+        TypedExpr::Match { .. } => super::patterns::emit_match(emitter, expr),
 
         // ── Lambda — closure/delegate lowering (EMIT-14) ─────────────────────
         TypedExpr::Lambda { ty, captures, .. } => {
-            let mut counter = emitter.lambda_counter;
-            let r = super::closure::emit_lambda(emitter, captures, &mut counter, *ty);
-            emitter.lambda_counter = counter;
-            r
+            let closure_idx = emitter.lambda_ordinal(expr);
+            super::closure::emit_lambda(emitter, captures, closure_idx, *ty)
         }
 
         // ── Object construction (EMIT-10, EMIT-11) ────────────────────────────
-        TypedExpr::New { ty, target_def_id, fields, .. } => {
-            emit_new(emitter, *ty, *target_def_id, fields)
-        }
-        TypedExpr::ArrayLit { ty, elements, .. } => {
-            emit_array_lit(emitter, *ty, elements)
-        }
-        TypedExpr::Range { ty, start, end, inclusive, .. } => {
-            emit_range(emitter, *ty, start.as_deref(), end.as_deref(), *inclusive)
-        }
+        TypedExpr::New {
+            ty,
+            target_def_id,
+            fields,
+            ..
+        } => emit_new(emitter, *ty, *target_def_id, fields),
+        TypedExpr::ArrayLit { ty, elements, .. } => emit_array_lit(emitter, *ty, elements),
+        TypedExpr::Range {
+            ty,
+            start,
+            end,
+            inclusive,
+            ..
+        } => emit_range(emitter, *ty, start.as_deref(), end.as_deref(), *inclusive),
         // ── Spawn — SPAWN_TASK (EMIT-15) ──────────────────────────────────────
-        TypedExpr::Spawn { ty, expr: inner, .. } => {
-            emit_spawn(emitter, *ty, inner, false)
-        }
-        // ── SpawnDetached — SPAWN_DETACHED (EMIT-15) ──────────────────────────
-        TypedExpr::SpawnDetached { ty, expr: inner, .. } => {
-            emit_spawn(emitter, *ty, inner, true)
-        }
+        TypedExpr::Spawn {
+            ty, expr: inner, ..
+        } => emit_spawn(emitter, *ty, inner),
         // ── Join — JOIN (EMIT-15) ──────────────────────────────────────────────
-        TypedExpr::Join { ty, expr: inner, .. } => {
+        TypedExpr::Join {
+            ty, expr: inner, ..
+        } => {
             let r_task = emit_expr(emitter, inner);
             let r_dst = emitter.alloc_reg(*ty);
             emitter.emit(Instruction::Join { r_dst, r_task });
@@ -522,9 +692,7 @@ pub fn emit_expr(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
             emitter.alloc_void_reg()
         }
         // ── Defer — DEFER_PUSH/POP/END (EMIT-15) ─────────────────────────────
-        TypedExpr::Defer { expr: inner, .. } => {
-            emit_defer(emitter, inner)
-        }
+        TypedExpr::Defer { expr: inner, .. } => emit_defer(emitter, inner),
         // ── TypeOf — emit TypeOf instruction with baked-in type_idx ─────────
         TypedExpr::TypeOf { ty, static_ty, .. } => {
             let r_dst = emitter.alloc_reg(*ty);
@@ -553,11 +721,11 @@ fn resolve_typeof_type_idx(emitter: &BodyEmitter<'_>, static_ty: Ty) -> u32 {
         | TyKind::Class(def_id)
         | TyKind::Entity(def_id)
         | TyKind::Enum(def_id)
-        | TyKind::Contract(def_id) => {
-            emitter.builder.token_for_def(*def_id)
-                .map(|t| t.0)
-                .unwrap_or(0)
-        }
+        | TyKind::Contract(def_id) => emitter
+            .builder
+            .token_for_def(*def_id)
+            .map(|t| t.0)
+            .unwrap_or(0),
         TyKind::Int => emitter.builder.type_ref_token_by_name("Int"),
         TyKind::Float => emitter.builder.type_ref_token_by_name("Float"),
         TyKind::Bool => emitter.builder.type_ref_token_by_name("Bool"),
@@ -568,30 +736,37 @@ fn resolve_typeof_type_idx(emitter: &BodyEmitter<'_>, static_ty: Ty) -> u32 {
 
 // ─── Tail-call emission (EMIT-24) ────────────────────────────────────────────
 
-/// Emit a TailCall instruction for a Return(Call(...)) pattern.
+/// Emit a TailCall instruction for a terminal dialogue transition.
 ///
-/// Dialogue transitions are lowered to `Return(Call(...))` at the AST level.
-/// This function detects that pattern and emits TailCall instead of Call + Ret,
-/// which is required for correct stack frame management in recursive state machines.
-pub(crate) fn emit_tail_call(
-    emitter: &mut BodyEmitter<'_>,
-    callee: &TypedExpr,
-    args: &[TypedExpr],
-    callee_def_id: Option<crate::resolve::def_map::DefId>,
-) -> u16 {
-    // Emit arguments; pack into consecutive block (BUG-06 fix: skip MOV if already consecutive)
-    let arg_regs: Vec<u16> = args.iter().map(|arg| emit_expr(emitter, arg)).collect();
-    let argc = arg_regs.len() as u16;
-    let r_base = pack_args_consecutive(emitter, &arg_regs);
+/// Transition intent is preserved as `TypedStmt::Transition`; ordinary return-call
+/// expressions use the normal Call + Ret path so defer ordering remains unchanged.
+pub(crate) fn emit_tail_call(emitter: &mut BodyEmitter<'_>, call: &TypedExpr) -> u16 {
+    let TypedExpr::Call {
+        callee,
+        args,
+        callee_def_id,
+        callee_has_receiver,
+        ..
+    } = call
+    else {
+        unreachable!("typed dialogue transition must contain a call")
+    };
+    let target = resolve_concrete_call_target(
+        emitter,
+        callee,
+        callee.ty(),
+        *callee_def_id,
+        *callee_has_receiver,
+    )
+    .expect("checked dialogue transition has no concrete non-null method target");
+    let (r_base, argc) = pack_concrete_call_args(emitter, callee, args, target)
+        .expect("resolved instance transition must have a field receiver");
 
-    // MC-01 fix: use the callee_def_id propagated from TypedExpr::Call.
-    let _ = callee; // callee sub-expression no longer needed for DefId resolution
-    let method_idx = callee_def_id
-        .and_then(|id| emitter.builder.token_for_def(id))
-        .map(|t| t.0)
-        .unwrap_or(0);
-
-    emitter.emit(Instruction::TailCall { method_idx, r_base, argc });
+    emitter.emit(Instruction::TailCall {
+        method_idx: target.token,
+        r_base,
+        argc,
+    });
 
     // TailCall does not return to this frame; return a void register to satisfy
     // the invariant that every emit_expr call returns a register.
@@ -608,7 +783,119 @@ pub(crate) fn extract_type_def_id(
     ty: Ty,
 ) -> Option<crate::resolve::def_map::DefId> {
     match emitter.interner.kind(ty) {
-        TyKind::Struct(def_id) | TyKind::Class(def_id) | TyKind::Entity(def_id) | TyKind::Enum(def_id) => Some(*def_id),
+        TyKind::Struct(def_id)
+        | TyKind::Class(def_id)
+        | TyKind::Entity(def_id)
+        | TyKind::Enum(def_id) => Some(*def_id),
         _ => None,
+    }
+}
+
+/// A statically resolvable CALL target and its ABI receiver requirement.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ConcreteCallTarget {
+    pub token: u32,
+    pub prepend_receiver: bool,
+}
+
+/// Emit and pack the argument block for a statically resolved concrete call.
+/// Instance methods receive `self` first; static qualified calls intentionally
+/// do not evaluate or pass the qualifier as an implicit argument.
+pub(crate) fn pack_concrete_call_args(
+    emitter: &mut BodyEmitter<'_>,
+    callee: &TypedExpr,
+    args: &[TypedExpr],
+    target: ConcreteCallTarget,
+) -> Option<(u16, u16)> {
+    let arg_regs: Vec<u16> = if target.prepend_receiver {
+        let TypedExpr::Field { receiver, .. } = callee else {
+            return None;
+        };
+        std::iter::once(emit_expr(emitter, receiver))
+            .chain(args.iter().map(|arg| emit_expr(emitter, arg)))
+            .collect()
+    } else {
+        args.iter().map(|arg| emit_expr(emitter, arg)).collect()
+    };
+    let argc = arg_regs.len() as u16;
+    Some((pack_args_consecutive(emitter, &arg_regs), argc))
+}
+
+/// Resolve only calls that can use the concrete CALL ABI. Extern, virtual,
+/// and delegate calls return `None`, allowing tail/spawn lowering to decline
+/// the optimization rather than emit a null target.
+pub(crate) fn resolve_concrete_call_target(
+    emitter: &BodyEmitter<'_>,
+    callee: &TypedExpr,
+    checked_func_ty: Ty,
+    callee_def_id: Option<crate::resolve::def_map::DefId>,
+    callee_has_receiver: Option<bool>,
+) -> Option<ConcreteCallTarget> {
+    use crate::emit::metadata::{MetadataToken, TableId};
+
+    let declared_token = callee_def_id.and_then(|id| emitter.builder.token_for_def(id));
+    if declared_token.is_some_and(|token| token.table() == TableId::ExternDef) {
+        return None;
+    }
+
+    match callee {
+        TypedExpr::Field {
+            receiver, field, ..
+        } => {
+            let has_receiver = callee_has_receiver?;
+            if !matches!(
+                emitter.interner.kind(receiver.ty()),
+                TyKind::Struct(_) | TyKind::Class(_) | TyKind::Entity(_) | TyKind::Enum(_)
+            ) {
+                return None;
+            }
+            if let Some(token) = declared_token.filter(|token| {
+                !token.is_null()
+                    && matches!(token.table(), TableId::MethodDef | TableId::MethodRef)
+                    && emitter.builder.method_has_receiver(*token) == Some(has_receiver)
+            }) {
+                return Some(ConcreteCallTarget {
+                    token: token.0,
+                    prepend_receiver: has_receiver,
+                });
+            }
+            let signature = crate::emit::type_sig::encode_method_sig_for_fn_ty(
+                checked_func_ty,
+                emitter.interner,
+                &|def_id| {
+                    emitter
+                        .builder
+                        .token_for_def(def_id)
+                        .unwrap_or(MetadataToken::NULL)
+                },
+            )?;
+            let receiver_ty = emitter.interner.resolve_infer(receiver.ty());
+            let base_parent = extract_type_def_id(emitter, receiver_ty)
+                .and_then(|def_id| emitter.builder.token_for_def(def_id));
+            let exact_parent = emitter
+                .builder
+                .type_spec_token_for_encoded_ty(receiver_ty, emitter.interner)
+                .or(base_parent)?;
+            let token = emitter.builder.method_token_by_parent_name_and_signature(
+                exact_parent,
+                base_parent,
+                field,
+                &signature,
+                has_receiver,
+            )?;
+            let token_metadata = MetadataToken(token);
+            (!token_metadata.is_null()).then_some(ConcreteCallTarget {
+                token,
+                prepend_receiver: has_receiver,
+            })
+        }
+        _ => {
+            let token = declared_token?;
+            (!token.is_null() && matches!(token.table(), TableId::MethodDef | TableId::MethodRef))
+                .then_some(ConcreteCallTarget {
+                    token: token.0,
+                    prepend_receiver: false,
+                })
+        }
     }
 }

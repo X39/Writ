@@ -130,7 +130,7 @@
         },
         {
           "name": "keyword.other.writ",
-          "match": "\\b(let|mut|const|global|pub|priv|void|self|true|false|null|new|on|use|spawn|detached|join|cancel|defer|atomic)\\b"
+          "match": "\\b(let|mut|const|global|pub|priv|void|self|true|false|null|new|on|use|spawn|join|cancel|defer|atomic)\\b"
         },
         {
           "name": "storage.type.primitive.writ",

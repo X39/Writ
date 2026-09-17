@@ -19,7 +19,7 @@
 | Structs                      | **Value types**                                    | Inline storage, copy-on-assign. Reference-typed fields copy pointer (shallow copy). Structural equality auto-derived. No lifecycle hooks. Recursive value-type structs are illegal (infinite size). |
 | Classes                      | **Reference types**                                | Heap-allocated, GC-managed, shared-on-assign. Support lifecycle hooks (on create/finalize/serialize/deserialize). The `class` keyword fills the reference-type role. |
 | Enums                        | **Value types**                                    | Tag + inline payload. Copied on assignment. Reference payloads are GC-traced.                                     |
-| Binding mutability           | **Binding-only**                                   | `let`/`let mut` controls the binding, not the object. Standard GC-language model.                                 |
+| Binding and field mutability | **Strict mutable-place model**                     | Mutation requires a `let mut` receiver path and every traversed field must be declared `mut`; `mut self` calls use the same rule. |
 | Closure/function values      | **Delegate model (C# style)**                      | Unified: closures, function refs, and bound methods are all delegates                                             |
 | Closure mut captures         | **Shared capture class**                           | Compiler generates a class; both outer scope and closure reference it                                            |
 | Empty closures               | **Null target optimization**                       | No capture struct allocated if nothing is captured                                                                |
@@ -27,10 +27,9 @@
 | Entity ownership             | **Runtime owns script state, host owns native**    | Extern component fields proxied through host API                                                                  |
 | Save/load IL                 | **Include original IL in save**                    | PCs become invalid if scripts are recompiled                                                                      |
 | Self parameter               | **Explicit `self`/`mut self`**                     | Methods take explicit receiver; operators and lifecycle hooks have implicit self                                  |
-| Binding mutability           | **Strict (prevents mutation)**                     | `let` prevents both reassignment and mutation through the binding                                                 |
-| Component back-ref           | **Hidden `@entity` field**                         | Compiler-emitted, unreachable from script; set during SPAWN_ENTITY, used internally for component access lowering |
+| Component back-ref           | **Hidden owner association**                       | Runtime/host associates a component with its entity during SPAWN_ENTITY; it is unreachable from Writ source and used internally for component access lowering |
 | Construction syntax          | **`new Type { ... }`**                             | `new` keyword disambiguates construction from blocks; same syntax for structs, classes, and entities              |
-| Default field values         | **Runtime expressions, inlined**                   | Compiler emits default expression code at each construction site; `NEW` allocates zeroed                          |
+| Default field values         | **Runtime expressions, inlined**                   | Compiler evaluates one default/override per field in declaration order and passes the complete block to atomic `NEW`/`SPAWN_ENTITY` |
 | Components                   | **Extern-only, data-only**                         | No script-defined components; components are host-provided data schemas, no methods                               |
 | Lifecycle hooks              | **Universal `on` hooks**                           | `on create/finalize/serialize/deserialize` on classes and entities; `on destroy/interact` entity-only             |
 | Host communication           | **Suspend-and-confirm**                            | Runtime suspends on host operations until host confirms; aligns with game engine logic loop                       |
@@ -47,7 +46,7 @@
 | Metadata tokens              | **u32: top 8 = table ID, bottom 24 = row**         | Uniform encoding for all cross-table references                                                                   |
 | Module versioning            | **Semver 3.0.0 (MAJOR.MINOR.PATCH)**               | ModuleRef carries min_version; same-major compatibility rule                                                      |
 | String/blob heaps            | **Length-prefixed**                                | u32(length) + bytes; offset 0 = empty/null                                                                        |
-| Entity construction          | **INIT_ENTITY commits buffered writes**            | Component writes buffered during construction, flushed as batch                                                   |
+| Entity construction          | **Atomic SPAWN plus lifecycle INIT**               | SPAWN installs all script fields before publication; INIT completes host setup, marks alive, and fires `on_create` |
 | Well-known type table        | **Removed**                                        | Core types in `writ-runtime` module; referenced via standard TypeRef                                              |
 | `writ-runtime` module        | **Runtime-provided, spec-mandated**                | Intrinsic flag on MethodDefs; runtime implements natively                                                         |
 | `writ-std` module            | **Optional, written in Writ**                      | Utility types (List, Map, etc.); imports from writ-runtime                                                        |

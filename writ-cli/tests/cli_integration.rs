@@ -4,7 +4,7 @@
 /// (not via CLI process invocation) to validate end-to-end workflows.
 use writ_assembler::{assemble, disassemble};
 use writ_module::{
-    heap::read_string, instruction::Instruction, module::MethodBody, Module, ModuleBuilder,
+    Module, ModuleBuilder, heap::read_string, instruction::Instruction, module::MethodBody,
 };
 use writ_runtime::{
     ExecutionLimit, GcStats, HostRequest, HostResponse, LogLevel, RequestId, RuntimeBuilder,
@@ -42,7 +42,12 @@ impl TestSayHost {
 impl RuntimeHost for TestSayHost {
     fn on_request(&mut self, _id: RequestId, req: &HostRequest) -> HostResponse {
         match req {
-            HostRequest::ExternCall { extern_idx, args, display_args, .. } => {
+            HostRequest::ExternCall {
+                extern_idx,
+                args,
+                display_args,
+                ..
+            } => {
                 let arg_strs: Vec<String> = args
                     .iter()
                     .map(|v| match v {
@@ -55,8 +60,11 @@ impl RuntimeHost for TestSayHost {
                         Value::Struct { .. } => "<struct>".to_string(),
                     })
                     .collect();
-                self.captured
-                    .push(format!("extern_idx={} args=[{}]", extern_idx, arg_strs.join(",")));
+                self.captured.push(format!(
+                    "extern_idx={} args=[{}]",
+                    extern_idx,
+                    arg_strs.join(",")
+                ));
                 // FIX-03: capture display_args for string content verification
                 self.display_captured.push(display_args.clone());
                 HostResponse::Value(Value::Void)
@@ -93,10 +101,22 @@ fn test_assemble_and_disassemble() {
     let module = assemble(src).expect("assemble should succeed");
     let text = disassemble(&module);
 
-    assert!(text.contains(".module"), "output should contain .module directive");
-    assert!(text.contains(".method"), "output should contain .method directive");
-    assert!(text.contains("LOAD_INT"), "output should contain LOAD_INT instruction");
-    assert!(text.contains("RET_VOID"), "output should contain RET_VOID instruction");
+    assert!(
+        text.contains(".module"),
+        "output should contain .module directive"
+    );
+    assert!(
+        text.contains(".method"),
+        "output should contain .method directive"
+    );
+    assert!(
+        text.contains("LOAD_INT"),
+        "output should contain LOAD_INT instruction"
+    );
+    assert!(
+        text.contains("RET_VOID"),
+        "output should contain RET_VOID instruction"
+    );
 }
 
 // ─── Test: run simple module (programmatic build with export) ─────────────────
@@ -133,13 +153,20 @@ fn test_run_simple_module() {
         .find(|e| read_string(&loaded.string_heap, e.name).unwrap_or("") == "main")
         .expect("should find 'main' export");
 
-    assert_eq!(main_export.item_kind, 0, "export should be a method (kind=0)");
+    assert_eq!(
+        main_export.item_kind, 0,
+        "export should be a method (kind=0)"
+    );
 
     let method_idx = (main_export.item.0 & 0x00FF_FFFF) as usize - 1;
 
-    let mut runtime = RuntimeBuilder::new(loaded).build().expect("runtime should build");
+    let mut runtime = RuntimeBuilder::new(loaded)
+        .build()
+        .expect("runtime should build");
 
-    runtime.spawn_task(method_idx, vec![]).expect("spawn_task should succeed");
+    runtime
+        .spawn_task(method_idx, vec![])
+        .expect("spawn_task should succeed");
 
     loop {
         match runtime.tick(0.0, ExecutionLimit::None) {
@@ -218,7 +245,10 @@ fn test_end_to_end_dialogue_say() {
     let body = MethodBody {
         register_types: vec![0, 0],
         code: encode(&[
-            Instruction::LoadInt { r_dst: 0, value: 42 },
+            Instruction::LoadInt {
+                r_dst: 0,
+                value: 42,
+            },
             Instruction::CallExtern {
                 r_dst: 1,
                 extern_idx: extern_tok.0,
@@ -260,7 +290,9 @@ fn test_end_to_end_dialogue_say() {
         .expect("runtime should build");
 
     // Step 6: Spawn and run
-    runtime.spawn_task(method_idx, vec![]).expect("spawn_task should succeed");
+    runtime
+        .spawn_task(method_idx, vec![])
+        .expect("spawn_task should succeed");
 
     loop {
         match runtime.tick(0.0, ExecutionLimit::None) {
@@ -306,7 +338,10 @@ fn fix03_extern_call_display_args_contains_string_content() {
     let body = MethodBody {
         register_types: vec![0, 0, 0],
         code: encode(&[
-            Instruction::LoadInt { r_dst: 0, value: 99 },
+            Instruction::LoadInt {
+                r_dst: 0,
+                value: 99,
+            },
             Instruction::I2s { r_dst: 1, r_src: 0 },
             Instruction::CallExtern {
                 r_dst: 2,
@@ -339,7 +374,9 @@ fn fix03_extern_call_display_args_contains_string_content() {
         .build()
         .expect("runtime should build");
 
-    runtime.spawn_task(method_idx, vec![]).expect("spawn should succeed");
+    runtime
+        .spawn_task(method_idx, vec![])
+        .expect("spawn should succeed");
 
     loop {
         match runtime.tick(0.0, ExecutionLimit::None) {
@@ -357,11 +394,14 @@ fn fix03_extern_call_display_args_contains_string_content() {
     );
     let first = &display[0];
     assert_eq!(
-        first.len(), 1,
-        "expected exactly one display arg, got {:?}", first
+        first.len(),
+        1,
+        "expected exactly one display arg, got {:?}",
+        first
     );
     assert_eq!(
         first[0], "99",
-        "display_args[0] must be the actual string content '99', got {:?}", first[0]
+        "display_args[0] must be the actual string content '99', got {:?}",
+        first[0]
     );
 }

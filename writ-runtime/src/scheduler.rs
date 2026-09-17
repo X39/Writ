@@ -1,7 +1,7 @@
-use std::collections::VecDeque;
 use rustc_hash::FxHashMap;
+use std::collections::VecDeque;
 
-use crate::dispatch::{execute_batch, execute_crash, DispatchTable, ExecutionResult};
+use crate::dispatch::{DispatchTable, ExecutionResult, execute_batch, execute_crash};
 use crate::entity::EntityRegistry;
 use crate::frame::{CallFrame, RegisterPool};
 use crate::gc::GcHeap;
@@ -9,14 +9,16 @@ use crate::host::RuntimeHost;
 use crate::loader::LoadedModule;
 use crate::reflection::ReflectionIndex;
 use crate::task::{SuspendReason, Task, TaskState};
-use crate::value::{pack_task_id, TaskId, Value};
+use crate::value::{TaskId, Value, pack_task_id};
 
 /// Task scheduler managing task lifecycle and execution.
 pub struct Scheduler {
     pub(crate) tasks: FxHashMap<TaskId, Task>,
     pub(crate) ready_queue: VecDeque<TaskId>,
     pub(crate) next_task_index: u32,
-    pub(crate) globals: Vec<Value>,
+    /// Module-local global storage, indexed first by Domain module index and
+    /// then by the module's zero-based GlobalDef row.
+    pub(crate) globals: Vec<Vec<Value>>,
     pub(crate) global_locks: FxHashMap<u32, TaskId>,
     /// Tasks waiting to join on another task. Maps target_task_id -> Vec<(waiting_task_id, r_dst)>.
     pub(crate) join_waiters: FxHashMap<TaskId, Vec<(TaskId, u16)>>,
@@ -148,20 +150,42 @@ impl Scheduler {
                     {
                         let task = self.tasks.get_mut(&task_id).unwrap();
                         execute_crash(
-                            task, msg.clone(), modules, current_module_idx, dispatch_table, heap, host,
-                            &mut self.globals, next_request_id,
-                            &mut self.entity_registry, &mut self.pool, reflection,
+                            task,
+                            msg.clone(),
+                            modules,
+                            current_module_idx,
+                            dispatch_table,
+                            heap,
+                            host,
+                            &mut self.globals,
+                            next_request_id,
+                            &mut self.entity_registry,
+                            &mut self.pool,
+                            reflection,
                         );
                     }
                     // Cancel scoped children
-                    let children = self.tasks.get(&task_id)
+                    let children = self
+                        .tasks
+                        .get(&task_id)
                         .map(|t| t.scoped_children.clone())
                         .unwrap_or_default();
                     for child_id in children {
-                        self.cancel_task_tree(child_id, modules, current_module_idx, dispatch_table, heap, host, next_request_id, reflection);
+                        self.cancel_task_tree(
+                            child_id,
+                            modules,
+                            current_module_idx,
+                            dispatch_table,
+                            heap,
+                            host,
+                            next_request_id,
+                            reflection,
+                        );
                     }
                     // Release any global locks held by this task
-                    let locks: Vec<u32> = self.tasks.get(&task_id)
+                    let locks: Vec<u32> = self
+                        .tasks
+                        .get(&task_id)
                         .map(|t| t.atomic_locks.clone())
                         .unwrap_or_default();
                     for global_idx in locks {
@@ -186,10 +210,19 @@ impl Scheduler {
                 }
 
                 // ── Concurrency results handled by scheduler ──
-                ExecutionResult::SpawnChild { r_dst, method_idx, args } => {
-                    let child_id = self.create_task(
-                        method_idx, args, Some(task_id), &modules[current_module_idx],
-                    );
+                ExecutionResult::SpawnChild {
+                    r_dst,
+                    module_idx,
+                    method_idx,
+                    args,
+                } => {
+                    let child_id =
+                        self.create_task(method_idx, args, Some(task_id), &modules[module_idx]);
+                    self.tasks
+                        .get_mut(&child_id)
+                        .and_then(|task| task.call_stack.last_mut())
+                        .expect("new child task must have an initial frame")
+                        .module_idx = Some(module_idx);
                     // Add child to parent's scoped_children and store result
                     if let Some(parent) = self.tasks.get_mut(&task_id) {
                         parent.scoped_children.push(child_id);
@@ -199,22 +232,15 @@ impl Scheduler {
                     }
                     continue;
                 }
-                ExecutionResult::SpawnDetachedTask { r_dst, method_idx, args } => {
-                    let child_id = self.create_task(
-                        method_idx, args, None, &modules[current_module_idx],
-                    );
-                    if let Some(parent) = self.tasks.get_mut(&task_id)
-                        && let Some(frame) = parent.call_stack.last_mut() {
-                            frame.registers[r_dst as usize] = pack_task_id(child_id);
-                        }
-                    continue;
-                }
                 ExecutionResult::JoinTask { r_dst, target } => {
                     // Check if target is already terminal
-                    let target_info = self.tasks.get(&target)
+                    let target_info = self
+                        .tasks
+                        .get(&target)
                         .map(|t| (t.state, t.return_value.clone()));
                     match target_info {
-                        Some((TaskState::Completed, ret_val)) | Some((TaskState::Cancelled, ret_val)) => {
+                        Some((TaskState::Completed, ret_val))
+                        | Some((TaskState::Cancelled, ret_val)) => {
                             let task = self.tasks.get_mut(&task_id).unwrap();
                             if let Some(frame) = task.call_stack.last_mut() {
                                 frame.registers[r_dst as usize] = ret_val.unwrap_or(Value::Void);
@@ -229,9 +255,10 @@ impl Scheduler {
                                 .entry(target)
                                 .or_default()
                                 .push((task_id, r_dst));
-                            return Some((task_id, ExecutionResult::Suspended(
-                                crate::host::RequestId(0),
-                            )));
+                            return Some((
+                                task_id,
+                                ExecutionResult::Suspended(crate::host::RequestId(0)),
+                            ));
                         }
                         None => {
                             // Target doesn't exist — just return Void
@@ -244,7 +271,16 @@ impl Scheduler {
                     }
                 }
                 ExecutionResult::CancelTask { target } => {
-                    self.cancel_task_tree(target, modules, current_module_idx, dispatch_table, heap, host, next_request_id, reflection);
+                    self.cancel_task_tree(
+                        target,
+                        modules,
+                        current_module_idx,
+                        dispatch_table,
+                        heap,
+                        host,
+                        next_request_id,
+                        reflection,
+                    );
                     continue;
                 }
             }
@@ -266,13 +302,24 @@ impl Scheduler {
         reflection: &mut crate::reflection::ReflectionIndex,
     ) {
         // Get children first (depth-first)
-        let children = self.tasks.get(&task_id)
+        let children = self
+            .tasks
+            .get(&task_id)
             .map(|t| t.scoped_children.clone())
             .unwrap_or_default();
 
         // Cancel children first
         for child_id in children {
-            self.cancel_task_tree(child_id, modules, current_module_idx, dispatch_table, heap, host, next_request_id, reflection);
+            self.cancel_task_tree(
+                child_id,
+                modules,
+                current_module_idx,
+                dispatch_table,
+                heap,
+                host,
+                next_request_id,
+                reflection,
+            );
         }
 
         // Cancel this task
@@ -290,13 +337,23 @@ impl Scheduler {
             execute_crash(
                 task,
                 "task cancelled".into(),
-                modules, current_module_idx, dispatch_table, heap, host, &mut self.globals, next_request_id,
-                &mut self.entity_registry, &mut self.pool, reflection,
+                modules,
+                current_module_idx,
+                dispatch_table,
+                heap,
+                host,
+                &mut self.globals,
+                next_request_id,
+                &mut self.entity_registry,
+                &mut self.pool,
+                reflection,
             );
         }
 
         // Release global locks
-        let locks: Vec<u32> = self.tasks.get(&task_id)
+        let locks: Vec<u32> = self
+            .tasks
+            .get(&task_id)
             .map(|t| t.atomic_locks.clone())
             .unwrap_or_default();
         for global_idx in locks {
@@ -318,14 +375,16 @@ impl Scheduler {
         if let Some(waiters) = self.join_waiters.remove(&target_id) {
             for (waiter_id, r_dst) in waiters {
                 if let Some(waiter) = self.tasks.get_mut(&waiter_id)
-                    && waiter.state == TaskState::Suspended {
-                        waiter.state = TaskState::Ready;
-                        waiter.pending_request = None;
-                        if let Some(frame) = waiter.call_stack.last_mut() {
-                            frame.registers[r_dst as usize] = return_value.clone().unwrap_or(Value::Void);
-                        }
-                        self.ready_queue.push_back(waiter_id);
+                    && waiter.state == TaskState::Suspended
+                {
+                    waiter.state = TaskState::Ready;
+                    waiter.pending_request = None;
+                    if let Some(frame) = waiter.call_stack.last_mut() {
+                        frame.registers[r_dst as usize] =
+                            return_value.clone().unwrap_or(Value::Void);
                     }
+                    self.ready_queue.push_back(waiter_id);
+                }
             }
         }
     }
@@ -337,7 +396,7 @@ impl Scheduler {
 
     /// Schedule a finalizer task for the given method with a self argument.
     ///
-    /// The task is detached (no parent) and runs the on_finalize hook.
+    /// The task is a runtime-owned root task and runs the on_finalize hook.
     pub fn schedule_finalizer(
         &mut self,
         method_idx: usize,

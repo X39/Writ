@@ -44,7 +44,7 @@ impl_decl      = 'impl' [ contract 'for' ] type '{'
 entity_decl    = 'entity' IDENT '{' { entity_member } '}' ;
 entity_member  = [ visibility ] property | use_decl
                | [ visibility ] fn_decl | on_decl ;
-property       = IDENT ':' type [ '=' expr ] ',' ;
+property       = [ 'mut' ] IDENT ':' type [ '=' expr ] ',' ;
 use_decl       = 'use' IDENT [ '{' { IDENT ':' expr ',' } '}' ] ',' ;
 on_decl        = 'on' IDENT [ '(' params ')' ] block ;
 

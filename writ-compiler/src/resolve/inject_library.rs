@@ -8,6 +8,36 @@ use writ_diagnostics::FileId;
 
 use super::def_map::{DefEntry, DefKind, DefMap, DefVis};
 
+/// Give an imported MethodDef a stable declaration identity without pretending
+/// that it came from source text. The synthetic file id identifies the library,
+/// while this span identifies the MethodDef row inside that library.
+pub(crate) fn library_method_span(method_idx: usize) -> SimpleSpan {
+    SimpleSpan {
+        start: method_idx,
+        end: method_idx.saturating_add(1),
+        context: (),
+    }
+}
+
+/// Find the DefId allocated for one exact imported top-level MethodDef row.
+///
+/// Names are insufficient here because a library may export overloads. Pairing
+/// the library's synthetic file id with its MethodDef-row span makes this lookup
+/// stable across resolution, type checking, and emission.
+pub(crate) fn library_top_level_method_def_id(
+    def_map: &DefMap,
+    lib_file_id: FileId,
+    method_idx: usize,
+    method_name: &str,
+) -> Option<super::def_map::DefId> {
+    def_map.get_fn_by_span(
+        method_name,
+        lib_file_id,
+        method_name,
+        library_method_span(method_idx),
+    )
+}
+
 /// Inject type and contract definitions from pre-compiled library modules into the DefMap.
 ///
 /// For each library module, creates synthetic `DefEntry` records for all types,
@@ -20,11 +50,12 @@ use super::def_map::{DefEntry, DefKind, DefMap, DefVis};
 /// This must be called BEFORE `collect_declarations` so that library types are
 /// in the DefMap when user-source Pass 1 and Pass 2 run. User code re-declaring
 /// a library type will produce a duplicate-definition error (expected behavior).
-pub fn inject_module_types(
-    library_modules: &[&writ_module::Module],
-    def_map: &mut DefMap,
-) {
-    let synthetic_span = SimpleSpan { start: 0, end: 0, context: () };
+pub fn inject_module_types(library_modules: &[&writ_module::Module], def_map: &mut DefMap) {
+    let synthetic_span = SimpleSpan {
+        start: 0,
+        end: 0,
+        context: (),
+    };
 
     for (lib_index, module) in library_modules.iter().enumerate() {
         let lib_file_id = FileId(u32::MAX - 1 - lib_index as u32);
@@ -35,7 +66,8 @@ pub fn inject_module_types(
 
         // Collect generic params for type defs (owner_kind == 0)
         let type_generics: rustc_hash::FxHashMap<u32, Vec<String>> = {
-            let mut map: rustc_hash::FxHashMap<u32, Vec<(u16, String)>> = rustc_hash::FxHashMap::default();
+            let mut map: rustc_hash::FxHashMap<u32, Vec<(u16, String)>> =
+                rustc_hash::FxHashMap::default();
             for param in &module.generic_params {
                 if param.owner_kind != 0 {
                     continue;
@@ -48,7 +80,9 @@ pub fn inject_module_types(
                 let param_name = writ_module::heap::read_string(&module.string_heap, param.name)
                     .unwrap_or("")
                     .to_string();
-                map.entry(type_idx).or_default().push((param.ordinal, param_name));
+                map.entry(type_idx)
+                    .or_default()
+                    .push((param.ordinal, param_name));
             }
             map.into_iter()
                 .map(|(k, mut v)| {
@@ -60,7 +94,8 @@ pub fn inject_module_types(
 
         // Collect generic params for contract defs (owner_kind == 2)
         let contract_generics: rustc_hash::FxHashMap<u32, Vec<String>> = {
-            let mut map: rustc_hash::FxHashMap<u32, Vec<(u16, String)>> = rustc_hash::FxHashMap::default();
+            let mut map: rustc_hash::FxHashMap<u32, Vec<(u16, String)>> =
+                rustc_hash::FxHashMap::default();
             for param in &module.generic_params {
                 if param.owner_kind != 2 {
                     continue;
@@ -73,7 +108,9 @@ pub fn inject_module_types(
                 let param_name = writ_module::heap::read_string(&module.string_heap, param.name)
                     .unwrap_or("")
                     .to_string();
-                map.entry(contract_idx).or_default().push((param.ordinal, param_name));
+                map.entry(contract_idx)
+                    .or_default()
+                    .push((param.ordinal, param_name));
             }
             map.into_iter()
                 .map(|(k, mut v)| {
@@ -135,7 +172,8 @@ pub fn inject_module_types(
 
             let id = def_map.arena.alloc(entry);
             def_map.by_fqn.insert(fqn, id);
-            def_map.namespace_members
+            def_map
+                .namespace_members
                 .entry(namespace)
                 .or_default()
                 .push(id);
@@ -146,9 +184,10 @@ pub fn inject_module_types(
             let name = writ_module::heap::read_string(&module.string_heap, contract_def.name)
                 .unwrap_or("")
                 .to_string();
-            let namespace = writ_module::heap::read_string(&module.string_heap, contract_def.namespace)
-                .unwrap_or("")
-                .to_string();
+            let namespace =
+                writ_module::heap::read_string(&module.string_heap, contract_def.namespace)
+                    .unwrap_or("")
+                    .to_string();
 
             if name.is_empty() {
                 continue;
@@ -183,83 +222,18 @@ pub fn inject_module_types(
 
             let id = def_map.arena.alloc(entry);
             def_map.by_fqn.insert(fqn, id);
-            def_map.namespace_members
+            def_map
+                .namespace_members
                 .entry(namespace)
                 .or_default()
                 .push(id);
         }
 
-        // --- Inject top-level functions (methods not owned by any TypeDef or ImplDef) ---
-        // A method is top-level if its 0-based index is NOT in any TypeDef's method range
-        // AND NOT in any ImplDef's method range.
+        // --- Inject top-level functions using authoritative MethodDef.owner tokens. ---
+        for method_idx in module.top_level_method_indices() {
+            let method_def = &module.method_defs[method_idx];
 
-        // Build the set of method indices owned by TypeDefs
-        let type_method_ranges: Vec<(usize, usize)> = {
-            let mut ranges = Vec::new();
-            for (i, type_def) in module.type_defs.iter().enumerate() {
-                if type_def.method_list == 0 {
-                    continue;
-                }
-                let start = (type_def.method_list - 1) as usize; // convert 1-based to 0-based
-                // end = next type_def's method_list or total method count
-                let end = if i + 1 < module.type_defs.len() {
-                    let next_start = module.type_defs[i + 1].method_list;
-                    if next_start == 0 {
-                        module.method_defs.len()
-                    } else {
-                        (next_start - 1) as usize
-                    }
-                } else {
-                    module.method_defs.len()
-                };
-                if start < end {
-                    ranges.push((start, end));
-                }
-            }
-            ranges
-        };
-
-        // Build the set of method indices owned by ImplDefs
-        let impl_method_ranges: Vec<(usize, usize)> = {
-            let mut ranges = Vec::new();
-            for (i, impl_def) in module.impl_defs.iter().enumerate() {
-                if impl_def.method_list == 0 {
-                    continue;
-                }
-                let start = (impl_def.method_list - 1) as usize;
-                let end = if i + 1 < module.impl_defs.len() {
-                    let next_start = module.impl_defs[i + 1].method_list;
-                    if next_start == 0 {
-                        module.method_defs.len()
-                    } else {
-                        (next_start - 1) as usize
-                    }
-                } else {
-                    module.method_defs.len()
-                };
-                if start < end {
-                    ranges.push((start, end));
-                }
-            }
-            ranges
-        };
-
-        let is_owned = |method_idx: usize| -> bool {
-            for &(start, end) in &type_method_ranges {
-                if method_idx >= start && method_idx < end {
-                    return true;
-                }
-            }
-            for &(start, end) in &impl_method_ranges {
-                if method_idx >= start && method_idx < end {
-                    return true;
-                }
-            }
-            false
-        };
-
-        for (method_idx, method_def) in module.method_defs.iter().enumerate() {
-            if is_owned(method_idx) {
+            if method_def.flags & writ_module::tables::METHOD_FLAG_PUBLIC == 0 {
                 continue;
             }
 
@@ -273,8 +247,19 @@ pub fn inject_module_types(
 
             // Top-level functions have no namespace in this module
             let fqn = name.clone();
+            let method_span = library_method_span(method_idx);
 
-            if def_map.by_fqn.contains_key(&fqn) {
+            // `typecheck` defensively injects libraries again at its public
+            // boundary. Keep that second pass idempotent at MethodDef-row
+            // granularity rather than collapsing overloads by name.
+            if library_top_level_method_def_id(def_map, lib_file_id, method_idx, &name).is_some() {
+                continue;
+            }
+
+            let existing_fn = def_map.by_fqn.get(&fqn).copied().filter(|id| {
+                matches!(def_map.get_entry(*id).kind, DefKind::Fn | DefKind::ExternFn)
+            });
+            if def_map.by_fqn.contains_key(&fqn) && existing_fn.is_none() {
                 continue;
             }
 
@@ -285,14 +270,26 @@ pub fn inject_module_types(
                 file_id: lib_file_id,
                 namespace: String::new(),
                 name: name.clone(),
-                name_span: synthetic_span,
+                name_span: method_span,
                 generics: Vec::new(),
-                span: synthetic_span,
+                span: method_span,
             };
 
             let id = def_map.arena.alloc(entry);
-            def_map.by_fqn.insert(fqn, id);
-            def_map.namespace_members
+            if method_def.flags & writ_module::tables::METHOD_FLAG_DIALOGUE != 0 {
+                def_map.dialogue_defs.insert(id);
+            }
+            if let Some(existing_id) = existing_fn {
+                def_map
+                    .fn_overloads
+                    .entry(fqn)
+                    .or_insert_with(|| vec![existing_id])
+                    .push(id);
+            } else {
+                def_map.by_fqn.insert(fqn, id);
+            }
+            def_map
+                .namespace_members
                 .entry(String::new())
                 .or_default()
                 .push(id);

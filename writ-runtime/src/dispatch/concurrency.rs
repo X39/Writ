@@ -1,3 +1,5 @@
+use crate::value::Value;
+
 use super::{ExecContext, ExecutionResult};
 
 pub(super) fn exec_spawn_task(
@@ -7,35 +9,49 @@ pub(super) fn exec_spawn_task(
     r_base: u16,
     argc: u16,
 ) -> ExecutionResult {
-    let decoded_idx = match super::decode_method_token(method_idx) {
-        Some(idx) => idx,
-        None => return ExecutionResult::Crash("SpawnTask: null method token".into()),
-    };
-    let mut args = Vec::with_capacity(argc as usize);
-    {
-        let frame = ctx.task.call_stack.last().unwrap();
-        for i in 0..argc as usize {
-            args.push(frame.registers[r_base as usize + i]);
-        }
-    }
+    let (module_idx, method_idx, args) =
+        match prepare_spawn(ctx, "SPAWN_TASK", r_dst, method_idx, r_base, argc) {
+            Ok(spawn) => spawn,
+            Err(message) => return ExecutionResult::Crash(message),
+        };
     ExecutionResult::SpawnChild {
         r_dst,
-        method_idx: decoded_idx,
+        module_idx,
+        method_idx,
         args,
     }
 }
 
-pub(super) fn exec_spawn_detached(
+fn prepare_spawn(
     ctx: &mut ExecContext<'_>,
+    opcode: &str,
     r_dst: u16,
-    method_idx: u32,
+    method_token: u32,
     r_base: u16,
     argc: u16,
-) -> ExecutionResult {
-    let decoded_idx = match super::decode_method_token(method_idx) {
-        Some(idx) => idx,
-        None => return ExecutionResult::Crash("SpawnDetached: null method token".into()),
-    };
+) -> Result<(usize, usize, Vec<Value>), String> {
+    let caller_register_count = ctx.task.call_stack.last().unwrap().registers.len();
+    super::calls::validate_call_site_registers(opcode, caller_register_count, r_dst, r_base, argc)?;
+    let (module_idx, method_idx) =
+        super::calls::resolve_call_target(method_token, ctx.modules, ctx.current_module_idx)
+            .map_err(|message| format!("{opcode}: {message}"))?;
+    let (register_count, param_count) =
+        super::calls::checked_method_register_count(opcode, ctx.modules, module_idx, method_idx)?;
+    let target_module = &ctx.modules[module_idx];
+    let method = &target_module.module.method_defs[method_idx];
+    if method.flags & writ_module::tables::METHOD_FLAG_INTRINSIC != 0 {
+        return Err(format!(
+            "{opcode}: MethodDef {method_idx} in module {module_idx} is runtime-intrinsic and has no spawnable IL body"
+        ));
+    }
+    if target_module.decoded_bodies[method_idx].is_empty() {
+        return Err(format!(
+            "{opcode}: MethodDef {method_idx} in module {module_idx} has no executable bytecode body"
+        ));
+    }
+    super::calls::validate_method_param_count(opcode, param_count, argc as usize)?;
+    super::calls::validate_callee_register_capacity(opcode, register_count, argc, 0)?;
+
     let mut args = Vec::with_capacity(argc as usize);
     {
         let frame = ctx.task.call_stack.last().unwrap();
@@ -43,11 +59,7 @@ pub(super) fn exec_spawn_detached(
             args.push(frame.registers[r_base as usize + i]);
         }
     }
-    ExecutionResult::SpawnDetachedTask {
-        r_dst,
-        method_idx: decoded_idx,
-        args,
-    }
+    Ok((module_idx, method_idx, args))
 }
 
 pub(super) fn exec_join(ctx: &mut ExecContext<'_>, r_dst: u16, r_task: u16) -> ExecutionResult {
@@ -78,10 +90,20 @@ pub(super) fn exec_defer_pop(ctx: &mut ExecContext<'_>) -> ExecutionResult {
     ExecutionResult::Continue
 }
 
-pub(super) fn exec_load_global(ctx: &mut ExecContext<'_>, r_dst: u16, global_idx: u32) -> ExecutionResult {
+pub(super) fn exec_load_global(
+    ctx: &mut ExecContext<'_>,
+    r_dst: u16,
+    global_idx: u32,
+) -> ExecutionResult {
     let idx = global_idx as usize;
-    if idx < ctx.globals.len() {
-        let val = ctx.globals[idx];
+    let Some(module_globals) = ctx.globals.get(ctx.current_module_idx) else {
+        return ExecutionResult::Crash(format!(
+            "LoadGlobal: module index {} out of range",
+            ctx.current_module_idx
+        ));
+    };
+    if idx < module_globals.len() {
+        let val = module_globals[idx];
         let frame = ctx.task.call_stack.last_mut().unwrap();
         frame.registers[r_dst as usize] = val;
         ExecutionResult::Continue
@@ -90,11 +112,21 @@ pub(super) fn exec_load_global(ctx: &mut ExecContext<'_>, r_dst: u16, global_idx
     }
 }
 
-pub(super) fn exec_store_global(ctx: &mut ExecContext<'_>, global_idx: u32, r_src: u16) -> ExecutionResult {
+pub(super) fn exec_store_global(
+    ctx: &mut ExecContext<'_>,
+    global_idx: u32,
+    r_src: u16,
+) -> ExecutionResult {
     let idx = global_idx as usize;
     let val = ctx.task.call_stack.last().unwrap().registers[r_src as usize];
-    if idx < ctx.globals.len() {
-        ctx.globals[idx] = val;
+    let Some(module_globals) = ctx.globals.get_mut(ctx.current_module_idx) else {
+        return ExecutionResult::Crash(format!(
+            "StoreGlobal: module index {} out of range",
+            ctx.current_module_idx
+        ));
+    };
+    if idx < module_globals.len() {
+        module_globals[idx] = val;
         ExecutionResult::Continue
     } else {
         ExecutionResult::Crash(format!("StoreGlobal: index {} out of range", idx))

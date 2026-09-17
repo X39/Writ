@@ -8,8 +8,8 @@
 //! - `server`      -- DAP server with request handlers and variable inspection
 //! - `variables`   -- Variable presentation for debug UI
 
-pub mod debug_host;
 pub mod breakpoints;
+pub mod debug_host;
 pub mod launch;
 pub mod server;
 pub mod variables;

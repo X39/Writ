@@ -54,23 +54,25 @@ metadata references a type: field types, parameter types, return types, register
 | Kind (u8)     | Payload                      | Meaning                                                                                                               |
 |---------------|------------------------------|-----------------------------------------------------------------------------------------------------------------------|
 | `0x00`–`0x05` | —                            | Primitive (void, int, float, bool, string, Entity)                                                                    |
-| `0x10`        | TypeDef index (`u32`)        | Named type — struct, class, enum, entity, or component. The TypeDef entry carries a `kind` flag distinguishing these. |
-| `0x11`        | TypeSpec index (`u32`)       | Instantiated generic type (e.g., `List<int>`, `Option<Guard>`)                                                        |
+| `0x10`        | metadata token (`u32`)       | Named type — a TypeDef, TypeRef, or ContractDef token for a struct, class, enum, entity, component, or contract.    |
+| `0x11`        | namespace + name + arguments | Instantiated generic type. Payload: `namespace_len: u16`, namespace UTF-8, `name_len: u16`, name UTF-8, `arg_count: u16`, then `arg_count` recursive TypeRefs. |
 | `0x12`        | GenericParam ordinal (`u16`) | Open type parameter — the Nth generic param on the enclosing TypeDef or MethodDef                                     |
 | `0x20`        | element TypeRef              | `Array<T>` — recursive encoding. The element is itself a TypeRef.                                                     |
-| `0x30`        | blob offset (`u32`)          | Function/delegate type — points to a signature blob: `param_count: u16, param_types: TypeRef[], return_type: TypeRef` |
+| `0x30`        | inline function signature    | Function/delegate type. Payload: `param_count: u16`, `param_types: TypeRef[]`, `return_type: TypeRef`.                  |
 
 **Design notes:**
 
 - **Single TypeDef table.** All named types (structs, classes, enums, entities, components) share one TypeDef table. The TypeDef
   entry's `kind` field distinguishes them. TypeRefs do not encode the kind — it is looked up from the TypeDef.
-- **Option and Result are regular generic enums** in the type system. `Option<int>` is represented as a TypeSpec entry
-  pointing to the `Option` TypeDef with type argument `int`. Their specialness exists only at the instruction level
-  (`WRAP_SOME`, `IS_OK`, etc.), not in the type encoding.
+- **Generic constructor identity is namespace-qualified.** `Option<int>` uses namespace `writ`, name `Option`, and one
+  recursively encoded `int` argument. User generic constructors use their declared namespace and name, so equal short
+  names from different modules cannot collide. Option and Result remain regular generic enums; their specialness exists
+  only at the instruction level (`WRAP_SOME`, `IS_OK`, etc.).
 - **Closure/delegate types.** A closure is a compiler-generated TypeDef (per §2.12). Its TypeRef is a `0x10` pointing
   to that generated TypeDef. The callable signature is encoded separately in the delegate metadata.
-- **Recursive encoding.** TypeRefs nest: `Array<Option<int>>` encodes as `0x20` → `0x11` →
-  TypeSpec(Option_TypeDef, [`0x01`]).
+- **Recursive, self-contained encoding.** TypeRefs nest without heap or TypeSpec side lookups:
+  `Array<Option<int>>` encodes as `0x20` → `0x11` → (`writ`, `Option`, [`0x01`]). This makes a method signature
+  independently decodable by dependency compilers and rejects truncated or trailing payload bytes deterministically.
 
 ## 2.15.4 Generic Representation
 
@@ -79,9 +81,10 @@ metadata references a type: field types, parameter types, return types, register
 - **Open generic types:** A TypeDef may have one or more `GenericParam` rows, each with a zero-based ordinal.
   `List<T>` has one GenericParam (ordinal 0). `Map<K, V>` has two (ordinals 0, 1).
 - **Generic constraints:** `GenericConstraint` rows bind a GenericParam to required contracts. `T: Add + Eq` produces
-  two constraint rows, each referencing the GenericParam and a contract TypeDef.
-- **Instantiated types:** A `TypeSpec` entry references a TypeDef plus a list of concrete TypeRef arguments.
-  `List<int>` = TypeSpec(List_TypeDef, [`0x01`]). `Map<string, int>` = TypeSpec(Map_TypeDef, [`0x04`, `0x01`]).
+  two constraint rows, each referencing the GenericParam and a ContractDef.
+- **Instantiated types:** Signatures embed the `0x11` constructor identity and concrete TypeRef arguments directly.
+  When an instantiated type must itself be addressed by a metadata token (for example by `TYPEOF`), a TypeSpec row
+  stores that same complete TypeRef descriptor in its signature blob.
 - **Generic methods:** Same mechanism — GenericParam rows are attached to the MethodDef instead of the TypeDef.
   Call sites provide type arguments in the `CALL` instruction's metadata.
 
@@ -150,4 +153,3 @@ enum QuestStatus {
 `Option<T>` as a bare reference where `null` = `None` and non-null = `Some(value)`. This is a permitted runtime
 optimization, not mandated by the spec. IL code uses `WRAP_SOME` / `IS_NONE` / etc. regardless — the runtime may
 elide them internally.
-

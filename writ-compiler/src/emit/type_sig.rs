@@ -4,6 +4,7 @@
 
 use crate::check::ty::{Ty, TyInterner, TyKind};
 use crate::resolve::def_map::DefId;
+use writ_module::signature::{TypeSignature, encode_method_signature, encode_type_signature};
 
 use super::heaps::BlobHeap;
 use super::metadata::MetadataToken;
@@ -18,27 +19,38 @@ pub fn encode_type(
     token_for_def: &dyn Fn(DefId) -> MetadataToken,
     blob_heap: &mut BlobHeap,
 ) -> Vec<u8> {
-    let mut buf = Vec::new();
-    encode_type_into(ty, interner, token_for_def, blob_heap, &mut buf);
-    buf
+    let _ = blob_heap;
+    encode_type_bytes(ty, interner, token_for_def)
 }
 
-/// Encode a type into the given buffer (recursive helper).
-fn encode_type_into(
+/// Encode a `Ty` without borrowing a blob heap.
+///
+/// Collection uses this form when it must create a TypeSpec row before body
+/// serialization. The caller interns the returned descriptor in its own heap.
+pub fn encode_type_bytes(
     ty: Ty,
     interner: &TyInterner,
     token_for_def: &dyn Fn(DefId) -> MetadataToken,
-    blob_heap: &mut BlobHeap,
-    buf: &mut Vec<u8>,
-) {
-    match interner.kind(ty) {
-        TyKind::Void => buf.push(0x00),
-        TyKind::Int => buf.push(0x01),
-        TyKind::Float => buf.push(0x02),
-        TyKind::Bool => buf.push(0x03),
-        TyKind::String => buf.push(0x04),
+) -> Vec<u8> {
+    encode_type_signature(&type_signature_for_ty(ty, interner, token_for_def))
+        .expect("compiler type signature exceeds module format limits")
+}
 
-        TyKind::AnyEntity => buf.push(0x05),
+/// Convert a compiler type into the format's recursive type descriptor.
+fn type_signature_for_ty(
+    ty: Ty,
+    interner: &TyInterner,
+    token_for_def: &dyn Fn(DefId) -> MetadataToken,
+) -> TypeSignature {
+    let ty = interner.resolve_infer(ty);
+    match interner.full_kind(ty) {
+        TyKind::Void => TypeSignature::Void,
+        TyKind::Int => TypeSignature::Int,
+        TyKind::Float => TypeSignature::Float,
+        TyKind::Bool => TypeSignature::Bool,
+        TyKind::String => TypeSignature::String,
+
+        TyKind::AnyEntity => TypeSignature::Entity,
 
         TyKind::Struct(def_id)
         | TyKind::Class(def_id)
@@ -46,68 +58,69 @@ fn encode_type_into(
         | TyKind::Enum(def_id)
         | TyKind::Contract(def_id) => {
             let token = token_for_def(*def_id);
-            buf.push(0x10);
-            buf.extend_from_slice(&token.row().to_le_bytes());
+            TypeSignature::Named(writ_module::MetadataToken(token.0))
         }
 
-        TyKind::GenericParam(idx) => {
-            buf.push(0x12);
-            buf.extend_from_slice(&(*idx as u16).to_le_bytes());
-        }
+        TyKind::GenericInstance {
+            namespace,
+            name,
+            args,
+            ..
+        } => TypeSignature::Generic {
+            namespace: namespace.clone(),
+            name: name.clone(),
+            args: args
+                .iter()
+                .map(|arg| type_signature_for_ty(*arg, interner, token_for_def))
+                .collect(),
+        },
+
+        TyKind::GenericParam(idx) => TypeSignature::GenericParam(*idx as u16),
 
         TyKind::Array(elem) => {
-            buf.push(0x20);
-            // Guard: if elem is Infer or Error (unresolved empty-array literal),
-            // fall back to void to avoid the debug_assert in the recursive call.
-            match interner.kind(*elem) {
-                TyKind::Infer(_) | TyKind::Error => buf.push(0x00),
-                _ => encode_type_into(*elem, interner, token_for_def, blob_heap, buf),
-            }
+            let element = type_signature_for_ty(*elem, interner, token_for_def);
+            TypeSignature::Array(Box::new(element))
         }
 
         TyKind::Func { params, ret } => {
-            // Encode function signature as a separate blob:
-            // u16 param_count + TypeRef[] params + TypeRef return
-            let mut sig_buf = Vec::new();
-            sig_buf.extend_from_slice(&(params.len() as u16).to_le_bytes());
-            for &p in params {
-                encode_type_into(p, interner, token_for_def, blob_heap, &mut sig_buf);
-            }
-            encode_type_into(*ret, interner, token_for_def, blob_heap, &mut sig_buf);
-            let blob_offset = blob_heap.intern(&sig_buf);
-            buf.push(0x30);
-            buf.extend_from_slice(&blob_offset.to_le_bytes());
+            let params = params
+                .iter()
+                .map(|&param| type_signature_for_ty(param, interner, token_for_def))
+                .collect();
+            let ret = Box::new(type_signature_for_ty(*ret, interner, token_for_def));
+            TypeSignature::Function { params, ret }
         }
 
-        TyKind::ReflectionType(_inner) => {
-            // Type is a class in writ-runtime. Encode as TypeSpec placeholder (same as Option/Result).
-            // Will be resolved when TypeRef for "Type" is registered in Plan 02.
-            buf.push(0x11);
-            buf.extend_from_slice(&0u32.to_le_bytes());
-        }
+        TyKind::ReflectionType(inner) => TypeSignature::Generic {
+            namespace: "writ".to_string(),
+            name: "Type".to_string(),
+            args: vec![type_signature_for_ty(*inner, interner, token_for_def)],
+        },
 
-        TyKind::Option(inner) | TyKind::Result(inner, _) | TyKind::TaskHandle(inner) => {
-            // These are writ-runtime generic types. For Phase 24, encode as TypeSpec
-            // references (0x11). We emit a TypeSpec row with the generic instantiation.
-            // For now, encode a placeholder TypeSpec reference at row 0 (will be
-            // resolved when TypeSpec emission is implemented in Phase 25).
-            //
-            // The inner type is still encoded for correctness.
-            buf.push(0x11);
-            // Placeholder TypeSpec row index (0 means unresolved)
-            buf.extend_from_slice(&0u32.to_le_bytes());
-            let _ = inner; // suppress unused warning
-        }
+        TyKind::Option(inner) => TypeSignature::Generic {
+            namespace: "writ".to_string(),
+            name: "Option".to_string(),
+            args: vec![type_signature_for_ty(*inner, interner, token_for_def)],
+        },
 
-        TyKind::Infer(_) => {
-            debug_assert!(false, "Infer type should not appear in emit output");
-            buf.push(0x00); // fallback to void
-        }
+        TyKind::Result(ok, err) => TypeSignature::Generic {
+            namespace: "writ".to_string(),
+            name: "Result".to_string(),
+            args: vec![
+                type_signature_for_ty(*ok, interner, token_for_def),
+                type_signature_for_ty(*err, interner, token_for_def),
+            ],
+        },
 
-        TyKind::Error => {
-            debug_assert!(false, "Error type should not appear in emit output");
-            buf.push(0x00); // fallback to void
-        }
+        TyKind::TaskHandle(inner) => TypeSignature::Generic {
+            namespace: "writ".to_string(),
+            name: "TaskHandle".to_string(),
+            args: vec![type_signature_for_ty(*inner, interner, token_for_def)],
+        },
+
+        // A genuinely unbound inference variable or prior type error must not
+        // panic serialization. Retained bindings were followed above.
+        TyKind::Infer(_) | TyKind::Error => TypeSignature::Void,
     }
 }
 
@@ -121,11 +134,34 @@ pub fn encode_method_sig(
     token_for_def: &dyn Fn(DefId) -> MetadataToken,
     blob_heap: &mut BlobHeap,
 ) -> u32 {
-    let mut buf = Vec::new();
-    buf.extend_from_slice(&(param_types.len() as u16).to_le_bytes());
-    for &p in param_types {
-        encode_type_into(p, interner, token_for_def, blob_heap, &mut buf);
-    }
-    encode_type_into(ret_type, interner, token_for_def, blob_heap, &mut buf);
+    let params: Vec<TypeSignature> = param_types
+        .iter()
+        .map(|&param| type_signature_for_ty(param, interner, token_for_def))
+        .collect();
+    let ret = type_signature_for_ty(ret_type, interner, token_for_def);
+    let buf = encode_method_signature(&params, &ret)
+        .expect("compiler method signature exceeds module format limits");
     blob_heap.intern(&buf)
+}
+
+/// Encode the declaration-level function type carried by a checked call.
+///
+/// Unlike rebuilding a signature from the call's argument expressions, this
+/// preserves open GenericParam descriptors and therefore matches the method's
+/// metadata identity exactly.
+pub fn encode_method_sig_for_fn_ty(
+    ty: Ty,
+    interner: &TyInterner,
+    token_for_def: &dyn Fn(DefId) -> MetadataToken,
+) -> Option<Vec<u8>> {
+    let ty = interner.resolve_infer(ty);
+    let TyKind::Func { params, ret } = interner.full_kind(ty) else {
+        return None;
+    };
+    let params = params
+        .iter()
+        .map(|param| type_signature_for_ty(*param, interner, token_for_def))
+        .collect::<Vec<_>>();
+    let ret = type_signature_for_ty(*ret, interner, token_for_def);
+    encode_method_signature(&params, &ret).ok()
 }

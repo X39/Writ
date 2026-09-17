@@ -45,12 +45,12 @@ The reflection system exposes six types. All are class types (GC-allocated, refe
 |-------|------|-------------|
 | `name` | `string` | Field name |
 | `declared_type` | `Type` | Type of the field |
-| `is_mutable` | `bool` | `true` if declared with `mut`, `false` if `let` |
+| `is_mutable` | `bool` | `true` exactly when the FieldDef `READONLY` metadata bit is clear |
 
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `get` | `fn get(self, instance: Box) -> Box` | Read field value dynamically (boxed) |
-| `set` | `fn set(self, instance: Box, value: Box)` | Write field value dynamically (boxed). Crashes task if field is immutable (`let`). |
+| `set` | `fn set(self, instance: Box, value: Box)` | Write a mutable field dynamically (boxed). A read-only field crashes the current task without being changed. |
 
 ---
 
@@ -194,10 +194,23 @@ Reflection supports dynamic field access and method invocation through `FieldInf
 **`FieldInfo.get(instance)` and `FieldInfo.set(instance, value)`:**
 
 - `get()` reads the field value from the given instance and returns it as a `Box`.
-- `set()` writes a new value. If the field was declared with `let` (immutable binding), calling `set()` **crashes
-  the current task** with the message: `"Reflection write to immutable field '{field_name}'"`.
-- If the field was declared with `mut`, `set()` writes the new value.
-- The runtime determines immutability from the `is_mutable` flag stored in the field's declaration metadata.
+- `set()` writes a new value only when the FieldDef `READONLY` metadata bit is clear. If the bit is set, `set()`
+  **crashes the current task** with the message `"Reflection write to read-only field '{field_name}'"` and leaves the
+  field unchanged.
+- The source field grammar is `[visibility] [mut] name: type [= default]`. A field without `mut` is read-only, so the
+  compiler sets its FieldDef `READONLY` bit. A field declared with `mut` is writable, so the compiler clears the bit.
+  Runtime-provided and programmatically authored modules use the same metadata rule.
+- `FieldInfo.is_mutable` is derived only from that metadata: it is `false` when `READONLY` is set and `true` when the
+  bit is clear. It describes the field's post-construction storage policy, not whether a particular source expression
+  is presently allowed to mutate an instance.
+- Field mutability, binding or receiver mutability, and visibility are independent. Direct source mutation requires a
+  mutable field and mutable access through rules such as a `mut` binding or `mut self`. A mutable binding or `mut self`
+  never permits writing a read-only field. Visibility controls whether a field appears in `Type.fields()`; it does not
+  determine `is_mutable`.
+- Construction may establish the initial value of a read-only field. Default expressions and explicit fields in a
+  `new Type { ... }` expression are applied as one compiler-generated initialization operation before the completed
+  value becomes observable. This initialization privilege ends before lifecycle hooks such as `on create` run.
+  `FieldInfo.set()` is ordinary post-construction mutation and never receives initialization privilege.
 
 **`MethodInfo.invoke(instance, args)`:**
 
@@ -218,13 +231,22 @@ All reflection API parameters and return values use `Box` (see section 3.15).
 - This uses the existing `BOX`/`UNBOX` IL instructions (section 3.15). No new `TyKind::Any` is introduced.
 
 ```writ
-let t    = typeof(Player);
-let hp   = t.fields().find(fn(f) = f.name == "hp")!;
-hp.set(player, 100);  // OK if hp is 'mut'
-// If hp was declared 'let', task crashes: "Reflection write to immutable field 'hp'"
+class Player {
+    pub id: int,       // read-only: READONLY is set
+    pub mut hp: int,   // mutable: READONLY is clear
+}
 
-let greet = t.methods().find(fn(m) = m.name == "greet")!;
-greet.invoke(player, []);  // args boxed automatically by compiler
+let mut player = new Player { id: 7, hp: 100 }; // construction may establish both values
+let fields = typeof(Player).fields();
+let id = fields.find(fn(f) = f.name == "id")!;
+let hp = fields.find(fn(f) = f.name == "hp")!;
+
+log(id.is_mutable); // false
+log(hp.is_mutable); // true
+hp.set(player, 80); // OK: hp is a mutable field
+
+// Runtime error: the current task crashes and player.id remains 7.
+id.set(player, 8);
 ```
 
 **Note on `Type.construct()`:** Dynamic type instantiation via `Type.construct()` is reserved for a future

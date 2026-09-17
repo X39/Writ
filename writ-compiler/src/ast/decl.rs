@@ -1,7 +1,7 @@
-use chumsky::span::SimpleSpan;
 use crate::ast::expr::AstExpr;
 use crate::ast::stmt::AstStmt;
 use crate::ast::types::AstType;
+use chumsky::span::SimpleSpan;
 
 /// All top-level declaration forms that survive lowering into the AST.
 ///
@@ -65,7 +65,11 @@ pub enum AstAttributeArg {
     /// Positional argument: `expr`
     Positional(AstExpr),
     /// Named argument: `name: expr`
-    Named { name: String, name_span: SimpleSpan, value: AstExpr },
+    Named {
+        name: String,
+        name_span: SimpleSpan,
+        value: AstExpr,
+    },
 }
 
 /// A function/method parameter: `name: type`.
@@ -122,7 +126,11 @@ pub enum AstNamespaceDecl {
     /// Declarative form: `namespace a::b::c;`
     Declarative { path: Vec<String>, span: SimpleSpan },
     /// Block form: `namespace a::b { items }`
-    Block { path: Vec<String>, items: Vec<AstDecl>, span: SimpleSpan },
+    Block {
+        path: Vec<String>,
+        items: Vec<AstDecl>,
+        span: SimpleSpan,
+    },
 }
 
 /// Using import: `using [alias =] qualified::name;`
@@ -140,7 +148,7 @@ pub struct AstUsingDecl {
 // =========================================================
 
 /// Function declaration: `[attrs] [vis] fn name [<generics>] (params) [-> type] { body }`
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct AstFnDecl {
     pub attrs: Vec<AstAttribute>,
     pub vis: Option<AstVisibility>,
@@ -151,6 +159,27 @@ pub struct AstFnDecl {
     pub return_type: Option<AstType>,
     pub body: Vec<AstStmt>,
     pub span: SimpleSpan,
+    /// Internal lowering provenance. Dialogue declarations lower to ordinary
+    /// functions, but transitions must still distinguish them from `fn`.
+    pub is_dialogue: bool,
+}
+
+// Keep lowering snapshots focused on source-visible AST structure. The
+// dialogue marker is compiler provenance rather than a source field.
+impl std::fmt::Debug for AstFnDecl {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AstFnDecl")
+            .field("attrs", &self.attrs)
+            .field("vis", &self.vis)
+            .field("name", &self.name)
+            .field("name_span", &self.name_span)
+            .field("generics", &self.generics)
+            .field("params", &self.params)
+            .field("return_type", &self.return_type)
+            .field("body", &self.body)
+            .field("span", &self.span)
+            .finish()
+    }
 }
 
 /// Function signature (no body): used in contracts and extern declarations.
@@ -199,10 +228,11 @@ pub struct AstStructDecl {
     pub span: SimpleSpan,
 }
 
-/// A struct field: `[vis] name: type [= default]`
+/// A struct field: `[vis] [mut] name: type [= default]`
 #[derive(Debug, Clone, PartialEq)]
 pub struct AstStructField {
     pub vis: Option<AstVisibility>,
+    pub is_mutable: bool,
     pub name: String,
     pub name_span: SimpleSpan,
     pub ty: AstType,

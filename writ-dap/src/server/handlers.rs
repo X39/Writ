@@ -15,7 +15,7 @@ use crate::launch::{compile_and_load, compile_and_load_project};
 use crate::variables::{make_variables_ref, unpack_variables_ref};
 
 use super::DapServer;
-use super::helpers::{decode_frame_id, build_thread_list};
+use super::helpers::{build_thread_list, decode_frame_id};
 
 impl<I: Read, O: Write> DapServer<I, O> {
     pub(super) fn handle_initialize(&mut self, req: Request) {
@@ -29,8 +29,15 @@ impl<I: Read, O: Write> DapServer<I, O> {
         let _ = self.server.send_event(Event::Initialized);
     }
 
-    pub(super) fn handle_set_breakpoints(&mut self, req: Request, args: requests::SetBreakpointsArguments) {
-        let source_path = args.source.path.clone()
+    pub(super) fn handle_set_breakpoints(
+        &mut self,
+        req: Request,
+        args: requests::SetBreakpointsArguments,
+    ) {
+        let source_path = args
+            .source
+            .path
+            .clone()
             .or_else(|| args.source.name.clone())
             .unwrap_or_default();
 
@@ -67,7 +74,9 @@ impl<I: Read, O: Write> DapServer<I, O> {
             }
 
             let rsp = req.success(ResponseBody::SetBreakpoints(
-                responses::SetBreakpointsResponse { breakpoints: result },
+                responses::SetBreakpointsResponse {
+                    breakpoints: result,
+                },
             ));
             let _ = self.server.respond(rsp);
         } else {
@@ -86,7 +95,9 @@ impl<I: Read, O: Write> DapServer<I, O> {
                 .collect();
 
             let rsp = req.success(ResponseBody::SetBreakpoints(
-                responses::SetBreakpointsResponse { breakpoints: dap_bps },
+                responses::SetBreakpointsResponse {
+                    breakpoints: dap_bps,
+                },
             ));
             let _ = self.server.respond(rsp);
         }
@@ -104,7 +115,9 @@ impl<I: Read, O: Write> DapServer<I, O> {
 
     pub(super) fn handle_launch(&mut self, req: Request, args: requests::LaunchRequestArguments) {
         // Extract the "program" field from additional_data.
-        let additional = args.additional_data.as_ref()
+        let additional = args
+            .additional_data
+            .as_ref()
             .and_then(|v| v.as_object())
             .cloned()
             .unwrap_or_default();
@@ -126,8 +139,7 @@ impl<I: Read, O: Write> DapServer<I, O> {
 
         // Detect launch mode: .writ file = single-file, directory or writ.toml = project mode.
         let path = std::path::Path::new(&program_path);
-        let is_project = path.is_dir()
-            || program_path.ends_with("writ.toml");
+        let is_project = path.is_dir() || program_path.ends_with("writ.toml");
 
         let (module, source_paths, method_file_ids) = if is_project {
             // Project mode: compile all .writ files discovered via writ.toml.
@@ -137,7 +149,9 @@ impl<I: Read, O: Write> DapServer<I, O> {
                 path.to_path_buf()
             };
             match compile_and_load_project(&project_root) {
-                Ok((module, file_id_paths, method_file_ids)) => (module, file_id_paths, method_file_ids),
+                Ok((module, file_id_paths, method_file_ids)) => {
+                    (module, file_id_paths, method_file_ids)
+                }
                 Err(e) => {
                     let err = req.error(&format!("compile error: {}", e));
                     let _ = self.server.respond(err);
@@ -160,6 +174,8 @@ impl<I: Read, O: Write> DapServer<I, O> {
         };
 
         // Build breakpoint table and debug host.
+        // The final domain index is assigned by RuntimeBuilder below. Rebind the
+        // table immediately after construction, before execution can begin.
         let breakpoint_table = BreakpointTable::new(&module);
         let debug_host = DebugHost::new(breakpoint_table, &module);
 
@@ -175,30 +191,37 @@ impl<I: Read, O: Write> DapServer<I, O> {
                 return;
             }
         };
+        let user_module_idx = runtime.user_module_idx();
+        runtime
+            .host_mut()
+            .breakpoints
+            .set_module_idx(user_module_idx);
 
         // Find the "main" export (item_kind == 0 = method).
         // If not found in exports, fall back to searching method_defs
         // by name. This allows `fn main()` (without `pub`) to work.
-        let main_method_idx = module.export_defs.iter().find_map(|export| {
-            if export.item_kind == 0 {
-                let name = read_string(&module.string_heap, export.name)
-                    .unwrap_or("");
-                if name == "main" {
-                    export.item.row_index().map(|idx| (idx - 1) as usize)
+        let main_method_idx = module
+            .export_defs
+            .iter()
+            .find_map(|export| {
+                if export.item_kind == 0 {
+                    let name = read_string(&module.string_heap, export.name).unwrap_or("");
+                    if name == "main" {
+                        export.item.row_index().map(|idx| (idx - 1) as usize)
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
-            } else {
-                None
-            }
-        }).or_else(|| {
-            // Fallback: search method_defs by name (non-pub entry points)
-            module.method_defs.iter().enumerate().find_map(|(idx, md)| {
-                let name = read_string(&module.string_heap, md.name)
-                    .unwrap_or("");
-                if name == "main" { Some(idx) } else { None }
             })
-        });
+            .or_else(|| {
+                // Fallback: search method_defs by name (non-pub entry points)
+                module.method_defs.iter().enumerate().find_map(|(idx, md)| {
+                    let name = read_string(&module.string_heap, md.name).unwrap_or("");
+                    if name == "main" { Some(idx) } else { None }
+                })
+            });
 
         let main_idx = match main_method_idx {
             Some(idx) => idx,
@@ -228,18 +251,17 @@ impl<I: Read, O: Write> DapServer<I, O> {
             let resolved = runtime.host_mut().breakpoints.set_breakpoints(lines);
             // Send breakpoint update events for each resolved breakpoint.
             for bp in &resolved {
-                let source = self.source_paths.first().map(|(_, p)| {
-                    types::Source {
-                        path: Some(p.clone()),
-                        name: std::path::Path::new(p)
-                            .file_name()
-                            .and_then(|n| n.to_str())
-                            .map(|s| s.to_string()),
-                        ..Default::default()
-                    }
+                let source = self.source_paths.first().map(|(_, p)| types::Source {
+                    path: Some(p.clone()),
+                    name: std::path::Path::new(p)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|s| s.to_string()),
+                    ..Default::default()
                 });
-                let _ = self.server.send_event(Event::Breakpoint(
-                    events::BreakpointEventBody {
+                let _ = self
+                    .server
+                    .send_event(Event::Breakpoint(events::BreakpointEventBody {
                         reason: types::BreakpointEventReason::Changed,
                         breakpoint: types::Breakpoint {
                             id: Some(bp.id as i64),
@@ -248,8 +270,7 @@ impl<I: Read, O: Write> DapServer<I, O> {
                             source,
                             ..Default::default()
                         },
-                    },
-                ));
+                    }));
             }
         }
         self.pending_breakpoints.clear();
@@ -274,22 +295,24 @@ impl<I: Read, O: Write> DapServer<I, O> {
     pub(super) fn start_execution(&mut self) {
         if self.stop_on_entry {
             let thread_id = self.task_id.map(|t| t.index as i64).unwrap_or(0);
-            let _ = self.server.send_event(Event::Stopped(events::StoppedEventBody {
-                reason: types::StoppedEventReason::Entry,
-                description: None,
-                thread_id: Some(thread_id),
-                preserve_focus_hint: None,
-                text: None,
-                all_threads_stopped: Some(true),
-                hit_breakpoint_ids: None,
-            }));
+            let _ = self
+                .server
+                .send_event(Event::Stopped(events::StoppedEventBody {
+                    reason: types::StoppedEventReason::Entry,
+                    description: None,
+                    thread_id: Some(thread_id),
+                    preserve_focus_hint: None,
+                    text: None,
+                    all_threads_stopped: Some(true),
+                    hit_breakpoint_ids: None,
+                }));
         } else {
             self.run_until_stop();
         }
     }
 
     pub(super) fn handle_threads(&mut self, req: Request) {
-        let threads = if let (Some(rt), Some(module)) = (self.runtime.as_ref(), self.module.as_ref()) {
+        let threads = if let Some(rt) = self.runtime.as_ref() {
             let task_ids = rt.all_task_ids();
             if task_ids.is_empty() {
                 // Check if the main task crashed -- if so, report it as a stopped thread
@@ -301,18 +324,39 @@ impl<I: Read, O: Write> DapServer<I, O> {
                             name: "main (crashed)".to_string(),
                         }]
                     } else {
-                        vec![types::Thread { id: 0, name: "terminated".to_string() }]
+                        vec![types::Thread {
+                            id: 0,
+                            name: "terminated".to_string(),
+                        }]
                     }
                 } else {
-                    vec![types::Thread { id: 0, name: "terminated".to_string() }]
+                    vec![types::Thread {
+                        id: 0,
+                        name: "terminated".to_string(),
+                    }]
                 }
             } else {
-                build_thread_list(&task_ids, |tid| rt.call_stack_frames(tid), module)
+                build_thread_list(
+                    &task_ids,
+                    |tid| rt.call_stack_frames(tid),
+                    |module_idx, method_idx| {
+                        let loaded = rt.domain().modules.get(module_idx)?;
+                        let method = loaded.module.method_defs.get(method_idx)?;
+                        read_string(&loaded.module.string_heap, method.name)
+                            .ok()
+                            .map(str::to_owned)
+                    },
+                )
             }
         } else {
-            vec![types::Thread { id: 0, name: "terminated".to_string() }]
+            vec![types::Thread {
+                id: 0,
+                name: "terminated".to_string(),
+            }]
         };
-        let rsp = req.success(ResponseBody::Threads(responses::ThreadsResponse { threads }));
+        let rsp = req.success(ResponseBody::Threads(responses::ThreadsResponse {
+            threads,
+        }));
         let _ = self.server.respond(rsp);
     }
 
@@ -390,9 +434,10 @@ impl<I: Read, O: Write> DapServer<I, O> {
 
     pub(super) fn handle_next(&mut self, req: Request) {
         // Step Over: stop at next line at same or lower call depth.
-        let (current_line, current_method) = self.current_position();
+        let (current_line, current_module, current_method) = self.current_position();
         if let (Some(rt), Some(task_id)) = (self.runtime.as_mut(), self.task_id) {
-            rt.host_mut().set_step_over(task_id, current_line, current_method);
+            rt.host_mut()
+                .set_step_over(task_id, current_line, current_module, current_method);
         }
         let rsp = req.success(ResponseBody::Next);
         let _ = self.server.respond(rsp);
@@ -401,9 +446,10 @@ impl<I: Read, O: Write> DapServer<I, O> {
 
     pub(super) fn handle_step_in(&mut self, req: Request) {
         // Step Into: stop at next line in any method (including callees).
-        let (current_line, current_method) = self.current_position();
+        let (current_line, current_module, current_method) = self.current_position();
         if let Some(rt) = self.runtime.as_mut() {
-            rt.host_mut().set_step_into(current_line, current_method);
+            rt.host_mut()
+                .set_step_into(current_line, current_module, current_method);
         }
         let rsp = req.success(ResponseBody::StepIn);
         let _ = self.server.respond(rsp);

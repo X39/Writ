@@ -29,7 +29,7 @@
   - 0x0909 NEW_ARRAY_FILLED (new — Shape var: r_dst, elem_type:u32, r_len, r_fill)
 
 ### Resize Semantics
-- **D-04:** resize(n) where n > current len: new slots filled with type default values (int→0, string→"", bool→false, float→0.0, reference types→null). Consistent with existing default-value semantics.
+- **D-04:** resize(n) where n > current len: new slots filled with type default values (int→0, string→"", bool→false, float→0.0, reference types→null). Consistent with existing default-value semantics. The shipped runtime crashes on growth when an erased generic or value-struct array still has no constructible default category.
 - **D-05:** resize(n) where n < current len: silent truncation. Elements at indices >= n are dropped. GC reclaims reference-type elements.
 - **D-06:** resize(0) produces a valid empty array (len=0). Negative values crash at runtime.
 

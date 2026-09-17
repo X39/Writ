@@ -10,12 +10,7 @@
 //! would create artificial file boundaries in what is a tightly-coupled algorithmic
 //! pipeline.
 
-use std::collections::HashMap;
-use chumsky::span::SimpleSpan;
-use writ_parser::cst::{
-    DlgChoice, DlgDecl, DlgEscape, DlgIf, DlgElse, DlgLine, DlgMatch,
-    DlgTextSegment, DlgTransition, Spanned, StringSegment,
-};
+use super::{lower_attrs, lower_param, lower_vis};
 use crate::ast::decl::{AstAttributeArg, AstFnDecl, AstFnParam};
 use crate::ast::expr::{AstArg, AstExpr, AstMatchArm};
 use crate::ast::stmt::AstStmt;
@@ -25,7 +20,12 @@ use crate::lower::error::LoweringError;
 use crate::lower::expr::{lower_expr, lower_pattern};
 use crate::lower::fmt_string::lower_fmt_string;
 use crate::lower::stmt::lower_stmt;
-use super::{lower_attrs, lower_param, lower_vis};
+use chumsky::span::SimpleSpan;
+use std::collections::HashMap;
+use writ_parser::cst::{
+    DlgChoice, DlgDecl, DlgElse, DlgEscape, DlgIf, DlgLine, DlgMatch, DlgTextSegment,
+    DlgTransition, Spanned, StringSegment,
+};
 
 // =========================================================
 // Private state for a single dlg lowering session
@@ -101,10 +101,13 @@ pub(crate) fn lower_dialogue(
         .collect::<Vec<_>>();
 
     // Collect param names for Tier 1 speaker lookup
-    let param_names: Vec<String> = params.iter().filter_map(|p| match p {
-        AstFnParam::Regular(param) => Some(param.name.clone()),
-        AstFnParam::SelfParam { .. } => None,
-    }).collect();
+    let param_names: Vec<String> = params
+        .iter()
+        .filter_map(|p| match p {
+            AstFnParam::Regular(param) => Some(param.name.clone()),
+            AstFnParam::SelfParam { .. } => None,
+        })
+        .collect();
 
     // Pre-scan for singleton speakers (Tier 2 hoisting)
     let singleton_speakers = collect_singleton_speakers(&dlg.body, &param_names);
@@ -175,6 +178,7 @@ pub(crate) fn lower_dialogue(
         return_type: None,
         body: hoisted_stmts,
         span: dlg_span,
+        is_dialogue: true,
     }
 }
 
@@ -202,7 +206,10 @@ fn collect_singleton_speakers_inner(
 ) {
     for (line, _line_span) in lines {
         match line {
-            DlgLine::SpeakerLine { speaker: (name, span), .. } => {
+            DlgLine::SpeakerLine {
+                speaker: (name, span),
+                ..
+            } => {
                 let name_str = name.to_string();
                 if !param_names.contains(&name_str) && !seen.contains(&name_str) {
                     seen.push(name_str.clone());
@@ -272,33 +279,25 @@ fn lower_dlg_lines(
     for (i, (line, line_span)) in lines.iter().enumerate() {
         let line_span = *line_span;
         match line {
-            DlgLine::SpeakerLine { speaker: (speaker_name, speaker_span), text, loc_key } => {
+            DlgLine::SpeakerLine {
+                speaker: (speaker_name, speaker_span),
+                text,
+                loc_key,
+            } => {
                 let speaker_ref = resolve_speaker(speaker_name, *speaker_span, state);
                 let raw = raw_text_content(text);
                 let fallback = lower_dlg_text(text.clone(), line_span, ctx);
 
                 let expr = if loc_key.is_some() {
                     // Manual #key present -> say_localized
-                    let key = compute_or_use_loc_key(
-                        *loc_key,
-                        speaker_name,
-                        &raw,
-                        line_span,
-                        state,
-                        ctx,
-                    );
+                    let key =
+                        compute_or_use_loc_key(*loc_key, speaker_name, &raw, line_span, state, ctx);
                     make_say_localized(speaker_ref, key, fallback, line_span)
                 } else {
                     // No #key -> say() (auto FNV key is for CSV tooling only)
                     // Still compute key for occurrence tracking
-                    let _csv_key = compute_or_use_loc_key(
-                        None,
-                        speaker_name,
-                        &raw,
-                        line_span,
-                        state,
-                        ctx,
-                    );
+                    let _csv_key =
+                        compute_or_use_loc_key(None, speaker_name, &raw, line_span, state, ctx);
                     make_say(speaker_ref, fallback, line_span)
                 };
 
@@ -317,19 +316,18 @@ fn lower_dlg_lines(
             }
 
             DlgLine::TextLine { text, loc_key } => {
-                let (speaker_ref, speaker_name_str) =
-                    if let Some(scope) = ctx.current_speaker() {
-                        let name = scope.name.clone();
-                        let span = scope.span;
-                        let sp_ref = resolve_speaker(&name, span, state);
-                        (sp_ref, name)
-                    } else {
-                        ctx.emit_error(LoweringError::UnknownSpeaker {
-                            name: String::new(),
-                            span: line_span,
-                        });
-                        (AstExpr::Error { span: line_span }, String::new())
-                    };
+                let (speaker_ref, speaker_name_str) = if let Some(scope) = ctx.current_speaker() {
+                    let name = scope.name.clone();
+                    let span = scope.span;
+                    let sp_ref = resolve_speaker(&name, span, state);
+                    (sp_ref, name)
+                } else {
+                    ctx.emit_error(LoweringError::UnknownSpeaker {
+                        name: String::new(),
+                        span: line_span,
+                    });
+                    (AstExpr::Error { span: line_span }, String::new())
+                };
                 let raw = raw_text_content(text);
                 let fallback = lower_dlg_text(text.clone(), line_span, ctx);
 
@@ -363,18 +361,16 @@ fn lower_dlg_lines(
                 });
             }
 
-            DlgLine::CodeEscape((escape, _escape_span)) => {
-                match escape {
-                    DlgEscape::Statement(stmt) => {
-                        stmts.push(lower_stmt(*stmt.clone(), ctx));
-                    }
-                    DlgEscape::Block(stmts_cst) => {
-                        for s in stmts_cst {
-                            stmts.push(lower_stmt(s.clone(), ctx));
-                        }
+            DlgLine::CodeEscape((escape, _escape_span)) => match escape {
+                DlgEscape::Statement(stmt) => {
+                    stmts.push(lower_stmt(*stmt.clone(), ctx));
+                }
+                DlgEscape::Block(stmts_cst) => {
+                    for s in stmts_cst {
+                        stmts.push(lower_stmt(s.clone(), ctx));
                     }
                 }
-            }
+            },
 
             DlgLine::Choice((choice, choice_span)) => {
                 stmts.push(lower_choice(choice.clone(), *choice_span, state, ctx));
@@ -405,11 +401,7 @@ fn lower_dlg_lines(
 // Private: resolve_speaker
 // =========================================================
 
-fn resolve_speaker(
-    speaker_name: &str,
-    speaker_span: SimpleSpan,
-    state: &DlgLowerState,
-) -> AstExpr {
+fn resolve_speaker(speaker_name: &str, speaker_span: SimpleSpan, state: &DlgLowerState) -> AstExpr {
     if state.param_names.contains(&speaker_name.to_string()) {
         // Tier 1: direct param reference
         AstExpr::Ident {
@@ -555,19 +547,23 @@ fn lower_dlg_text(
 // =========================================================
 
 /// Emits `say(speaker, text)` — used when no manual #key is present.
-fn make_say(
-    speaker_ref: AstExpr,
-    text: AstExpr,
-    span: SimpleSpan,
-) -> AstExpr {
+fn make_say(speaker_ref: AstExpr, text: AstExpr, span: SimpleSpan) -> AstExpr {
     AstExpr::Call {
         callee: Box::new(AstExpr::Ident {
             name: "say".to_string(),
             span,
         }),
         args: vec![
-            AstArg { name: None, value: speaker_ref, span },
-            AstArg { name: None, value: text, span },
+            AstArg {
+                name: None,
+                value: speaker_ref,
+                span,
+            },
+            AstArg {
+                name: None,
+                value: text,
+                span,
+            },
         ],
         span,
     }
@@ -586,13 +582,24 @@ fn make_say_localized(
             span,
         }),
         args: vec![
-            AstArg { name: None, value: speaker_ref, span },
             AstArg {
                 name: None,
-                value: AstExpr::StringLit { value: loc_key, span },
+                value: speaker_ref,
                 span,
             },
-            AstArg { name: None, value: fallback, span },
+            AstArg {
+                name: None,
+                value: AstExpr::StringLit {
+                    value: loc_key,
+                    span,
+                },
+                span,
+            },
+            AstArg {
+                name: None,
+                value: fallback,
+                span,
+            },
         ],
         span,
     }
@@ -618,14 +625,7 @@ fn lower_choice(
             // Compute loc key for choice label (empty speaker for choice labels)
             let label_text = arm.label.0.to_string();
             let label_span = arm.label.1;
-            let key = compute_or_use_loc_key(
-                arm.loc_key,
-                "",
-                &label_text,
-                arm_span,
-                state,
-                ctx,
-            );
+            let key = compute_or_use_loc_key(arm.loc_key, "", &label_text, arm_span, state, ctx);
             // Lower arm body
             let body = lower_dlg_lines(&arm.body, state, ctx);
 
@@ -821,15 +821,15 @@ fn lower_transition(
         })
         .collect();
 
-    AstStmt::Return {
-        value: Some(AstExpr::Call {
+    AstStmt::Transition {
+        call: AstExpr::Call {
             callee: Box::new(AstExpr::Ident {
                 name: trans.target.0.to_string(),
                 span: trans.target.1,
             }),
             args,
             span: trans_span,
-        }),
+        },
         span: trans_span,
     }
 }

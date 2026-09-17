@@ -14,7 +14,10 @@ use writ_diagnostics::{Diagnostic, FileId, Severity};
 /// Out-of-bounds offsets return `Position { line: 0, character: 0 }`.
 pub fn offset_to_position(source: &str, byte_offset: usize) -> Position {
     if byte_offset > source.len() {
-        return Position { line: 0, character: 0 };
+        return Position {
+            line: 0,
+            character: 0,
+        };
     }
 
     let mut line: u32 = 0;
@@ -134,10 +137,7 @@ pub fn parse_error_to_diag(
     };
 
     // Collect expected tokens into a readable message
-    let expected: Vec<String> = err
-        .expected()
-        .map(|e| format!("{:?}", e))
-        .collect();
+    let expected: Vec<String> = err.expected().map(|e| format!("{:?}", e)).collect();
     let found = err.found().map(|t| format!("{:?}", t));
 
     let message = if expected.is_empty() {
@@ -224,7 +224,11 @@ mod tests {
     fn test_span_to_range() {
         let source = "hello\nworld";
         // span from byte 0 to byte 5 (the '\n')
-        let span = SimpleSpan { start: 0, end: 5, context: () };
+        let span = SimpleSpan {
+            start: 0,
+            end: 5,
+            context: (),
+        };
         let range = span_to_range(source, &span);
         assert_eq!(range.start.line, 0);
         assert_eq!(range.start.character, 0);
@@ -236,7 +240,11 @@ mod tests {
     fn test_span_to_range_cross_line() {
         let source = "hello\nworld";
         // span from byte 0 to byte 6 (start of "world")
-        let span = SimpleSpan { start: 0, end: 6, context: () };
+        let span = SimpleSpan {
+            start: 0,
+            end: 6,
+            context: (),
+        };
         let range = span_to_range(source, &span);
         assert_eq!(range.start.line, 0);
         assert_eq!(range.start.character, 0);
@@ -251,12 +259,18 @@ mod tests {
 
     #[test]
     fn test_severity_warning() {
-        assert_eq!(severity_to_lsp(Severity::Warning), DiagnosticSeverity::WARNING);
+        assert_eq!(
+            severity_to_lsp(Severity::Warning),
+            DiagnosticSeverity::WARNING
+        );
     }
 
     #[test]
     fn test_severity_note() {
-        assert_eq!(severity_to_lsp(Severity::Note), DiagnosticSeverity::INFORMATION);
+        assert_eq!(
+            severity_to_lsp(Severity::Note),
+            DiagnosticSeverity::INFORMATION
+        );
     }
 
     // Leak a string to get a &'static str for tests
@@ -267,20 +281,23 @@ mod tests {
     #[test]
     fn test_writ_diag_to_lsp_basic() {
         let file_id = make_file_id();
-        let span = SimpleSpan { start: 0, end: 3, context: () };
+        let span = SimpleSpan {
+            start: 0,
+            end: 3,
+            context: (),
+        };
         let diag = Diagnostic::error("E0001", "test error")
             .with_primary(file_id, span, "here")
             .build();
 
         let source_text = leak("abc def");
-        let lsp_diag = writ_diag_to_lsp(
-            &diag,
-            &|fid| dummy_uri(fid),
-            &|_| source_text,
-        );
+        let lsp_diag = writ_diag_to_lsp(&diag, &|fid| dummy_uri(fid), &|_| source_text);
 
         assert_eq!(lsp_diag.severity, Some(DiagnosticSeverity::ERROR));
-        assert_eq!(lsp_diag.code, Some(NumberOrString::String("E0001".to_string())));
+        assert_eq!(
+            lsp_diag.code,
+            Some(NumberOrString::String("E0001".to_string()))
+        );
         assert_eq!(lsp_diag.source, Some("writ".to_string()));
         assert_eq!(lsp_diag.message, "test error");
         assert!(lsp_diag.related_information.is_none());
@@ -289,21 +306,27 @@ mod tests {
     #[test]
     fn test_writ_diag_to_lsp_with_secondary_labels() {
         let file_id = make_file_id();
-        let span = SimpleSpan { start: 0, end: 3, context: () };
-        let sec_span = SimpleSpan { start: 4, end: 7, context: () };
+        let span = SimpleSpan {
+            start: 0,
+            end: 3,
+            context: (),
+        };
+        let sec_span = SimpleSpan {
+            start: 4,
+            end: 7,
+            context: (),
+        };
         let diag = Diagnostic::error("E0002", "dual error")
             .with_primary(file_id, span, "primary")
             .with_secondary(file_id, sec_span, "secondary label")
             .build();
 
         let source_text = leak("abc def");
-        let lsp_diag = writ_diag_to_lsp(
-            &diag,
-            &|fid| dummy_uri(fid),
-            &|_| source_text,
-        );
+        let lsp_diag = writ_diag_to_lsp(&diag, &|fid| dummy_uri(fid), &|_| source_text);
 
-        let related = lsp_diag.related_information.expect("should have related_information");
+        let related = lsp_diag
+            .related_information
+            .expect("should have related_information");
         assert_eq!(related.len(), 1);
         assert_eq!(related[0].message, "secondary label");
     }
@@ -311,7 +334,11 @@ mod tests {
     #[test]
     fn test_writ_diag_to_lsp_empty_secondary_is_none() {
         let file_id = make_file_id();
-        let span = SimpleSpan { start: 0, end: 3, context: () };
+        let span = SimpleSpan {
+            start: 0,
+            end: 3,
+            context: (),
+        };
         let diag = Diagnostic::error("E0001", "no secondary")
             .with_primary(file_id, span, "here")
             .build();
@@ -322,7 +349,11 @@ mod tests {
     #[test]
     fn test_writ_diag_to_lsp_empty_code() {
         let file_id = make_file_id();
-        let span = SimpleSpan { start: 0, end: 0, context: () };
+        let span = SimpleSpan {
+            start: 0,
+            end: 0,
+            context: (),
+        };
         let diag = Diagnostic::warning("", "no code")
             .with_primary(file_id, span, "here")
             .build();
@@ -337,7 +368,10 @@ mod tests {
         let src = "fn main( {}";
         let (_cst_opt, parse_errs) = writ_parser::parse(src);
         // We should have at least one error
-        assert!(!parse_errs.is_empty(), "Expected parse errors for broken syntax");
+        assert!(
+            !parse_errs.is_empty(),
+            "Expected parse errors for broken syntax"
+        );
 
         let file_id = make_file_id();
         let diag = parse_error_to_diag(&parse_errs[0], file_id);
@@ -352,7 +386,10 @@ mod tests {
         // Entity with missing closing brace produces EOF error with zero-width span
         let src = "entity Foo {";
         let (_cst_opt, parse_errs) = writ_parser::parse(src);
-        assert!(!parse_errs.is_empty(), "Expected parse errors for incomplete entity");
+        assert!(
+            !parse_errs.is_empty(),
+            "Expected parse errors for incomplete entity"
+        );
 
         let file_id = make_file_id();
         for err in &parse_errs {

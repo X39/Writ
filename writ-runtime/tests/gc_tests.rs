@@ -7,13 +7,13 @@
 //! - GC-05: GcHeap trait — BumpHeap and MarkSweepHeap both work
 
 use std::sync::{Arc, Mutex};
-use writ_module::module::MethodBody;
-use writ_module::tables::TypeDefKind;
 use writ_module::Instruction;
 use writ_module::ModuleBuilder;
+use writ_module::module::MethodBody;
+use writ_module::tables::TypeDefKind;
 use writ_runtime::{
-    ExecutionLimit, GcStats, HostRequest, HostResponse, LogLevel, NullHost,
-    RequestId, Runtime, RuntimeBuilder, RuntimeHost, TaskState, Value,
+    ExecutionLimit, GcStats, HostRequest, HostResponse, LogLevel, NullHost, RequestId, Runtime,
+    RuntimeBuilder, RuntimeHost, TaskState, Value,
 };
 
 // ── Encoding helper ──────────────────────────────────────────────
@@ -26,6 +26,10 @@ fn encode(instrs: &[Instruction]) -> Vec<u8> {
     code
 }
 
+fn typedef_token(index: u32) -> u32 {
+    0x0200_0000 | (index + 1)
+}
+
 // ── Recording Host ───────────────────────────────────────────────
 
 /// A host that records on_gc_complete calls.
@@ -36,7 +40,12 @@ struct RecordingHost {
 impl RecordingHost {
     fn new() -> (Self, Arc<Mutex<Vec<GcStats>>>) {
         let stats = Arc::new(Mutex::new(Vec::new()));
-        (RecordingHost { gc_stats: stats.clone() }, stats)
+        (
+            RecordingHost {
+                gc_stats: stats.clone(),
+            },
+            stats,
+        )
     }
 }
 
@@ -65,8 +74,16 @@ impl RuntimeHost for RecordingHost {
 // ── Test helpers ─────────────────────────────────────────────────
 
 fn build_gc_runtime(instructions: &[Instruction], reg_count: u16) -> Runtime<NullHost> {
+    build_gc_runtime_with_type_kind(instructions, reg_count, TypeDefKind::Struct)
+}
+
+fn build_gc_runtime_with_type_kind(
+    instructions: &[Instruction],
+    reg_count: u16,
+    type_kind: TypeDefKind,
+) -> Runtime<NullHost> {
     let mut builder = ModuleBuilder::new("test");
-    builder.add_type_def("TestType", "", TypeDefKind::Struct, 0);
+    builder.add_type_def("TestType", "", type_kind, 0);
     let body = MethodBody {
         register_types: vec![0; reg_count as usize],
         code: encode(instructions),
@@ -108,7 +125,10 @@ fn gc_collects_unreachable_string() {
     let mut runtime = build_gc_runtime(
         &[
             // r0 = "hello"
-            Instruction::LoadString { r_dst: 0, string_idx: 0 },
+            Instruction::LoadString {
+                r_dst: 0,
+                string_idx: 0,
+            },
             // Overwrite r0 with null — string now unreachable
             Instruction::LoadNull { r_dst: 0 },
             Instruction::RetVoid,
@@ -138,8 +158,14 @@ fn gc_preserves_reachable_global() {
     let body = MethodBody {
         register_types: vec![0; 2],
         code: encode(&[
-            Instruction::LoadString { r_dst: 0, string_idx: 0 },
-            Instruction::StoreGlobal { global_idx: 0, r_src: 0 },
+            Instruction::LoadString {
+                r_dst: 0,
+                string_idx: 0,
+            },
+            Instruction::StoreGlobal {
+                global_idx: 0,
+                r_src: 0,
+            },
             Instruction::RetVoid,
         ]),
         debug_locals: vec![],
@@ -162,13 +188,19 @@ fn gc_preserves_reachable_global() {
 #[test]
 fn gc_preserves_entity_data_ref() {
     // Spawn and init an entity — its data_ref should survive GC.
-    let mut runtime = build_gc_runtime(
+    let mut runtime = build_gc_runtime_with_type_kind(
         &[
-            Instruction::SpawnEntity { r_dst: 0, type_idx: 1 },
+            Instruction::SpawnEntity {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
+            },
             Instruction::InitEntity { r_entity: 0 },
             Instruction::RetVoid,
         ],
         1,
+        TypeDefKind::Entity,
     );
     let tid = runtime.spawn_task(0, vec![]).unwrap();
     runtime.tick(0.0, ExecutionLimit::None);
@@ -185,14 +217,20 @@ fn gc_preserves_entity_data_ref() {
 #[test]
 fn gc_frees_destroyed_entity_data() {
     // Spawn, init, then destroy entity — data should be collectible
-    let mut runtime = build_gc_runtime(
+    let mut runtime = build_gc_runtime_with_type_kind(
         &[
-            Instruction::SpawnEntity { r_dst: 0, type_idx: 1 },
+            Instruction::SpawnEntity {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
+            },
             Instruction::InitEntity { r_entity: 0 },
             Instruction::DestroyEntity { r_entity: 0 },
             Instruction::RetVoid,
         ],
         1,
+        TypeDefKind::Entity,
     );
     let tid = runtime.spawn_task(0, vec![]).unwrap();
     runtime.tick(0.0, ExecutionLimit::None);
@@ -200,17 +238,16 @@ fn gc_frees_destroyed_entity_data() {
 
     // Entity is destroyed, data_ref is no longer a root
     let stats = runtime.collect_garbage();
-    assert!(stats.objects_freed > 0, "destroyed entity data should be freed");
+    assert!(
+        stats.objects_freed > 0,
+        "destroyed entity data should be freed"
+    );
 }
 
 #[test]
 fn gc_on_gc_complete_callback_fires() {
     let (host, stats_log) = RecordingHost::new();
-    let mut runtime = build_gc_runtime_with_host(
-        &[Instruction::RetVoid],
-        1,
-        host,
-    );
+    let mut runtime = build_gc_runtime_with_host(&[Instruction::RetVoid], 1, host);
     let tid = runtime.spawn_task(0, vec![]).unwrap();
     runtime.tick(0.0, ExecutionLimit::None);
     assert_eq!(runtime.task_state(tid), Some(TaskState::Completed));
@@ -229,10 +266,22 @@ fn gc_stats_accurate_counts() {
     let body = MethodBody {
         register_types: vec![0; 3],
         code: encode(&[
-            Instruction::LoadString { r_dst: 0, string_idx: 0 },
-            Instruction::StoreGlobal { global_idx: 0, r_src: 0 },
-            Instruction::LoadString { r_dst: 1, string_idx: 0 },
-            Instruction::LoadString { r_dst: 2, string_idx: 0 },
+            Instruction::LoadString {
+                r_dst: 0,
+                string_idx: 0,
+            },
+            Instruction::StoreGlobal {
+                global_idx: 0,
+                r_src: 0,
+            },
+            Instruction::LoadString {
+                r_dst: 1,
+                string_idx: 0,
+            },
+            Instruction::LoadString {
+                r_dst: 2,
+                string_idx: 0,
+            },
             Instruction::RetVoid,
         ]),
         debug_locals: vec![],
@@ -261,7 +310,10 @@ fn gc_with_bump_heap_is_noop() {
     let body = MethodBody {
         register_types: vec![0; 1],
         code: encode(&[
-            Instruction::LoadString { r_dst: 0, string_idx: 0 },
+            Instruction::LoadString {
+                r_dst: 0,
+                string_idx: 0,
+            },
             Instruction::LoadNull { r_dst: 0 },
             Instruction::RetVoid,
         ]),
@@ -286,10 +338,7 @@ fn gc_with_bump_heap_is_noop() {
 
 #[test]
 fn gc_empty_heap_collection() {
-    let mut runtime = build_gc_runtime(
-        &[Instruction::RetVoid],
-        1,
-    );
+    let mut runtime = build_gc_runtime(&[Instruction::RetVoid], 1);
     let tid = runtime.spawn_task(0, vec![]).unwrap();
     runtime.tick(0.0, ExecutionLimit::None);
     assert_eq!(runtime.task_state(tid), Some(TaskState::Completed));
@@ -311,10 +360,19 @@ fn gc_multiple_collections_progressive() {
         register_types: vec![0; 2],
         code: encode(&[
             // Allocate a string and store in global
-            Instruction::LoadString { r_dst: 0, string_idx: 0 },
-            Instruction::StoreGlobal { global_idx: 0, r_src: 0 },
+            Instruction::LoadString {
+                r_dst: 0,
+                string_idx: 0,
+            },
+            Instruction::StoreGlobal {
+                global_idx: 0,
+                r_src: 0,
+            },
             // Allocate another string (unreachable after return)
-            Instruction::LoadString { r_dst: 1, string_idx: 0 },
+            Instruction::LoadString {
+                r_dst: 1,
+                string_idx: 0,
+            },
             Instruction::RetVoid,
         ]),
         debug_locals: vec![],
@@ -365,20 +423,45 @@ fn gc_class_containing_array_field_survives() {
         register_types: vec![0; 4],
         code: encode(&[
             // r0 = new MyClass (Value::Ref on heap, kind=Class)
-            Instruction::New { r_dst: 0, type_idx: class_token.0 },
-            // r1 = new int[] (empty array, elem_type=0x01 for int)
-            Instruction::NewArray { r_dst: 1, elem_type: 0x01 },
+            Instruction::New {
+                r_dst: 0,
+                type_idx: class_token.0,
+                field_count: 1,
+                r_base: 0,
+            },
+            // r1 = new int[] (empty array, default_kind=0 for Int)
+            Instruction::NewArray {
+                r_dst: 1,
+                default_kind: 0,
+            },
             // resize to 1 so we can store an element
             Instruction::LoadInt { r_dst: 2, value: 1 },
-            Instruction::ArrayResize { r_arr: 1, r_new_len: 2 },
+            Instruction::ArrayResize {
+                r_arr: 1,
+                r_new_len: 2,
+            },
             // r2 = 42; store at index 0
-            Instruction::LoadInt { r_dst: 2, value: 42 },
+            Instruction::LoadInt {
+                r_dst: 2,
+                value: 42,
+            },
             Instruction::LoadInt { r_dst: 3, value: 0 },
-            Instruction::ArrayStore { r_arr: 1, r_idx: 3, r_val: 2 },
+            Instruction::ArrayStore {
+                r_arr: 1,
+                r_idx: 3,
+                r_val: 2,
+            },
             // r0.field[0] = r1 (store array ref as class field)
-            Instruction::SetField { r_obj: 0, field_idx: 0, r_val: 1 },
+            Instruction::SetField {
+                r_obj: 0,
+                field_token: 0x0500_0001,
+                r_val: 1,
+            },
             // Store class ref in global so it's a GC root after task completes
-            Instruction::StoreGlobal { global_idx: 0, r_src: 0 },
+            Instruction::StoreGlobal {
+                global_idx: 0,
+                r_src: 0,
+            },
             // Null out r1 — array is now ONLY reachable via r0.field[0]
             Instruction::LoadNull { r_dst: 1 },
             Instruction::RetVoid,
@@ -395,11 +478,18 @@ fn gc_class_containing_array_field_survives() {
     assert_eq!(runtime.task_state(tid), Some(TaskState::Completed));
 
     // Heap should have 2 objects: the class instance (Struct) and the array.
-    assert_eq!(runtime.heap().heap_size(), 2, "heap should contain class + array before GC");
+    assert_eq!(
+        runtime.heap().heap_size(),
+        2,
+        "heap should contain class + array before GC"
+    );
 
     // Collect: class is reachable via global; array is reachable via class.field[0].
     let stats = runtime.collect_garbage();
-    assert_eq!(stats.objects_freed, 0, "GC must trace array through class field — nothing freed");
+    assert_eq!(
+        stats.objects_freed, 0,
+        "GC must trace array through class field — nothing freed"
+    );
     assert_eq!(stats.heap_after, 2, "both class and array must survive GC");
     assert_eq!(stats.objects_traced, 2, "both objects should be traced");
 }

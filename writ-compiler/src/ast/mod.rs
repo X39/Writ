@@ -1,11 +1,11 @@
+pub mod decl;
 pub mod expr;
 pub mod stmt;
-pub mod decl;
 pub mod types;
 
+pub use decl::AstDecl;
 pub use expr::AstExpr;
 pub use stmt::AstStmt;
-pub use decl::AstDecl;
 pub use types::AstType;
 
 /// The lowered AST: a flat list of top-level declarations.

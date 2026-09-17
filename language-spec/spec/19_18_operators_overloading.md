@@ -24,6 +24,7 @@ Operators are overloaded inside `impl` blocks using the `operator` keyword. The 
 corresponding builtin contract.
 
 ```writ
+// vec2.x and vec2.y are mutable fields.
 impl vec2 {
     // Binary operators
     operator +(other: vec2) -> vec2 {

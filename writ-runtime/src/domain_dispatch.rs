@@ -33,63 +33,100 @@ impl Domain {
                 // Uses ContractDef-based keys for standard virtual dispatch:
                 // CALL_VIRT provides a contract identifier, and the runtime type
                 // determines which implementation to use.
-                //
-                // Note: When a type implements the same contract with different
-                // generic specializations (e.g., Int: Into<Float> vs Int: Into<String>),
-                // only the last-registered implementation will be in the table.
-                // Full generic dispatch requires a future phase.
                 let contract_key = self.resolve_contract_key_for_impl(mod_idx, impl_def.contract);
+                if type_key == u32::MAX || contract_key == u32::MAX {
+                    // Inherent impls have a null contract, while malformed or
+                    // unresolved metadata has no canonical key. Neither belongs
+                    // in the virtual-dispatch index.
+                    continue;
+                }
 
-                // Find the method range for this ImplDef.
-                // Use the contract's method count to bound the range, rather than
-                // extending to the next ImplDef's method_list (which may include
-                // unrelated methods from other types).
-                let method_start = impl_def.method_list.saturating_sub(1) as usize;
-                let contract_method_count = Self::get_contract_method_count(module, impl_def.contract);
-                let method_end_from_next = if impl_idx + 1 < module.impl_defs.len() {
-                    module.impl_defs[impl_idx + 1].method_list.saturating_sub(1) as usize
-                } else {
-                    module.method_defs.len()
-                };
-                // Use the smaller of: contract method count, or next ImplDef boundary
-                let method_end = if contract_method_count > 0 {
-                    (method_start + contract_method_count).min(method_end_from_next)
-                } else {
-                    method_end_from_next
-                };
-
-                // For each method in this impl, slot = sequential offset from start
-                for method_idx in method_start..method_end {
-                    let method_def = &module.method_defs[method_idx];
-                    let slot = (method_idx - method_start) as u16;
-
-                    let target = if method_def.flags & 0x80 != 0 {
-                        // Intrinsic method -- resolve to IntrinsicId
-                        let type_name = self.get_type_name(mod_idx, impl_def.type_token);
-                        let method_name = read_string(
-                            &module.string_heap, method_def.name
-                        ).unwrap_or("");
-                        match resolve_intrinsic_id(&type_name, method_name) {
-                            Some(intrinsic) => DispatchTarget::Intrinsic(intrinsic),
-                            None => {
-                                // Unknown intrinsic -- treat as IL method (shouldn't happen with
-                                // correct virtual module, but avoids panic)
-                                DispatchTarget::Method { module_idx: mod_idx, method_idx }
-                            }
-                        }
-                    } else {
-                        DispatchTarget::Method { module_idx: mod_idx, method_idx }
+                let target_pattern = if impl_def.type_token.table_id() == 4 {
+                    let Some(signature) = crate::type_specs::type_spec_signature(
+                        mod_idx,
+                        impl_def.type_token,
+                        &self.modules,
+                    ) else {
+                        continue;
                     };
+                    Some((mod_idx, signature))
+                } else {
+                    None
+                };
+                let contract_pattern = if impl_def.contract.table_id() == 4 {
+                    let Some(signature) = crate::type_specs::type_spec_signature(
+                        mod_idx,
+                        impl_def.contract,
+                        &self.modules,
+                    ) else {
+                        continue;
+                    };
+                    Some((mod_idx, signature))
+                } else {
+                    None
+                };
 
-                    // FIX-02: Use impl_def.contract.0 as the type_args_hash discriminator.
-                    // Each generic specialization (e.g. Into<Float>, Into<String>) has its own
-                    // synthetic ContractDef token in the virtual module, so their raw token values
-                    // differ. This produces distinct DispatchKeys for each specialization, eliminating
-                    // the 4 collisions that occurred when all specializations shared the same base
-                    // contract token. CALL_VIRT carries contract_idx (which must match this value)
-                    // to perform the lookup.
-                    let type_args_hash = impl_def.contract.0;
-                    table.insert(DispatchKey { type_key, contract_key, slot, type_args_hash }, target);
+                // Find the methods explicitly owned by this ImplDef. Ownership is
+                // encoded on each MethodDef, so unrelated type or top-level methods
+                // cannot leak into this implementation's dispatch slots.
+                let mut method_indices = module.impl_method_indices(impl_idx);
+                let contract_method_count =
+                    self.get_contract_method_count(mod_idx, impl_def.contract);
+                if contract_method_count > 0 {
+                    method_indices.truncate(contract_method_count);
+                }
+
+                // For each method in this impl, slot = sequential ownership order.
+                for (slot, method_idx) in method_indices.into_iter().enumerate() {
+                    let method_def = &module.method_defs[method_idx];
+                    let slot = slot as u16;
+
+                    let target =
+                        if method_def.flags & writ_module::tables::METHOD_FLAG_INTRINSIC != 0 {
+                            // Intrinsic method -- resolve to IntrinsicId
+                            let type_name = self.get_type_name(mod_idx, impl_def.type_token);
+                            let method_name =
+                                read_string(&module.string_heap, method_def.name).unwrap_or("");
+                            match resolve_intrinsic_id(&type_name, method_name) {
+                                Some(intrinsic) => DispatchTarget::Intrinsic(intrinsic),
+                                None => {
+                                    // Unknown intrinsic -- treat as IL method (shouldn't happen with
+                                    // correct virtual module, but avoids panic)
+                                    DispatchTarget::Method {
+                                        module_idx: mod_idx,
+                                        method_idx,
+                                    }
+                                }
+                            }
+                        } else {
+                            DispatchTarget::Method {
+                                module_idx: mod_idx,
+                                method_idx,
+                            }
+                        };
+
+                    let type_args_hash = crate::type_specs::specialization_hash(
+                        mod_idx,
+                        impl_def.contract,
+                        &self.modules,
+                    );
+                    table.insert(
+                        DispatchKey {
+                            type_key,
+                            contract_key,
+                            slot,
+                            type_args_hash,
+                        },
+                        target,
+                    );
+                    table.insert_pattern(
+                        type_key,
+                        contract_key,
+                        slot,
+                        target_pattern.clone(),
+                        contract_pattern.clone(),
+                        target,
+                    );
                 }
             }
         }
@@ -101,117 +138,24 @@ impl Domain {
     ///
     /// Encoded as `(module_idx << 16) | typedef_row_idx_0based`.
     fn resolve_type_key(&self, mod_idx: usize, token: MetadataToken) -> u32 {
-        let table_id = token.table_id();
-        let row = match token.row_index() {
-            Some(r) => r - 1, // convert to 0-based
-            None => return u32::MAX,
-        };
-
-        match table_id {
-            2 => {
-                // Local TypeDef
-                ((mod_idx as u32) << 16) | row
-            }
-            3 => {
-                // TypeRef -- resolve via cross-module resolution
-                if let Some(resolved) = self.modules[mod_idx].resolved_refs.types.get(&row) {
-                    ((resolved.module_idx as u32) << 16) | (resolved.typedef_idx as u32)
-                } else {
-                    u32::MAX
-                }
-            }
-            _ => u32::MAX,
-        }
+        crate::type_specs::resolve_type_key(mod_idx, token, &self.modules)
     }
 
     /// Resolve a contract MetadataToken to a global contract_key for dispatch table building.
     ///
     /// ContractDef tokens use table ID 10. The key is `(module_idx << 16) | contractdef_row_idx`.
     fn resolve_contract_key_for_impl(&self, mod_idx: usize, token: MetadataToken) -> u32 {
-        let table_id = token.table_id();
-        let row = match token.row_index() {
-            Some(r) => r - 1, // convert to 0-based
-            None => return u32::MAX,
-        };
-
-        match table_id {
-            10 => {
-                // Local ContractDef
-                ((mod_idx as u32) << 16) | row
-            }
-            3 => {
-                // TypeRef pointing to a contract in another module.
-                // Check the contracts map first (TypeRef resolved to ContractDef).
-                if let Some(resolved) = self.modules[mod_idx].resolved_refs.contracts.get(&row) {
-                    ((resolved.module_idx as u32) << 16) | (resolved.contractdef_idx as u32)
-                } else {
-                    u32::MAX
-                }
-            }
-            _ => u32::MAX,
-        }
+        crate::type_specs::resolve_contract_key(mod_idx, token, &self.modules)
     }
 
     /// Get the number of methods in a contract (from its ContractMethod slots).
-    fn get_contract_method_count(module: &writ_module::Module, contract_token: MetadataToken) -> usize {
-        let table_id = contract_token.table_id();
-        if table_id != 10 {
-            return 0; // Cross-module contract -- can't count methods locally
-        }
-        let row = match contract_token.row_index() {
-            Some(r) => (r - 1) as usize,
-            None => return 0,
-        };
-        if row >= module.contract_defs.len() {
-            return 0;
-        }
-        let cd = &module.contract_defs[row];
-        let method_start = cd.method_list.saturating_sub(1) as usize;
-        let method_end = if row + 1 < module.contract_defs.len() {
-            module.contract_defs[row + 1].method_list.saturating_sub(1) as usize
-        } else {
-            module.contract_methods.len()
-        };
-        method_end.saturating_sub(method_start)
+    fn get_contract_method_count(&self, mod_idx: usize, contract_token: MetadataToken) -> usize {
+        crate::type_specs::contract_method_count(mod_idx, contract_token, &self.modules)
     }
 
     /// Get the type name for a type MetadataToken (for intrinsic resolution).
     fn get_type_name(&self, mod_idx: usize, token: MetadataToken) -> String {
-        let table_id = token.table_id();
-        let row = match token.row_index() {
-            Some(r) => (r - 1) as usize,
-            None => return String::new(),
-        };
-
-        match table_id {
-            2 => {
-                // Local TypeDef
-                let module = &self.modules[mod_idx].module;
-                if row < module.type_defs.len() {
-                    read_string(&module.string_heap, module.type_defs[row].name)
-                        .unwrap_or("")
-                        .to_string()
-                } else {
-                    String::new()
-                }
-            }
-            3 => {
-                // TypeRef -- resolve to target module and get name from there
-                if let Some(resolved) = self.modules[mod_idx].resolved_refs.types.get(&(row as u32)) {
-                    let target_module = &self.modules[resolved.module_idx].module;
-                    if resolved.typedef_idx < target_module.type_defs.len() {
-                        read_string(&target_module.string_heap, target_module.type_defs[resolved.typedef_idx].name)
-                            .unwrap_or("")
-                            .to_string()
-                    } else {
-                        String::new()
-                    }
-                } else {
-                    String::new()
-                }
-            }
-            _ => String::new(),
-        }
+        crate::type_specs::type_name(mod_idx, token, &self.modules)
     }
 }
 
@@ -263,31 +207,31 @@ pub fn resolve_intrinsic_id(type_name: &str, method_name: &str) -> Option<Intrin
         ("Array", "array_index_range") => Some(IntrinsicId::ArraySlice),
         ("Array", "array_iterable") => Some(IntrinsicId::ArrayIterable),
         // Reflection get_type (4)
-        ("Int",    "int_get_type")    => Some(IntrinsicId::IntGetType),
-        ("Float",  "float_get_type")  => Some(IntrinsicId::FloatGetType),
-        ("Bool",   "bool_get_type")   => Some(IntrinsicId::BoolGetType),
+        ("Int", "int_get_type") => Some(IntrinsicId::IntGetType),
+        ("Float", "float_get_type") => Some(IntrinsicId::FloatGetType),
+        ("Bool", "bool_get_type") => Some(IntrinsicId::BoolGetType),
         ("String", "string_get_type") => Some(IntrinsicId::StringGetType),
         // Reflection — Type methods (Phase 103)
-        ("Type", "type_fields")          => Some(IntrinsicId::TypeFields),
-        ("Type", "type_methods")         => Some(IntrinsicId::TypeMethods),
-        ("Type", "type_attributes")      => Some(IntrinsicId::TypeAttributes),
-        ("Type", "type_contracts")       => Some(IntrinsicId::TypeContracts),
-        ("Type", "type_implements")      => Some(IntrinsicId::TypeImplements),
-        ("Type", "type_get_name")        => Some(IntrinsicId::TypeGetName),
-        ("Type", "type_get_namespace")   => Some(IntrinsicId::TypeGetNamespace),
-        ("Type", "type_get_kind")        => Some(IntrinsicId::TypeGetKind),
-        ("Type", "type_get_is_generic")  => Some(IntrinsicId::TypeGetIsGeneric),
+        ("Type", "fields") => Some(IntrinsicId::TypeFields),
+        ("Type", "methods") => Some(IntrinsicId::TypeMethods),
+        ("Type", "attributes") => Some(IntrinsicId::TypeAttributes),
+        ("Type", "contracts") => Some(IntrinsicId::TypeContracts),
+        ("Type", "implements") => Some(IntrinsicId::TypeImplements),
+        ("Type", "type_get_name") => Some(IntrinsicId::TypeGetName),
+        ("Type", "type_get_namespace") => Some(IntrinsicId::TypeGetNamespace),
+        ("Type", "type_get_kind") => Some(IntrinsicId::TypeGetKind),
+        ("Type", "type_get_is_generic") => Some(IntrinsicId::TypeGetIsGeneric),
         // Reflection — FieldInfo methods (Phase 103)
-        ("FieldInfo", "fieldinfo_get")                => Some(IntrinsicId::FieldInfoGet),
-        ("FieldInfo", "fieldinfo_get_name")           => Some(IntrinsicId::FieldInfoGetName),
-        ("FieldInfo", "fieldinfo_get_declared_type")  => Some(IntrinsicId::FieldInfoGetDeclaredType),
-        ("FieldInfo", "fieldinfo_get_is_mutable")     => Some(IntrinsicId::FieldInfoGetIsMutable),
-        ("FieldInfo", "fieldinfo_set")                => Some(IntrinsicId::FieldInfoSet),
+        ("FieldInfo", "get") => Some(IntrinsicId::FieldInfoGet),
+        ("FieldInfo", "fieldinfo_get_name") => Some(IntrinsicId::FieldInfoGetName),
+        ("FieldInfo", "fieldinfo_get_declared_type") => Some(IntrinsicId::FieldInfoGetDeclaredType),
+        ("FieldInfo", "fieldinfo_get_is_mutable") => Some(IntrinsicId::FieldInfoGetIsMutable),
+        ("FieldInfo", "set") => Some(IntrinsicId::FieldInfoSet),
         // Reflection — MethodInfo methods (Phase 103, Phase 107)
-        ("MethodInfo", "methodinfo_get_name")         => Some(IntrinsicId::MethodInfoGetName),
-        ("MethodInfo", "methodinfo_get_return_type")  => Some(IntrinsicId::MethodInfoGetReturnType),
-        ("MethodInfo", "methodinfo_get_parameters")   => Some(IntrinsicId::MethodInfoGetParameters),
-        ("MethodInfo", "methodinfo_invoke")           => Some(IntrinsicId::MethodInfoInvoke),
+        ("MethodInfo", "methodinfo_get_name") => Some(IntrinsicId::MethodInfoGetName),
+        ("MethodInfo", "methodinfo_get_return_type") => Some(IntrinsicId::MethodInfoGetReturnType),
+        ("MethodInfo", "methodinfo_get_parameters") => Some(IntrinsicId::MethodInfoGetParameters),
+        ("MethodInfo", "invoke") => Some(IntrinsicId::MethodInfoInvoke),
         // Reflection — ParameterInfo methods (Phase 103)
         ("ParameterInfo", "paraminfo_get_name") => Some(IntrinsicId::ParameterInfoGetName),
         ("ParameterInfo", "paraminfo_get_type") => Some(IntrinsicId::ParameterInfoGetType),
@@ -298,15 +242,68 @@ pub fn resolve_intrinsic_id(type_name: &str, method_name: &str) -> Option<Intrin
         ("ContractInfo", "contractinfo_get_name") => Some(IntrinsicId::ContractInfoGetName),
         ("ContractInfo", "contractinfo_get_type") => Some(IntrinsicId::ContractInfoGetType),
         // Reflection — Generic type queries (Phase 108)
-        ("Type",       "type_type_args")        => Some(IntrinsicId::TypeTypeArgs),
+        ("Type", "type_args") => Some(IntrinsicId::TypeTypeArgs),
         // Reflection — Per-member attributes (Phase 108)
-        ("MethodInfo", "methodinfo_attributes") => Some(IntrinsicId::MethodInfoAttributes),
-        ("FieldInfo",  "fieldinfo_attributes")  => Some(IntrinsicId::FieldInfoAttributes),
+        ("MethodInfo", "attributes") => Some(IntrinsicId::MethodInfoAttributes),
+        ("FieldInfo", "attributes") => Some(IntrinsicId::FieldInfoAttributes),
         // Hashable (4) — Phase 116
-        ("Int",    "int_hash")    => Some(IntrinsicId::IntHash),
-        ("Float",  "float_hash")  => Some(IntrinsicId::FloatHash),
-        ("Bool",   "bool_hash")   => Some(IntrinsicId::BoolHash),
+        ("Int", "int_hash") => Some(IntrinsicId::IntHash),
+        ("Float", "float_hash") => Some(IntrinsicId::FloatHash),
+        ("Bool", "bool_hash") => Some(IntrinsicId::BoolHash),
         ("String", "string_hash") => Some(IntrinsicId::StringHash),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn public_reflection_names_resolve_to_intrinsics() {
+        let cases = [
+            ("Type", "fields", IntrinsicId::TypeFields),
+            ("Type", "methods", IntrinsicId::TypeMethods),
+            ("Type", "attributes", IntrinsicId::TypeAttributes),
+            ("Type", "contracts", IntrinsicId::TypeContracts),
+            ("Type", "implements", IntrinsicId::TypeImplements),
+            ("Type", "type_args", IntrinsicId::TypeTypeArgs),
+            ("FieldInfo", "get", IntrinsicId::FieldInfoGet),
+            ("FieldInfo", "set", IntrinsicId::FieldInfoSet),
+            ("FieldInfo", "attributes", IntrinsicId::FieldInfoAttributes),
+            ("MethodInfo", "invoke", IntrinsicId::MethodInfoInvoke),
+            (
+                "MethodInfo",
+                "attributes",
+                IntrinsicId::MethodInfoAttributes,
+            ),
+        ];
+
+        for (type_name, method_name, expected) in cases {
+            assert_eq!(
+                resolve_intrinsic_id(type_name, method_name),
+                Some(expected),
+                "{type_name}.{method_name}"
+            );
+        }
+    }
+
+    #[test]
+    fn obsolete_public_reflection_internal_names_do_not_resolve() {
+        for (type_name, method_name) in [
+            ("Type", "type_fields"),
+            ("Type", "type_methods"),
+            ("Type", "type_attributes"),
+            ("Type", "type_contracts"),
+            ("Type", "type_implements"),
+            ("Type", "type_type_args"),
+            ("FieldInfo", "fieldinfo_get"),
+            ("FieldInfo", "fieldinfo_set"),
+            ("FieldInfo", "fieldinfo_attributes"),
+            ("MethodInfo", "methodinfo_invoke"),
+            ("MethodInfo", "methodinfo_attributes"),
+        ] {
+            assert_eq!(resolve_intrinsic_id(type_name, method_name), None);
+        }
     }
 }

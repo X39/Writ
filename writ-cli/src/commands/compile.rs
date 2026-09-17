@@ -3,7 +3,12 @@
 use crate::bom_utils::strip_bom_and_decode;
 use crate::pipeline::run_pipeline;
 
-pub fn cmd_compile(input: String, output: Option<String>, condition: Vec<String>, deny_warnings: bool) -> Result<(), String> {
+pub fn cmd_compile(
+    input: String,
+    output: Option<String>,
+    condition: Vec<String>,
+    deny_warnings: bool,
+) -> Result<(), String> {
     // Detect directory input and give helpful error
     if std::path::Path::new(&input).is_dir() {
         return Err(format!(
@@ -23,8 +28,8 @@ pub fn cmd_compile(input: String, output: Option<String>, condition: Vec<String>
     let handle = std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)
         .spawn(move || -> Result<(), String> {
-            let bytes = std::fs::read(&input)
-                .map_err(|e| format!("failed to read '{}': {}", input, e))?;
+            let bytes =
+                std::fs::read(&input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
             let src_owned = strip_bom_and_decode(&bytes)
                 .map_err(|e| format!("failed to decode '{}': {}", input, e))?;
             // Leak the source string to obtain a 'static reference required by the
@@ -35,11 +40,11 @@ pub fn cmd_compile(input: String, output: Option<String>, condition: Vec<String>
 
             let compiled_bytes = run_pipeline(
                 vec![(file_id, input.clone(), src)],
-                None,       // no module_name override
-                true,       // always emit debug info in single-file mode
+                None, // no module_name override
+                true, // always emit debug info in single-file mode
                 &active_conditions,
                 deny_warnings,
-                &[],        // no library modules in single-file mode
+                &[], // no library modules in single-file mode
             )?;
 
             // Determine output path
@@ -59,5 +64,7 @@ pub fn cmd_compile(input: String, output: Option<String>, condition: Vec<String>
         })
         .map_err(|e| format!("failed to spawn compile thread: {e}"))?;
 
-    handle.join().unwrap_or_else(|_| Err("compilation panicked".to_string()))
+    handle
+        .join()
+        .unwrap_or_else(|_| Err("compilation panicked".to_string()))
 }

@@ -3,20 +3,20 @@
 //! Consumes a `NameResolvedAst` and the original ASTs, producing a `TypedAst`
 //! where every expression carries a fully resolved `Ty`.
 
-pub mod ty;
-pub mod ir;
-pub mod env;
-pub(crate) mod env_build;
-pub(crate) mod library_sigs;
-pub mod unify;
-pub(crate) mod infer;
+pub(crate) mod check_decl;
 pub(crate) mod check_expr;
 pub(crate) mod check_stmt;
-pub(crate) mod check_decl;
-pub(crate) mod error;
-pub(crate) mod mutability;
 pub(crate) mod desugar;
+pub mod env;
+pub(crate) mod env_build;
+pub(crate) mod error;
+pub(crate) mod infer;
+pub mod ir;
+pub(crate) mod library_sigs;
+pub(crate) mod mutability;
 pub(crate) mod pattern;
+pub mod ty;
+pub mod unify;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -36,8 +36,9 @@ use writ_diagnostics::{Diagnostic, FileId};
 ///
 /// `library_modules` is a slice of pre-compiled module binaries. Their method
 /// signatures are injected into `TypeEnv` after `TypeEnv::build` so that method
-/// calls on library types resolve correctly. Pass `&[]` when compiling without
-/// library dependencies.
+/// calls on library types resolve correctly. The canonical `writ-runtime` module
+/// is appended automatically when the supplied slice does not already contain a
+/// core module.
 ///
 /// Returns a 4-element tuple: `(TypedAst, TyInterner, TypeEnv, Vec<Diagnostic>)`.
 /// The `TypeEnv` carries function signatures, struct/entity/enum fields, impl
@@ -47,6 +48,15 @@ pub fn typecheck(
     asts: &[(FileId, &Ast)],
     library_modules: &[&writ_module::Module],
 ) -> (TypedAst, ty::TyInterner, env::TypeEnv, Vec<Diagnostic>) {
+    let canonical_core = writ_module::build_writ_runtime_module();
+    let library_modules =
+        crate::core_library::normalize_libraries(library_modules, &canonical_core);
+
+    // typecheck is a public boundary and may receive a NameResolvedAst built by
+    // another frontend. Injection is idempotent, so ensure its DefMap contains
+    // the same normalized libraries before materializing TypeEnv metadata.
+    crate::resolve::inject_library::inject_module_types(&library_modules, &mut resolved.def_map);
+
     // 1. Build TyInterner with primitives pre-interned
     let mut interner = ty::TyInterner::new();
 
@@ -57,7 +67,7 @@ pub fn typecheck(
     // This must happen AFTER TypeEnv::build so user-source sigs are already present.
     // resolved is owned (mut) and TypeEnv::build has returned; no outstanding borrows exist.
     library_sigs::inject_library_sigs(
-        library_modules,
+        &library_modules,
         &mut resolved.def_map,
         &mut type_env,
         &mut interner,
@@ -77,6 +87,7 @@ pub fn typecheck(
         current_fn_ret: None,
         current_file: file_id,
         self_type: None,
+        current_generics: FxHashMap::default(),
         current_namespace: String::new(),
     };
 
@@ -91,21 +102,35 @@ pub fn typecheck(
     //     Must run after all declarations are checked so that struct_fields is fully populated.
     {
         let mut recursive_diags = Vec::new();
-        detect_recursive_structs(&resolved.def_map, &type_env, &ctx.interner, &mut recursive_diags);
+        detect_recursive_structs(
+            &resolved.def_map,
+            &type_env,
+            &ctx.interner,
+            &mut recursive_diags,
+        );
         ctx.diags.extend(recursive_diags);
     }
 
     // 5. Extract struct field types from TypeEnv before it's dropped.
     //    Map: DefId -> Vec<(field_name, field_ty)>, dropping the span.
     let struct_field_types: FxHashMap<crate::resolve::def_map::DefId, Vec<(String, ty::Ty)>> =
-        type_env.struct_fields
+        type_env
+            .struct_fields
             .iter()
             .map(|(def_id, fields)| {
-                (*def_id, fields.iter().map(|(name, field_ty, _span)| (name.clone(), *field_ty)).collect())
+                (
+                    *def_id,
+                    fields
+                        .iter()
+                        .map(|field| (field.name.clone(), field.ty))
+                        .collect(),
+                )
             })
             .collect();
 
-    // 6. Collect diagnostics and extract interner
+    // 6. Retain contextual inference results needed by code generation, then
+    //    collect diagnostics and extract the interner.
+    ctx.unify.record_resolutions(&mut ctx.interner);
     all_diags.append(&mut ctx.diags);
     let interner = std::mem::take(&mut ctx.interner);
 
@@ -205,12 +230,12 @@ fn dfs_struct(
 
     // Walk each field of this struct.
     if let Some(fields) = type_env.struct_fields.get(&def_id) {
-        for (field_name, field_ty, _span) in fields {
+        for field in fields {
             // Only value-type struct fields can create infinite-size cycles.
             // TyKind::Class, TyKind::Entity, TyKind::Enum, primitives, Array, Option,
             // Result, Func, TaskHandle, GenericParam, Infer, Error — all safe.
-            if let TyKind::Struct(field_def_id) = interner.kind(*field_ty) {
-                path.push((def_id, field_name.clone()));
+            if let TyKind::Struct(field_def_id) = interner.kind(field.ty) {
+                path.push((def_id, field.name.clone()));
                 dfs_struct(
                     *field_def_id,
                     path,

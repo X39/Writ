@@ -1,10 +1,10 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
-    .method "check" (val: ?) -> void mut {
+    .method "check" (val: writ::Option<bool>) -> int static {
         .locals {
-            r0: ? "val" [0, 56)
+            r0: writ::Option<bool> "val" [0, 56)
         }
-        .reg r0 int
+        .reg r0 writ::Option<bool>
         .reg r1 int
         .reg r2 int
         .reg r3 int
@@ -16,16 +16,16 @@
         BR 8
         RET r1
     }
-    .method "main" () -> void mut {
+    .method "main" () -> void static {
         .locals {
             r0: int "a" [16, 40)
             r2: int "b" [38, 40)
         }
         .reg r0 int
-        .reg r1 ?
+        .reg r1 writ::Option<bool>
         .reg r2 int
         .reg r3 bool
-        .reg r4 ?
+        .reg r4 writ::Option<bool>
         LOAD_NULL r1  ; line:9 col:5
         CALL r0, 117440513, r1, 1
         LOAD_TRUE r3  ; line:10 col:5

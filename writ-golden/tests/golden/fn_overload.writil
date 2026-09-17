@@ -1,7 +1,7 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
-    .extern_fn "log::info" (string) -> void "log::info"
-    .method "test" (value: int) -> void pub mut {
+    .extern_fn "log::info" (string) -> void "log::info" pub
+    .method "test" (value: int) -> void pub static {
         .locals {
             r0: int "value" [0, 20)
         }
@@ -12,7 +12,7 @@
         CALL_EXTERN r1, 268435457, r2, 1
         RET_VOID
     }
-    .method "test" (value: string) -> void pub mut {
+    .method "test" (value: string) -> void pub static {
         .locals {
             r0: string "value" [0, 14)
         }
@@ -21,14 +21,14 @@
         CALL_EXTERN r1, 268435457, r0, 1  ; line:6 col:5
         RET_VOID
     }
-    .method "main" () -> void mut {
+    .method "main" () -> void static {
         .reg r0 void
         .reg r1 int
         .reg r2 void
         .reg r3 string
         LOAD_INT r1, 42  ; line:10 col:5
         CALL r0, 117440513, r1, 1
-        LOAD_STRING r3, 169  ; line:11 col:5
+        LOAD_STRING r3, 2462  ; line:11 col:5
         CALL r2, 117440514, r3, 1
         RET_VOID
     }

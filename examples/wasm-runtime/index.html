@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Writ WASM runtime</title>
+  <style>
+    body { max-width: 52rem; margin: 3rem auto; padding: 0 1rem; font: 16px/1.5 system-ui; color: #18212f; }
+    pre { padding: 1rem; background: #eef2f7; border-radius: .5rem; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>Writ in WebAssembly</h1>
+  <p>This page runs a bounded VM tick each animation frame. The deferred host call resolves after one second.</p>
+  <pre id="output">Starting…</pre>
+  <script type="module" src="./main.js?v=1"></script>
+</body>
+</html>

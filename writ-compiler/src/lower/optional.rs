@@ -1,5 +1,5 @@
-use writ_parser::cst::{Spanned, TypeExpr};
 use crate::ast::types::AstType;
+use writ_parser::cst::{Spanned, TypeExpr};
 
 /// Folds a CST `TypeExpr` into a lowered `AstType`.
 ///
@@ -18,7 +18,11 @@ pub(crate) fn lower_type(spanned: Spanned<TypeExpr<'_>>) -> AstType {
 
         TypeExpr::Qualified { segments, rooted } => AstType::Named {
             name: {
-                let joined: String = segments.iter().map(|(seg, _)| *seg).collect::<Vec<_>>().join("::");
+                let joined: String = segments
+                    .iter()
+                    .map(|(seg, _)| *seg)
+                    .collect::<Vec<_>>()
+                    .join("::");
                 if rooted {
                     format!("::{}", joined)
                 } else {
@@ -32,7 +36,11 @@ pub(crate) fn lower_type(spanned: Spanned<TypeExpr<'_>>) -> AstType {
             let name = match base.0 {
                 TypeExpr::Named(n) => n.to_string(),
                 TypeExpr::Qualified { segments, rooted } => {
-                    let joined: String = segments.iter().map(|(s, _)| *s).collect::<Vec<_>>().join("::");
+                    let joined: String = segments
+                        .iter()
+                        .map(|(s, _)| *s)
+                        .collect::<Vec<_>>()
+                        .join("::");
                     if rooted {
                         format!("::{}", joined)
                     } else {

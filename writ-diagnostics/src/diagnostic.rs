@@ -116,7 +116,12 @@ pub struct DiagnosticBuilder {
 
 impl DiagnosticBuilder {
     /// Set the primary span location.
-    pub fn with_primary(mut self, file_id: FileId, span: SimpleSpan, label: impl Into<String>) -> Self {
+    pub fn with_primary(
+        mut self,
+        file_id: FileId,
+        span: SimpleSpan,
+        label: impl Into<String>,
+    ) -> Self {
         self.primary_file = file_id;
         self.primary_span = span;
         self.primary_label = label.into();
@@ -124,7 +129,12 @@ impl DiagnosticBuilder {
     }
 
     /// Add a secondary label.
-    pub fn with_secondary(mut self, file_id: FileId, span: SimpleSpan, message: impl Into<String>) -> Self {
+    pub fn with_secondary(
+        mut self,
+        file_id: FileId,
+        span: SimpleSpan,
+        message: impl Into<String>,
+    ) -> Self {
         self.secondary_labels.push(SecondaryLabel {
             file_id,
             span,

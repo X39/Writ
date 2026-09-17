@@ -4,15 +4,17 @@
 //! method bodies in a TypedAst. It consumes the populated ModuleBuilder from
 //! Phase 24 and the TypedAst/TyInterner from Phase 23.
 
-pub mod reg_alloc;
-pub mod labels;
-pub mod expr;
-pub mod stmt;
+use std::collections::HashSet;
+
 pub mod call;
 pub mod closure;
-pub mod patterns;
 pub mod const_fold;
 pub mod debug;
+pub mod expr;
+pub mod labels;
+pub mod patterns;
+pub mod reg_alloc;
+pub mod stmt;
 
 use chumsky::span::SimpleSpan;
 use rustc_hash::FxHashMap;
@@ -20,7 +22,7 @@ use rustc_hash::FxHashMap;
 use writ_module::instruction::Instruction;
 
 use crate::check::ir::{TypedAst, TypedDecl, TypedExpr, TypedLiteral, TypedStmt};
-use crate::check::ty::{Ty, TyInterner};
+use crate::check::ty::{Ty, TyInterner, TyKind};
 use crate::emit::collect::ReflectableInfo;
 use crate::emit::module_builder::ModuleBuilder;
 use crate::resolve::def_map::DefId;
@@ -72,11 +74,18 @@ pub struct BodyEmitter<'a> {
     pub source_spans: Vec<(u32, SimpleSpan)>,
     pub debug_locals: Vec<(u16, String, u32, u32)>,
     pub current_method_def_id: Option<DefId>,
+    /// Whether the current method declares an `Option<T>` return type.
+    pub returns_option: bool,
     /// Stack of (break_label, continue_label) for nested loops.
     pub loop_stack: Vec<(Label, Label)>,
-    /// Lambda counter: tracks how many lambdas have been emitted in this body.
-    /// Used by closure::emit_lambda to find the right synthetic TypeDef/MethodDef.
+    /// Fallback counter for standalone expression-emission tests that do not
+    /// provide the module-wide lambda ordinal map.
     pub lambda_counter: usize,
+    /// Stable TypedExpr identity -> module-wide pre-scan ordinal.
+    ///
+    /// Production body emission populates this map so lambdas in later methods
+    /// and nested lambda bodies resolve their own synthetic metadata rows.
+    pub lambda_ordinals: Option<&'a FxHashMap<usize, usize>>,
     /// Pending string literals awaiting interning.
     ///
     /// Collects (instruction_index, string_value) pairs for each LoadString emitted.
@@ -106,8 +115,10 @@ impl<'a> BodyEmitter<'a> {
             source_spans: Vec::new(),
             debug_locals: Vec::new(),
             current_method_def_id: None,
+            returns_option: false,
             loop_stack: Vec::new(),
             lambda_counter: 0,
+            lambda_ordinals: None,
             pending_strings: Vec::new(),
             struct_field_types,
         }
@@ -130,6 +141,23 @@ impl<'a> BodyEmitter<'a> {
     pub fn alloc_void_reg(&mut self) -> u16 {
         let void_ty = Ty(4);
         self.regs.alloc(void_ty)
+    }
+
+    /// Resolve a lambda's module-wide pre-scan ordinal.
+    ///
+    /// Direct BodyEmitter unit tests have no AST-wide map, so they retain the
+    /// old sequential fallback beginning at zero.
+    pub fn lambda_ordinal(&mut self, expr: &TypedExpr) -> usize {
+        if let Some(ordinals) = self.lambda_ordinals {
+            let identity = expr as *const TypedExpr as usize;
+            return *ordinals
+                .get(&identity)
+                .expect("lambda expression missing from pre-scan ordinal map");
+        }
+
+        let ordinal = self.lambda_counter;
+        self.lambda_counter += 1;
+        ordinal
     }
 
     /// Create a new label.
@@ -222,18 +250,25 @@ fn expr_has_error(expr: &TypedExpr) -> bool {
                 }
             }
             if let Some(t) = tail
-                && expr_has_error(t) {
-                    return true;
-                }
+                && expr_has_error(t)
+            {
+                return true;
+            }
         }
-        TypedExpr::If { condition, then_branch, else_branch, .. } => {
+        TypedExpr::If {
+            condition,
+            then_branch,
+            else_branch,
+            ..
+        } => {
             if expr_has_error(condition) || expr_has_error(then_branch) {
                 return true;
             }
             if let Some(e) = else_branch
-                && expr_has_error(e) {
-                    return true;
-                }
+                && expr_has_error(e)
+            {
+                return true;
+            }
         }
         TypedExpr::Binary { left, right, .. } => {
             if expr_has_error(left) || expr_has_error(right) {
@@ -255,13 +290,14 @@ fn expr_has_error(expr: &TypedExpr) -> bool {
                 }
             }
         }
-        TypedExpr::Field { receiver, .. }
-        | TypedExpr::ComponentAccess { receiver, .. } => {
+        TypedExpr::Field { receiver, .. } | TypedExpr::ComponentAccess { receiver, .. } => {
             if expr_has_error(receiver) {
                 return true;
             }
         }
-        TypedExpr::Index { receiver, index, .. } => {
+        TypedExpr::Index {
+            receiver, index, ..
+        } => {
             if expr_has_error(receiver) || expr_has_error(index) {
                 return true;
             }
@@ -287,16 +323,17 @@ fn expr_has_error(expr: &TypedExpr) -> bool {
         }
         TypedExpr::Range { start, end, .. } => {
             if let Some(s) = start
-                && expr_has_error(s) {
-                    return true;
-                }
+                && expr_has_error(s)
+            {
+                return true;
+            }
             if let Some(e) = end
-                && expr_has_error(e) {
-                    return true;
-                }
+                && expr_has_error(e)
+            {
+                return true;
+            }
         }
         TypedExpr::Spawn { expr: inner, .. }
-        | TypedExpr::SpawnDetached { expr: inner, .. }
         | TypedExpr::Join { expr: inner, .. }
         | TypedExpr::Cancel { expr: inner, .. }
         | TypedExpr::Defer { expr: inner, .. } => {
@@ -309,7 +346,9 @@ fn expr_has_error(expr: &TypedExpr) -> bool {
                 return true;
             }
         }
-        TypedExpr::Match { scrutinee, arms, .. } => {
+        TypedExpr::Match {
+            scrutinee, arms, ..
+        } => {
             if expr_has_error(scrutinee) {
                 return true;
             }
@@ -321,13 +360,15 @@ fn expr_has_error(expr: &TypedExpr) -> bool {
         }
         TypedExpr::Return { value, .. } => {
             if let Some(v) = value
-                && expr_has_error(v) {
-                    return true;
-                }
+                && expr_has_error(v)
+            {
+                return true;
+            }
         }
         // Leaf nodes with no children to recurse into
         TypedExpr::Literal { .. }
         | TypedExpr::Var { .. }
+        | TypedExpr::GlobalRef { .. }
         | TypedExpr::SelfRef { .. }
         | TypedExpr::Path { .. }
         | TypedExpr::Crash { .. }
@@ -343,13 +384,16 @@ fn stmt_has_error(stmt: &TypedStmt) -> bool {
         TypedStmt::Let { value, .. } => expr_has_error(value),
         TypedStmt::Expr { expr, .. } => expr_has_error(expr),
         TypedStmt::Return { value, .. } => value.as_ref().is_some_and(expr_has_error),
+        TypedStmt::Transition { call, .. } => expr_has_error(call),
         TypedStmt::For { iterable, body, .. } => {
             if expr_has_error(iterable) {
                 return true;
             }
             body.iter().any(stmt_has_error)
         }
-        TypedStmt::While { condition, body, .. } => {
+        TypedStmt::While {
+            condition, body, ..
+        } => {
             if expr_has_error(condition) {
                 return true;
             }
@@ -381,29 +425,72 @@ pub fn emit_all_bodies(
     struct_field_types: &FxHashMap<DefId, Vec<(String, crate::check::ty::Ty)>>,
     reflectable_infos: &[ReflectableInfo],
 ) -> (Vec<EmittedBody>, Vec<writ_diagnostics::Diagnostic>) {
+    emit_all_bodies_excluding(
+        typed_ast,
+        interner,
+        builder,
+        lambda_infos,
+        struct_field_types,
+        reflectable_infos,
+        &HashSet::new(),
+    )
+}
+
+/// Emit executable bodies while omitting conditionally suppressed functions.
+pub(in crate::emit) fn emit_all_bodies_excluding(
+    typed_ast: &TypedAst,
+    interner: &TyInterner,
+    builder: &ModuleBuilder,
+    lambda_infos: &[closure::LambdaInfo],
+    struct_field_types: &FxHashMap<DefId, Vec<(String, crate::check::ty::Ty)>>,
+    reflectable_infos: &[ReflectableInfo],
+    skipped_def_ids: &HashSet<DefId>,
+) -> (Vec<EmittedBody>, Vec<writ_diagnostics::Diagnostic>) {
     let mut diags = Vec::new();
     let mut bodies = Vec::new();
+    let mut lambda_exprs: Vec<&TypedExpr> = Vec::new();
+    collect_lambda_exprs_from_ast(typed_ast, skipped_def_ids, &mut lambda_exprs);
+    assert_eq!(
+        lambda_exprs.len(),
+        lambda_infos.len(),
+        "lambda pre-scan and body traversal must discover the same expressions"
+    );
+    let lambda_ordinals: FxHashMap<usize, usize> = lambda_exprs
+        .iter()
+        .enumerate()
+        .map(|(ordinal, expr)| (*expr as *const TypedExpr as usize, ordinal))
+        .collect();
 
     for decl in &typed_ast.decls {
         match decl {
-            TypedDecl::Fn { def_id, body, .. } => {
+            TypedDecl::Fn { def_id, body, .. } if !skipped_def_ids.contains(def_id) => {
                 // Per-function error check: skip broken bodies instead of aborting all.
                 if expr_has_error(body) {
                     // Look up a human-readable name for the diagnostic.
-                    let fn_name = typed_ast.def_map.arena
+                    let fn_name = typed_ast
+                        .def_map
+                        .arena
                         .get(*def_id)
                         .map(|e| e.name.as_str())
                         .unwrap_or("<unknown>");
                     diags.push(
                         writ_diagnostics::Diagnostic::error(
                             "E9001",
-                            format!("Skipping function '{}' due to syntax errors in body", fn_name),
-                        ).build()
+                            format!(
+                                "Skipping function '{}' due to syntax errors in body",
+                                fn_name
+                            ),
+                        )
+                        .build(),
                     );
                     continue;
                 }
                 let mut emitter = BodyEmitter::new(builder, interner, struct_field_types);
+                emitter.lambda_ordinals = Some(&lambda_ordinals);
                 emitter.current_method_def_id = Some(*def_id);
+                emitter.returns_option = builder
+                    .find_method_handle(*def_id)
+                    .is_some_and(|handle| builder.method_returns_option(handle));
                 // Pre-allocate parameter registers r0..r(n-1) per IL spec section 2.16.2.
                 // Parameters are allocated in declaration order before any body emission,
                 // ensuring all branches of the body find parameters in stable registers.
@@ -420,6 +507,8 @@ pub fn emit_all_bodies(
                 if body.ty() == Ty(4) {
                     emitter.emit(Instruction::RetVoid);
                 } else {
+                    let result_reg =
+                        stmt::coerce_option_return(&mut emitter, body.ty(), result_reg);
                     emitter.emit(Instruction::Ret { r_src: result_reg });
                 }
                 let reg_count = emitter.regs.reg_count();
@@ -435,22 +524,32 @@ pub fn emit_all_bodies(
                     label_allocator: emitter.labels,
                 });
             }
-            TypedDecl::Impl { def_id: impl_def_id, methods } => {
+            TypedDecl::Impl {
+                def_id: impl_def_id,
+                methods,
+            } => {
                 for (method_idx, (def_id, body)) in methods.iter().enumerate() {
                     if expr_has_error(body) {
-                        let method_name = typed_ast.def_map.arena
+                        let method_name = typed_ast
+                            .def_map
+                            .arena
                             .get(*def_id)
                             .map(|e| e.name.as_str())
                             .unwrap_or("<unknown>");
                         diags.push(
                             writ_diagnostics::Diagnostic::error(
                                 "E9001",
-                                format!("Skipping method '{}' due to syntax errors in body", method_name),
-                            ).build()
+                                format!(
+                                    "Skipping method '{}' due to syntax errors in body",
+                                    method_name
+                                ),
+                            )
+                            .build(),
                         );
                         continue;
                     }
                     let mut emitter = BodyEmitter::new(builder, interner, struct_field_types);
+                    emitter.lambda_ordinals = Some(&lambda_ordinals);
                     emitter.current_method_def_id = Some(*def_id);
                     // Pre-allocate parameter registers r0..r(n-1) per IL spec section 2.16.2.
                     //
@@ -458,7 +557,10 @@ pub fn emit_all_bodies(
                     // so fn_param_map only retains the LAST method's params. Use the handle-based
                     // impl_method_param_map which is indexed by MethodDefHandle for unambiguous
                     // per-method param lookup. Fall back to fn_param_map for non-impl methods.
-                    let method_handle_idx = builder.find_impl_method_handle(*impl_def_id, method_idx);
+                    let method_handle_idx =
+                        builder.find_impl_method_handle(*impl_def_id, method_idx);
+                    emitter.returns_option = method_handle_idx
+                        .is_some_and(|handle| builder.method_returns_option(handle));
                     let params_opt = method_handle_idx
                         .and_then(|h| builder.get_fn_params_by_handle(h))
                         .or_else(|| builder.get_fn_params(*def_id));
@@ -474,6 +576,8 @@ pub fn emit_all_bodies(
                     if body.ty() == Ty(4) {
                         emitter.emit(Instruction::RetVoid);
                     } else {
+                        let result_reg =
+                            stmt::coerce_option_return(&mut emitter, body.ty(), result_reg);
                         emitter.emit(Instruction::Ret { r_src: result_reg });
                     }
                     let reg_count = emitter.regs.reg_count();
@@ -492,7 +596,9 @@ pub fn emit_all_bodies(
             }
             TypedDecl::Const { def_id, value } => {
                 if expr_has_error(value) {
-                    let name = typed_ast.def_map.arena
+                    let name = typed_ast
+                        .def_map
+                        .arena
                         .get(*def_id)
                         .map(|e| e.name.as_str())
                         .unwrap_or("<unknown>");
@@ -500,11 +606,13 @@ pub fn emit_all_bodies(
                         writ_diagnostics::Diagnostic::error(
                             "E9001",
                             format!("Skipping const '{}' due to syntax errors in value", name),
-                        ).build()
+                        )
+                        .build(),
                     );
                     continue;
                 }
                 let mut emitter = BodyEmitter::new(builder, interner, struct_field_types);
+                emitter.lambda_ordinals = Some(&lambda_ordinals);
                 emitter.current_method_def_id = Some(*def_id);
 
                 // Try constant folding first — emit a single load instruction.
@@ -512,12 +620,18 @@ pub fn emit_all_bodies(
                     match &folded {
                         TypedLiteral::Int(v) => {
                             let r = emitter.alloc_reg(Ty(0)); // Int
-                            emitter.emit(Instruction::LoadInt { r_dst: r, value: *v });
+                            emitter.emit(Instruction::LoadInt {
+                                r_dst: r,
+                                value: *v,
+                            });
                             r
                         }
                         TypedLiteral::Float(v) => {
                             let r = emitter.alloc_reg(Ty(1)); // Float
-                            emitter.emit(Instruction::LoadFloat { r_dst: r, value: *v });
+                            emitter.emit(Instruction::LoadFloat {
+                                r_dst: r,
+                                value: *v,
+                            });
                             r
                         }
                         TypedLiteral::Bool(true) => {
@@ -557,7 +671,9 @@ pub fn emit_all_bodies(
             }
             TypedDecl::Global { def_id, value } => {
                 if expr_has_error(value) {
-                    let name = typed_ast.def_map.arena
+                    let name = typed_ast
+                        .def_map
+                        .arena
                         .get(*def_id)
                         .map(|e| e.name.as_str())
                         .unwrap_or("<unknown>");
@@ -565,12 +681,14 @@ pub fn emit_all_bodies(
                         writ_diagnostics::Diagnostic::error(
                             "E9001",
                             format!("Skipping global '{}' due to syntax errors in value", name),
-                        ).build()
+                        )
+                        .build(),
                     );
                     continue;
                 }
                 // Global initializers: emit without const folding (may be non-constant).
                 let mut emitter = BodyEmitter::new(builder, interner, struct_field_types);
+                emitter.lambda_ordinals = Some(&lambda_ordinals);
                 emitter.current_method_def_id = Some(*def_id);
                 let r = expr::emit_expr(&mut emitter, value);
                 emitter.emit(Instruction::Ret { r_src: r });
@@ -604,14 +722,12 @@ pub fn emit_all_bodies(
     for info in reflectable_infos {
         // Resolve the type_idx: use the TypeDef's finalized MetadataToken for TYPEOF.
         // This is the same token returned by token_for_def(def_id) post-finalize.
-        let type_idx = builder.token_for_def(info.def_id)
-            .map(|t| t.0)
-            .unwrap_or(0);
+        let type_idx = builder.token_for_def(info.def_id).map(|t| t.0).unwrap_or(0);
 
         // r0 = self (Ty placeholder — self type is not used for IL execution correctness)
         // r1 = TYPEOF result (also Ty placeholder — only reg index matters for TYPEOF dst)
-        let self_ty = Ty(0);  // Int placeholder — type doesn't affect IL execution
-        let type_ty = Ty(0);  // Int placeholder — Type return type
+        let self_ty = Ty(0); // Int placeholder — type doesn't affect IL execution
+        let type_ty = Ty(0); // Int placeholder — Type return type
 
         let instructions = vec![
             Instruction::TypeOf { r_dst: 1, type_idx },
@@ -619,9 +735,9 @@ pub fn emit_all_bodies(
         ];
 
         bodies.push(EmittedBody {
-            method_def_id: None,  // synthetic method — no source DefId
+            method_def_id: None, // synthetic method — no source DefId
             instructions,
-            reg_count: 2,         // r0 = self, r1 = TYPEOF result
+            reg_count: 2, // r0 = self, r1 = TYPEOF result
             reg_types: vec![self_ty, type_ty],
             source_spans: Vec::new(),
             debug_locals: Vec::new(),
@@ -632,54 +748,70 @@ pub fn emit_all_bodies(
 
     // Emit lambda bodies as separate EmittedBody entries.
     // lambda_infos[i] corresponds to the i-th Lambda node discovered by pre_scan_lambdas.
-    // Walk the TypedAst in the same order as pre_scan_lambdas to collect lambda nodes.
-    let mut lambda_exprs: Vec<&TypedExpr> = Vec::new();
-    collect_lambda_exprs_from_ast(typed_ast, &mut lambda_exprs);
+    // `lambda_exprs` was collected before named-body emission so every emitter
+    // could use the same stable module-wide ordinal map.
 
     for (i, lambda_expr) in lambda_exprs.iter().enumerate() {
-        if i >= lambda_infos.len() {
-            break;
-        }
         let info = &lambda_infos[i];
 
         // Extract params and body from the Lambda node itself.
-        let (params, lambda_body) = match lambda_expr {
-            TypedExpr::Lambda { params, body, .. } => (params.as_slice(), body.as_ref()),
+        let (params, ret_ty, lambda_body) = match lambda_expr {
+            TypedExpr::Lambda {
+                params,
+                ret_ty,
+                body,
+                ..
+            } => (params.as_slice(), *ret_ty, body.as_ref()),
             _ => continue,
         };
 
         let mut emitter = BodyEmitter::new(builder, interner, struct_field_types);
+        emitter.lambda_ordinals = Some(&lambda_ordinals);
+        emitter.returns_option = matches!(
+            interner.kind(interner.resolve_infer(ret_ty)),
+            TyKind::Option(_)
+        );
 
-        // If this lambda has captures, register r0 as the capture struct (self/target)
-        // and emit GET_FIELD instructions to load each captured variable into a named local.
+        // A capturing lambda receives its environment as the delegate target in r0.
+        // Explicit source parameters must immediately follow all entry parameters;
+        // captured values are ordinary temporaries and are loaded only afterward.
         if !info.captures_info.is_empty() {
-            let closure_name = format!("__closure_{}", info.closure_idx);
             // r0 = capture struct reference (passed as the delegate target)
-            let env_ty = crate::check::ty::Ty(4); // Void placeholder — type not used by VM for field access
-            let r_self = emitter.alloc_reg(env_ty);
-
-            for (cap_name, cap_ty) in &info.captures_info {
-                let r_cap = emitter.alloc_reg(*cap_ty);
-                let field_idx = builder.field_token_by_name_on_closure(&closure_name, cap_name).unwrap_or(0);
-                emitter.emit(Instruction::GetField {
-                    r_dst: r_cap,
-                    r_obj: r_self,
-                    field_idx,
-                });
-                emitter.locals.insert(cap_name.clone(), r_cap);
-            }
+            let env_ty = crate::check::ty::Ty(4); // Void placeholder — synthetic type has no Ty
+            emitter.alloc_reg(env_ty);
         }
 
-        // Register lambda params in locals AFTER captures so captures come first in reg layout.
+        // Zero-capture lambdas are static, so their first explicit parameter is
+        // r0. Capturing lambdas are instance methods, so parameters start at r1.
         for (pname, pty) in params {
             let r_param = emitter.alloc_reg(*pty);
             emitter.locals.insert(pname.clone(), r_param);
+        }
+
+        if !info.captures_info.is_empty() {
+            let closure_name = format!("__closure_{}", info.closure_idx);
+            let r_self = 0;
+            for (cap_name, cap_ty) in &info.captures_info {
+                let r_cap = emitter.alloc_reg(*cap_ty);
+                let field_token = builder
+                    .field_token_by_name_on_closure(&closure_name, cap_name)
+                    .unwrap_or_else(|| {
+                        panic!("checked closure capture `{cap_name}` has no FieldDef token")
+                    });
+                emitter.emit(Instruction::GetField {
+                    r_dst: r_cap,
+                    r_obj: r_self,
+                    field_token,
+                });
+                emitter.locals.insert(cap_name.clone(), r_cap);
+            }
         }
 
         let r = expr::emit_expr(&mut emitter, lambda_body);
         if lambda_body.ty() == Ty(4) {
             emitter.emit(Instruction::RetVoid);
         } else {
+            let r = stmt::coerce_option_return(&mut emitter, lambda_body.ty(), r);
             emitter.emit(Instruction::Ret { r_src: r });
         }
 
@@ -704,10 +836,14 @@ pub fn emit_all_bodies(
 
 /// Walk the TypedAst in the same pre-order as `pre_scan_lambdas` and collect
 /// references to each Lambda expression node (not just the body).
-fn collect_lambda_exprs_from_ast<'a>(typed_ast: &'a TypedAst, out: &mut Vec<&'a TypedExpr>) {
+fn collect_lambda_exprs_from_ast<'a>(
+    typed_ast: &'a TypedAst,
+    skipped_def_ids: &HashSet<DefId>,
+    out: &mut Vec<&'a TypedExpr>,
+) {
     for decl in &typed_ast.decls {
         match decl {
-            TypedDecl::Fn { body, .. } => {
+            TypedDecl::Fn { def_id, body, .. } if !skipped_def_ids.contains(def_id) => {
                 collect_lambda_exprs_from_expr(body, out);
             }
             TypedDecl::Impl { methods, .. } => {
@@ -741,7 +877,12 @@ fn collect_lambda_exprs_from_expr<'a>(expr: &'a TypedExpr, out: &mut Vec<&'a Typ
                 collect_lambda_exprs_from_expr(t, out);
             }
         }
-        TypedExpr::If { condition, then_branch, else_branch, .. } => {
+        TypedExpr::If {
+            condition,
+            then_branch,
+            else_branch,
+            ..
+        } => {
             collect_lambda_exprs_from_expr(condition, out);
             collect_lambda_exprs_from_expr(then_branch, out);
             if let Some(e) = else_branch {
@@ -764,7 +905,9 @@ fn collect_lambda_exprs_from_expr<'a>(expr: &'a TypedExpr, out: &mut Vec<&'a Typ
         TypedExpr::Field { receiver, .. } | TypedExpr::ComponentAccess { receiver, .. } => {
             collect_lambda_exprs_from_expr(receiver, out);
         }
-        TypedExpr::Index { receiver, index, .. } => {
+        TypedExpr::Index {
+            receiver, index, ..
+        } => {
             collect_lambda_exprs_from_expr(receiver, out);
             collect_lambda_exprs_from_expr(index, out);
         }
@@ -791,13 +934,14 @@ fn collect_lambda_exprs_from_expr<'a>(expr: &'a TypedExpr, out: &mut Vec<&'a Typ
             }
         }
         TypedExpr::Spawn { expr: inner, .. }
-        | TypedExpr::SpawnDetached { expr: inner, .. }
         | TypedExpr::Join { expr: inner, .. }
         | TypedExpr::Cancel { expr: inner, .. }
         | TypedExpr::Defer { expr: inner, .. } => {
             collect_lambda_exprs_from_expr(inner, out);
         }
-        TypedExpr::Match { scrutinee, arms, .. } => {
+        TypedExpr::Match {
+            scrutinee, arms, ..
+        } => {
             collect_lambda_exprs_from_expr(scrutinee, out);
             for arm in arms {
                 collect_lambda_exprs_from_expr(&arm.body, out);
@@ -811,6 +955,7 @@ fn collect_lambda_exprs_from_expr<'a>(expr: &'a TypedExpr, out: &mut Vec<&'a Typ
         // Leaf nodes
         TypedExpr::Literal { .. }
         | TypedExpr::Var { .. }
+        | TypedExpr::GlobalRef { .. }
         | TypedExpr::SelfRef { .. }
         | TypedExpr::Path { .. }
         | TypedExpr::Error { .. }
@@ -829,13 +974,16 @@ fn collect_lambda_exprs_from_stmt<'a>(stmt: &'a TypedStmt, out: &mut Vec<&'a Typ
                 collect_lambda_exprs_from_expr(v, out);
             }
         }
+        TypedStmt::Transition { call, .. } => collect_lambda_exprs_from_expr(call, out),
         TypedStmt::For { iterable, body, .. } => {
             collect_lambda_exprs_from_expr(iterable, out);
             for s in body {
                 collect_lambda_exprs_from_stmt(s, out);
             }
         }
-        TypedStmt::While { condition, body, .. } => {
+        TypedStmt::While {
+            condition, body, ..
+        } => {
             collect_lambda_exprs_from_expr(condition, out);
             for s in body {
                 collect_lambda_exprs_from_stmt(s, out);
