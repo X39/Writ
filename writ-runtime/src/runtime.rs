@@ -440,6 +440,29 @@ impl<H: RuntimeHost> Runtime<H> {
         self.scheduler.task_state(task_id)
     }
 
+    /// Snapshot every host request currently suspending a task.
+    ///
+    /// Unlike [`TickResult::TasksSuspended`], this also reports requests while other tasks
+    /// remain ready and a tick reports [`TickResult::ExecutionLimitReached`].
+    pub fn pending_requests(&self) -> Vec<PendingRequest> {
+        self.scheduler
+            .tasks
+            .values()
+            .filter_map(|task| {
+                if task.state != TaskState::Suspended {
+                    return None;
+                }
+                task.pending_request
+                    .as_ref()
+                    .map(|(request_id, request)| PendingRequest {
+                        task_id: task.id,
+                        request_id: *request_id,
+                        request: request.clone(),
+                    })
+            })
+            .collect()
+    }
+
     /// Read a register value from a task's top call frame.
     pub fn register_value(&self, task_id: TaskId, reg: u16) -> Option<Value> {
         self.scheduler.tasks.get(&task_id).and_then(|t| {

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["writ-assembler", "writ-cli", "writ-compiler", "writ-dap", "writ-diagnostics", "writ-golden", "writ-lsp", "writ-module", "writ-parser", "writ-runtime"]
+members = ["writ-assembler", "writ-cli", "writ-compiler", "writ-dap", "writ-diagnostics", "writ-golden", "writ-lsp", "writ-module", "writ-parser", "writ-runtime", "writ-runtime-wasm"]
 
 [profile.release]
 lto = "fat"

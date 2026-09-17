@@ -2,6 +2,8 @@
 
 This guide covers how to embed the Writ runtime in a host application (game engine, app framework, etc.).
 
+This guide describes native Rust embedding. For browsers and Web Workers, see the [WASM runtime integration guide](../book/src/embedding/wasm-runtime.md).
+
 ## Quick Start
 
 ### From Source (requires `compiler` feature)
