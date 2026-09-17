@@ -1,6 +1,6 @@
 pub class HashMap<K: Hashable, V> {
-    keys: K[],
-    values: V[]
+    mut keys: K[],
+    mut values: V[]
 }
 
 impl<K: Hashable, V> HashMap<K, V> {
@@ -63,7 +63,7 @@ impl<K: Hashable, V> HashMap<K, V> {
 }
 
 fn main() {
-    let hm: HashMap<string, int> = new HashMap<string, int> { keys: [], values: [] };
+    let mut hm: HashMap<string, int> = new HashMap<string, int> { keys: [], values: [] };
     hm.set("x", 10);
     hm.set("y", 20);
     let _v: int = hm.get("x");

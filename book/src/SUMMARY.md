@@ -55,6 +55,7 @@
 # Embedding Writ
 
 - [Runtime Integration](embedding/runtime-integration.md)
+- [Browser and Web Worker Runtime](embedding/wasm-runtime.md)
 
 # Architecture
 

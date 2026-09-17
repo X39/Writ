@@ -1,3 +1,5 @@
+use writ_dap::breakpoints::BreakpointTable;
+use writ_dap::debug_host::DebugHost;
 /// Integration tests for DAP debug session: byte-offset PC translation,
 /// source span consistency, breakpoints, and variable scoping.
 ///
@@ -5,8 +7,6 @@
 /// exercise the same code paths the DAP server uses to resolve source locations
 /// and variable scopes.
 use writ_dap::launch::compile_and_load;
-use writ_dap::breakpoints::BreakpointTable;
-use writ_dap::debug_host::DebugHost;
 use writ_module::heap::read_string;
 use writ_runtime::RuntimeBuilder;
 use writ_runtime::runtime::{ExecutionLimit, TickResult};
@@ -62,7 +62,10 @@ fn test_byte_pc_translation() {
             assert!(
                 byte_offset >= instr_idx as u32,
                 "method {} instr {} byte_offset {} should be >= instr_idx {}",
-                method_idx, instr_idx, byte_offset, instr_idx
+                method_idx,
+                instr_idx,
+                byte_offset,
+                instr_idx
             );
         }
         // Monotonically non-decreasing
@@ -70,7 +73,9 @@ fn test_byte_pc_translation() {
             assert!(
                 window[1] >= window[0],
                 "method {}: byte offsets should be non-decreasing, got {} then {}",
-                method_idx, window[0], window[1]
+                method_idx,
+                window[0],
+                window[1]
             );
         }
     }
@@ -138,7 +143,9 @@ fn test_debug_locals_byte_offset_consistency() {
             assert!(
                 dl.start_pc <= max_byte_offset + 10, // some slack for instruction encoding
                 "method {} DebugLocal start_pc={} should be within byte offset range (max={})",
-                method_idx, dl.start_pc, max_byte_offset
+                method_idx,
+                dl.start_pc,
+                max_byte_offset
             );
         }
     }
@@ -170,7 +177,8 @@ fn test_stack_frame_line_resolution_with_byte_offsets() {
 
         // For each instruction, translate to byte PC and look up source line
         for (instr_idx, &byte_pc) in offsets.iter().enumerate() {
-            let resolved = body.source_spans
+            let resolved = body
+                .source_spans
                 .iter()
                 .filter(|span| span.pc <= byte_pc)
                 .max_by_key(|span| span.pc)
@@ -180,7 +188,10 @@ fn test_stack_frame_line_resolution_with_byte_offsets() {
                 assert!(
                     (line as usize) <= line_count + 1,
                     "method {} instr {} resolved line {} should be within source (total {} lines)",
-                    method_idx, instr_idx, line, line_count
+                    method_idx,
+                    instr_idx,
+                    line,
+                    line_count
                 );
             }
         }
@@ -194,7 +205,10 @@ fn test_compile_produces_source_spans_with_correct_lines() {
     let (module, src) = compile_fixture("writ-golden/tests/golden/fn_multi_return.writ");
     let line_count = src.lines().count() as u32;
 
-    let has_any_spans = module.method_bodies.iter().any(|b| !b.source_spans.is_empty());
+    let has_any_spans = module
+        .method_bodies
+        .iter()
+        .any(|b| !b.source_spans.is_empty());
     assert!(has_any_spans, "compiled module should have source spans");
 
     for (method_idx, body) in module.method_bodies.iter().enumerate() {
@@ -203,7 +217,9 @@ fn test_compile_produces_source_spans_with_correct_lines() {
             assert!(
                 span.line >= 1 && span.line <= line_count,
                 "method {} span line {} should be in range [1, {}]",
-                method_idx, span.line, line_count
+                method_idx,
+                span.line,
+                line_count
             );
         }
     }
@@ -253,7 +269,8 @@ fn test_breakpoint_resolves_to_valid_line() {
     assert!(
         valid.contains(&resolved[0].line),
         "resolved line {} should be in valid_lines {:?}",
-        resolved[0].line, valid
+        resolved[0].line,
+        valid
     );
 }
 
@@ -317,7 +334,9 @@ fn test_breakpoint_lookup_hit() {
             hit,
             Some(bp.id),
             "lookup at resolved (method_idx={}, pc={}) should return breakpoint id {}",
-            bp.method_idx, bp.pc, bp.id
+            bp.method_idx,
+            bp.pc,
+            bp.id
         );
     }
 }
@@ -410,9 +429,10 @@ fn test_call_stack_after_spawn() {
         frames.len()
     );
     assert_eq!(
-        frames[0].0, main_idx,
+        frames[0].method_idx, main_idx,
         "initial frame method_idx should be the main method index"
     );
+    assert_eq!(frames[0].module_idx, runtime.user_module_idx());
 }
 
 // ─── Method name resolution from compiled module ─────────────────────────────
@@ -466,8 +486,7 @@ fn test_debug_locals_present_for_local_variables() {
     let (module, _src) = compile_fixture("writ-golden/tests/golden/fn_typed_params.writ");
 
     // Find the method body corresponding to "add".
-    let add_idx = find_method_index(&module, "add")
-        .expect("should find 'add' method");
+    let add_idx = find_method_index(&module, "add").expect("should find 'add' method");
 
     let body = &module.method_bodies[add_idx];
     let local_names: Vec<String> = body
@@ -561,7 +580,9 @@ fn test_source_span_pcs_sorted() {
             assert!(
                 window[1].pc >= window[0].pc,
                 "method {} source spans should be sorted by pc: pc={} followed by pc={}",
-                method_idx, window[0].pc, window[1].pc
+                method_idx,
+                window[0].pc,
+                window[1].pc
             );
         }
     }
@@ -602,7 +623,9 @@ fn test_struct_fixture_has_debug_info() {
         assert!(
             dl.start_pc <= dl.end_pc,
             "debug_local {} should have start_pc ({}) <= end_pc ({})",
-            dl_idx, dl.start_pc, dl.end_pc
+            dl_idx,
+            dl.start_pc,
+            dl.end_pc
         );
     }
 }
@@ -645,8 +668,7 @@ fn test_breakpoint_fires_during_execution() {
     // with a Breakpoint reason.
     let (module, _src) = compile_fixture("writ-golden/tests/golden/fn_typed_params.writ");
 
-    let main_idx = find_method_index(&module, "main")
-        .expect("should find 'main'");
+    let main_idx = find_method_index(&module, "main").expect("should find 'main'");
 
     // Build breakpoint table and set breakpoint on line 11.
     let mut breakpoint_table = BreakpointTable::new(&module);
@@ -670,6 +692,11 @@ fn test_breakpoint_fires_during_execution() {
         .with_host(debug_host)
         .build()
         .expect("runtime should build");
+    let user_module_idx = runtime.user_module_idx();
+    runtime
+        .host_mut()
+        .breakpoints
+        .set_module_idx(user_module_idx);
 
     let task_id = runtime
         .spawn_task(main_idx, vec![])
@@ -731,8 +758,15 @@ fn test_breakpoint_resume_does_not_rehit_same_pc() {
         .with_host(debug_host)
         .build()
         .expect("runtime should build");
+    let user_module_idx = runtime.user_module_idx();
+    runtime
+        .host_mut()
+        .breakpoints
+        .set_module_idx(user_module_idx);
 
-    let task_id = runtime.spawn_task(main_idx, vec![]).expect("spawn should succeed");
+    let task_id = runtime
+        .spawn_task(main_idx, vec![])
+        .expect("spawn should succeed");
 
     // Tick until breakpoint fires.
     for _ in 0..100 {
@@ -746,7 +780,9 @@ fn test_breakpoint_resume_does_not_rehit_same_pc() {
 
     // Resume and continue — should NOT re-hit immediately, should complete.
     runtime.host_mut().clear_step();
-    runtime.resume_debug(task_id).expect("resume should succeed");
+    runtime
+        .resume_debug(task_id)
+        .expect("resume should succeed");
 
     for _ in 0..100 {
         runtime.tick(0.0, ExecutionLimit::Instructions(100));
@@ -787,7 +823,9 @@ fn diag_multi_fn_breakpoint_alignment() {
     for (mi, body) in module.method_bodies.iter().enumerate() {
         let name = if mi < module.method_defs.len() {
             read_string(&module.string_heap, mi_to_name(&module, mi)).unwrap_or("?")
-        } else { "?" };
+        } else {
+            "?"
+        };
         eprintln!("  Method {} ({}):", mi, name);
         for s in &body.source_spans {
             eprintln!("    pc={} line={} col={}", s.pc, s.line, s.column);
@@ -801,18 +839,28 @@ fn diag_multi_fn_breakpoint_alignment() {
     let r = bt2.set_breakpoints(&[2]);
     eprintln!("\nBreakpoint at line 2:");
     for bp in &r {
-        eprintln!("  id={} line={} method={} pc={}", bp.id, bp.line, bp.method_idx, bp.pc);
+        eprintln!(
+            "  id={} line={} method={} pc={}",
+            bp.id, bp.line, bp.method_idx, bp.pc
+        );
     }
 
     let r = bt2.set_breakpoints(&[5]);
     eprintln!("\nBreakpoint at line 5:");
     for bp in &r {
-        eprintln!("  id={} line={} method={} pc={}", bp.id, bp.line, bp.method_idx, bp.pc);
+        eprintln!(
+            "  id={} line={} method={} pc={}",
+            bp.id, bp.line, bp.method_idx, bp.pc
+        );
     }
 }
 
 fn mi_to_name(module: &writ_module::Module, method_idx: usize) -> u32 {
-    module.method_defs.get(method_idx).map(|d| d.name).unwrap_or(0)
+    module
+        .method_defs
+        .get(method_idx)
+        .map(|d| d.name)
+        .unwrap_or(0)
 }
 
 // ─── Multi-function breakpoint alignment regression tests ─────────────────────
@@ -937,6 +985,11 @@ fn test_multi_fn_breakpoint_fires_on_line2() {
         .with_host(debug_host)
         .build()
         .expect("runtime should build");
+    let user_module_idx = runtime.user_module_idx();
+    runtime
+        .host_mut()
+        .breakpoints
+        .set_module_idx(user_module_idx);
 
     let task_id = runtime
         .spawn_task(main_idx, vec![])
@@ -945,7 +998,10 @@ fn test_multi_fn_breakpoint_fires_on_line2() {
     // Tick until the task suspends (breakpoint hit) or completes.
     let mut ticks = 0;
     loop {
-        let _result = runtime.tick(0.0, writ_runtime::runtime::ExecutionLimit::Instructions(100));
+        let _result = runtime.tick(
+            0.0,
+            writ_runtime::runtime::ExecutionLimit::Instructions(100),
+        );
         ticks += 1;
         match runtime.task_state(task_id) {
             Some(TaskState::Suspended) => break,
@@ -995,6 +1051,11 @@ fn test_multi_fn_step_into_function_call() {
         .with_host(debug_host)
         .build()
         .expect("runtime should build");
+    let user_module_idx = runtime.user_module_idx();
+    runtime
+        .host_mut()
+        .breakpoints
+        .set_module_idx(user_module_idx);
 
     let task_id = runtime
         .spawn_task(main_idx, vec![])
@@ -1002,7 +1063,10 @@ fn test_multi_fn_step_into_function_call() {
 
     // Tick until the breakpoint at line 6 fires.
     for _ in 0..200 {
-        runtime.tick(0.0, writ_runtime::runtime::ExecutionLimit::Instructions(100));
+        runtime.tick(
+            0.0,
+            writ_runtime::runtime::ExecutionLimit::Instructions(100),
+        );
         if runtime.task_state(task_id) == Some(TaskState::Suspended) {
             break;
         }
@@ -1016,19 +1080,34 @@ fn test_multi_fn_step_into_function_call() {
     runtime.host_mut().take_pending_stop();
 
     // Record the current line so StepInto knows the origin.
-    let origin_line = match runtime.suspend_reason(task_id) {
-        Some(SuspendReason::Breakpoint { line, .. }) => *line,
-        _ => resolved[0].line,  // fall back to what the table reported
+    let (origin_line, origin_module, origin_method) = match runtime.suspend_reason(task_id) {
+        Some(SuspendReason::Breakpoint {
+            line,
+            module_idx,
+            method_idx,
+            ..
+        }) => (*line, *module_idx, *method_idx),
+        _ => (
+            resolved[0].line,
+            runtime.user_module_idx(),
+            resolved[0].method_idx as u32,
+        ),
     };
-    let origin_method = resolved[0].method_idx as u32;
 
     // Activate StepInto mode, then resume.
-    runtime.host_mut().set_step_into(origin_line, origin_method);
-    runtime.resume_debug(task_id).expect("resume_debug should succeed");
+    runtime
+        .host_mut()
+        .set_step_into(origin_line, origin_module, origin_method);
+    runtime
+        .resume_debug(task_id)
+        .expect("resume_debug should succeed");
 
     // Tick until the step fires (should stop inside test() at line 2).
     for _ in 0..200 {
-        runtime.tick(0.0, writ_runtime::runtime::ExecutionLimit::Instructions(100));
+        runtime.tick(
+            0.0,
+            writ_runtime::runtime::ExecutionLimit::Instructions(100),
+        );
         if runtime.task_state(task_id) == Some(TaskState::Suspended) {
             break;
         }
@@ -1045,8 +1124,12 @@ fn test_multi_fn_step_into_function_call() {
     // The meaningful assertion is the line and method, not the variant.
     let reason = runtime.suspend_reason(task_id);
     let (stop_line, stop_method) = match reason {
-        Some(SuspendReason::Breakpoint { line, method_idx, .. }) => (*line, *method_idx),
-        Some(SuspendReason::DebugStep { line, method_idx, .. }) => (*line, *method_idx),
+        Some(SuspendReason::Breakpoint {
+            line, method_idx, ..
+        }) => (*line, *method_idx),
+        Some(SuspendReason::DebugStep {
+            line, method_idx, ..
+        }) => (*line, *method_idx),
         other => {
             panic!(
                 "expected a debug stop (Breakpoint or DebugStep) after StepInto, got {:?}",
@@ -1067,8 +1150,9 @@ fn test_multi_fn_step_into_function_call() {
     );
     let test_idx = find_method_index(
         &runtime.domain().modules[runtime.user_module_idx()].module,
-        "test"
-    ).expect("should find 'test' method");
+        "test",
+    )
+    .expect("should find 'test' method");
     assert_eq!(
         stop_method as usize, test_idx,
         "StepInto should stop inside test() (method {}), stopped in method {}",

@@ -5,13 +5,13 @@
 //!   launch -> (execution) -> stopped event -> stackTrace/threads ->
 //!   next/stepIn/stepOut -> stopped event -> continue -> terminated -> disconnect
 
-use std::io::{Read, Write};
 use std::io::{BufReader, BufWriter};
+use std::io::{Read, Write};
 
 use dap::prelude::*;
+use writ_diagnostics;
 use writ_module::module::Module;
 use writ_runtime::{Runtime, TaskId};
-use writ_diagnostics;
 
 use crate::debug_host::DebugHost;
 

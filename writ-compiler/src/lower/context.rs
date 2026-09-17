@@ -1,5 +1,5 @@
-use chumsky::span::SimpleSpan;
 use crate::lower::error::LoweringError;
+use chumsky::span::SimpleSpan;
 
 /// A speaker scope entry for active-speaker tracking in dialogue lowering.
 #[derive(Debug, Clone, PartialEq)]

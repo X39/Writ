@@ -13,13 +13,12 @@ The full task state machine and scheduling semantics are specified in the [IL Ex
 
 ## 1.21.2 Concurrency Primitives
 
-| Primitive        | Syntax                | Behavior                                                                                        |
-|------------------|-----------------------|-------------------------------------------------------------------------------------------------|
-| `spawn`          | `spawn expr`          | Starts a background task, returns a handle. Scoped to parent — auto-cancelled when parent ends. |
-| `spawn detached` | `spawn detached expr` | Independent background task. Outlives parent scope.                                             |
-| `join`           | `join handle`         | Wait for a spawned task to complete.                                                            |
-| `cancel`         | `cancel handle`       | Hard-terminate a task. Runs `defer` blocks.                                                     |
-| `defer`          | `defer { ... }`       | Cleanup code that runs on normal return or cancellation.                                        |
+| Primitive | Syntax          | Behavior                                                                                        |
+|-----------|-----------------|-------------------------------------------------------------------------------------------------|
+| `spawn`   | `spawn call`    | Starts a background task, returns a handle. Scoped to parent — auto-cancelled when parent ends. |
+| `join`    | `join handle`   | Wait for a spawned task to complete.                                                            |
+| `cancel`  | `cancel handle` | Hard-terminate a task. Runs `defer` blocks.                                                     |
+| `defer`   | `defer { ... }` | Cleanup code that runs on normal return or cancellation.                                        |
 
 ```writ
 dlg boulderScene {
@@ -39,17 +38,35 @@ dlg boulderScene {
 }
 
 fn moveBoulder(target: vec2) {
-    defer { boulder.animation = "idle"; }
-    boulder.animation = "rolling";
-    lerp(boulder.position, target, 3.0);
+    let mut moving = boulder;
+    defer { moving.animation = "idle"; }
+    moving.animation = "rolling";
+    lerp(moving.position, target, 3.0);
 }
 ```
 
 ## 1.21.3 Task Lifetime Rules
 
-Scoped tasks (`spawn`) are automatically cancelled when their parent scope exits (normal return, `->` transition, or
-cancellation). Detached tasks (`spawn detached`) run independently and must be explicitly cancelled or run to
-completion.
+Every task created by `spawn` is a child of the spawning task. It is automatically cancelled when its parent exits
+(normal return, `->` transition, crash, or cancellation). Cancellation is recursive through the task tree and runs
+each cancelled task's `defer` handlers.
+
+`spawn call` has type `TaskHandle<R>` when `call` returns `R`. The handle may be passed to `join` or `cancel`; ignoring
+the value does not detach the child or change its lifetime.
+
+## 1.21.4 Spawnable Calls
+
+The operand of `spawn` must be a call that the compiler resolves statically to a concrete Writ bytecode function or
+method (`MethodDef` or `MethodRef`). A concrete instance method passes `self` first, followed by the explicit
+arguments. A qualified static method passes only its explicit arguments; its qualifier is not a receiver.
+
+The compiler rejects non-call operands, extern/native calls, virtual contract or generic dispatch, delegate calls,
+built-in operations, and unresolved calls. These forms do not identify one bytecode method body that a task can start.
+The compiler does not synthesize wrapper thunks to make them spawnable.
+
+The runtime independently validates encoded `SPAWN_TASK` instructions. Forged or programmatically authored modules
+cannot bypass the restriction by placing an extern, intrinsic/native, unresolved, null, or otherwise non-executable
+target in the instruction. A failed validation crashes the task executing `SPAWN_TASK`, and no child task is created.
 
 ---
 

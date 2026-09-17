@@ -366,15 +366,13 @@ fn postfix_chain_bracket_nullprop_member() {
         Expr::MemberAccess(base, field) => {
             assert_eq!(field.0, "current");
             match &base.0 {
-                Expr::UnaryPostfix(bracket, PostfixOp::NullPropagate) => {
-                    match &bracket.0 {
-                        Expr::BracketAccess(entity, idx) => {
-                            assert!(matches!(entity.0, Expr::Ident("entity")));
-                            assert!(matches!(idx.0, Expr::Ident("Health")));
-                        }
-                        other => panic!("Expected BracketAccess, got {:?}", other),
+                Expr::UnaryPostfix(bracket, PostfixOp::NullPropagate) => match &bracket.0 {
+                    Expr::BracketAccess(entity, idx) => {
+                        assert!(matches!(entity.0, Expr::Ident("entity")));
+                        assert!(matches!(idx.0, Expr::Ident("Health")));
                     }
-                }
+                    other => panic!("Expected BracketAccess, got {:?}", other),
+                },
                 other => panic!("Expected UnaryPostfix(NullPropagate), got {:?}", other),
             }
         }
@@ -595,7 +593,14 @@ fn if_statement() {
     let stmts = parse_ok_stmts("if damaged { playSound(\"hit\"); }");
     assert_eq!(stmts.len(), 1);
     match &stmts[0].0 {
-        Stmt::Expr((Expr::If { condition, then_block, else_block }, _)) => {
+        Stmt::Expr((
+            Expr::If {
+                condition,
+                then_block,
+                else_block,
+            },
+            _,
+        )) => {
             assert!(matches!(condition.0, Expr::Ident("damaged")));
             assert!(!then_block.is_empty());
             assert!(else_block.is_none());
@@ -1042,7 +1047,9 @@ fn snippet_half_open_range() {
 
 #[test]
 fn snippet_match_with_or_pattern() {
-    let stmts = parse_ok_stmts("match status { QuestStatus::Completed | QuestStatus::Failed => { log(\"done\"); } _ => { log(\"ongoing\"); } }");
+    let stmts = parse_ok_stmts(
+        "match status { QuestStatus::Completed | QuestStatus::Failed => { log(\"done\"); } _ => { log(\"ongoing\"); } }",
+    );
     assert_eq!(stmts.len(), 1);
     match &stmts[0].0 {
         Stmt::Expr((Expr::Match { arms, .. }, _)) => {
@@ -1132,7 +1139,10 @@ fn unrooted_multi_segment_path() {
 fn bare_ident_is_not_path() {
     let stmts = parse_ok("let x = foo;");
     let val = let_value(&stmts[0]);
-    assert!(matches!(val, Expr::Ident("foo")), "Bare ident should remain Expr::Ident");
+    assert!(
+        matches!(val, Expr::Ident("foo")),
+        "Bare ident should remain Expr::Ident"
+    );
 }
 
 // =========================================================
@@ -1143,18 +1153,18 @@ fn bare_ident_is_not_path() {
 fn qualified_type_in_annotation() {
     let stmts = parse_ok("let x: a::b::Type = foo;");
     match &stmts[0].0 {
-        Stmt::Let { ty: Some((ty, _)), .. } => {
-            match ty {
-                TypeExpr::Qualified { segments, rooted } => {
-                    assert!(!rooted);
-                    assert_eq!(segments.len(), 3);
-                    assert_eq!(segments[0].0, "a");
-                    assert_eq!(segments[1].0, "b");
-                    assert_eq!(segments[2].0, "Type");
-                }
-                other => panic!("Expected TypeExpr::Qualified, got {:?}", other),
+        Stmt::Let {
+            ty: Some((ty, _)), ..
+        } => match ty {
+            TypeExpr::Qualified { segments, rooted } => {
+                assert!(!rooted);
+                assert_eq!(segments.len(), 3);
+                assert_eq!(segments[0].0, "a");
+                assert_eq!(segments[1].0, "b");
+                assert_eq!(segments[2].0, "Type");
             }
-        }
+            other => panic!("Expected TypeExpr::Qualified, got {:?}", other),
+        },
         other => panic!("Expected Stmt::Let with type annotation, got {:?}", other),
     }
 }
@@ -1163,15 +1173,15 @@ fn qualified_type_in_annotation() {
 fn rooted_qualified_type() {
     let stmts = parse_ok("let x: ::std::Map = foo;");
     match &stmts[0].0 {
-        Stmt::Let { ty: Some((ty, _)), .. } => {
-            match ty {
-                TypeExpr::Qualified { segments, rooted } => {
-                    assert!(rooted, "::std::Map should have rooted=true");
-                    assert_eq!(segments.len(), 2);
-                }
-                other => panic!("Expected TypeExpr::Qualified, got {:?}", other),
+        Stmt::Let {
+            ty: Some((ty, _)), ..
+        } => match ty {
+            TypeExpr::Qualified { segments, rooted } => {
+                assert!(rooted, "::std::Map should have rooted=true");
+                assert_eq!(segments.len(), 2);
             }
-        }
+            other => panic!("Expected TypeExpr::Qualified, got {:?}", other),
+        },
         other => panic!("Expected Stmt::Let, got {:?}", other),
     }
 }
@@ -1180,12 +1190,12 @@ fn rooted_qualified_type() {
 fn single_segment_type_remains_named() {
     let stmts = parse_ok("let x: int = 42;");
     match &stmts[0].0 {
-        Stmt::Let { ty: Some((ty, _)), .. } => {
-            match ty {
-                TypeExpr::Named("int") => {}
-                other => panic!("Expected TypeExpr::Named(\"int\"), got {:?}", other),
-            }
-        }
+        Stmt::Let {
+            ty: Some((ty, _)), ..
+        } => match ty {
+            TypeExpr::Named("int") => {}
+            other => panic!("Expected TypeExpr::Named(\"int\"), got {:?}", other),
+        },
         other => panic!("Expected Stmt::Let, got {:?}", other),
     }
 }
@@ -1194,22 +1204,22 @@ fn single_segment_type_remains_named() {
 fn qualified_generic_type() {
     let stmts = parse_ok("let x: a::b::List<int> = foo;");
     match &stmts[0].0 {
-        Stmt::Let { ty: Some((ty, _)), .. } => {
-            match ty {
-                TypeExpr::Generic(base, args) => {
-                    match &base.0 {
-                        TypeExpr::Qualified { segments, rooted } => {
-                            assert!(!rooted);
-                            assert_eq!(segments.len(), 3);
-                            assert_eq!(segments[2].0, "List");
-                        }
-                        other => panic!("Expected Qualified base, got {:?}", other),
+        Stmt::Let {
+            ty: Some((ty, _)), ..
+        } => match ty {
+            TypeExpr::Generic(base, args) => {
+                match &base.0 {
+                    TypeExpr::Qualified { segments, rooted } => {
+                        assert!(!rooted);
+                        assert_eq!(segments.len(), 3);
+                        assert_eq!(segments[2].0, "List");
                     }
-                    assert_eq!(args.len(), 1);
+                    other => panic!("Expected Qualified base, got {:?}", other),
                 }
-                other => panic!("Expected TypeExpr::Generic, got {:?}", other),
+                assert_eq!(args.len(), 1);
             }
-        }
+            other => panic!("Expected TypeExpr::Generic, got {:?}", other),
+        },
         other => panic!("Expected Stmt::Let, got {:?}", other),
     }
 }
@@ -1251,21 +1261,6 @@ fn snippet_cancel_expr() {
 }
 
 #[test]
-fn snippet_spawn_detached_expr() {
-    let stmts = parse_ok_stmts("spawn detached playSound(\"beep\");");
-    assert_eq!(stmts.len(), 1);
-    match &stmts[0].0 {
-        Stmt::Expr((Expr::SpawnDetached(inner), _)) => match &inner.0 {
-            Expr::Call(callee, _) => {
-                assert!(matches!(callee.0, Expr::Ident("playSound")));
-            }
-            other => panic!("Expected Call inside SpawnDetached, got {:?}", other),
-        },
-        other => panic!("Expected SpawnDetached, got {:?}", other),
-    }
-}
-
-#[test]
 fn snippet_try_expr() {
     let stmts = parse_ok("let file = try openFile(\"save.dat\");");
     match let_value(&stmts[0]) {
@@ -1281,15 +1276,14 @@ fn snippet_try_expr() {
 
 #[test]
 fn snippet_match_range_pattern() {
-    let stmts = parse_ok_stmts("match score { 1..=5 => { log(\"low\"); } _ => { log(\"high\"); } }");
+    let stmts =
+        parse_ok_stmts("match score { 1..=5 => { log(\"low\"); } _ => { log(\"high\"); } }");
     assert_eq!(stmts.len(), 1);
     match &stmts[0].0 {
-        Stmt::Expr((Expr::Match { arms, .. }, _)) => {
-            match &arms[0].0.pattern.0 {
-                Pattern::Range(_, RangeKind::Inclusive, _) => {}
-                other => panic!("Expected Range pattern, got {:?}", other),
-            }
-        }
+        Stmt::Expr((Expr::Match { arms, .. }, _)) => match &arms[0].0.pattern.0 {
+            Pattern::Range(_, RangeKind::Inclusive, _) => {}
+            other => panic!("Expected Range pattern, got {:?}", other),
+        },
         other => panic!("Expected Match, got {:?}", other),
     }
 }
@@ -1421,16 +1415,14 @@ fn dlg_transition_with_args() {
     let items = parse_ok_items("dlg test() { -> other(player) }");
     assert_eq!(items.len(), 1);
     match &items[0].0 {
-        Item::Dlg((decl, _)) => {
-            match &decl.body[0].0 {
-                DlgLine::Transition((t, _)) => {
-                    assert_eq!(t.target.0, "other");
-                    assert!(t.args.is_some());
-                    assert_eq!(t.args.as_ref().unwrap().len(), 1);
-                }
-                other => panic!("Expected Transition, got {:?}", other),
+        Item::Dlg((decl, _)) => match &decl.body[0].0 {
+            DlgLine::Transition((t, _)) => {
+                assert_eq!(t.target.0, "other");
+                assert!(t.args.is_some());
+                assert_eq!(t.args.as_ref().unwrap().len(), 1);
             }
-        }
+            other => panic!("Expected Transition, got {:?}", other),
+        },
         other => panic!("Expected Item::Dlg, got {:?}", other),
     }
 }
@@ -1441,14 +1433,12 @@ fn dlg_code_escape_statement() {
     let items = parse_ok_items("dlg test() { $ let x = 1; }");
     assert_eq!(items.len(), 1);
     match &items[0].0 {
-        Item::Dlg((decl, _)) => {
-            match &decl.body[0].0 {
-                DlgLine::CodeEscape((escape, _)) => {
-                    assert!(matches!(escape, DlgEscape::Statement(_)));
-                }
-                other => panic!("Expected CodeEscape, got {:?}", other),
+        Item::Dlg((decl, _)) => match &decl.body[0].0 {
+            DlgLine::CodeEscape((escape, _)) => {
+                assert!(matches!(escape, DlgEscape::Statement(_)));
             }
-        }
+            other => panic!("Expected CodeEscape, got {:?}", other),
+        },
         other => panic!("Expected Item::Dlg, got {:?}", other),
     }
 }
@@ -1459,19 +1449,15 @@ fn dlg_code_escape_block() {
     let items = parse_ok_items("dlg test() { $ { let x = 1; let y = 2; } }");
     assert_eq!(items.len(), 1);
     match &items[0].0 {
-        Item::Dlg((decl, _)) => {
-            match &decl.body[0].0 {
-                DlgLine::CodeEscape((escape, _)) => {
-                    match escape {
-                        DlgEscape::Block(stmts) => {
-                            assert_eq!(stmts.len(), 2);
-                        }
-                        other => panic!("Expected Block, got {:?}", other),
-                    }
+        Item::Dlg((decl, _)) => match &decl.body[0].0 {
+            DlgLine::CodeEscape((escape, _)) => match escape {
+                DlgEscape::Block(stmts) => {
+                    assert_eq!(stmts.len(), 2);
                 }
-                other => panic!("Expected CodeEscape, got {:?}", other),
-            }
-        }
+                other => panic!("Expected Block, got {:?}", other),
+            },
+            other => panic!("Expected CodeEscape, got {:?}", other),
+        },
         other => panic!("Expected Item::Dlg, got {:?}", other),
     }
 }
@@ -1479,17 +1465,17 @@ fn dlg_code_escape_block() {
 #[test]
 fn dlg_choice_basic() {
     // Basic choice block
-    let items = parse_ok_items(r#"dlg test() { $ choice { "Option A" { @Narrator A. } "Option B" { @Narrator B. } } }"#);
+    let items = parse_ok_items(
+        r#"dlg test() { $ choice { "Option A" { @Narrator A. } "Option B" { @Narrator B. } } }"#,
+    );
     assert_eq!(items.len(), 1);
     match &items[0].0 {
-        Item::Dlg((decl, _)) => {
-            match &decl.body[0].0 {
-                DlgLine::Choice((choice, _)) => {
-                    assert_eq!(choice.arms.len(), 2);
-                }
-                other => panic!("Expected Choice, got {:?}", other),
+        Item::Dlg((decl, _)) => match &decl.body[0].0 {
+            DlgLine::Choice((choice, _)) => {
+                assert_eq!(choice.arms.len(), 2);
             }
-        }
+            other => panic!("Expected Choice, got {:?}", other),
+        },
         other => panic!("Expected Item::Dlg, got {:?}", other),
     }
 }
@@ -1497,18 +1483,17 @@ fn dlg_choice_basic() {
 #[test]
 fn dlg_if_else() {
     // Conditional dialogue with if/else
-    let items = parse_ok_items("dlg test() { $ if x > 10 { @Narrator High. } else { @Narrator Low. } }");
+    let items =
+        parse_ok_items("dlg test() { $ if x > 10 { @Narrator High. } else { @Narrator Low. } }");
     assert_eq!(items.len(), 1);
     match &items[0].0 {
-        Item::Dlg((decl, _)) => {
-            match &decl.body[0].0 {
-                DlgLine::If((dif, _)) => {
-                    assert!(!dif.then_block.is_empty());
-                    assert!(dif.else_block.is_some());
-                }
-                other => panic!("Expected If, got {:?}", other),
+        Item::Dlg((decl, _)) => match &decl.body[0].0 {
+            DlgLine::If((dif, _)) => {
+                assert!(!dif.then_block.is_empty());
+                assert!(dif.else_block.is_some());
             }
-        }
+            other => panic!("Expected If, got {:?}", other),
+        },
         other => panic!("Expected Item::Dlg, got {:?}", other),
     }
 }
@@ -1516,17 +1501,17 @@ fn dlg_if_else() {
 #[test]
 fn dlg_match_basic() {
     // Match in dialogue
-    let items = parse_ok_items(r#"dlg test() { $ match cls { "a" => { @Narrator Alpha. } "b" => { @Narrator Beta. } } }"#);
+    let items = parse_ok_items(
+        r#"dlg test() { $ match cls { "a" => { @Narrator Alpha. } "b" => { @Narrator Beta. } } }"#,
+    );
     assert_eq!(items.len(), 1);
     match &items[0].0 {
-        Item::Dlg((decl, _)) => {
-            match &decl.body[0].0 {
-                DlgLine::Match((dm, _)) => {
-                    assert_eq!(dm.arms.len(), 2);
-                }
-                other => panic!("Expected Match, got {:?}", other),
+        Item::Dlg((decl, _)) => match &decl.body[0].0 {
+            DlgLine::Match((dm, _)) => {
+                assert_eq!(dm.arms.len(), 2);
             }
-        }
+            other => panic!("Expected Match, got {:?}", other),
+        },
         other => panic!("Expected Item::Dlg, got {:?}", other),
     }
 }
@@ -1550,15 +1535,13 @@ fn dlg_localization_key() {
     let items = parse_ok_items("dlg test() { @Narrator Welcome. #welcome_msg }");
     assert_eq!(items.len(), 1);
     match &items[0].0 {
-        Item::Dlg((decl, _)) => {
-            match &decl.body[0].0 {
-                DlgLine::SpeakerLine { loc_key, .. } => {
-                    assert!(loc_key.is_some());
-                    assert_eq!(loc_key.unwrap().0, "welcome_msg");
-                }
-                other => panic!("Expected SpeakerLine, got {:?}", other),
+        Item::Dlg((decl, _)) => match &decl.body[0].0 {
+            DlgLine::SpeakerLine { loc_key, .. } => {
+                assert!(loc_key.is_some());
+                assert_eq!(loc_key.unwrap().0, "welcome_msg");
             }
-        }
+            other => panic!("Expected SpeakerLine, got {:?}", other),
+        },
         other => panic!("Expected Item::Dlg, got {:?}", other),
     }
 }
@@ -1569,19 +1552,15 @@ fn dlg_expression_escape() {
     let items = parse_ok_items("dlg test() { $ player.gold += 10; }");
     assert_eq!(items.len(), 1);
     match &items[0].0 {
-        Item::Dlg((decl, _)) => {
-            match &decl.body[0].0 {
-                DlgLine::CodeEscape((escape, _)) => {
-                    match escape {
-                        DlgEscape::Statement(stmt) => {
-                            assert!(matches!(&stmt.0, Stmt::Expr(_)));
-                        }
-                        other => panic!("Expected Statement, got {:?}", other),
-                    }
+        Item::Dlg((decl, _)) => match &decl.body[0].0 {
+            DlgLine::CodeEscape((escape, _)) => match escape {
+                DlgEscape::Statement(stmt) => {
+                    assert!(matches!(&stmt.0, Stmt::Expr(_)));
                 }
-                other => panic!("Expected CodeEscape, got {:?}", other),
-            }
-        }
+                other => panic!("Expected Statement, got {:?}", other),
+            },
+            other => panic!("Expected CodeEscape, got {:?}", other),
+        },
         other => panic!("Expected Item::Dlg, got {:?}", other),
     }
 }
@@ -1712,12 +1691,17 @@ fn speaker_line_inline() {
     let decl = parse_dlg("dlg test() { @Narrator Hello, traveler. }");
     assert_eq!(decl.body.len(), 1);
     match &decl.body[0].0 {
-        DlgLine::SpeakerLine { speaker, text, loc_key } => {
+        DlgLine::SpeakerLine {
+            speaker,
+            text,
+            loc_key,
+        } => {
             assert_eq!(speaker.0, "Narrator");
             assert!(!text.is_empty(), "text segments should not be empty");
             // The text segments should contain at least one Text segment
             assert!(
-                text.iter().any(|(seg, _)| matches!(seg, DlgTextSegment::Text(_))),
+                text.iter()
+                    .any(|(seg, _)| matches!(seg, DlgTextSegment::Text(_))),
                 "Expected at least one Text segment"
             );
             assert!(loc_key.is_none());
@@ -1750,10 +1734,20 @@ fn speaker_line_with_interpolation() {
         DlgLine::SpeakerLine { speaker, text, .. } => {
             assert_eq!(speaker.0, "Narrator");
             // text should contain both Text and Expr segments
-            let has_text = text.iter().any(|(seg, _)| matches!(seg, DlgTextSegment::Text(_)));
-            let has_expr = text.iter().any(|(seg, _)| matches!(seg, DlgTextSegment::Expr(_)));
-            assert!(has_text, "Expected Text segment in interpolated speaker line");
-            assert!(has_expr, "Expected Expr segment in interpolated speaker line");
+            let has_text = text
+                .iter()
+                .any(|(seg, _)| matches!(seg, DlgTextSegment::Text(_)));
+            let has_expr = text
+                .iter()
+                .any(|(seg, _)| matches!(seg, DlgTextSegment::Expr(_)));
+            assert!(
+                has_text,
+                "Expected Text segment in interpolated speaker line"
+            );
+            assert!(
+                has_expr,
+                "Expected Expr segment in interpolated speaker line"
+            );
         }
         other => panic!("Expected SpeakerLine, got {:?}", other),
     }
@@ -1779,7 +1773,9 @@ fn text_line_with_interpolation() {
     let decl = parse_dlg("dlg test(x: int) { @Narrator The value is {x}. }");
     match &decl.body[0].0 {
         DlgLine::SpeakerLine { text, .. } => {
-            let has_expr = text.iter().any(|(seg, _)| matches!(seg, DlgTextSegment::Expr(_)));
+            let has_expr = text
+                .iter()
+                .any(|(seg, _)| matches!(seg, DlgTextSegment::Expr(_)));
             assert!(has_expr, "Expected Expr segment for interpolation");
         }
         other => panic!("Expected SpeakerLine, got {:?}", other),
@@ -1853,7 +1849,7 @@ fn dlg_escape_expr_stmt() {
 fn dlg_choice_two_arms() {
     // Basic choice with 2 arms, each with a label and body
     let decl = parse_dlg(
-        r#"dlg test() { $ choice { "Option A" { @Narrator A! } "Option B" { @Narrator B! } } }"#
+        r#"dlg test() { $ choice { "Option A" { @Narrator A! } "Option B" { @Narrator B! } } }"#,
     );
     match &decl.body[0].0 {
         DlgLine::Choice((choice, _)) => {
@@ -1872,9 +1868,7 @@ fn dlg_choice_two_arms() {
 #[test]
 fn dlg_choice_with_loc_key() {
     // Choice arm with localization key: "Fight" #opt_fight { ... }
-    let decl = parse_dlg(
-        r#"dlg test() { $ choice { "Fight" #opt_fight { @Narrator Fight! } } }"#
-    );
+    let decl = parse_dlg(r#"dlg test() { $ choice { "Fight" #opt_fight { @Narrator Fight! } } }"#);
     match &decl.body[0].0 {
         DlgLine::Choice((choice, _)) => {
             assert_eq!(choice.arms.len(), 1);
@@ -1907,7 +1901,8 @@ fn dlg_if_basic() {
 #[test]
 fn dlg_if_else_comprehensive() {
     // $ if condition { ... } else { ... }
-    let decl = parse_dlg("dlg test(x: int) { $ if x > 0 { @Narrator Yes. } else { @Narrator No. } }");
+    let decl =
+        parse_dlg("dlg test(x: int) { $ if x > 0 { @Narrator Yes. } else { @Narrator No. } }");
     match &decl.body[0].0 {
         DlgLine::If((dif, _)) => {
             assert!(!dif.then_block.is_empty());
@@ -1922,7 +1917,7 @@ fn dlg_match_arms() {
     // $ match x { 1 => { ... } _ => { ... } }
     // Note: integer and wildcard patterns
     let decl = parse_dlg(
-        r#"dlg test(x: int) { $ match x { 1 => { @Narrator One. } _ => { @Narrator Other. } } }"#
+        r#"dlg test(x: int) { $ match x { 1 => { @Narrator One. } _ => { @Narrator Other. } } }"#,
     );
     match &decl.body[0].0 {
         DlgLine::Match((dm, _)) => {
@@ -1983,7 +1978,9 @@ fn dlg_loc_key_on_speaker() {
     // @Narrator Welcome. #welcome_msg
     let decl = parse_dlg("dlg test() { @Narrator Welcome. #welcome_msg }");
     match &decl.body[0].0 {
-        DlgLine::SpeakerLine { speaker, loc_key, .. } => {
+        DlgLine::SpeakerLine {
+            speaker, loc_key, ..
+        } => {
             assert_eq!(speaker.0, "Narrator");
             let key = loc_key.expect("expected loc_key");
             assert_eq!(key.0, "welcome_msg");
@@ -1996,7 +1993,7 @@ fn dlg_loc_key_on_speaker() {
 fn dlg_loc_key_on_choice() {
     // Choice arm with #key (same test as dlg_choice_with_loc_key, but from DLG-08 perspective)
     let decl = parse_dlg(
-        r#"dlg test() { $ choice { "Fight" #fight_key { @Narrator Fight! } "Run" #run_key { @Narrator Run! } } }"#
+        r#"dlg test() { $ choice { "Fight" #fight_key { @Narrator Fight! } "Run" #run_key { @Narrator Run! } } }"#,
     );
     match &decl.body[0].0 {
         DlgLine::Choice((choice, _)) => {
@@ -2106,7 +2103,10 @@ fn parse_08_dialogue() {
             "Parse errors in trimmed 08_dialogue content: {:?}",
             trimmed_errors
         );
-        assert!(trimmed_output.is_some(), "No output from trimmed 08_dialogue content");
+        assert!(
+            trimmed_output.is_some(),
+            "No output from trimmed 08_dialogue content"
+        );
     }
 }
 
@@ -2148,7 +2148,10 @@ fn parse_19_localization() {
             "Parse errors in trimmed 19_localization content: {:?}",
             trimmed_errors
         );
-        assert!(trimmed_output.is_some(), "No output from trimmed 19_localization content");
+        assert!(
+            trimmed_output.is_some(),
+            "No output from trimmed 19_localization content"
+        );
     }
 }
 
@@ -2159,9 +2162,8 @@ fn parse_19_localization() {
 #[test]
 fn dlg_nested_choice_in_if() {
     // $ if condition { $ choice { ... } } -- choice nested inside if
-    let decl = parse_dlg(
-        r#"dlg test(x: int) { $ if x > 0 { $ choice { "A" { @Narrator Nested! } } } }"#
-    );
+    let decl =
+        parse_dlg(r#"dlg test(x: int) { $ if x > 0 { $ choice { "A" { @Narrator Nested! } } } }"#);
     match &decl.body[0].0 {
         DlgLine::If((dif, _)) => {
             assert!(!dif.then_block.is_empty());
@@ -2180,9 +2182,8 @@ fn dlg_nested_choice_in_if() {
 #[test]
 fn dlg_nested_if_in_choice() {
     // $ choice { "A" { $ if x > 0 { @Narrator Nested! } } } -- if nested inside choice
-    let decl = parse_dlg(
-        r#"dlg test(x: int) { $ choice { "A" { $ if x > 0 { @Narrator Nested! } } } }"#
-    );
+    let decl =
+        parse_dlg(r#"dlg test(x: int) { $ choice { "A" { $ if x > 0 { @Narrator Nested! } } } }"#);
     match &decl.body[0].0 {
         DlgLine::Choice((choice, _)) => {
             assert_eq!(choice.arms.len(), 1);
@@ -2206,7 +2207,7 @@ fn dlg_nested_if_in_choice() {
 fn dlg_multi_speakers_and_escape() {
     // Realistic dialogue with multiple speakers and code escape
     let decl = parse_dlg(
-        "dlg test(player: Entity) { $ let name = player.name; @Narrator Welcome. @OldTim Hello. }"
+        "dlg test(player: Entity) { $ let name = player.name; @Narrator Welcome. @OldTim Hello. }",
     );
     // Should have 3 body lines: code escape + 2 speaker lines
     assert_eq!(decl.body.len(), 3);
@@ -2219,14 +2220,20 @@ fn dlg_multi_speakers_and_escape() {
 fn dlg_choice_with_transition() {
     // Choice arms with transitions inside
     let decl = parse_dlg(
-        r#"dlg test(p: Entity) { $ choice { "Shop" { -> shop(p) } "Arena" { -> arena(p) } } }"#
+        r#"dlg test(p: Entity) { $ choice { "Shop" { -> shop(p) } "Arena" { -> arena(p) } } }"#,
     );
     match &decl.body[0].0 {
         DlgLine::Choice((choice, _)) => {
             assert_eq!(choice.arms.len(), 2);
             // Each arm body should contain a Transition
-            assert!(matches!(&choice.arms[0].0.body[0].0, DlgLine::Transition(_)));
-            assert!(matches!(&choice.arms[1].0.body[0].0, DlgLine::Transition(_)));
+            assert!(matches!(
+                &choice.arms[0].0.body[0].0,
+                DlgLine::Transition(_)
+            ));
+            assert!(matches!(
+                &choice.arms[1].0.body[0].0,
+                DlgLine::Transition(_)
+            ));
         }
         other => panic!("Expected Choice, got {:?}", other),
     }
@@ -2236,23 +2243,19 @@ fn dlg_choice_with_transition() {
 fn dlg_deeply_nested() {
     // Deep nesting: choice > if > choice
     let decl = parse_dlg(
-        r#"dlg test(x: int) { $ choice { "A" { $ if x > 0 { $ choice { "Inner" { @Narrator Deep! } } } } } }"#
+        r#"dlg test(x: int) { $ choice { "A" { $ if x > 0 { $ choice { "Inner" { @Narrator Deep! } } } } } }"#,
     );
     match &decl.body[0].0 {
-        DlgLine::Choice((c, _)) => {
-            match &c.arms[0].0.body[0].0 {
-                DlgLine::If((dif, _)) => {
-                    match &dif.then_block[0].0 {
-                        DlgLine::Choice((inner, _)) => {
-                            assert_eq!(inner.arms.len(), 1);
-                            assert_eq!(inner.arms[0].0.label.0, "\"Inner\"");
-                        }
-                        other => panic!("Expected inner Choice, got {:?}", other),
-                    }
+        DlgLine::Choice((c, _)) => match &c.arms[0].0.body[0].0 {
+            DlgLine::If((dif, _)) => match &dif.then_block[0].0 {
+                DlgLine::Choice((inner, _)) => {
+                    assert_eq!(inner.arms.len(), 1);
+                    assert_eq!(inner.arms[0].0.label.0, "\"Inner\"");
                 }
-                other => panic!("Expected If inside choice, got {:?}", other),
-            }
-        }
+                other => panic!("Expected inner Choice, got {:?}", other),
+            },
+            other => panic!("Expected If inside choice, got {:?}", other),
+        },
         other => panic!("Expected Choice, got {:?}", other),
     }
 }
@@ -2579,9 +2582,8 @@ fn test_struct_basic() {
 
 #[test]
 fn test_struct_with_defaults() {
-    let items = parse_ok_items(
-        "pub struct Config { pub width: int = 800, pub title: string = \"Game\", }",
-    );
+    let items =
+        parse_ok_items("pub struct Config { pub width: int = 800, pub title: string = \"Game\", }");
     assert_eq!(items.len(), 1);
     match &items[0].0 {
         Item::Struct((sd, _)) => {
@@ -2589,10 +2591,16 @@ fn test_struct_with_defaults() {
             assert_eq!(sd.members.len(), 2);
             // First field has default = 800
             let f0 = unwrap_struct_field(&sd.members[0]);
-            assert!(matches!(f0.default.as_ref().unwrap().0, Expr::IntLit("800")));
+            assert!(matches!(
+                f0.default.as_ref().unwrap().0,
+                Expr::IntLit("800")
+            ));
             // Second field has default = "Game"
             let f1 = unwrap_struct_field(&sd.members[1]);
-            assert!(matches!(&f1.default.as_ref().unwrap().0, Expr::StringLit(_)));
+            assert!(matches!(
+                &f1.default.as_ref().unwrap().0,
+                Expr::StringLit(_)
+            ));
         }
         other => panic!("Expected Item::Struct, got {:?}", other),
     }
@@ -2600,9 +2608,7 @@ fn test_struct_with_defaults() {
 
 #[test]
 fn test_struct_generic() {
-    let items = parse_ok_items(
-        "pub struct Pair<T> { pub first: T, pub second: T, }",
-    );
+    let items = parse_ok_items("pub struct Pair<T> { pub first: T, pub second: T, }");
     assert_eq!(items.len(), 1);
     match &items[0].0 {
         Item::Struct((sd, _)) => {
@@ -2618,9 +2624,7 @@ fn test_struct_generic() {
 
 #[test]
 fn test_struct_multi_generic() {
-    let items = parse_ok_items(
-        "pub struct KeyValue<K, V> { pub key: K, pub value: V, }",
-    );
+    let items = parse_ok_items("pub struct KeyValue<K, V> { pub key: K, pub value: V, }");
     assert_eq!(items.len(), 1);
     match &items[0].0 {
         Item::Struct((sd, _)) => {
@@ -2640,9 +2644,7 @@ fn test_struct_multi_generic() {
 
 #[test]
 fn test_enum_basic() {
-    let items = parse_ok_items(
-        "pub enum Direction { North, South, East, West, }",
-    );
+    let items = parse_ok_items("pub enum Direction { North, South, East, West, }");
     assert_eq!(items.len(), 1);
     match &items[0].0 {
         Item::Enum((ed, _)) => {
@@ -2694,9 +2696,7 @@ fn test_enum_tuple_variants() {
 
 #[test]
 fn test_contract_basic() {
-    let items = parse_ok_items(
-        "pub contract Interactable { fn onInteract(who: Entity); }",
-    );
+    let items = parse_ok_items("pub contract Interactable { fn onInteract(who: Entity); }");
     assert_eq!(items.len(), 1);
     match &items[0].0 {
         Item::Contract((cd, _)) => {
@@ -2767,9 +2767,7 @@ fn test_contract_multiple_sigs() {
 
 #[test]
 fn test_impl_basic() {
-    let items = parse_ok_items(
-        "impl Merchant { pub fn greet() -> string { \"Hello\" } }",
-    );
+    let items = parse_ok_items("impl Merchant { pub fn greet() -> string { \"Hello\" } }");
     assert_eq!(items.len(), 1);
     match &items[0].0 {
         Item::Impl((id, _)) => {
@@ -2796,7 +2794,10 @@ fn test_impl_contract_for() {
     assert_eq!(items.len(), 1);
     match &items[0].0 {
         Item::Impl((id, _)) => {
-            assert!(matches!(id.contract.as_ref().unwrap().0, TypeExpr::Named("Interactable")));
+            assert!(matches!(
+                id.contract.as_ref().unwrap().0,
+                TypeExpr::Named("Interactable")
+            ));
             assert!(matches!(id.target.0, TypeExpr::Named("Merchant")));
             assert_eq!(id.members.len(), 1);
         }
@@ -2806,9 +2807,7 @@ fn test_impl_contract_for() {
 
 #[test]
 fn test_impl_generic_contract() {
-    let items = parse_ok_items(
-        "impl Into<string> for Vec2 { fn into() -> string { \"vec\" } }",
-    );
+    let items = parse_ok_items("impl Into<string> for Vec2 { fn into() -> string { \"vec\" } }");
     assert_eq!(items.len(), 1);
     match &items[0].0 {
         Item::Impl((id, _)) => {
@@ -2849,20 +2848,16 @@ fn test_impl_operator_binary() {
 
 #[test]
 fn test_impl_operator_index() {
-    let items = parse_ok_items(
-        "impl Grid { pub operator [](key: int) -> int { self.data[key] } }",
-    );
+    let items = parse_ok_items("impl Grid { pub operator [](key: int) -> int { self.data[key] } }");
     assert_eq!(items.len(), 1);
     match &items[0].0 {
-        Item::Impl((id, _)) => {
-            match &id.members[0].0 {
-                ImplMember::Op((od, _)) => {
-                    assert!(matches!(od.symbol.0, OpSymbol::Index));
-                    assert_eq!(od.params.len(), 1);
-                }
-                other => panic!("Expected ImplMember::Op, got {:?}", other),
+        Item::Impl((id, _)) => match &id.members[0].0 {
+            ImplMember::Op((od, _)) => {
+                assert!(matches!(od.symbol.0, OpSymbol::Index));
+                assert_eq!(od.params.len(), 1);
             }
-        }
+            other => panic!("Expected ImplMember::Op, got {:?}", other),
+        },
         other => panic!("Expected Item::Impl, got {:?}", other),
     }
 }
@@ -2874,35 +2869,30 @@ fn test_impl_operator_index_set() {
     );
     assert_eq!(items.len(), 1);
     match &items[0].0 {
-        Item::Impl((id, _)) => {
-            match &id.members[0].0 {
-                ImplMember::Op((od, _)) => {
-                    assert!(matches!(od.symbol.0, OpSymbol::IndexSet));
-                    assert_eq!(od.params.len(), 2);
-                }
-                other => panic!("Expected ImplMember::Op, got {:?}", other),
+        Item::Impl((id, _)) => match &id.members[0].0 {
+            ImplMember::Op((od, _)) => {
+                assert!(matches!(od.symbol.0, OpSymbol::IndexSet));
+                assert_eq!(od.params.len(), 2);
             }
-        }
+            other => panic!("Expected ImplMember::Op, got {:?}", other),
+        },
         other => panic!("Expected Item::Impl, got {:?}", other),
     }
 }
 
 #[test]
 fn test_impl_operator_unary_neg() {
-    let items = parse_ok_items(
-        "impl Vec2 { pub operator -() -> Vec2 { Vec2(x: -self.x, y: -self.y) } }",
-    );
+    let items =
+        parse_ok_items("impl Vec2 { pub operator -() -> Vec2 { Vec2(x: -self.x, y: -self.y) } }");
     assert_eq!(items.len(), 1);
     match &items[0].0 {
-        Item::Impl((id, _)) => {
-            match &id.members[0].0 {
-                ImplMember::Op((od, _)) => {
-                    assert!(matches!(od.symbol.0, OpSymbol::Sub));
-                    assert_eq!(od.params.len(), 0);
-                }
-                other => panic!("Expected ImplMember::Op, got {:?}", other),
+        Item::Impl((id, _)) => match &id.members[0].0 {
+            ImplMember::Op((od, _)) => {
+                assert!(matches!(od.symbol.0, OpSymbol::Sub));
+                assert_eq!(od.params.len(), 0);
             }
-        }
+            other => panic!("Expected ImplMember::Op, got {:?}", other),
+        },
         other => panic!("Expected Item::Impl, got {:?}", other),
     }
 }
@@ -2913,9 +2903,7 @@ fn test_impl_operator_unary_neg() {
 
 #[test]
 fn test_entity_basic() {
-    let items = parse_ok_items(
-        "pub entity Guard { pub name: string = \"Guard\", }",
-    );
+    let items = parse_ok_items("pub entity Guard { pub name: string = \"Guard\", }");
     assert_eq!(items.len(), 1);
     match &items[0].0 {
         Item::Entity((ed, _)) => {
@@ -2923,8 +2911,15 @@ fn test_entity_basic() {
             assert_eq!(ed.name.0, "Guard");
             assert_eq!(ed.members.len(), 1);
             match &ed.members[0].0 {
-                EntityMember::Property { vis, name, ty, default } => {
+                EntityMember::Property {
+                    vis,
+                    is_mutable,
+                    name,
+                    ty,
+                    default,
+                } => {
                     assert!(matches!(vis, Some(Visibility::Pub)));
+                    assert!(!is_mutable);
                     assert_eq!(name.0, "name");
                     assert!(matches!(ty.0, TypeExpr::Named("string")));
                     assert!(default.is_some());
@@ -2937,10 +2932,52 @@ fn test_entity_basic() {
 }
 
 #[test]
-fn test_entity_use_clause() {
+fn field_mutability_modifier_parses_for_all_field_declarations() {
     let items = parse_ok_items(
-        "pub entity Guard { use Speaker { displayName: \"Guard\", }, }",
+        "struct Record { pub mut value: int, label: string }
+         class Box { mut item: int }
+         entity Actor { pub mut health: int, name: string, }
+         extern component Position { mut x: float, y: float, }",
     );
+
+    let Item::Struct((record, _)) = &items[0].0 else {
+        panic!("expected struct");
+    };
+    assert!(unwrap_struct_field(&record.members[0]).is_mutable);
+    assert!(!unwrap_struct_field(&record.members[1]).is_mutable);
+
+    let Item::Class((boxed, _)) = &items[1].0 else {
+        panic!("expected class");
+    };
+    let ClassMember::Field(field) = &boxed.members[0].0 else {
+        panic!("expected class field");
+    };
+    assert!(field.is_mutable);
+
+    let Item::Entity((actor, _)) = &items[2].0 else {
+        panic!("expected entity");
+    };
+    let EntityMember::Property { is_mutable, .. } = &actor.members[0].0 else {
+        panic!("expected entity property");
+    };
+    assert!(*is_mutable);
+    let EntityMember::Property { is_mutable, .. } = &actor.members[1].0 else {
+        panic!("expected entity property");
+    };
+    assert!(!is_mutable);
+
+    let Item::Extern((ExternDecl::Component(_, (position, _)), _)) = &items[3].0 else {
+        panic!("expected extern component");
+    };
+    let ComponentMember::Field((field, _)) = &position.members[0].0 else {
+        panic!("expected component field");
+    };
+    assert!(field.is_mutable);
+}
+
+#[test]
+fn test_entity_use_clause() {
+    let items = parse_ok_items("pub entity Guard { use Speaker { displayName: \"Guard\", }, }");
     assert_eq!(items.len(), 1);
     match &items[0].0 {
         Item::Entity((ed, _)) => {
@@ -2960,9 +2997,7 @@ fn test_entity_use_clause() {
 
 #[test]
 fn test_entity_fn_member() {
-    let items = parse_ok_items(
-        "pub entity Guard { pub fn greet() -> string { \"Hello\" } }",
-    );
+    let items = parse_ok_items("pub entity Guard { pub fn greet() -> string { \"Hello\" } }");
     assert_eq!(items.len(), 1);
     match &items[0].0 {
         Item::Entity((ed, _)) => {
@@ -2980,15 +3015,17 @@ fn test_entity_fn_member() {
 
 #[test]
 fn test_entity_on_handler() {
-    let items = parse_ok_items(
-        "pub entity Guard { on create { log(\"created\"); } }",
-    );
+    let items = parse_ok_items("pub entity Guard { on create { log(\"created\"); } }");
     assert_eq!(items.len(), 1);
     match &items[0].0 {
         Item::Entity((ed, _)) => {
             assert_eq!(ed.members.len(), 1);
             match &ed.members[0].0 {
-                EntityMember::On { event, params, body } => {
+                EntityMember::On {
+                    event,
+                    params,
+                    body,
+                } => {
                     assert_eq!(event.0, "create");
                     assert!(params.is_none());
                     assert!(!body.is_empty());
@@ -3002,22 +3039,18 @@ fn test_entity_on_handler() {
 
 #[test]
 fn test_entity_on_with_params() {
-    let items = parse_ok_items(
-        "pub entity Guard { on interact(who: Entity) { log(\"hi\"); } }",
-    );
+    let items = parse_ok_items("pub entity Guard { on interact(who: Entity) { log(\"hi\"); } }");
     assert_eq!(items.len(), 1);
     match &items[0].0 {
-        Item::Entity((ed, _)) => {
-            match &ed.members[0].0 {
-                EntityMember::On { event, params, .. } => {
-                    assert_eq!(event.0, "interact");
-                    let p = params.as_ref().expect("Expected params");
-                    assert_eq!(p.len(), 1);
-                    assert_eq!(p[0].0.name.0, "who");
-                }
-                other => panic!("Expected EntityMember::On, got {:?}", other),
+        Item::Entity((ed, _)) => match &ed.members[0].0 {
+            EntityMember::On { event, params, .. } => {
+                assert_eq!(event.0, "interact");
+                let p = params.as_ref().expect("Expected params");
+                assert_eq!(p.len(), 1);
+                assert_eq!(p[0].0.name.0, "who");
             }
-        }
+            other => panic!("Expected EntityMember::On, got {:?}", other),
+        },
         other => panic!("Expected Item::Entity, got {:?}", other),
     }
 }
@@ -3029,22 +3062,20 @@ fn test_entity_transition_in_on() {
     );
     assert_eq!(items.len(), 1);
     match &items[0].0 {
-        Item::Entity((ed, _)) => {
-            match &ed.members[0].0 {
-                EntityMember::On { body, .. } => {
-                    assert_eq!(body.len(), 1);
-                    match &body[0].0 {
-                        Stmt::Transition((t, _)) => {
-                            assert_eq!(t.target.0, "guardDialog");
-                            let args = t.args.as_ref().expect("Expected args");
-                            assert_eq!(args.len(), 2);
-                        }
-                        other => panic!("Expected Stmt::Transition, got {:?}", other),
+        Item::Entity((ed, _)) => match &ed.members[0].0 {
+            EntityMember::On { body, .. } => {
+                assert_eq!(body.len(), 1);
+                match &body[0].0 {
+                    Stmt::Transition((t, _)) => {
+                        assert_eq!(t.target.0, "guardDialog");
+                        let args = t.args.as_ref().expect("Expected args");
+                        assert_eq!(args.len(), 2);
                     }
+                    other => panic!("Expected Stmt::Transition, got {:?}", other),
                 }
-                other => panic!("Expected EntityMember::On, got {:?}", other),
             }
-        }
+            other => panic!("Expected EntityMember::On, got {:?}", other),
+        },
         other => panic!("Expected Item::Entity, got {:?}", other),
     }
 }
@@ -3055,9 +3086,7 @@ fn test_entity_transition_in_on() {
 
 #[test]
 fn test_component_basic_extern() {
-    let items = parse_ok_items(
-        "extern component Health { current: int, max: int, }",
-    );
+    let items = parse_ok_items("extern component Health { current: int, max: int, }");
     assert_eq!(items.len(), 1);
     match &items[0].0 {
         Item::Extern((ExternDecl::Component(_vis, (cd, _)), _)) => {
@@ -3070,7 +3099,10 @@ fn test_component_basic_extern() {
                 other => panic!("Expected ComponentMember::Field, got {:?}", other),
             }
         }
-        other => panic!("Expected Item::Extern(ExternDecl::Component), got {:?}", other),
+        other => panic!(
+            "Expected Item::Extern(ExternDecl::Component), got {:?}",
+            other
+        ),
     }
 }
 
@@ -3130,7 +3162,10 @@ fn test_extern_component() {
             assert_eq!(cd.name.0, "Transform");
             assert_eq!(cd.members.len(), 2);
         }
-        other => panic!("Expected Item::Extern(ExternDecl::Component), got {:?}", other),
+        other => panic!(
+            "Expected Item::Extern(ExternDecl::Component), got {:?}",
+            other
+        ),
     }
 }
 
@@ -3142,22 +3177,34 @@ fn test_extern_component() {
 fn parse_04_structs() {
     let src = include_str!("cases/04_structs.writ");
     let (result, errors) = parse(src);
-    assert!(errors.is_empty(), "04_structs.writ had parse errors: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "04_structs.writ had parse errors: {errors:?}"
+    );
     assert!(result.is_some(), "04_structs.writ produced no output");
     let items = result.unwrap();
     assert!(!items.is_empty(), "04_structs.writ produced no items");
     // Structural assertions: at least one Struct and one Impl
-    assert!(items.iter().any(|(item, _)| matches!(item, Item::Struct(_))),
-        "Expected at least one Item::Struct");
-    assert!(items.iter().any(|(item, _)| matches!(item, Item::Impl(_))),
-        "Expected at least one Item::Impl");
+    assert!(
+        items
+            .iter()
+            .any(|(item, _)| matches!(item, Item::Struct(_))),
+        "Expected at least one Item::Struct"
+    );
+    assert!(
+        items.iter().any(|(item, _)| matches!(item, Item::Impl(_))),
+        "Expected at least one Item::Impl"
+    );
 }
 
 #[test]
 fn parse_05_enums() {
     let src = include_str!("cases/05_enums.writ");
     let (result, errors) = parse(src);
-    assert!(errors.is_empty(), "05_enums.writ had parse errors: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "05_enums.writ had parse errors: {errors:?}"
+    );
     assert!(result.is_some(), "05_enums.writ produced no output");
     let items = result.unwrap();
     assert!(!items.is_empty(), "05_enums.writ produced no items");
@@ -3167,19 +3214,29 @@ fn parse_05_enums() {
 fn parse_06_contracts() {
     let src = include_str!("cases/06_contracts.writ");
     let (result, errors) = parse(src);
-    assert!(errors.is_empty(), "06_contracts.writ had parse errors: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "06_contracts.writ had parse errors: {errors:?}"
+    );
     assert!(result.is_some(), "06_contracts.writ produced no output");
     let items = result.unwrap();
     assert!(!items.is_empty(), "06_contracts.writ produced no items");
-    assert!(items.iter().any(|(item, _)| matches!(item, Item::Contract(_))),
-        "Expected at least one Item::Contract");
+    assert!(
+        items
+            .iter()
+            .any(|(item, _)| matches!(item, Item::Contract(_))),
+        "Expected at least one Item::Contract"
+    );
 }
 
 #[test]
 fn parse_07_functions() {
     let src = include_str!("cases/07_functions.writ");
     let (result, errors) = parse(src);
-    assert!(errors.is_empty(), "07_functions.writ had parse errors: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "07_functions.writ had parse errors: {errors:?}"
+    );
     assert!(result.is_some(), "07_functions.writ produced no output");
     let items = result.unwrap();
     assert!(!items.is_empty(), "07_functions.writ produced no items");
@@ -3189,46 +3246,78 @@ fn parse_07_functions() {
 fn parse_09_entities() {
     let src = include_str!("cases/09_entities.writ");
     let (result, errors) = parse(src);
-    assert!(errors.is_empty(), "09_entities.writ had parse errors: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "09_entities.writ had parse errors: {errors:?}"
+    );
     assert!(result.is_some(), "09_entities.writ produced no output");
     let items = result.unwrap();
     assert!(!items.is_empty(), "09_entities.writ produced no items");
-    assert!(items.iter().any(|(item, _)| matches!(item, Item::Entity(_))),
-        "Expected at least one Item::Entity");
+    assert!(
+        items
+            .iter()
+            .any(|(item, _)| matches!(item, Item::Entity(_))),
+        "Expected at least one Item::Entity"
+    );
     // All components are now extern components, so no standalone Item::Component
-    assert!(items.iter().any(|(item, _)| matches!(item, Item::Extern(_))),
-        "Expected at least one Item::Extern");
+    assert!(
+        items
+            .iter()
+            .any(|(item, _)| matches!(item, Item::Extern(_))),
+        "Expected at least one Item::Extern"
+    );
 }
 
 #[test]
 fn parse_12_namespaces() {
     let src = include_str!("cases/12_namespaces.writ");
     let (result, errors) = parse(src);
-    assert!(errors.is_empty(), "12_namespaces.writ had parse errors: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "12_namespaces.writ had parse errors: {errors:?}"
+    );
     assert!(result.is_some(), "12_namespaces.writ produced no output");
     let items = result.unwrap();
     assert!(!items.is_empty(), "12_namespaces.writ produced no items");
-    assert!(items.iter().any(|(item, _)| matches!(item, Item::Namespace(_))),
-        "Expected at least one Item::Namespace");
-    assert!(items.iter().any(|(item, _)| matches!(item, Item::Using(_))),
-        "Expected at least one Item::Using");
+    assert!(
+        items
+            .iter()
+            .any(|(item, _)| matches!(item, Item::Namespace(_))),
+        "Expected at least one Item::Namespace"
+    );
+    assert!(
+        items.iter().any(|(item, _)| matches!(item, Item::Using(_))),
+        "Expected at least one Item::Using"
+    );
 }
 
 #[test]
 fn parse_12b_namespace_block() {
     let src = include_str!("cases/12b_namespace_block.writ");
     let (result, errors) = parse(src);
-    assert!(errors.is_empty(), "12b_namespace_block.writ had parse errors: {errors:?}");
-    assert!(result.is_some(), "12b_namespace_block.writ produced no output");
+    assert!(
+        errors.is_empty(),
+        "12b_namespace_block.writ had parse errors: {errors:?}"
+    );
+    assert!(
+        result.is_some(),
+        "12b_namespace_block.writ produced no output"
+    );
     let items = result.unwrap();
-    assert!(!items.is_empty(), "12b_namespace_block.writ produced no items");
+    assert!(
+        !items.is_empty(),
+        "12b_namespace_block.writ produced no items"
+    );
 }
 
 #[test]
 fn parse_13_concurrency() {
     let src = include_str!("cases/13_concurrency.writ");
     let (result, errors) = parse(src);
-    assert!(errors.is_empty(), "13_concurrency.writ had parse errors: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "13_concurrency.writ had parse errors: {errors:?}"
+    );
     assert!(result.is_some(), "13_concurrency.writ produced no output");
     let items = result.unwrap();
     assert!(!items.is_empty(), "13_concurrency.writ produced no items");
@@ -3238,7 +3327,10 @@ fn parse_13_concurrency() {
 fn parse_14_attributes() {
     let src = include_str!("cases/14_attributes.writ");
     let (result, errors) = parse(src);
-    assert!(errors.is_empty(), "14_attributes.writ had parse errors: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "14_attributes.writ had parse errors: {errors:?}"
+    );
     assert!(result.is_some(), "14_attributes.writ produced no output");
     let items = result.unwrap();
     assert!(!items.is_empty(), "14_attributes.writ produced no items");
@@ -3248,19 +3340,35 @@ fn parse_14_attributes() {
 fn parse_17_globals_atomic() {
     let src = include_str!("cases/17_globals_atomic.writ");
     let (result, errors) = parse(src);
-    assert!(errors.is_empty(), "17_globals_atomic.writ had parse errors: {errors:?}");
-    assert!(result.is_some(), "17_globals_atomic.writ produced no output");
+    assert!(
+        errors.is_empty(),
+        "17_globals_atomic.writ had parse errors: {errors:?}"
+    );
+    assert!(
+        result.is_some(),
+        "17_globals_atomic.writ produced no output"
+    );
     let items = result.unwrap();
-    assert!(!items.is_empty(), "17_globals_atomic.writ produced no items");
-    assert!(items.iter().any(|(item, _)| matches!(item, Item::Global(_))),
-        "Expected at least one Item::Global");
+    assert!(
+        !items.is_empty(),
+        "17_globals_atomic.writ produced no items"
+    );
+    assert!(
+        items
+            .iter()
+            .any(|(item, _)| matches!(item, Item::Global(_))),
+        "Expected at least one Item::Global"
+    );
 }
 
 #[test]
 fn parse_18_extern() {
     let src = include_str!("cases/18_extern.writ");
     let (result, errors) = parse(src);
-    assert!(errors.is_empty(), "18_extern.writ had parse errors: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "18_extern.writ had parse errors: {errors:?}"
+    );
     assert!(result.is_some(), "18_extern.writ produced no output");
     let items = result.unwrap();
     assert!(!items.is_empty(), "18_extern.writ produced no items");
@@ -3274,80 +3382,156 @@ fn parse_18_extern() {
 fn parse_01_comments_writ() {
     let src = include_str!("cases/01_comments.writ");
     let (result, errors) = parse(src);
-    assert!(errors.is_empty(), "01_comments.writ had parse errors: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "01_comments.writ had parse errors: {errors:?}"
+    );
     assert!(result.is_some(), "01_comments.writ produced no output");
     let items = result.unwrap();
-    assert_eq!(items.len(), 2, "01_comments.writ: expected 2 items, got {}", items.len());
+    assert_eq!(
+        items.len(),
+        2,
+        "01_comments.writ: expected 2 items, got {}",
+        items.len()
+    );
 }
 
 #[test]
 fn parse_02_string_literals_writ() {
     let src = include_str!("cases/02_string_literals.writ");
     let (result, errors) = parse(src);
-    assert!(errors.is_empty(), "02_string_literals.writ had parse errors: {errors:?}");
-    assert!(result.is_some(), "02_string_literals.writ produced no output");
+    assert!(
+        errors.is_empty(),
+        "02_string_literals.writ had parse errors: {errors:?}"
+    );
+    assert!(
+        result.is_some(),
+        "02_string_literals.writ produced no output"
+    );
     let items = result.unwrap();
-    assert_eq!(items.len(), 5, "02_string_literals.writ: expected 5 items, got {}", items.len());
+    assert_eq!(
+        items.len(),
+        5,
+        "02_string_literals.writ: expected 5 items, got {}",
+        items.len()
+    );
 }
 
 #[test]
 fn parse_03_variables_constants_writ() {
     let src = include_str!("cases/03_variables_constants.writ");
     let (result, errors) = parse(src);
-    assert!(errors.is_empty(), "03_variables_constants.writ had parse errors: {errors:?}");
-    assert!(result.is_some(), "03_variables_constants.writ produced no output");
+    assert!(
+        errors.is_empty(),
+        "03_variables_constants.writ had parse errors: {errors:?}"
+    );
+    assert!(
+        result.is_some(),
+        "03_variables_constants.writ produced no output"
+    );
     let items = result.unwrap();
-    assert_eq!(items.len(), 9, "03_variables_constants.writ: expected 9 items, got {}", items.len());
+    assert_eq!(
+        items.len(),
+        9,
+        "03_variables_constants.writ: expected 9 items, got {}",
+        items.len()
+    );
 }
 
 #[test]
 fn parse_10_operators_writ() {
     let src = include_str!("cases/10_operators.writ");
     let (result, errors) = parse(src);
-    assert!(errors.is_empty(), "10_operators.writ had parse errors: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "10_operators.writ had parse errors: {errors:?}"
+    );
     assert!(result.is_some(), "10_operators.writ produced no output");
     let items = result.unwrap();
-    assert_eq!(items.len(), 10, "10_operators.writ: expected 10 items, got {}", items.len());
+    assert_eq!(
+        items.len(),
+        10,
+        "10_operators.writ: expected 10 items, got {}",
+        items.len()
+    );
 }
 
 #[test]
 fn parse_11_error_handling_writ() {
     let src = include_str!("cases/11_error_handling.writ");
     let (result, errors) = parse(src);
-    assert!(errors.is_empty(), "11_error_handling.writ had parse errors: {errors:?}");
-    assert!(result.is_some(), "11_error_handling.writ produced no output");
+    assert!(
+        errors.is_empty(),
+        "11_error_handling.writ had parse errors: {errors:?}"
+    );
+    assert!(
+        result.is_some(),
+        "11_error_handling.writ produced no output"
+    );
     let items = result.unwrap();
-    assert_eq!(items.len(), 10, "11_error_handling.writ: expected 10 items, got {}", items.len());
+    assert_eq!(
+        items.len(),
+        10,
+        "11_error_handling.writ: expected 10 items, got {}",
+        items.len()
+    );
 }
 
 #[test]
 fn parse_15_ranges_indexing_writ() {
     let src = include_str!("cases/15_ranges_indexing.writ");
     let (result, errors) = parse(src);
-    assert!(errors.is_empty(), "15_ranges_indexing.writ had parse errors: {errors:?}");
-    assert!(result.is_some(), "15_ranges_indexing.writ produced no output");
+    assert!(
+        errors.is_empty(),
+        "15_ranges_indexing.writ had parse errors: {errors:?}"
+    );
+    assert!(
+        result.is_some(),
+        "15_ranges_indexing.writ produced no output"
+    );
     let items = result.unwrap();
-    assert_eq!(items.len(), 7, "15_ranges_indexing.writ: expected 7 items, got {}", items.len());
+    assert_eq!(
+        items.len(),
+        7,
+        "15_ranges_indexing.writ: expected 7 items, got {}",
+        items.len()
+    );
 }
 
 #[test]
 fn parse_16_generics_writ() {
     let src = include_str!("cases/16_generics.writ");
     let (result, errors) = parse(src);
-    assert!(errors.is_empty(), "16_generics.writ had parse errors: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "16_generics.writ had parse errors: {errors:?}"
+    );
     assert!(result.is_some(), "16_generics.writ produced no output");
     let items = result.unwrap();
-    assert_eq!(items.len(), 13, "16_generics.writ: expected 13 items, got {}", items.len());
+    assert_eq!(
+        items.len(),
+        13,
+        "16_generics.writ: expected 13 items, got {}",
+        items.len()
+    );
 }
 
 #[test]
 fn parse_20_comprehensive_writ() {
     let src = include_str!("cases/20_comprehensive.writ");
     let (result, errors) = parse(src);
-    assert!(errors.is_empty(), "20_comprehensive.writ had parse errors: {errors:?}");
+    assert!(
+        errors.is_empty(),
+        "20_comprehensive.writ had parse errors: {errors:?}"
+    );
     assert!(result.is_some(), "20_comprehensive.writ produced no output");
     let items = result.unwrap();
-    assert_eq!(items.len(), 18, "20_comprehensive.writ: expected 18 items, got {}", items.len());
+    assert_eq!(
+        items.len(),
+        18,
+        "20_comprehensive.writ: expected 18 items, got {}",
+        items.len()
+    );
 }
 
 #[test]
@@ -3403,10 +3587,7 @@ fn recovery_nested_delimiters_fn_body() {
         !errors.is_empty(),
         "Expected errors from broken function body, got none",
     );
-    assert!(
-        output.is_some(),
-        "Expected output with recovery, got None",
-    );
+    assert!(output.is_some(), "Expected output with recovery, got None",);
     let items = output.unwrap();
     // Recovery should allow at least some items to be parsed
     assert!(
@@ -3424,10 +3605,7 @@ fn recovery_nested_delimiters_struct_body() {
         !errors.is_empty(),
         "Expected errors from broken struct body, got none",
     );
-    assert!(
-        output.is_some(),
-        "Expected output with recovery, got None",
-    );
+    assert!(output.is_some(), "Expected output with recovery, got None",);
     let items = output.unwrap();
     assert!(
         !items.is_empty(),
@@ -3445,10 +3623,7 @@ fn recovery_skips_bad_item() {
         !errors.is_empty(),
         "Expected errors from garbled input, got none",
     );
-    assert!(
-        output.is_some(),
-        "Expected output with recovery, got None",
-    );
+    assert!(output.is_some(), "Expected output with recovery, got None",);
     let items = output.unwrap();
     // Should recover and parse at least the valid fn
     assert!(
@@ -3463,8 +3638,14 @@ fn recovery_does_not_break_valid_input() {
     // after recovery is added. Recovery must not cause false positives.
     let files: &[(&str, &str)] = &[
         ("01_comments.writ", include_str!("cases/01_comments.writ")),
-        ("02_string_literals.writ", include_str!("cases/02_string_literals.writ")),
-        ("03_variables_constants.writ", include_str!("cases/03_variables_constants.writ")),
+        (
+            "02_string_literals.writ",
+            include_str!("cases/02_string_literals.writ"),
+        ),
+        (
+            "03_variables_constants.writ",
+            include_str!("cases/03_variables_constants.writ"),
+        ),
         ("04_structs.writ", include_str!("cases/04_structs.writ")),
         ("05_enums.writ", include_str!("cases/05_enums.writ")),
         ("06_contracts.writ", include_str!("cases/06_contracts.writ")),
@@ -3472,17 +3653,44 @@ fn recovery_does_not_break_valid_input() {
         ("08_dialogue.writ", include_str!("cases/08_dialogue.writ")),
         ("09_entities.writ", include_str!("cases/09_entities.writ")),
         ("10_operators.writ", include_str!("cases/10_operators.writ")),
-        ("11_error_handling.writ", include_str!("cases/11_error_handling.writ")),
-        ("12_namespaces.writ", include_str!("cases/12_namespaces.writ")),
-        ("12b_namespace_block.writ", include_str!("cases/12b_namespace_block.writ")),
-        ("13_concurrency.writ", include_str!("cases/13_concurrency.writ")),
-        ("14_attributes.writ", include_str!("cases/14_attributes.writ")),
-        ("15_ranges_indexing.writ", include_str!("cases/15_ranges_indexing.writ")),
+        (
+            "11_error_handling.writ",
+            include_str!("cases/11_error_handling.writ"),
+        ),
+        (
+            "12_namespaces.writ",
+            include_str!("cases/12_namespaces.writ"),
+        ),
+        (
+            "12b_namespace_block.writ",
+            include_str!("cases/12b_namespace_block.writ"),
+        ),
+        (
+            "13_concurrency.writ",
+            include_str!("cases/13_concurrency.writ"),
+        ),
+        (
+            "14_attributes.writ",
+            include_str!("cases/14_attributes.writ"),
+        ),
+        (
+            "15_ranges_indexing.writ",
+            include_str!("cases/15_ranges_indexing.writ"),
+        ),
         ("16_generics.writ", include_str!("cases/16_generics.writ")),
-        ("17_globals_atomic.writ", include_str!("cases/17_globals_atomic.writ")),
+        (
+            "17_globals_atomic.writ",
+            include_str!("cases/17_globals_atomic.writ"),
+        ),
         ("18_extern.writ", include_str!("cases/18_extern.writ")),
-        ("19_localization.writ", include_str!("cases/19_localization.writ")),
-        ("20_comprehensive.writ", include_str!("cases/20_comprehensive.writ")),
+        (
+            "19_localization.writ",
+            include_str!("cases/19_localization.writ"),
+        ),
+        (
+            "20_comprehensive.writ",
+            include_str!("cases/20_comprehensive.writ"),
+        ),
     ];
     for (name, src) in files {
         let (output, errors) = parse(src);
@@ -3580,7 +3788,10 @@ fn new_construction_rooted_path() {
 fn old_construction_syntax_rejected() {
     // Without `new`, the brace construction should fail
     let (_, errors) = parse("let p = Point { x: 1 };");
-    assert!(!errors.is_empty(), "Old construction syntax (without `new`) should produce parse errors");
+    assert!(
+        !errors.is_empty(),
+        "Old construction syntax (without `new`) should produce parse errors"
+    );
 }
 
 // ---------------------------------------------------------
@@ -3667,18 +3878,23 @@ fn struct_interleaved_fields_and_hooks() {
 #[test]
 fn struct_all_four_lifecycle_hooks() {
     let items = parse_ok_items(
-        "class Foo { on create { }, on finalize { }, on serialize { }, on deserialize { } }"
+        "class Foo { on create { }, on finalize { }, on serialize { }, on deserialize { } }",
     );
     match &items[0].0 {
         Item::Class(cd) => {
             assert_eq!(cd.0.members.len(), 4);
-            let events: Vec<&str> = cd.0.members.iter().map(|m| {
-                match &m.0 {
-                    ClassMember::OnHook { event, .. } => event.0,
-                    other => panic!("Expected OnHook, got {:?}", other),
-                }
-            }).collect();
-            assert_eq!(events, vec!["create", "finalize", "serialize", "deserialize"]);
+            let events: Vec<&str> =
+                cd.0.members
+                    .iter()
+                    .map(|m| match &m.0 {
+                        ClassMember::OnHook { event, .. } => event.0,
+                        other => panic!("Expected OnHook, got {:?}", other),
+                    })
+                    .collect();
+            assert_eq!(
+                events,
+                vec!["create", "finalize", "serialize", "deserialize"]
+            );
         }
         other => panic!("Expected Item::Class, got {:?}", other),
     }
@@ -3689,14 +3905,12 @@ fn struct_all_four_lifecycle_hooks() {
 fn struct_hook_with_body() {
     let items = parse_ok_items("class Foo { on create { let x = 1; } }");
     match &items[0].0 {
-        Item::Class(cd) => {
-            match &cd.0.members[0].0 {
-                ClassMember::OnHook { body, .. } => {
-                    assert_eq!(body.len(), 1, "Hook body should have 1 statement");
-                }
-                other => panic!("Expected OnHook, got {:?}", other),
+        Item::Class(cd) => match &cd.0.members[0].0 {
+            ClassMember::OnHook { body, .. } => {
+                assert_eq!(body.len(), 1, "Hook body should have 1 statement");
             }
-        }
+            other => panic!("Expected OnHook, got {:?}", other),
+        },
         other => panic!("Expected Item::Class, got {:?}", other),
     }
 }
@@ -3741,7 +3955,10 @@ fn fn_self_with_regular_params() {
     match &items[0].0 {
         Item::Fn(fd) => {
             assert_eq!(fd.0.params.len(), 2);
-            assert!(matches!(fd.0.params[0].0, FnParam::SelfParam { mutable: false }));
+            assert!(matches!(
+                fd.0.params[0].0,
+                FnParam::SelfParam { mutable: false }
+            ));
             assert!(matches!(fd.0.params[1].0, FnParam::Regular(_)));
         }
         other => panic!("Expected Item::Fn, got {:?}", other),
@@ -3801,9 +4018,7 @@ fn shift_precedence_above_comparison() {
 
 #[test]
 fn operator_bitand_in_impl() {
-    let items = parse_ok_items(
-        "impl Flags { operator &(other: Flags) -> Flags { } }"
-    );
+    let items = parse_ok_items("impl Flags { operator &(other: Flags) -> Flags { } }");
     match &items[0].0 {
         Item::Impl(id) => {
             assert_eq!(id.0.members.len(), 1);
@@ -3820,9 +4035,7 @@ fn operator_bitand_in_impl() {
 
 #[test]
 fn operator_bitor_in_impl() {
-    let items = parse_ok_items(
-        "impl Flags { operator |(other: Flags) -> Flags { } }"
-    );
+    let items = parse_ok_items("impl Flags { operator |(other: Flags) -> Flags { } }");
     match &items[0].0 {
         Item::Impl(id) => {
             assert_eq!(id.0.members.len(), 1);
@@ -3856,9 +4069,7 @@ fn parse_has_errors(src: &'static str) -> bool {
 
 #[test]
 fn test_impl_generic_params() {
-    let items = parse_ok_items(
-        "impl<T> Printable<T> for Container<T> { fn print() { } }"
-    );
+    let items = parse_ok_items("impl<T> Printable<T> for Container<T> { fn print() { } }");
     assert_eq!(items.len(), 1);
     match &items[0].0 {
         Item::Impl((decl, _)) => {
@@ -3874,9 +4085,8 @@ fn test_impl_generic_params() {
 
 #[test]
 fn test_impl_generic_bounded() {
-    let items = parse_ok_items(
-        "impl<T: Display + Clone> Printable<T> for Container<T> { fn show() { } }"
-    );
+    let items =
+        parse_ok_items("impl<T: Display + Clone> Printable<T> for Container<T> { fn show() { } }");
     match &items[0].0 {
         Item::Impl((decl, _)) => {
             let generics = decl.generics.as_ref().unwrap();
@@ -3890,9 +4100,7 @@ fn test_impl_generic_bounded() {
 #[test]
 fn test_impl_no_generics_still_works() {
     // Regression: impl without generics should still work
-    let items = parse_ok_items(
-        "impl Printable for Foo { fn print() { } }"
-    );
+    let items = parse_ok_items("impl Printable for Foo { fn print() { } }");
     match &items[0].0 {
         Item::Impl((decl, _)) => {
             assert!(decl.generics.is_none());
@@ -3905,9 +4113,7 @@ fn test_impl_no_generics_still_works() {
 #[test]
 fn test_impl_generic_plain() {
     // impl<T> MyType<T> { ... } (no contract)
-    let items = parse_ok_items(
-        "impl<T> Container<T> { fn size() -> int { 0 } }"
-    );
+    let items = parse_ok_items("impl<T> Container<T> { fn size() -> int { 0 } }");
     match &items[0].0 {
         Item::Impl((decl, _)) => {
             assert!(decl.generics.is_some());
@@ -3923,9 +4129,7 @@ fn test_impl_generic_plain() {
 
 #[test]
 fn test_contract_operator_sig() {
-    let items = parse_ok_items(
-        "contract Addable<T> { operator +(other: T) -> T; }"
-    );
+    let items = parse_ok_items("contract Addable<T> { operator +(other: T) -> T; }");
     match &items[0].0 {
         Item::Contract((decl, _)) => {
             assert_eq!(decl.members.len(), 1);
@@ -3945,7 +4149,7 @@ fn test_contract_operator_sig() {
 #[test]
 fn test_contract_mixed_fn_and_op_sigs() {
     let items = parse_ok_items(
-        "contract Comparable<T> { fn compare(other: T) -> int; operator ==(other: T) -> bool; operator <(other: T) -> bool; }"
+        "contract Comparable<T> { fn compare(other: T) -> int; operator ==(other: T) -> bool; operator <(other: T) -> bool; }",
     );
     match &items[0].0 {
         Item::Contract((decl, _)) => {
@@ -3961,7 +4165,7 @@ fn test_contract_mixed_fn_and_op_sigs() {
 #[test]
 fn test_contract_index_op_sig() {
     let items = parse_ok_items(
-        "contract Indexable<K, V> { operator [](key: K) -> V; operator []=(key: K, value: V); }"
+        "contract Indexable<K, V> { operator [](key: K) -> V; operator []=(key: K, value: V); }",
     );
     match &items[0].0 {
         Item::Contract((decl, _)) => {
@@ -4099,15 +4303,13 @@ fn test_caret_in_bracket_range() {
     let stmts = parse_ok("let x = arr[^3..^1];");
     let expr = let_value(&stmts[0]);
     match expr {
-        Expr::BracketAccess(_, inner) => {
-            match &inner.0 {
-                Expr::Range(start, _, end) => {
-                    assert!(matches!(&start.as_ref().unwrap().0, Expr::FromEnd(_)));
-                    assert!(matches!(&end.as_ref().unwrap().0, Expr::FromEnd(_)));
-                }
-                _ => panic!("expected Range inside bracket"),
+        Expr::BracketAccess(_, inner) => match &inner.0 {
+            Expr::Range(start, _, end) => {
+                assert!(matches!(&start.as_ref().unwrap().0, Expr::FromEnd(_)));
+                assert!(matches!(&end.as_ref().unwrap().0, Expr::FromEnd(_)));
             }
-        }
+            _ => panic!("expected Range inside bracket"),
+        },
         _ => panic!("expected BracketAccess"),
     }
 }
@@ -4119,33 +4321,20 @@ fn test_caret_outside_brackets_error() {
 }
 
 // ---------------------------------------------------------
-// EXPR-04: spawn detached
+// EXPR-04: spawn
 // ---------------------------------------------------------
 
 #[test]
-fn test_spawn_detached() {
-    let stmts = parse_ok("let x = spawn detached doWork();");
-    let expr = let_value(&stmts[0]);
-    match expr {
-        Expr::SpawnDetached(inner) => {
-            assert!(matches!(&inner.0, Expr::Call(_, _)));
-        }
-        _ => panic!("expected SpawnDetached, got {:?}", expr),
-    }
-}
-
-#[test]
-fn test_spawn_without_detached() {
-    // Regression: spawn without detached still works
+fn test_spawn() {
     let stmts = parse_ok("let x = spawn doWork();");
     let expr = let_value(&stmts[0]);
     assert!(matches!(expr, Expr::Spawn(_)));
 }
 
 #[test]
-fn test_detached_standalone_error() {
-    // standalone "detached expr" should be a parse error
-    assert!(parse_has_errors("pub fn foo() { detached doWork(); }"));
+fn test_detached_can_be_used_as_an_identifier() {
+    let stmts = parse_ok("let detached = 1;");
+    assert_eq!(stmts.len(), 1);
 }
 
 // ---------------------------------------------------------
@@ -4216,7 +4405,10 @@ fn test_attr_positional_still_works() {
     match &items[0].0 {
         Item::Fn((decl, _)) => {
             assert_eq!(decl.attrs[0].0[0].args.len(), 1);
-            assert!(matches!(&decl.attrs[0].0[0].args[0].0, AttrArg::Positional(_)));
+            assert!(matches!(
+                &decl.attrs[0].0[0].args[0].0,
+                AttrArg::Positional(_)
+            ));
         }
         _ => panic!("expected fn with attr"),
     }

@@ -1,12 +1,12 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
-    .method "main" () -> int pub mut {
+    .method "main" () -> int pub static {
         .locals {
             r0: string "s" [8, 18)
         }
         .reg r0 string
         .reg r1 int
-        LOAD_STRING r0, 139  ; line:6 col:5
+        LOAD_STRING r0, 2432  ; line:6 col:5
         STR_LEN r1, r0  ; line:7 col:5
         RET r1
     }

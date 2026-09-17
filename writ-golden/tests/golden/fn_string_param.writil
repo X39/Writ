@@ -1,21 +1,21 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
-    .extern_fn "log::info" (string) -> void "log::info"
-    .method "greet" (name: string) -> string pub mut {
+    .extern_fn "log::info" (string) -> void "log::info" pub
+    .method "greet" (name: string) -> string pub static {
         .locals {
             r0: string "name" [0, 4)
         }
         .reg r0 string
         RET r0  ; line:2 col:5
     }
-    .method "main" () -> void mut {
+    .method "main" () -> void static {
         .locals {
             r0: string "msg" [20, 34)
         }
         .reg r0 string
         .reg r1 string
         .reg r2 void
-        LOAD_STRING r1, 169  ; line:6 col:5
+        LOAD_STRING r1, 2454  ; line:6 col:5
         CALL r0, 117440513, r1, 1
         CALL_EXTERN r2, 268435457, r0, 1  ; line:7 col:5
         RET_VOID

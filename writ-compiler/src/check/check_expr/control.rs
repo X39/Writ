@@ -2,12 +2,12 @@
 
 use chumsky::span::SimpleSpan;
 
-use crate::ast::expr::AstExpr;
-use super::CheckCtx;
-use super::check_expr;
-use super::check_block_stmts;
 use super::super::error::TypeError;
 use super::super::ir::TypedExpr;
+use super::CheckCtx;
+use super::check_block_stmts;
+use super::check_expr;
+use crate::ast::expr::AstExpr;
 
 pub(super) fn check_if(
     ctx: &mut CheckCtx,
@@ -43,7 +43,11 @@ pub(super) fn check_if(
         // Unify branch types
         let result_ty = if ctx.is_error(then_ty) || ctx.is_error(else_ty) {
             ctx.interner.error()
-        } else if ctx.unify.unify(then_ty, else_ty, &mut ctx.interner).is_err() {
+        } else if ctx
+            .unify
+            .unify(then_ty, else_ty, &mut ctx.interner)
+            .is_err()
+        {
             ctx.emit_error(TypeError::TypeMismatch {
                 expected: ctx.display_ty(then_ty),
                 found: ctx.display_ty(else_ty),

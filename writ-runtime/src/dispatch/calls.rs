@@ -2,7 +2,7 @@ use crate::heap::HeapObject;
 use crate::host::{LogLevel, RequestId};
 use crate::value::Value;
 
-use super::{helpers, intrinsics, DispatchKey, DispatchTarget, ExecContext, ExecutionResult};
+use super::{DispatchTarget, ExecContext, ExecutionResult, IntrinsicId, helpers, intrinsics};
 
 #[inline]
 pub(super) fn exec_call(
@@ -12,34 +12,51 @@ pub(super) fn exec_call(
     r_base: u16,
     argc: u16,
 ) -> ExecutionResult {
-    let module = &ctx.modules[ctx.current_module_idx];
-    let method_idx = match super::decode_method_token(method_idx) {
-        Some(idx) => idx,
-        None => return ExecutionResult::Crash("call to null method token".into()),
-    };
-    if method_idx >= module.decoded_bodies.len() {
-        return ExecutionResult::Crash(format!("call to invalid method index {}", method_idx));
+    let caller_register_count = ctx.task.call_stack.last().unwrap().registers.len();
+    if let Err(message) =
+        validate_call_site_registers("CALL", caller_register_count, r_dst, r_base, argc)
+    {
+        return ExecutionResult::Crash(message);
     }
-    let reg_count = module.module.method_bodies[method_idx].register_types.len();
+
+    let (target_module_idx, method_idx) =
+        match resolve_call_target(method_idx, ctx.modules, ctx.current_module_idx) {
+            Ok(target) => target,
+            Err(message) => return ExecutionResult::Crash(message),
+        };
+    let (reg_count, param_count) =
+        match checked_method_register_count("CALL", ctx.modules, target_module_idx, method_idx) {
+            Ok(reg_count) => reg_count,
+            Err(message) => return ExecutionResult::Crash(message),
+        };
+    if let Err(message) = validate_method_param_count("CALL", param_count, argc as usize) {
+        return ExecutionResult::Crash(message);
+    }
+    if let Err(message) = validate_callee_register_capacity("CALL", reg_count, argc, 0) {
+        return ExecutionResult::Crash(message);
+    }
 
     // Push callee frame immediately, then use split_at_mut for disjoint caller/callee access
-    ctx.task.call_stack.push(crate::frame::CallFrame::with_pool(ctx.pool, method_idx, reg_count, r_dst));
+    ctx.task
+        .call_stack
+        .push(crate::frame::CallFrame::with_pool_in_module(
+            ctx.pool,
+            target_module_idx,
+            method_idx,
+            reg_count,
+            r_dst,
+        ));
     let stack_len = ctx.task.call_stack.len();
     let (bottom, top) = ctx.task.call_stack.split_at_mut(stack_len - 1);
     let caller = bottom.last().unwrap();
     let callee = &mut top[0];
-    // SAFETY: The compiler guarantees argc <= callee reg_count and r_base + argc <= caller
-    // reg_count for every CALL instruction it emits. Both frames were sized from these
-    // values at creation time, so all indices are in-bounds.
     for i in 0..argc as usize {
-        unsafe {
-            *callee.registers.get_unchecked_mut(i) =
-                *caller.registers.get_unchecked(r_base as usize + i);
-        }
+        callee.registers[i] = caller.registers[r_base as usize + i];
     }
 
     if ctx.host.debug_enabled() {
-        ctx.host.on_function_enter(ctx.task.id, method_idx as u32);
+        ctx.host
+            .on_function_enter(ctx.task.id, target_module_idx, method_idx as u32);
     }
     ExecutionResult::Continue
 }
@@ -54,71 +71,153 @@ pub(super) fn exec_call_virt(
     r_base: u16,
     argc: u16,
 ) -> ExecutionResult {
-    let obj_val = ctx.task.call_stack.last().unwrap().registers[r_obj as usize];
+    let caller_register_count = ctx.task.call_stack.last().unwrap().registers.len();
+    if let Err(message) =
+        validate_call_site_registers("CALL_VIRT", caller_register_count, r_dst, r_base, argc)
+    {
+        return ExecutionResult::Crash(message);
+    }
+    let r_obj_idx = match checked_register("CALL_VIRT", caller_register_count, r_obj, "receiver") {
+        Ok(r_obj) => r_obj,
+        Err(message) => return ExecutionResult::Crash(message),
+    };
+    if r_obj != r_base {
+        return ExecutionResult::Crash(format!(
+            "CALL_VIRT: receiver register r{r_obj} must equal argument base r{r_base}"
+        ));
+    }
+    if argc == 0 {
+        return ExecutionResult::Crash(
+            "CALL_VIRT: argument block must include the receiver".to_string(),
+        );
+    }
+    let obj_val = ctx.task.call_stack.last().unwrap().registers[r_obj_idx];
 
     // Determine type_key from the object value's runtime type
     let type_key = resolve_runtime_type_key(obj_val, ctx.heap, ctx.modules);
+    if type_key == u32::MAX {
+        return ExecutionResult::Crash(
+            "CALL_VIRT: receiver has no resolvable runtime type".to_string(),
+        );
+    }
+
+    let target_type = match resolve_runtime_type_spec(obj_val, ctx.heap) {
+        Some((module_idx, token)) => {
+            let Some(signature) =
+                crate::type_specs::type_spec_signature(module_idx, token, ctx.modules)
+            else {
+                return ExecutionResult::Crash(format!(
+                    "CALL_VIRT: malformed receiver TypeSpec token 0x{:08x}",
+                    token.0
+                ));
+            };
+            Some((module_idx, signature))
+        }
+        None => None,
+    };
 
     // Resolve contract_key from the contract_idx in the current module
-    let contract_key = resolve_contract_key_from_idx(contract_idx, ctx.modules, ctx.current_module_idx);
+    let contract_key =
+        resolve_contract_key_from_idx(contract_idx, ctx.modules, ctx.current_module_idx);
+    if contract_key == u32::MAX {
+        return ExecutionResult::Crash(format!(
+            "CALL_VIRT: unresolved contract token 0x{contract_idx:08x}"
+        ));
+    }
 
-    // Derive type_args_hash from the resolved ContractDef token
-    let type_args_hash = resolve_type_args_hash(contract_idx, ctx.modules, ctx.current_module_idx);
-    let key = DispatchKey { type_key, contract_key, slot, type_args_hash };
+    let contract_token = writ_module::MetadataToken(contract_idx);
+    let contract_type = if contract_token.table_id() == 4 {
+        let Some(signature) = crate::type_specs::type_spec_signature(
+            ctx.current_module_idx,
+            contract_token,
+            ctx.modules,
+        ) else {
+            return ExecutionResult::Crash(format!(
+                "CALL_VIRT: malformed contract TypeSpec token 0x{contract_idx:08x}"
+            ));
+        };
+        Some((ctx.current_module_idx, signature))
+    } else {
+        None
+    };
 
-    // Primary lookup: exact match including type_args_hash
-    let resolved_target = ctx.dispatch_table.get(&key).or_else(|| {
-        if type_args_hash == 0 {
-            ctx.dispatch_table.get_any(type_key, contract_key, slot)
-        } else {
-            None
+    let resolved_target = match ctx.dispatch_table.resolve_pattern(
+        type_key,
+        target_type
+            .as_ref()
+            .map(|(module_idx, signature)| (*module_idx, signature)),
+        contract_key,
+        contract_type
+            .as_ref()
+            .map(|(module_idx, signature)| (*module_idx, signature)),
+        slot,
+        ctx.modules,
+    ) {
+        Ok(target) => target.copied(),
+        Err(count) => {
+            return ExecutionResult::Crash(format!(
+                "CALL_VIRT: ambiguous implementation ({count} matches) for type_key=0x{type_key:08x}, contract_key=0x{contract_key:08x}, slot={slot}"
+            ));
         }
-    });
+    };
 
     match resolved_target {
-        Some(DispatchTarget::Method { module_idx, method_idx }) => {
-            let module_idx = *module_idx;
-            let method_idx = *method_idx;
-            let target_module = &ctx.modules[module_idx];
-            if method_idx >= target_module.decoded_bodies.len() {
-                return ExecutionResult::Crash(format!(
-                    "CALL_VIRT: method index {} out of range in module {}",
-                    method_idx, module_idx
-                ));
+        Some(DispatchTarget::Method {
+            module_idx,
+            method_idx,
+        }) => {
+            let (reg_count, param_count) = match checked_method_register_count(
+                "CALL_VIRT",
+                ctx.modules,
+                module_idx,
+                method_idx,
+            ) {
+                Ok(reg_count) => reg_count,
+                Err(message) => return ExecutionResult::Crash(message),
+            };
+            if let Err(message) =
+                validate_method_param_count("CALL_VIRT", param_count, argc as usize)
+            {
+                return ExecutionResult::Crash(message);
             }
-            let reg_count = target_module.module.method_bodies[method_idx].register_types.len();
+            if let Err(message) = validate_callee_register_capacity("CALL_VIRT", reg_count, argc, 0)
+            {
+                return ExecutionResult::Crash(message);
+            }
 
             // Push callee frame immediately, then use split_at_mut for disjoint caller/callee access
-            ctx.task.call_stack.push(crate::frame::CallFrame::with_pool(ctx.pool, method_idx, reg_count, r_dst));
+            ctx.task
+                .call_stack
+                .push(crate::frame::CallFrame::with_pool_in_module(
+                    ctx.pool, module_idx, method_idx, reg_count, r_dst,
+                ));
             let stack_len = ctx.task.call_stack.len();
             let (bottom, top) = ctx.task.call_stack.split_at_mut(stack_len - 1);
             let caller = bottom.last().unwrap();
             let callee = &mut top[0];
-            // SAFETY: The compiler guarantees argc <= callee reg_count and r_base + argc <= caller
-            // reg_count for every CALL instruction it emits. Both frames were sized from these
-            // values at creation time, so all indices are in-bounds.
             for i in 0..argc as usize {
-                unsafe {
-                    *callee.registers.get_unchecked_mut(i) =
-                        *caller.registers.get_unchecked(r_base as usize + i);
-                }
+                callee.registers[i] = caller.registers[r_base as usize + i];
             }
 
             if ctx.host.debug_enabled() {
-                ctx.host.on_function_enter(ctx.task.id, method_idx as u32);
+                ctx.host
+                    .on_function_enter(ctx.task.id, module_idx, method_idx as u32);
             }
             ExecutionResult::Continue
         }
         Some(DispatchTarget::Intrinsic(id)) => {
-            let id = *id;
+            let expected_param_count = intrinsic_param_count(id);
+            if argc as usize != expected_param_count {
+                return ExecutionResult::Crash(format!(
+                    "CALL_VIRT: argument count {argc} does not match intrinsic parameter count {expected_param_count}"
+                ));
+            }
             intrinsics::execute_intrinsic(ctx, id, r_dst, r_obj, r_base, argc)
         }
-        None => {
-            ExecutionResult::Crash(format!(
-                "CALL_VIRT: no implementation for type_key=0x{:08x}, contract_key=0x{:08x}, slot={}",
-                type_key, contract_key, slot
-            ))
-        }
+        None => ExecutionResult::Crash(format!(
+            "CALL_VIRT: no implementation for type_key=0x{:08x}, contract_key=0x{:08x}, slot={}",
+            type_key, contract_key, slot
+        )),
     }
 }
 
@@ -130,6 +229,13 @@ pub(super) fn exec_call_extern(
     r_base: u16,
     argc: u16,
 ) -> ExecutionResult {
+    let caller_register_count = ctx.task.call_stack.last().unwrap().registers.len();
+    if let Err(message) =
+        validate_call_site_registers("CALL_EXTERN", caller_register_count, r_dst, r_base, argc)
+    {
+        return ExecutionResult::Crash(message);
+    }
+
     let mut args = Vec::with_capacity(argc as usize);
     {
         let frame = ctx.task.call_stack.last().unwrap();
@@ -165,23 +271,31 @@ pub(super) fn exec_call_extern(
 
     // Pre-resolve args to human-readable strings before issuing HostRequest.
     // Entity values use Speaker override if available, otherwise type name from TypeDefs.
-    let display_args: Vec<String> = args.iter().enumerate().map(|(i, v)| {
-        // Check for Speaker contract override first
-        if let Some((_, name)) = speaker_overrides.iter().find(|(idx, _)| *idx == i) {
-            return name.clone();
-        }
-        match v {
-            Value::Int(n) => n.to_string(),
-            Value::Float(f) => f.to_string(),
-            Value::Bool(b) => b.to_string(),
-            Value::Ref(href) => ctx.heap.read_string(*href)
-                .map(|s| s.to_string())
-                .unwrap_or_else(|_| "<ref>".to_string()),
-            Value::Void => "void".to_string(),
-            Value::Entity(e) => resolve_entity_display_name(*e, ctx.entity_registry, ctx.modules),
-            Value::Struct { type_idx, .. } => format!("<struct@{}>", type_idx),
-        }
-    }).collect();
+    let display_args: Vec<String> = args
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            // Check for Speaker contract override first
+            if let Some((_, name)) = speaker_overrides.iter().find(|(idx, _)| *idx == i) {
+                return name.clone();
+            }
+            match v {
+                Value::Int(n) => n.to_string(),
+                Value::Float(f) => f.to_string(),
+                Value::Bool(b) => b.to_string(),
+                Value::Ref(href) => ctx
+                    .heap
+                    .read_string(*href)
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|_| "<ref>".to_string()),
+                Value::Void => "void".to_string(),
+                Value::Entity(e) => {
+                    resolve_entity_display_name(*e, ctx.entity_registry, ctx.modules)
+                }
+                Value::Struct { type_idx, .. } => format!("<struct@{}>", type_idx),
+            }
+        })
+        .collect();
 
     let req_id = RequestId(*ctx.next_request_id);
     *ctx.next_request_id += 1;
@@ -233,21 +347,51 @@ pub(super) fn exec_new_delegate(
     method_idx: u32,
     r_target: u16,
 ) -> ExecutionResult {
+    let caller_register_count = ctx.task.call_stack.last().unwrap().registers.len();
+    let r_dst = match checked_register("NEW_DELEGATE", caller_register_count, r_dst, "destination")
+    {
+        Ok(r_dst) => r_dst,
+        Err(message) => return ExecutionResult::Crash(message),
+    };
+    let r_target = match checked_register("NEW_DELEGATE", caller_register_count, r_target, "target")
+    {
+        Ok(r_target) => r_target,
+        Err(message) => return ExecutionResult::Crash(message),
+    };
+
+    let (target_module_idx, method_idx) =
+        match resolve_call_target(method_idx, ctx.modules, ctx.current_module_idx) {
+            Ok(target) => target,
+            Err(message) => return ExecutionResult::Crash(format!("NEW_DELEGATE: {message}")),
+        };
+    if let Err(message) =
+        checked_delegate_method("NEW_DELEGATE", ctx.modules, target_module_idx, method_idx)
+    {
+        return ExecutionResult::Crash(message);
+    }
+
     let target = {
         let frame = ctx.task.call_stack.last().unwrap();
-        if matches!(frame.registers[r_target as usize], Value::Void) {
+        if matches!(frame.registers[r_target], Value::Void) {
             None
         } else {
-            Some(frame.registers[r_target as usize])
+            Some(frame.registers[r_target])
         }
     };
-    let decoded_idx = match super::decode_method_token(method_idx) {
-        Some(idx) => idx,
-        None => return ExecutionResult::Crash("NewDelegate: null method token".into()),
-    };
-    let href = ctx.heap.alloc_delegate(decoded_idx, target);
+    if let Err(message) = validate_delegate_binding(
+        "NEW_DELEGATE",
+        ctx.modules,
+        target_module_idx,
+        method_idx,
+        target.is_some(),
+    ) {
+        return ExecutionResult::Crash(message);
+    }
+    let href = ctx
+        .heap
+        .alloc_delegate(target_module_idx, method_idx, target);
     let frame = ctx.task.call_stack.last_mut().unwrap();
-    frame.registers[r_dst as usize] = Value::Ref(href);
+    frame.registers[r_dst] = Value::Ref(href);
     ExecutionResult::Continue
 }
 
@@ -259,38 +403,279 @@ pub(super) fn exec_call_indirect(
     r_base: u16,
     argc: u16,
 ) -> ExecutionResult {
-    let module = &ctx.modules[ctx.current_module_idx];
-    let delegate_ref = helpers::extract_ref(&ctx.task.call_stack.last().unwrap().registers[r_delegate as usize]);
-    let (method_idx, _target) = match ctx.heap.get_object(delegate_ref) {
-        Ok(HeapObject::Delegate { method_idx, target }) => (*method_idx, *target),
-        _ => return ExecutionResult::Crash("CallIndirect: not a delegate".into()),
+    let caller_register_count = ctx.task.call_stack.last().unwrap().registers.len();
+    if let Err(message) =
+        validate_call_site_registers("CALL_INDIRECT", caller_register_count, r_dst, r_base, argc)
+    {
+        return ExecutionResult::Crash(message);
+    }
+    let r_delegate = match checked_register(
+        "CALL_INDIRECT",
+        caller_register_count,
+        r_delegate,
+        "delegate",
+    ) {
+        Ok(r_delegate) => r_delegate,
+        Err(message) => return ExecutionResult::Crash(message),
+    };
+    let delegate_ref =
+        helpers::extract_ref(&ctx.task.call_stack.last().unwrap().registers[r_delegate]);
+    let (target_module_idx, method_idx, target) = match ctx.heap.get_object(delegate_ref) {
+        Ok(HeapObject::Delegate {
+            module_idx,
+            method_idx,
+            target,
+        }) => (*module_idx, *method_idx, *target),
+        _ => return ExecutionResult::Crash("CALL_INDIRECT: not a delegate".into()),
     };
 
-    if method_idx >= module.decoded_bodies.len() {
-        return ExecutionResult::Crash(format!("CallIndirect: invalid method index {}", method_idx));
+    let (reg_count, param_count) = match checked_delegate_method(
+        "CALL_INDIRECT",
+        ctx.modules,
+        target_module_idx,
+        method_idx,
+    ) {
+        Ok(reg_count) => reg_count,
+        Err(message) => return ExecutionResult::Crash(message),
+    };
+    let implicit_argc = match validate_delegate_binding(
+        "CALL_INDIRECT",
+        ctx.modules,
+        target_module_idx,
+        method_idx,
+        target.is_some(),
+    ) {
+        Ok(implicit_argc) => implicit_argc,
+        Err(message) => return ExecutionResult::Crash(message),
+    };
+    let actual_param_count = argc as usize + implicit_argc;
+    if let Err(message) =
+        validate_method_param_count("CALL_INDIRECT", param_count, actual_param_count)
+    {
+        return ExecutionResult::Crash(message);
     }
-    let reg_count = module.module.method_bodies[method_idx].register_types.len();
+    if let Err(message) =
+        validate_callee_register_capacity("CALL_INDIRECT", reg_count, argc, implicit_argc)
+    {
+        return ExecutionResult::Crash(message);
+    }
 
     // Push callee frame immediately, then use split_at_mut for disjoint caller/callee access
-    ctx.task.call_stack.push(crate::frame::CallFrame::with_pool(ctx.pool, method_idx, reg_count, r_dst));
+    ctx.task
+        .call_stack
+        .push(crate::frame::CallFrame::with_pool_in_module(
+            ctx.pool,
+            target_module_idx,
+            method_idx,
+            reg_count,
+            r_dst,
+        ));
     let stack_len = ctx.task.call_stack.len();
     let (bottom, top) = ctx.task.call_stack.split_at_mut(stack_len - 1);
     let caller = bottom.last().unwrap();
     let callee = &mut top[0];
-    // SAFETY: The compiler guarantees argc <= callee reg_count and r_base + argc <= caller
-    // reg_count for every CALL instruction it emits. Both frames were sized from these
-    // values at creation time, so all indices are in-bounds.
+    if let Some(target) = target {
+        callee.registers[0] = target;
+    }
     for i in 0..argc as usize {
-        unsafe {
-            *callee.registers.get_unchecked_mut(i) =
-                *caller.registers.get_unchecked(r_base as usize + i);
-        }
+        callee.registers[implicit_argc + i] = caller.registers[r_base as usize + i];
     }
 
     if ctx.host.debug_enabled() {
-        ctx.host.on_function_enter(ctx.task.id, method_idx as u32);
+        ctx.host
+            .on_function_enter(ctx.task.id, target_module_idx, method_idx as u32);
     }
     ExecutionResult::Continue
+}
+
+pub(super) fn validate_call_site_registers(
+    opcode: &str,
+    caller_register_count: usize,
+    r_dst: u16,
+    r_base: u16,
+    argc: u16,
+) -> Result<(), String> {
+    checked_register(opcode, caller_register_count, r_dst, "destination")?;
+
+    validate_argument_registers(opcode, caller_register_count, r_base, argc)
+}
+
+pub(super) fn validate_argument_registers(
+    opcode: &str,
+    caller_register_count: usize,
+    r_base: u16,
+    argc: u16,
+) -> Result<(), String> {
+    let start = r_base as usize;
+    let end = start
+        .checked_add(argc as usize)
+        .ok_or_else(|| format!("{opcode}: argument register range overflow"))?;
+    if end > caller_register_count {
+        return Err(format!(
+            "{opcode}: argument register range r{start}..r{end} exceeds caller register count {caller_register_count}"
+        ));
+    }
+
+    Ok(())
+}
+
+fn checked_register(
+    opcode: &str,
+    register_count: usize,
+    register: u16,
+    role: &str,
+) -> Result<usize, String> {
+    let register = register as usize;
+    if register >= register_count {
+        return Err(format!(
+            "{opcode}: {role} register r{register} exceeds caller register count {register_count}"
+        ));
+    }
+    Ok(register)
+}
+
+pub(super) fn validate_callee_register_capacity(
+    opcode: &str,
+    callee_register_count: usize,
+    argc: u16,
+    implicit_argc: usize,
+) -> Result<(), String> {
+    let required = (argc as usize)
+        .checked_add(implicit_argc)
+        .ok_or_else(|| format!("{opcode}: callee register requirement overflow"))?;
+    if required > callee_register_count {
+        return Err(format!(
+            "{opcode}: {required} arguments exceed callee register count {callee_register_count}"
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn validate_method_param_count(
+    opcode: &str,
+    expected_param_count: usize,
+    actual_param_count: usize,
+) -> Result<(), String> {
+    if actual_param_count != expected_param_count {
+        return Err(format!(
+            "{opcode}: argument count {actual_param_count} does not match MethodDef.param_count {expected_param_count}"
+        ));
+    }
+    Ok(())
+}
+
+fn intrinsic_param_count(id: IntrinsicId) -> usize {
+    match id {
+        IntrinsicId::IntAdd
+        | IntrinsicId::IntSub
+        | IntrinsicId::IntMul
+        | IntrinsicId::IntDiv
+        | IntrinsicId::IntMod
+        | IntrinsicId::IntEq
+        | IntrinsicId::IntOrd
+        | IntrinsicId::IntBitAnd
+        | IntrinsicId::IntBitOr
+        | IntrinsicId::FloatAdd
+        | IntrinsicId::FloatSub
+        | IntrinsicId::FloatMul
+        | IntrinsicId::FloatDiv
+        | IntrinsicId::FloatMod
+        | IntrinsicId::FloatEq
+        | IntrinsicId::FloatOrd
+        | IntrinsicId::BoolEq
+        | IntrinsicId::StringAdd
+        | IntrinsicId::StringEq
+        | IntrinsicId::StringOrd
+        | IntrinsicId::StringIndexChar
+        | IntrinsicId::ArrayIndex
+        | IntrinsicId::TypeImplements
+        | IntrinsicId::FieldInfoGet => 2,
+        IntrinsicId::StringIndexRange
+        | IntrinsicId::ArrayIndexSet
+        | IntrinsicId::ArraySlice
+        | IntrinsicId::FieldInfoSet
+        | IntrinsicId::MethodInfoInvoke => 3,
+        _ => 1,
+    }
+}
+
+pub(super) fn checked_method_register_count(
+    opcode: &str,
+    modules: &[crate::loader::LoadedModule],
+    module_idx: usize,
+    method_idx: usize,
+) -> Result<(usize, usize), String> {
+    let module = modules
+        .get(module_idx)
+        .ok_or_else(|| format!("{opcode}: target module index {module_idx} out of range"))?;
+    let method_def = module.module.method_defs.get(method_idx).ok_or_else(|| {
+        format!("{opcode}: MethodDef index {method_idx} out of range in module {module_idx}")
+    })?;
+    if module.decoded_bodies.get(method_idx).is_none() {
+        return Err(format!(
+            "{opcode}: decoded method body index {method_idx} out of range in module {module_idx}"
+        ));
+    }
+    let body = module.module.method_bodies.get(method_idx).ok_or_else(|| {
+        format!("{opcode}: MethodBody index {method_idx} out of range in module {module_idx}")
+    })?;
+    let body_register_count = body.register_types.len();
+    if method_def.reg_count as usize != body_register_count {
+        return Err(format!(
+            "{opcode}: MethodDef.reg_count {} does not match MethodBody register count {body_register_count} for method {method_idx} in module {module_idx}",
+            method_def.reg_count
+        ));
+    }
+    Ok((body_register_count, method_def.param_count as usize))
+}
+
+fn checked_delegate_method(
+    opcode: &str,
+    modules: &[crate::loader::LoadedModule],
+    module_idx: usize,
+    method_idx: usize,
+) -> Result<(usize, usize), String> {
+    let counts = checked_method_register_count(opcode, modules, module_idx, method_idx)?;
+    let module = &modules[module_idx];
+    let method = &module.module.method_defs[method_idx];
+    if method.flags & writ_module::tables::METHOD_FLAG_INTRINSIC != 0 {
+        return Err(format!(
+            "{opcode}: MethodDef {method_idx} in module {module_idx} is runtime-intrinsic and has no delegate-callable IL body"
+        ));
+    }
+    if module.decoded_bodies[method_idx].is_empty() {
+        return Err(format!(
+            "{opcode}: MethodDef {method_idx} in module {module_idx} has no executable bytecode body"
+        ));
+    }
+    Ok(counts)
+}
+
+fn validate_delegate_binding(
+    opcode: &str,
+    modules: &[crate::loader::LoadedModule],
+    module_idx: usize,
+    method_idx: usize,
+    has_target: bool,
+) -> Result<usize, String> {
+    let method = modules
+        .get(module_idx)
+        .and_then(|module| module.module.method_defs.get(method_idx))
+        .ok_or_else(|| {
+            format!("{opcode}: MethodDef index {method_idx} out of range in module {module_idx}")
+        })?;
+    let has_receiver =
+        !method.owner.is_null() && method.flags & writ_module::tables::METHOD_FLAG_STATIC == 0;
+
+    match (has_receiver, has_target) {
+        (true, false) => Err(format!(
+            "{opcode}: instance MethodDef {method_idx} in module {module_idx} requires a non-null delegate target"
+        )),
+        (false, true) => Err(format!(
+            "{opcode}: static or top-level MethodDef {method_idx} in module {module_idx} requires a null delegate target"
+        )),
+        _ => Ok(usize::from(has_receiver)),
+    }
 }
 
 #[inline]
@@ -300,15 +685,33 @@ pub(super) fn exec_tail_call(
     r_base: u16,
     argc: u16,
 ) -> ExecutionResult {
-    let module = &ctx.modules[ctx.current_module_idx];
-    let method_idx = match super::decode_method_token(method_idx) {
-        Some(idx) => idx,
-        None => return ExecutionResult::Crash("TailCall: null method token".into()),
-    };
-    if method_idx >= module.decoded_bodies.len() {
-        return ExecutionResult::Crash(format!("TailCall: invalid method index {}", method_idx));
+    let caller_register_count = ctx.task.call_stack.last().unwrap().registers.len();
+    if let Err(message) =
+        validate_argument_registers("TAIL_CALL", caller_register_count, r_base, argc)
+    {
+        return ExecutionResult::Crash(message);
     }
-    let reg_count = module.module.method_bodies[method_idx].register_types.len();
+
+    let (target_module_idx, method_idx) =
+        match resolve_call_target(method_idx, ctx.modules, ctx.current_module_idx) {
+            Ok(target) => target,
+            Err(message) => return ExecutionResult::Crash(format!("TAIL_CALL: {message}")),
+        };
+    let (reg_count, param_count) = match checked_method_register_count(
+        "TAIL_CALL",
+        ctx.modules,
+        target_module_idx,
+        method_idx,
+    ) {
+        Ok(metadata) => metadata,
+        Err(message) => return ExecutionResult::Crash(message),
+    };
+    if let Err(message) = validate_method_param_count("TAIL_CALL", param_count, argc as usize) {
+        return ExecutionResult::Crash(message);
+    }
+    if let Err(message) = validate_callee_register_capacity("TAIL_CALL", reg_count, argc, 0) {
+        return ExecutionResult::Crash(message);
+    }
 
     // Collect args into stack-resident buffer (no heap allocation for argc <= 32)
     const MAX_INLINE_ARGC: usize = 32;
@@ -333,9 +736,18 @@ pub(super) fn exec_tail_call(
     // Execute defers before replacing frame (LIFO order)
     while let Some(handler_pc) = ctx.task.call_stack.last_mut().unwrap().defer_stack.pop() {
         if let Err(secondary) = super::execute_defer_handler(
-            ctx.task, handler_pc, ctx.modules, ctx.current_module_idx,
-            ctx.dispatch_table, ctx.heap, ctx.host, ctx.globals,
-            ctx.next_request_id, ctx.entity_registry, ctx.pool, ctx.reflection,
+            ctx.task,
+            handler_pc,
+            ctx.modules,
+            ctx.current_module_idx,
+            ctx.dispatch_table,
+            ctx.heap,
+            ctx.host,
+            ctx.globals,
+            ctx.next_request_id,
+            ctx.entity_registry,
+            ctx.pool,
+            ctx.reflection,
         ) {
             ctx.host.on_log(
                 LogLevel::Error,
@@ -346,15 +758,14 @@ pub(super) fn exec_tail_call(
 
     // Replace current frame in-place (reuse existing Vec allocation via clear+resize)
     let current = ctx.task.call_stack.last_mut().unwrap();
+    current.module_idx = Some(target_module_idx);
     current.method_idx = method_idx;
     current.pc = 0;
     current.registers.clear();
     current.registers.resize(reg_count, Value::Void);
     if let Some(hv) = heap_args {
         for (i, v) in hv.into_iter().enumerate() {
-            if i < current.registers.len() {
-                current.registers[i] = v;
-            }
+            current.registers[i] = v;
         }
     } else {
         for i in 0..argc_usize {
@@ -367,6 +778,32 @@ pub(super) fn exec_tail_call(
 
 // ──── CALL_VIRT Helpers ───────────────────────────────────────────────
 
+pub(super) fn resolve_call_target(
+    token: u32,
+    modules: &[crate::loader::LoadedModule],
+    current_module_idx: usize,
+) -> Result<(usize, usize), String> {
+    let token = writ_module::MetadataToken(token);
+    let row = token
+        .row_index()
+        .ok_or_else(|| "call to null method token".to_string())?
+        - 1;
+
+    match token.table_id() {
+        7 => Ok((current_module_idx, row as usize)),
+        8 => modules[current_module_idx]
+            .resolved_refs
+            .methods
+            .get(&row)
+            .map(|resolved| (resolved.module_idx, resolved.method_idx))
+            .ok_or_else(|| format!("call to unresolved MethodRef row {}", row)),
+        table => Err(format!(
+            "call uses unsupported method token table {}",
+            table
+        )),
+    }
+}
+
 /// Resolve a runtime value to its type_key for dispatch table lookup.
 pub(super) fn resolve_runtime_type_key(
     val: Value,
@@ -377,20 +814,37 @@ pub(super) fn resolve_runtime_type_key(
         Value::Int(_) => find_type_key_by_name(modules, 0, "Int"),
         Value::Float(_) => find_type_key_by_name(modules, 0, "Float"),
         Value::Bool(_) => find_type_key_by_name(modules, 0, "Bool"),
-        Value::Ref(href) => {
-            match heap.get_object(href) {
-                Ok(HeapObject::String(_)) => find_type_key_by_name(modules, 0, "String"),
-                Ok(HeapObject::Array { .. }) => find_type_key_by_name(modules, 0, "Array"),
-                Ok(HeapObject::Struct { type_key, .. }) => *type_key,
-                Ok(HeapObject::Boxed(inner)) => {
-                    resolve_runtime_type_key(*inner, heap, modules)
-                }
-                _ => u32::MAX,
-            }
-        }
+        Value::Ref(href) => match heap.get_object(href) {
+            Ok(HeapObject::String(_)) => find_type_key_by_name(modules, 0, "String"),
+            Ok(HeapObject::Array { .. }) => find_type_key_by_name(modules, 0, "Array"),
+            Ok(HeapObject::Struct { type_key, .. }) => *type_key,
+            Ok(HeapObject::Boxed(inner)) => resolve_runtime_type_key(*inner, heap, modules),
+            _ => u32::MAX,
+        },
         Value::Entity(_) => find_type_key_by_name(modules, 0, "Entity"),
         Value::Void => u32::MAX,
-        Value::Struct { type_idx, .. } => type_idx,
+        Value::Struct { href, .. } => match heap.get_object(href) {
+            Ok(HeapObject::Struct { type_key, .. }) => *type_key,
+            _ => u32::MAX,
+        },
+    }
+}
+/// Return the allocation-site TypeSpec retained on a generic class or struct.
+fn resolve_runtime_type_spec(
+    val: Value,
+    heap: &dyn crate::gc::GcHeap,
+) -> Option<(usize, writ_module::MetadataToken)> {
+    let href = match val {
+        Value::Ref(href) | Value::Struct { href, .. } => href,
+        _ => return None,
+    };
+    match heap.get_object(href).ok()? {
+        HeapObject::Struct {
+            type_spec: Some((module_idx, token)),
+            ..
+        } => Some((*module_idx, writ_module::MetadataToken(*token))),
+        HeapObject::Boxed(inner) => resolve_runtime_type_spec(*inner, heap),
+        _ => None,
     }
 }
 
@@ -406,9 +860,10 @@ pub(super) fn find_type_key_by_name(
     let module = &modules[mod_idx].module;
     for (idx, td) in module.type_defs.iter().enumerate() {
         if let Ok(td_name) = writ_module::heap::read_string(&module.string_heap, td.name)
-            && td_name == name {
-                return ((mod_idx as u32) << 16) | (idx as u32);
-            }
+            && td_name == name
+        {
+            return ((mod_idx as u32) << 16) | (idx as u32);
+        }
     }
     u32::MAX
 }
@@ -419,24 +874,11 @@ pub(super) fn resolve_contract_key_from_idx(
     modules: &[crate::loader::LoadedModule],
     current_module_idx: usize,
 ) -> u32 {
-    let token = writ_module::MetadataToken(contract_idx);
-    let table_id = token.table_id();
-    let row = match token.row_index() {
-        Some(r) => r - 1,
-        None => return u32::MAX,
-    };
-
-    match table_id {
-        10 => ((current_module_idx as u32) << 16) | row,
-        3 => {
-            if let Some(resolved) = modules[current_module_idx].resolved_refs.contracts.get(&row) {
-                ((resolved.module_idx as u32) << 16) | (resolved.contractdef_idx as u32)
-            } else {
-                u32::MAX
-            }
-        }
-        _ => u32::MAX,
-    }
+    crate::type_specs::resolve_contract_key(
+        current_module_idx,
+        writ_module::MetadataToken(contract_idx),
+        modules,
+    )
 }
 
 /// Resolve an entity's display name, checking for Speaker contract override first.
@@ -449,6 +891,17 @@ fn resolve_entity_display_name(
     entity_registry: &crate::entity::EntityRegistry,
     modules: &[crate::loader::LoadedModule],
 ) -> String {
+    if let Ok(Some(identity)) = entity_registry.get_type_identity(entity_id)
+        && let Some(module) = modules
+            .get(identity.module_idx)
+            .map(|loaded| &loaded.module)
+        && let Some(type_def) = module.type_defs.get(identity.type_def_idx)
+        && let Ok(name) = writ_module::heap::read_string(&module.string_heap, type_def.name)
+        && !name.is_empty()
+    {
+        return name.to_string();
+    }
+
     // Look up entity's type_idx (may fail for destroyed/stale handles)
     let type_idx = match entity_registry.get_type_idx(entity_id) {
         Ok(idx) => idx,
@@ -464,7 +917,9 @@ fn resolve_entity_display_name(
     for loaded in modules.iter().rev() {
         let module = &loaded.module;
         if row < module.type_defs.len() {
-            if let Ok(name) = writ_module::heap::read_string(&module.string_heap, module.type_defs[row].name) {
+            if let Ok(name) =
+                writ_module::heap::read_string(&module.string_heap, module.type_defs[row].name)
+            {
                 if !name.is_empty() {
                     return name.to_string();
                 }
@@ -490,7 +945,7 @@ fn try_speaker_dispatch(
     dispatch_table: &super::DispatchTable,
     heap: &mut dyn crate::gc::GcHeap,
     host: &mut dyn crate::host::RuntimeHost,
-    globals: &mut Vec<Value>,
+    globals: &mut Vec<Vec<Value>>,
     next_request_id: &mut u32,
     entity_registry: &mut crate::entity::EntityRegistry,
     pool: &mut crate::frame::RegisterPool,
@@ -505,12 +960,16 @@ fn try_speaker_dispatch(
         Value::Entity(eid) => eid,
         _ => return None,
     };
-    let raw_type_idx = entity_registry.get_type_idx(entity_id).ok()?;
-    // type_idx is a 1-based row in the user module (module 1). Convert to type_key.
-    let row_0based = (raw_type_idx & 0x00FF_FFFF).saturating_sub(1);
-    // User module is the last module loaded (index = modules.len() - 1)
-    let user_mod_idx = modules.len().saturating_sub(1) as u32;
-    let type_key = (user_mod_idx << 16) | row_0based;
+    let type_key = match entity_registry.get_type_identity(entity_id).ok().flatten() {
+        Some(identity) => ((identity.module_idx as u32) << 16) | identity.type_def_idx as u32,
+        None => {
+            // Compatibility fallback for entities created through the public raw registry API.
+            let raw_type_idx = entity_registry.get_type_idx(entity_id).ok()?;
+            let row_0based = (raw_type_idx & 0x00FF_FFFF).saturating_sub(1);
+            let user_mod_idx = modules.len().saturating_sub(1) as u32;
+            (user_mod_idx << 16) | row_0based
+        }
+    };
 
     // Look up Speaker::speaker_name (slot 0) in dispatch table
     let key = super::DispatchKey {
@@ -542,12 +1001,14 @@ fn try_speaker_dispatch(
 
     // Push speaker_name call frame with r_dst as return register
     let saved_depth = task.call_stack.len();
-    task.call_stack.push(crate::frame::CallFrame::with_pool(
-        pool,
-        method_idx,
-        reg_count,
-        r_dst,
-    ));
+    task.call_stack
+        .push(crate::frame::CallFrame::with_pool_in_module(
+            pool,
+            target_module_idx,
+            method_idx,
+            reg_count,
+            r_dst,
+        ));
     // Set self parameter (register 0) to the entity value
     if let Some(frame) = task.call_stack.last_mut() {
         if !frame.registers.is_empty() {
@@ -616,35 +1077,4 @@ fn find_contract_key_by_name(
         }
     }
     None
-}
-
-/// Derive the type_args_hash for CALL_VIRT dispatch from a contract_idx.
-pub(super) fn resolve_type_args_hash(
-    contract_idx: u32,
-    modules: &[crate::loader::LoadedModule],
-    current_module_idx: usize,
-) -> u32 {
-    if contract_idx == 0 {
-        return 0;
-    }
-
-    let token = writ_module::MetadataToken(contract_idx);
-    let table_id = token.table_id();
-    let row = match token.row_index() {
-        Some(r) => r - 1,
-        None => return 0,
-    };
-
-    match table_id {
-        10 => contract_idx,
-        3 => {
-            if let Some(resolved) = modules[current_module_idx].resolved_refs.contracts.get(&row) {
-                let contractdef_row_1based = (resolved.contractdef_idx as u32) + 1;
-                writ_module::MetadataToken::new(10, contractdef_row_1based).0
-            } else {
-                0
-            }
-        }
-        _ => 0,
-    }
 }

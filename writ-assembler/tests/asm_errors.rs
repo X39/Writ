@@ -14,7 +14,11 @@ fn undefined_label_error() {
     assert!(result.is_err(), "should fail on undefined label");
     let errors = result.unwrap_err();
     let has_label_error = errors.iter().any(|e| e.message.contains("nonexistent"));
-    assert!(has_label_error, "error should mention the undefined label name; errors: {:?}", errors);
+    assert!(
+        has_label_error,
+        "error should mention the undefined label name; errors: {:?}",
+        errors
+    );
 }
 
 #[test]
@@ -31,7 +35,11 @@ fn unknown_mnemonic_error() {
     assert!(result.is_err(), "should fail on unknown mnemonic");
     let errors = result.unwrap_err();
     let has_mnemonic_error = errors.iter().any(|e| e.message.contains("FAKE_OP"));
-    assert!(has_mnemonic_error, "error should mention unknown mnemonic; errors: {:?}", errors);
+    assert!(
+        has_mnemonic_error,
+        "error should mention unknown mnemonic; errors: {:?}",
+        errors
+    );
 }
 
 #[test]
@@ -51,6 +59,85 @@ fn wrong_operand_count() {
 }
 
 #[test]
+fn atomic_constructors_require_initializer_operands_and_u16_counts() {
+    for (instruction, expected) in [
+        ("NEW r0, 33554433", "operand 3"),
+        ("NEW r0, 33554433, -1, r0", "u16 range"),
+        ("SPAWN_ENTITY r0, 33554433, 65536, r0", "u16 range"),
+    ] {
+        let src = format!(
+            r#"
+.module "test" "1.0.0" {{
+    .method "main" () -> void {{
+        {instruction}
+        RET_VOID
+    }}
+}}
+"#
+        );
+        let errors =
+            writ_assembler::assemble(&src).expect_err("invalid constructor should be rejected");
+        assert!(
+            errors.iter().any(|error| error.message.contains(expected)),
+            "{instruction} should report {expected:?}: {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn array_constructors_reject_non_discriminant_default_kinds() {
+    for instruction in [
+        "NEW_ARRAY r0, -1",
+        "NEW_ARRAY r0, 5",
+        "NEW_ARRAY r0, 0xFFFFFFFE",
+        "NEW_ARRAY r0, token(0)",
+        "ARRAY_INIT r0, 5, 0, r0",
+        "NEW_ARRAY_SIZED r0, 5, r0",
+        "NEW_ARRAY_FILLED r0, 5, r0, r0",
+    ] {
+        let src = format!(
+            r#"
+.module "test" "1.0.0" {{
+    .method "main" () -> void {{
+        .reg r0 array<int>
+        {instruction}
+        RET_VOID
+    }}
+}}
+"#
+        );
+        let errors =
+            writ_assembler::assemble(&src).expect_err("invalid default kind should be rejected");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("array default kind")),
+            "{instruction} should report a default-kind error: {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn array_init_count_must_fit_u16() {
+    let src = r#"
+.module "test" "1.0.0" {
+    .method "main" () -> void {
+        .reg r0 array<int>
+        ARRAY_INIT r0, 0, 65536, r0
+        RET_VOID
+    }
+}
+"#;
+    let errors = writ_assembler::assemble(src).expect_err("oversized count should be rejected");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("u16 range")),
+        "{errors:?}"
+    );
+}
+
+#[test]
 fn multiple_errors_collected() {
     let src = r#"
 .module "test" "1.0.0" {
@@ -65,7 +152,11 @@ fn multiple_errors_collected() {
     let result = writ_assembler::assemble(src);
     assert!(result.is_err(), "should fail with multiple errors");
     let errors = result.unwrap_err();
-    assert!(errors.len() >= 3, "should collect at least 3 errors, got {}", errors.len());
+    assert!(
+        errors.len() >= 3,
+        "should collect at least 3 errors, got {}",
+        errors.len()
+    );
 }
 
 #[test]
@@ -82,9 +173,21 @@ fn error_format_matches_spec() {
     let errors = result.unwrap_err();
     let formatted = format!("{}", errors[0]);
     // Format should be: error: <message> at line <N>, column <M>
-    assert!(formatted.contains("error:"), "should start with 'error:'; got: {}", formatted);
-    assert!(formatted.contains("at line"), "should contain 'at line'; got: {}", formatted);
-    assert!(formatted.contains("column"), "should contain 'column'; got: {}", formatted);
+    assert!(
+        formatted.contains("error:"),
+        "should start with 'error:'; got: {}",
+        formatted
+    );
+    assert!(
+        formatted.contains("at line"),
+        "should contain 'at line'; got: {}",
+        formatted
+    );
+    assert!(
+        formatted.contains("column"),
+        "should contain 'column'; got: {}",
+        formatted
+    );
 }
 
 #[test]
@@ -105,5 +208,34 @@ fn undefined_type_in_impl_error() {
     assert!(result.is_err(), "should fail on undefined type in impl");
     let errors = result.unwrap_err();
     let has_type_error = errors.iter().any(|e| e.message.contains("NonExistentType"));
-    assert!(has_type_error, "error should mention undefined type; errors: {:?}", errors);
+    assert!(
+        has_type_error,
+        "error should mention undefined type; errors: {:?}",
+        errors
+    );
+}
+
+#[test]
+fn field_operands_reject_raw_ordinals_and_non_field_tokens() {
+    for operand in ["0", "1", "token(83886080)", "token(33554433)"] {
+        let src = format!(
+            r#"
+.module "test" "1.0.0" {{
+    .method "main" () -> void {{
+        .reg r0 int
+        GET_FIELD r0, r0, {operand}
+        RET_VOID
+    }}
+}}
+"#
+        );
+        let errors = writ_assembler::assemble(&src)
+            .expect_err(&format!("field operand {operand} should be rejected"));
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("field token")),
+            "field operand {operand} should report a field-token error: {errors:?}"
+        );
+    }
 }

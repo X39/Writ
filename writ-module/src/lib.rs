@@ -10,6 +10,7 @@
 //! - `reader`      -- Binary deserialization from bytes to Module
 //! - `tables`      -- 23 metadata table row-struct types (TypeDef, MethodDef, etc.)
 //! - `token`       -- MetadataToken type for table row references
+//! - `virtual_module` -- Canonical `writ-runtime` core module construction
 //! - `writer`      -- Binary serialization from Module to bytes
 
 pub mod attr;
@@ -19,14 +20,17 @@ pub mod heap;
 pub mod instruction;
 pub mod module;
 pub(crate) mod reader;
+pub mod signature;
 pub mod tables;
 pub mod token;
+pub mod virtual_module;
 pub(crate) mod writer;
 
 pub use attr::AttrValue;
 pub use builder::ModuleBuilder;
 pub use error::{DecodeError, EncodeError, ModuleError};
 pub use instruction::Instruction;
-pub use module::Module;
+pub use module::{FORMAT_VERSION, Module};
 pub use tables::TypeDefKind;
 pub use token::MetadataToken;
+pub use virtual_module::build_writ_runtime_module;

@@ -4,8 +4,8 @@
 //! Handles namespace context (both declarative and block forms), visibility,
 //! prelude shadow checks, and namespace/path mismatch warnings.
 
-use crate::ast::decl::{AstDecl, AstExternDecl, AstNamespaceDecl, AstVisibility};
 use crate::ast::Ast;
+use crate::ast::decl::{AstDecl, AstExternDecl, AstNamespaceDecl, AstVisibility};
 use crate::resolve::def_map::{DefEntry, DefKind, DefMap, DefVis};
 use crate::resolve::error::ResolutionError;
 use crate::resolve::prelude::{is_builtin_attribute_name, is_prelude_name};
@@ -27,8 +27,7 @@ pub fn collect_declarations(
     let mut impl_counter: usize = 0;
 
     // Build file path lookup
-    let path_map: std::collections::HashMap<FileId, &str> =
-        file_paths.iter().copied().collect();
+    let path_map: std::collections::HashMap<FileId, &str> = file_paths.iter().copied().collect();
 
     for &(file_id, ast) in asts {
         let file_path = path_map.get(&file_id).copied().unwrap_or("");
@@ -65,13 +64,7 @@ fn collect_items(
                     ctx.namespace = ns.clone();
 
                     // W0004: Check namespace/path mismatch
-                    check_namespace_path_mismatch(
-                        &ns,
-                        ctx.file_path,
-                        ctx.file_id,
-                        *span,
-                        diags,
-                    );
+                    check_namespace_path_mismatch(&ns, ctx.file_path, ctx.file_id, *span, diags);
                 }
                 AstNamespaceDecl::Block { path, items, .. } => {
                     let saved_ns = ctx.namespace.clone();
@@ -97,7 +90,7 @@ fn collect_items(
             AstDecl::Fn(f) => {
                 let vis = ast_vis_to_def_vis(f.vis.as_ref());
                 let generics = f.generics.iter().map(|g| g.name.clone()).collect();
-                try_insert(
+                let def_id = try_insert(
                     &f.name,
                     f.name_span,
                     f.span,
@@ -108,6 +101,11 @@ fn collect_items(
                     def_map,
                     diags,
                 );
+                if f.is_dialogue
+                    && let Some(def_id) = def_id
+                {
+                    def_map.dialogue_defs.insert(def_id);
+                }
             }
 
             AstDecl::Struct(s) => {
@@ -338,7 +336,7 @@ fn try_insert(
     ctx: &CollectorContext<'_>,
     def_map: &mut DefMap,
     diags: &mut Vec<Diagnostic>,
-) {
+) -> Option<crate::resolve::def_map::DefId> {
     // Check prelude shadow
     if is_prelude_name(name) {
         diags.push(
@@ -349,7 +347,7 @@ fn try_insert(
             }
             .into(),
         );
-        return;
+        return None;
     }
 
     let fqn = if ctx.namespace.is_empty() {
@@ -370,7 +368,7 @@ fn try_insert(
         span: decl_span,
     };
 
-    def_map.insert(fqn, entry, diags);
+    Some(def_map.insert(fqn, entry, diags))
 }
 
 /// Convert AST visibility to DefVis.

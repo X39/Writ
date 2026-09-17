@@ -23,9 +23,7 @@ fn main() {
         .spawn(move || writ_compiler::compile_source(src_static))
         .expect("failed to spawn compile thread");
 
-    let result = handle
-        .join()
-        .expect("compile thread panicked");
+    let result = handle.join().expect("compile thread panicked");
 
     let out_dir = std::env::var("OUT_DIR").unwrap();
     let out_path = std::path::Path::new(&out_dir).join("writ-std.writc");
@@ -41,7 +39,8 @@ fn main() {
                 "cargo:warning=writ-std compilation failed (expected during Phase 120 — stdlib uses removed array methods; Phase 121 will fix): {}",
                 e
             );
-            std::fs::write(&out_path, &[]).expect("failed to write empty writ-std.writc placeholder");
+            std::fs::write(&out_path, &[])
+                .expect("failed to write empty writ-std.writc placeholder");
         }
     }
 }

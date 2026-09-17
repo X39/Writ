@@ -38,8 +38,8 @@ where
         .map_with(|e, extra| (cst::Pattern::Literal((e, extra.span())), extra.span()));
 
         // Wildcard: _ (an identifier token with value "_")
-        let wildcard = select! { Token::Ident("_") => cst::Pattern::Wildcard }
-            .map_with(|p, e| (p, e.span()));
+        let wildcard =
+            select! { Token::Ident("_") => cst::Pattern::Wildcard }.map_with(|p, e| (p, e.span()));
 
         // Range pattern: int..=int (only inclusive form for patterns)
         // Must come before literal_pat in choice to try this first

@@ -1,243 +1,246 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
     .type "List" class pub {
-        .field "items" array<?>
+        .field "items" array<T0>
     }
-    .impl List : contract_167772179 {
-    }
-    .impl List : ? {
+    .impl List : contract_50331684 {
         .method "get_type" () -> Type pub {
             .reg r0 int
             .reg r1 int
             TYPEOF r1, 33554433
             RET r1
         }
-        .method "add" (item: ?) -> void pub static {
+    }
+    .impl List : ? {
+        .method "add" (item: T0) -> void pub mut_self {
             .locals {
-                r0: ? "self" [0, 72)
-                r1: ? "item" [0, 72)
+                r0: List<T0> "self" [0, 72)
+                r1: T0 "item" [0, 72)
                 r3: int "old_len" [16, 72)
             }
-            .reg r0 int
-            .reg r1 int
-            .reg r2 array<?>
+            .reg r0 List<T0>
+            .reg r1 T0
+            .reg r2 array<T0>
             .reg r3 int
-            .reg r4 array<?>
+            .reg r4 array<T0>
             .reg r5 int
             .reg r6 int
             .reg r7 void
-            .reg r8 array<?>
-            GET_FIELD r2, r0, 0  ; line:7 col:9
+            .reg r8 array<T0>
+            GET_FIELD r2, r0, token(83886081)  ; line:7 col:9
             ARRAY_LEN r3, r2
-            GET_FIELD r4, r0, 0  ; line:8 col:9
+            GET_FIELD r4, r0, token(83886081)  ; line:8 col:9
             LOAD_INT r5, 1
             ADD_I r6, r3, r5
             ARRAY_RESIZE r4, r6
-            GET_FIELD r8, r0, 0  ; line:9 col:9
+            GET_FIELD r8, r0, token(83886081)  ; line:9 col:9
             ARRAY_STORE r8, r3, r1
             RET_VOID
         }
-        .method "get" (index: int) -> ? pub {
+        .method "get" (index: int) -> T0 pub {
             .locals {
-                r0: ? "self" [0, 22)
+                r0: List<T0> "self" [0, 22)
                 r1: int "index" [0, 22)
             }
-            .reg r0 int
+            .reg r0 List<T0>
             .reg r1 int
-            .reg r2 array<?>
-            .reg r3 ?
-            GET_FIELD r2, r0, 0  ; line:13 col:9
+            .reg r2 array<T0>
+            .reg r3 T0
+            GET_FIELD r2, r0, token(83886081)  ; line:13 col:9
             ARRAY_LOAD r3, r2, r1
             RET r3
         }
-        .method "set" (index: int, item: ?) -> void pub static {
+        .method "set" (index: int, item: T0) -> void pub mut_self {
             .locals {
-                r0: ? "self" [0, 20)
+                r0: List<T0> "self" [0, 20)
                 r1: int "index" [0, 20)
-                r2: ? "item" [0, 20)
+                r2: T0 "item" [0, 20)
             }
-            .reg r0 int
+            .reg r0 List<T0>
             .reg r1 int
-            .reg r2 int
-            .reg r3 array<?>
-            GET_FIELD r3, r0, 0  ; line:17 col:9
+            .reg r2 T0
+            .reg r3 array<T0>
+            GET_FIELD r3, r0, token(83886081)  ; line:17 col:9
             ARRAY_STORE r3, r1, r2
             RET_VOID
         }
         .method "len" () -> int pub {
             .locals {
-                r0: ? "self" [0, 20)
+                r0: List<T0> "self" [0, 20)
             }
-            .reg r0 int
-            .reg r1 array<?>
+            .reg r0 List<T0>
+            .reg r1 array<T0>
             .reg r2 int
-            GET_FIELD r1, r0, 0  ; line:21 col:9
+            GET_FIELD r1, r0, token(83886081)  ; line:21 col:9
             ARRAY_LEN r2, r1
             RET r2
         }
-        .method "remove_at" (index: int) -> void pub static {
+        .method "remove_at" (index: int) -> void pub mut_self {
             .locals {
-                r0: ? "self" [0, 180)
+                r0: List<T0> "self" [0, 180)
                 r1: int "index" [0, 180)
                 r3: int "old_len" [16, 180)
             }
-            .reg r0 int
+            .reg r0 List<T0>
             .reg r1 int
-            .reg r2 array<?>
+            .reg r2 array<T0>
             .reg r3 int
             .reg r4 int
             .reg r5 int
             .reg r6 bool
-            .reg r7 array<?>
+            .reg r7 array<T0>
             .reg r8 int
             .reg r9 int
-            .reg r10 ?
-            .reg r11 array<?>
+            .reg r10 T0
+            .reg r11 array<T0>
             .reg r12 int
             .reg r13 int
-            .reg r14 array<?>
+            .reg r14 array<T0>
             .reg r15 int
             .reg r16 int
             .reg r17 void
-            GET_FIELD r2, r0, 0  ; line:25 col:9
+            GET_FIELD r2, r0, token(83886081)  ; line:25 col:9
             ARRAY_LEN r3, r2
             LOAD_INT r4, 1  ; line:27 col:9
             SUB_I r5, r3, r4
             CMP_LT_I r6, r1, r5
             BR_FALSE r6, 98
-            GET_FIELD r7, r0, 0  ; line:28 col:13
+            GET_FIELD r7, r0, token(83886081)  ; line:28 col:13
             LOAD_INT r8, 1
             ADD_I r9, r1, r8
             ARRAY_LOAD r10, r7, r9
-            GET_FIELD r11, r0, 0
+            GET_FIELD r11, r0, token(83886081)
             ARRAY_STORE r11, r1, r10
             LOAD_INT r12, 1  ; line:29 col:13
             ADD_I r13, r1, r12
             MOV r1, r13
             BR -118
-            GET_FIELD r14, r0, 0  ; line:31 col:9
+            GET_FIELD r14, r0, token(83886081)  ; line:31 col:9
             LOAD_INT r15, 1
             SUB_I r16, r3, r15
             ARRAY_RESIZE r14, r16
             RET_VOID
         }
-        .method "has" (item: ?) -> void pub {
+        .method "has" (item: T0) -> bool pub {
             .locals {
-                r0: ? "self" [0, 144)
-                r1: ? "item" [0, 144)
-                r2: int "i" [12, 144)
+                r0: List<T0> "self" [0, 164)
+                r1: T0 "item" [0, 164)
+                r2: int "i" [12, 164)
             }
-            .reg r0 int
-            .reg r1 int
+            .reg r0 List<T0>
+            .reg r1 T0
             .reg r2 int
-            .reg r3 array<?>
+            .reg r3 array<T0>
             .reg r4 int
             .reg r5 bool
-            .reg r6 array<?>
-            .reg r7 ?
+            .reg r6 array<T0>
+            .reg r7 T0
             .reg r8 bool
-            .reg r9 void
-            .reg r10 bool
-            .reg r11 int
-            .reg r12 int
-            .reg r13 bool
+            .reg r9 T0
+            .reg r10 T0
+            .reg r11 void
+            .reg r12 bool
+            .reg r13 int
+            .reg r14 int
+            .reg r15 bool
             LOAD_INT r2, 0  ; line:35 col:9
-            GET_FIELD r3, r0, 0  ; line:36 col:9
+            GET_FIELD r3, r0, token(83886081)  ; line:36 col:9
             ARRAY_LEN r4, r3
             CMP_LT_I r5, r2, r4
-            BR_FALSE r5, 100
-            GET_FIELD r6, r0, 0  ; line:37 col:13
+            BR_FALSE r5, 120
+            GET_FIELD r6, r0, token(83886081)  ; line:37 col:13
             ARRAY_LOAD r7, r6, r2
-            CMP_EQ_I r8, r7, r1
+            MOV r9, r7
+            MOV r10, r1
+            CALL_VIRT r8, r9, 50331655, 0, r9, 2
             BR_FALSE r8, 30
-            LOAD_TRUE r10  ; line:37 col:40
-            RET r10
-            MOV r9, r0
+            LOAD_TRUE r12  ; line:37 col:40
+            RET r12
+            MOV r11, r0
             BR 10
             NOP
-            LOAD_INT r11, 1  ; line:38 col:13
-            ADD_I r12, r2, r11
-            MOV r2, r12
-            BR -116
-            LOAD_FALSE r13  ; line:40 col:9
-            RET r13
+            LOAD_INT r13, 1  ; line:38 col:13
+            ADD_I r14, r2, r13
+            MOV r2, r14
+            BR -136
+            LOAD_FALSE r15  ; line:40 col:9
+            RET r15
         }
-        .method "main" () -> void mut {
-            .locals {
-                r0: List "list" [26, 310)
-                r14: ? "_v" [170, 310)
-                r18: int "_len" [182, 310)
-                r19: bool "_has" [218, 310)
-            }
-            .reg r0 List
-            .reg r1 array<void>
-            .reg r2 void
-            .reg r3 int
-            .reg r4 List
-            .reg r5 int
-            .reg r6 void
-            .reg r7 int
-            .reg r8 List
-            .reg r9 int
-            .reg r10 void
-            .reg r11 int
-            .reg r12 List
-            .reg r13 int
-            .reg r14 ?
-            .reg r15 int
-            .reg r16 List
-            .reg r17 int
-            .reg r18 int
-            .reg r19 bool
-            .reg r20 int
-            .reg r21 List
-            .reg r22 int
-            .reg r23 void
-            .reg r24 int
-            .reg r25 int
-            .reg r26 List
-            .reg r27 int
-            .reg r28 int
-            .reg r29 void
-            .reg r30 int
-            .reg r31 List
-            .reg r32 int
-            NEW r0, 33554433  ; line:45 col:5
-            NEW_ARRAY r1, 0
-            SET_FIELD r0, 0, r1
-            LOAD_INT r3, 10  ; line:46 col:5
-            MOV r4, r0
-            MOV r5, r3
-            CALL r2, 117440514, r4, 2
-            LOAD_INT r7, 20  ; line:47 col:5
-            MOV r8, r0
-            MOV r9, r7
-            CALL r6, 117440514, r8, 2
-            LOAD_INT r11, 30  ; line:48 col:5
-            MOV r12, r0
-            MOV r13, r11
-            CALL r10, 117440514, r12, 2
-            LOAD_INT r15, 0  ; line:49 col:5
-            MOV r16, r0
-            MOV r17, r15
-            CALL r14, 117440515, r16, 2
-            CALL r18, 117440517, r0, 1  ; line:50 col:5
-            LOAD_INT r20, 20  ; line:51 col:5
-            MOV r21, r0
-            MOV r22, r20
-            CALL r19, 117440519, r21, 2
-            LOAD_INT r24, 1  ; line:52 col:5
-            LOAD_INT r25, 25
-            MOV r26, r0
-            MOV r27, r24
-            MOV r28, r25
-            CALL r23, 117440516, r26, 3
-            LOAD_INT r30, 0  ; line:53 col:5
-            MOV r31, r0
-            MOV r32, r30
-            CALL r29, 117440518, r31, 2
-            RET_VOID
+    }
+    .method "main" () -> void static {
+        .locals {
+            r1: List<int> "list" [20, 304)
+            r14: int "_v" [164, 304)
+            r18: int "_len" [176, 304)
+            r19: bool "_has" [212, 304)
         }
+        .reg r0 array<int>
+        .reg r1 List<int>
+        .reg r2 void
+        .reg r3 int
+        .reg r4 List<int>
+        .reg r5 int
+        .reg r6 void
+        .reg r7 int
+        .reg r8 List<int>
+        .reg r9 int
+        .reg r10 void
+        .reg r11 int
+        .reg r12 List<int>
+        .reg r13 int
+        .reg r14 int
+        .reg r15 int
+        .reg r16 List<int>
+        .reg r17 int
+        .reg r18 int
+        .reg r19 bool
+        .reg r20 int
+        .reg r21 List<int>
+        .reg r22 int
+        .reg r23 void
+        .reg r24 int
+        .reg r25 int
+        .reg r26 List<int>
+        .reg r27 int
+        .reg r28 int
+        .reg r29 void
+        .reg r30 int
+        .reg r31 List<int>
+        .reg r32 int
+        NEW_ARRAY r0, 0  ; line:45 col:5
+        NEW r1, 67108866, 1, r0
+        LOAD_INT r3, 10  ; line:46 col:5
+        MOV r4, r1
+        MOV r5, r3
+        CALL r2, 117440514, r4, 2
+        LOAD_INT r7, 20  ; line:47 col:5
+        MOV r8, r1
+        MOV r9, r7
+        CALL r6, 117440514, r8, 2
+        LOAD_INT r11, 30  ; line:48 col:5
+        MOV r12, r1
+        MOV r13, r11
+        CALL r10, 117440514, r12, 2
+        LOAD_INT r15, 0  ; line:49 col:5
+        MOV r16, r1
+        MOV r17, r15
+        CALL r14, 117440515, r16, 2
+        CALL r18, 117440517, r1, 1  ; line:50 col:5
+        LOAD_INT r20, 20  ; line:51 col:5
+        MOV r21, r1
+        MOV r22, r20
+        CALL r19, 117440519, r21, 2
+        LOAD_INT r24, 1  ; line:52 col:5
+        LOAD_INT r25, 25
+        MOV r26, r1
+        MOV r27, r24
+        MOV r28, r25
+        CALL r23, 117440516, r26, 3
+        LOAD_INT r30, 0  ; line:53 col:5
+        MOV r31, r1
+        MOV r32, r30
+        CALL r29, 117440518, r31, 2
+        RET_VOID
     }
     .export "List" type 33554433
 }

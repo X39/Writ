@@ -416,26 +416,24 @@ Ast {
                         },
                         span: 205..277,
                     },
-                    Return {
-                        value: Some(
-                            Call {
-                                callee: Ident {
-                                    name: "greet",
-                                    span: 285..290,
-                                },
-                                args: [
-                                    AstArg {
-                                        name: None,
-                                        value: Ident {
-                                            name: "player",
-                                            span: 291..297,
-                                        },
-                                        span: 282..298,
-                                    },
-                                ],
-                                span: 282..298,
+                    Transition {
+                        call: Call {
+                            callee: Ident {
+                                name: "greet",
+                                span: 285..290,
                             },
-                        ),
+                            args: [
+                                AstArg {
+                                    name: None,
+                                    value: Ident {
+                                        name: "player",
+                                        span: 291..297,
+                                    },
+                                    span: 282..298,
+                                },
+                            ],
+                            span: 282..298,
+                        },
                         span: 282..298,
                     },
                 ],
@@ -458,6 +456,7 @@ Ast {
                 properties: [
                     AstStructField {
                         vis: None,
+                        is_mutable: false,
                         name: "name",
                         name_span: 336..340,
                         ty: Named {

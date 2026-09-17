@@ -3,10 +3,11 @@
 //! Each test constructs a minimal module programmatically, spawns a task,
 //! ticks to completion, and inspects the result.
 
-use writ_module::module::MethodBody;
-use writ_module::tables::TypeDefKind;
 use writ_module::Instruction;
 use writ_module::ModuleBuilder;
+use writ_module::module::MethodBody;
+use writ_module::signature::{TypeSignature, encode_method_signature};
+use writ_module::tables::TypeDefKind;
 use writ_runtime::{
     ExecutionLimit, NullHost, Runtime, RuntimeBuilder, TaskState, TickResult, Value,
 };
@@ -22,13 +23,41 @@ fn encode(instrs: &[Instruction]) -> Vec<u8> {
     code
 }
 
+fn method_signature(parameter_count: usize) -> Vec<u8> {
+    encode_method_signature(
+        &vec![TypeSignature::Int; parameter_count],
+        &TypeSignature::Void,
+    )
+    .expect("encode method signature")
+}
+
+fn typedef_token(index: u32) -> u32 {
+    0x0200_0000 | (index + 1)
+}
+
+fn fielddef_token(index: u32) -> u32 {
+    0x0500_0000 | (index + 1)
+}
+
 /// Build a module with one type and one method containing the given instructions.
 /// `reg_count` specifies how many registers the method body has.
 /// Returns a Runtime ready for spawning tasks.
 fn build_runtime(instructions: &[Instruction], reg_count: u16) -> Runtime<NullHost> {
+    build_runtime_with_type_kind(instructions, reg_count, TypeDefKind::Struct)
+}
+
+fn build_entity_runtime(instructions: &[Instruction], reg_count: u16) -> Runtime<NullHost> {
+    build_runtime_with_type_kind(instructions, reg_count, TypeDefKind::Entity)
+}
+
+fn build_runtime_with_type_kind(
+    instructions: &[Instruction],
+    reg_count: u16,
+    type_kind: TypeDefKind,
+) -> Runtime<NullHost> {
     let mut builder = ModuleBuilder::new("test");
     // Add a type (required for method ownership)
-    builder.add_type_def("TestType", "", TypeDefKind::Struct, 0);
+    builder.add_type_def("TestType", "", type_kind, 0);
     // Add the method with body
     let body = MethodBody {
         register_types: vec![0; reg_count as usize],
@@ -53,6 +82,16 @@ fn run_simple(
     (runtime, task_id)
 }
 
+fn run_entity_simple(
+    instructions: &[Instruction],
+    reg_count: u16,
+) -> (Runtime<NullHost>, writ_runtime::TaskId) {
+    let mut runtime = build_entity_runtime(instructions, reg_count);
+    let task_id = runtime.spawn_task(0, vec![]).unwrap();
+    runtime.tick(0.0, ExecutionLimit::None);
+    (runtime, task_id)
+}
+
 /// Build, spawn method 0 with args, tick to completion, return (runtime, task_id).
 fn run_with_args(
     instructions: &[Instruction],
@@ -71,6 +110,7 @@ fn build_two_method_runtime(
     main_reg_count: u16,
     callee_instrs: &[Instruction],
     callee_reg_count: u16,
+    callee_param_count: usize,
 ) -> Runtime<NullHost> {
     let mut builder = ModuleBuilder::new("test");
     builder.add_type_def("TestType", "", TypeDefKind::Struct, 0);
@@ -81,7 +121,7 @@ fn build_two_method_runtime(
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_method("main", &[0], 0, main_reg_count, body0);
+    builder.add_method("main", &method_signature(0), 0, main_reg_count, body0);
 
     let body1 = MethodBody {
         register_types: vec![0; callee_reg_count as usize],
@@ -89,7 +129,13 @@ fn build_two_method_runtime(
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_method("callee", &[0], 0, callee_reg_count, body1);
+    builder.add_method(
+        "callee",
+        &method_signature(callee_param_count),
+        0,
+        callee_reg_count,
+        body1,
+    );
 
     let module = builder.build();
     RuntimeBuilder::new(module).build().unwrap()
@@ -101,7 +147,10 @@ fn build_two_method_runtime(
 fn load_int_stores_value() {
     let (rt, tid) = run_simple(
         &[
-            Instruction::LoadInt { r_dst: 0, value: 42 },
+            Instruction::LoadInt {
+                r_dst: 0,
+                value: 42,
+            },
             Instruction::Ret { r_src: 0 },
         ],
         1,
@@ -806,7 +855,7 @@ fn call_and_ret_delivers_return_value() {
         Instruction::Ret { r_src: 1 },
     ];
 
-    let mut rt = build_two_method_runtime(&main_instrs, 2, &callee_instrs, 2);
+    let mut rt = build_two_method_runtime(&main_instrs, 2, &callee_instrs, 2, 1);
     let tid = rt.spawn_task(0, vec![]).unwrap();
     rt.tick(0.0, ExecutionLimit::None);
 
@@ -818,8 +867,8 @@ fn call_and_ret_delivers_return_value() {
 fn call_with_methoddef_token() {
     // Regression test for BUG-17: the CALL instruction's method_idx field carries
     // a MethodDef metadata token (table_id=7, 1-based row_index encoded in bits 23-0),
-    // NOT a 0-based array index. This test verifies that decode_method_token correctly
-    // maps 0x07000002 (table_id=7, row_index=2) to decoded_bodies[1].
+    // NOT a 0-based array index. This test verifies that the centralized call-target
+    // resolver maps 0x07000002 (table_id=7, row_index=2) to decoded_bodies[1].
     //
     // method 0 (main): LoadInt 5, Call method 1 via token 0x07000002, Ret result
     // method 1 (callee): r0 has 5, AddI r1=r0+r0=10, Ret r1
@@ -834,10 +883,14 @@ fn call_with_methoddef_token() {
         Instruction::Ret { r_src: 1 },
     ];
     let callee_instrs = vec![
-        Instruction::AddI { r_dst: 1, r_a: 0, r_b: 0 }, // 5 + 5 = 10
+        Instruction::AddI {
+            r_dst: 1,
+            r_a: 0,
+            r_b: 0,
+        }, // 5 + 5 = 10
         Instruction::Ret { r_src: 1 },
     ];
-    let mut rt = build_two_method_runtime(&main_instrs, 2, &callee_instrs, 2);
+    let mut rt = build_two_method_runtime(&main_instrs, 2, &callee_instrs, 2, 1);
     let tid = rt.spawn_task(0, vec![]).unwrap();
     rt.tick(0.0, ExecutionLimit::None);
     assert_eq!(rt.task_state(tid), Some(TaskState::Completed));
@@ -869,7 +922,7 @@ fn nested_calls_unwind_correctly() {
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_method("m0", &[0], 0, 2, body0);
+    builder.add_method("m0", &method_signature(0), 0, 2, body0);
 
     // Method 1: LoadInt 5, Call method 2 (MethodDef token 0x07000003 = table_id=7, row_index=3, array_index=2)
     let body1 = MethodBody {
@@ -887,7 +940,7 @@ fn nested_calls_unwind_correctly() {
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_method("m1", &[0], 0, 2, body1);
+    builder.add_method("m1", &method_signature(0), 0, 2, body1);
 
     // Method 2: r0 has 5, compute 5+5, return 10
     let body2 = MethodBody {
@@ -903,7 +956,7 @@ fn nested_calls_unwind_correctly() {
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_method("m2", &[0], 0, 2, body2);
+    builder.add_method("m2", &method_signature(1), 0, 2, body2);
 
     let module = builder.build();
     let mut rt = RuntimeBuilder::new(module).build().unwrap();
@@ -934,7 +987,7 @@ fn tail_call_does_not_grow_stack() {
 
     let callee_instrs = vec![Instruction::Ret { r_src: 0 }];
 
-    let mut rt = build_two_method_runtime(&main_instrs, 1, &callee_instrs, 1);
+    let mut rt = build_two_method_runtime(&main_instrs, 1, &callee_instrs, 1, 1);
     let tid = rt.spawn_task(0, vec![]).unwrap();
     rt.tick(0.0, ExecutionLimit::None);
 
@@ -948,8 +1001,14 @@ fn tail_call_passes_multiple_args() {
     // method 1: Add r2=r0+r1, Ret r2 → expected Int(30)
 
     let main_instrs = vec![
-        Instruction::LoadInt { r_dst: 0, value: 10 },
-        Instruction::LoadInt { r_dst: 1, value: 20 },
+        Instruction::LoadInt {
+            r_dst: 0,
+            value: 10,
+        },
+        Instruction::LoadInt {
+            r_dst: 1,
+            value: 20,
+        },
         Instruction::TailCall {
             method_idx: 0x07000002,
             r_base: 0,
@@ -958,11 +1017,15 @@ fn tail_call_passes_multiple_args() {
     ];
 
     let callee_instrs = vec![
-        Instruction::AddI { r_dst: 2, r_a: 0, r_b: 1 },
+        Instruction::AddI {
+            r_dst: 2,
+            r_a: 0,
+            r_b: 1,
+        },
         Instruction::Ret { r_src: 2 },
     ];
 
-    let mut rt = build_two_method_runtime(&main_instrs, 2, &callee_instrs, 3);
+    let mut rt = build_two_method_runtime(&main_instrs, 2, &callee_instrs, 3, 2);
     let tid = rt.spawn_task(0, vec![]).unwrap();
     rt.tick(0.0, ExecutionLimit::None);
 
@@ -1161,13 +1224,15 @@ fn str_len_returns_length() {
 
 #[test]
 fn new_allocates_struct() {
-    // New with type_idx=1 (our TestType, kind=Struct), creates Value::Struct with heap allocation
+    // New with our TestType's TypeDef token creates Value::Struct with heap allocation.
     let (rt, tid) = run_simple(
         &[
             Instruction::New {
                 r_dst: 0,
-                type_idx: 1,
-            }, // type_idx 1 = first TypeDef (1-based)
+                type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
+            },
             Instruction::Ret { r_src: 0 },
         ],
         1,
@@ -1176,7 +1241,7 @@ fn new_allocates_struct() {
     // Verify it's a Value::Struct (struct allocates on heap, register holds Copy-semantic HeapRef)
     match rt.return_value(tid) {
         Some(Value::Struct { type_idx, .. }) => {
-            assert_eq!(type_idx, 1);
+            assert_eq!(type_idx, typedef_token(0));
         }
         other => panic!("expected Value::Struct, got {:?}", other),
     }
@@ -1194,7 +1259,9 @@ fn get_set_field_round_trip() {
         code: encode(&[
             Instruction::New {
                 r_dst: 0,
-                type_idx: 1,
+                type_idx: typedef_token(0),
+                field_count: 1,
+                r_base: 0,
             },
             Instruction::LoadInt {
                 r_dst: 1,
@@ -1202,13 +1269,13 @@ fn get_set_field_round_trip() {
             },
             Instruction::SetField {
                 r_obj: 0,
-                field_idx: 0,
+                field_token: 0x0500_0001,
                 r_val: 1,
             },
             Instruction::GetField {
                 r_dst: 2,
                 r_obj: 0,
-                field_idx: 0,
+                field_token: 0x0500_0001,
             },
             Instruction::Ret { r_src: 2 },
         ]),
@@ -1225,6 +1292,191 @@ fn get_set_field_round_trip() {
     assert_eq!(rt.return_value(tid), Some(Value::Int(42)));
 }
 
+#[test]
+fn fielddef_token_uses_absolute_row_and_owner_local_offset() {
+    let mut builder = ModuleBuilder::new("test");
+    builder.add_type_def("First", "", TypeDefKind::Struct, 0);
+    builder.add_field_def("first", &[0x01], 0);
+    builder.add_type_def("Second", "", TypeDefKind::Struct, 0);
+    builder.add_field_def("second_0", &[0x01], 0);
+    builder.add_field_def("second_1", &[0x01], 0);
+
+    let body = MethodBody {
+        register_types: vec![0; 3],
+        code: encode(&[
+            Instruction::New {
+                r_dst: 0,
+                type_idx: typedef_token(1),
+                field_count: 2,
+                r_base: 0,
+            },
+            Instruction::LoadInt {
+                r_dst: 1,
+                value: 73,
+            },
+            Instruction::SetField {
+                r_obj: 0,
+                field_token: fielddef_token(2),
+                r_val: 1,
+            },
+            Instruction::GetField {
+                r_dst: 2,
+                r_obj: 0,
+                field_token: fielddef_token(2),
+            },
+            Instruction::Ret { r_src: 2 },
+        ]),
+        debug_locals: vec![],
+        source_spans: vec![],
+    };
+    builder.add_method("main", &[0], 0, 3, body);
+
+    let mut runtime = RuntimeBuilder::new(builder.build()).build().unwrap();
+    let task_id = runtime.spawn_task(0, vec![]).unwrap();
+    runtime.tick(0.0, ExecutionLimit::None);
+
+    assert_eq!(runtime.task_state(task_id), Some(TaskState::Completed));
+    assert_eq!(runtime.return_value(task_id), Some(Value::Int(73)));
+}
+
+#[test]
+fn forged_get_field_tokens_crash_the_current_task() {
+    let cases = [
+        (0, "null"),
+        (1, "table 0"),
+        (0x0500_0000, "row zero"),
+        (typedef_token(0), "table 2"),
+        (fielddef_token(1), "out of range"),
+    ];
+
+    for (field_token, description) in cases {
+        let mut runtime = build_runtime_with_type(
+            "MyStruct",
+            TypeDefKind::Struct,
+            1,
+            &[
+                Instruction::New {
+                    r_dst: 0,
+                    type_idx: typedef_token(0),
+                    field_count: 1,
+                    r_base: 0,
+                },
+                Instruction::GetField {
+                    r_dst: 1,
+                    r_obj: 0,
+                    field_token,
+                },
+                Instruction::Ret { r_src: 1 },
+            ],
+            2,
+        );
+        let task_id = runtime.spawn_task(0, vec![]).unwrap();
+        runtime.tick(0.0, ExecutionLimit::None);
+
+        assert_eq!(
+            runtime.task_state(task_id),
+            Some(TaskState::Cancelled),
+            "{description} field token must crash the task"
+        );
+        assert!(
+            runtime.crash_info(task_id).is_some(),
+            "{description} field token must record crash information"
+        );
+    }
+}
+
+#[test]
+fn forged_set_field_tokens_crash_the_current_task() {
+    let cases = [
+        (0, "null"),
+        (1, "table 0"),
+        (0x0500_0000, "row zero"),
+        (typedef_token(0), "table 2"),
+        (fielddef_token(1), "out of range"),
+    ];
+
+    for (field_token, description) in cases {
+        let mut runtime = build_runtime_with_type(
+            "MyStruct",
+            TypeDefKind::Struct,
+            1,
+            &[
+                Instruction::New {
+                    r_dst: 0,
+                    type_idx: typedef_token(0),
+                    field_count: 1,
+                    r_base: 0,
+                },
+                Instruction::LoadInt {
+                    r_dst: 1,
+                    value: 99,
+                },
+                Instruction::SetField {
+                    r_obj: 0,
+                    field_token,
+                    r_val: 1,
+                },
+                Instruction::RetVoid,
+            ],
+            2,
+        );
+        let task_id = runtime.spawn_task(0, vec![]).unwrap();
+        runtime.tick(0.0, ExecutionLimit::None);
+
+        assert_eq!(
+            runtime.task_state(task_id),
+            Some(TaskState::Cancelled),
+            "{description} field token must crash the task"
+        );
+        assert!(
+            runtime.crash_info(task_id).is_some(),
+            "{description} field token must record crash information"
+        );
+    }
+}
+
+#[test]
+fn field_token_owner_mismatch_crashes_the_current_task() {
+    let mut builder = ModuleBuilder::new("test");
+    builder.add_type_def("First", "", TypeDefKind::Struct, 0);
+    builder.add_field_def("first", &[0x01], 0);
+    builder.add_type_def("Second", "", TypeDefKind::Struct, 0);
+    builder.add_field_def("second", &[0x01], 0);
+
+    let body = MethodBody {
+        register_types: vec![0; 2],
+        code: encode(&[
+            Instruction::New {
+                r_dst: 0,
+                type_idx: typedef_token(1),
+                field_count: 1,
+                r_base: 0,
+            },
+            Instruction::GetField {
+                r_dst: 1,
+                r_obj: 0,
+                field_token: fielddef_token(0),
+            },
+            Instruction::Ret { r_src: 1 },
+        ]),
+        debug_locals: vec![],
+        source_spans: vec![],
+    };
+    builder.add_method("main", &[0], 0, 2, body);
+
+    let mut runtime = RuntimeBuilder::new(builder.build()).build().unwrap();
+    let task_id = runtime.spawn_task(0, vec![]).unwrap();
+    runtime.tick(0.0, ExecutionLimit::None);
+
+    assert_eq!(runtime.task_state(task_id), Some(TaskState::Cancelled));
+    let crash = runtime.crash_info(task_id).expect("owner mismatch crash");
+    assert!(
+        crash.message.contains("owner mismatch"),
+        "unexpected crash message: {}",
+        crash.message
+    );
+}
+
 // ── Array Tests ──────────────────────────────────────────────────
 
 #[test]
@@ -1235,14 +1487,20 @@ fn array_resize_load_store_len() {
             // NewArray (zero-length)
             Instruction::NewArray {
                 r_dst: 0,
-                elem_type: 0,
+                default_kind: 0,
             },
             // Resize to 2 (fills with default 0)
             Instruction::LoadInt { r_dst: 1, value: 2 },
-            Instruction::ArrayResize { r_arr: 0, r_new_len: 1 },
+            Instruction::ArrayResize {
+                r_arr: 0,
+                r_new_len: 1,
+            },
             // Store 10 at index 0
             Instruction::LoadInt { r_dst: 1, value: 0 },
-            Instruction::LoadInt { r_dst: 2, value: 10 },
+            Instruction::LoadInt {
+                r_dst: 2,
+                value: 10,
+            },
             Instruction::ArrayStore {
                 r_arr: 0,
                 r_idx: 1,
@@ -1250,7 +1508,10 @@ fn array_resize_load_store_len() {
             },
             // Store 20 at index 1
             Instruction::LoadInt { r_dst: 1, value: 1 },
-            Instruction::LoadInt { r_dst: 2, value: 20 },
+            Instruction::LoadInt {
+                r_dst: 2,
+                value: 20,
+            },
             Instruction::ArrayStore {
                 r_arr: 0,
                 r_idx: 1,
@@ -1266,7 +1527,10 @@ fn array_resize_load_store_len() {
                 r_idx: 4,
             },
             // Return len*100 + element[1] for combined check
-            Instruction::LoadInt { r_dst: 6, value: 100 },
+            Instruction::LoadInt {
+                r_dst: 6,
+                value: 100,
+            },
             Instruction::MulI {
                 r_dst: 7,
                 r_a: 3,
@@ -1290,16 +1554,19 @@ fn array_store_overwrites_element() {
     // Use NewArraySized to create a 2-element array, then overwrite index 0 with 99.
     let (rt, tid) = run_simple(
         &[
-            // NewArraySized: r_dst=0, elem_type=0 (int), r_len=1 (register holds 2)
+            // NewArraySized: r_dst=0, default_kind=0 (Int), r_len=1 (register holds 2)
             Instruction::LoadInt { r_dst: 1, value: 2 },
             Instruction::NewArraySized {
                 r_dst: 0,
-                elem_type: 0,
+                default_kind: 0,
                 r_len: 1,
             },
             // Store 99 at index 0
             Instruction::LoadInt { r_dst: 2, value: 0 },
-            Instruction::LoadInt { r_dst: 3, value: 99 },
+            Instruction::LoadInt {
+                r_dst: 3,
+                value: 99,
+            },
             Instruction::ArrayStore {
                 r_arr: 0,
                 r_idx: 2,
@@ -1404,12 +1671,15 @@ fn new_enum_get_tag_extract_field() {
             },
             Instruction::NewEnum {
                 r_dst: 1,
-                type_idx: 0,
+                type_idx: typedef_token(0),
                 tag: 2,
                 field_count: 1,
                 r_base: 0,
             },
-            Instruction::GetTag { r_dst: 2, r_enum: 1 },
+            Instruction::GetTag {
+                r_dst: 2,
+                r_enum: 1,
+            },
             Instruction::ExtractField {
                 r_dst: 3,
                 r_enum: 1,
@@ -1519,10 +1789,7 @@ fn atomic_begin_end_adjusts_depth() {
 
 #[test]
 fn atomic_end_without_begin_crashes() {
-    let (rt, tid) = run_simple(
-        &[Instruction::AtomicEnd, Instruction::RetVoid],
-        1,
-    );
+    let (rt, tid) = run_simple(&[Instruction::AtomicEnd, Instruction::RetVoid], 1);
     assert_eq!(rt.task_state(tid), Some(TaskState::Cancelled));
 }
 
@@ -1558,7 +1825,7 @@ fn new_delegate_and_call_indirect() {
         Instruction::Ret { r_src: 0 },
     ];
 
-    let mut rt = build_two_method_runtime(&main_instrs, 3, &callee_instrs, 1);
+    let mut rt = build_two_method_runtime(&main_instrs, 3, &callee_instrs, 1, 0);
     let tid = rt.spawn_task(0, vec![]).unwrap();
     rt.tick(0.0, ExecutionLimit::None);
 
@@ -1573,7 +1840,10 @@ fn call_indirect_passes_args() {
     // Expected return value: Int(99)
 
     let main_instrs = vec![
-        Instruction::LoadInt { r_dst: 1, value: 99 },
+        Instruction::LoadInt {
+            r_dst: 1,
+            value: 99,
+        },
         Instruction::NewDelegate {
             r_dst: 0,
             method_idx: 0x07000002,
@@ -1590,7 +1860,7 @@ fn call_indirect_passes_args() {
 
     let callee_instrs = vec![Instruction::Ret { r_src: 0 }];
 
-    let mut rt = build_two_method_runtime(&main_instrs, 4, &callee_instrs, 1);
+    let mut rt = build_two_method_runtime(&main_instrs, 4, &callee_instrs, 1, 1);
     let tid = rt.spawn_task(0, vec![]).unwrap();
     rt.tick(0.0, ExecutionLimit::None);
 
@@ -1698,11 +1968,15 @@ fn spawn_task_with_args() {
 
 #[test]
 fn spawn_entity_creates_pending_and_init_commits() {
-    // SPAWN_ENTITY r0 type=1, INIT_ENTITY r0, RET r0
-    // Type 1 needs to exist. We'll use the default type (idx 1 = 0-based idx 0).
-    let (rt, tid) = run_simple(
+    // SPAWN_ENTITY r0 with the default type's TypeDef token, INIT_ENTITY r0, RET r0.
+    let (rt, tid) = run_entity_simple(
         &[
-            Instruction::SpawnEntity { r_dst: 0, type_idx: 1 },
+            Instruction::SpawnEntity {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
+            },
             Instruction::InitEntity { r_entity: 0 },
             Instruction::Ret { r_src: 0 },
         ],
@@ -1721,11 +1995,19 @@ fn spawn_entity_creates_pending_and_init_commits() {
 
 #[test]
 fn entity_is_alive_returns_true_for_alive() {
-    let (rt, tid) = run_simple(
+    let (rt, tid) = run_entity_simple(
         &[
-            Instruction::SpawnEntity { r_dst: 0, type_idx: 1 },
+            Instruction::SpawnEntity {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
+            },
             Instruction::InitEntity { r_entity: 0 },
-            Instruction::EntityIsAlive { r_dst: 1, r_entity: 0 },
+            Instruction::EntityIsAlive {
+                r_dst: 1,
+                r_entity: 0,
+            },
             Instruction::Ret { r_src: 1 },
         ],
         2,
@@ -1735,12 +2017,20 @@ fn entity_is_alive_returns_true_for_alive() {
 
 #[test]
 fn entity_is_alive_returns_false_after_destroy() {
-    let (rt, tid) = run_simple(
+    let (rt, tid) = run_entity_simple(
         &[
-            Instruction::SpawnEntity { r_dst: 0, type_idx: 1 },
+            Instruction::SpawnEntity {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
+            },
             Instruction::InitEntity { r_entity: 0 },
             Instruction::DestroyEntity { r_entity: 0 },
-            Instruction::EntityIsAlive { r_dst: 1, r_entity: 0 },
+            Instruction::EntityIsAlive {
+                r_dst: 1,
+                r_entity: 0,
+            },
             Instruction::Ret { r_src: 1 },
         ],
         2,
@@ -1751,9 +2041,14 @@ fn entity_is_alive_returns_false_after_destroy() {
 #[test]
 fn destroy_stale_entity_crashes() {
     // Spawn, init, destroy, then try to destroy again
-    let (rt, tid) = run_simple(
+    let (rt, tid) = run_entity_simple(
         &[
-            Instruction::SpawnEntity { r_dst: 0, type_idx: 1 },
+            Instruction::SpawnEntity {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
+            },
             Instruction::InitEntity { r_entity: 0 },
             Instruction::DestroyEntity { r_entity: 0 },
             Instruction::DestroyEntity { r_entity: 0 }, // second destroy should crash
@@ -1763,7 +2058,11 @@ fn destroy_stale_entity_crashes() {
     );
     assert_eq!(rt.task_state(tid), Some(TaskState::Cancelled));
     let crash = rt.crash_info(tid).unwrap();
-    assert!(crash.message.contains("not alive"), "crash message: {}", crash.message);
+    assert!(
+        crash.message.contains("not alive"),
+        "crash message: {}",
+        crash.message
+    );
 }
 
 #[test]
@@ -1773,10 +2072,16 @@ fn get_or_create_singleton_returns_same_entity() {
     // then comparing by checking both are alive and have the same index.
     // Use a different approach: get_or_create twice, check both are alive,
     // then check the entity_registry has exactly 1 alive entity for that type.
-    let mut runtime = build_runtime(
+    let mut runtime = build_entity_runtime(
         &[
-            Instruction::GetOrCreate { r_dst: 0, type_idx: 1 },
-            Instruction::GetOrCreate { r_dst: 1, type_idx: 1 },
+            Instruction::GetOrCreate {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+            },
+            Instruction::GetOrCreate {
+                r_dst: 1,
+                type_idx: typedef_token(0),
+            },
             // Both r0 and r1 should be the same entity
             // Return r0; r1 should be the same value
             Instruction::RetVoid,
@@ -1788,8 +2093,22 @@ fn get_or_create_singleton_returns_same_entity() {
     assert_eq!(runtime.task_state(tid), Some(TaskState::Completed));
     // The entity registry should have exactly 1 alive entity
     assert_eq!(runtime.entity_registry().alive_count(), 1);
-    // The singleton should be registered
-    assert!(runtime.entity_registry().get_singleton(1).is_some());
+    // The singleton should be registered under its resolved domain identity.
+    let entity_id = runtime
+        .entity_registry()
+        .alive_entities()
+        .next()
+        .map(|(entity_id, _)| entity_id)
+        .expect("singleton entity should be alive");
+    let identity = runtime
+        .entity_registry()
+        .get_type_identity(entity_id)
+        .expect("entity handle should be valid")
+        .expect("runtime-created entity should retain its resolved type identity");
+    assert_eq!(
+        runtime.entity_registry().get_resolved_singleton(identity),
+        Some(entity_id)
+    );
 }
 
 #[test]
@@ -1801,7 +2120,10 @@ fn entity_is_alive_on_uninitialized_handle_returns_false() {
             // Simpler: just use LoadNull to get Void in r0, then EntityIsAlive
             // EntityIsAlive on non-Entity value extracts a default EntityId which won't exist
             Instruction::LoadNull { r_dst: 0 },
-            Instruction::EntityIsAlive { r_dst: 1, r_entity: 0 },
+            Instruction::EntityIsAlive {
+                r_dst: 1,
+                r_entity: 0,
+            },
             Instruction::Ret { r_src: 1 },
         ],
         2,
@@ -1811,11 +2133,21 @@ fn entity_is_alive_on_uninitialized_handle_returns_false() {
 
 #[test]
 fn spawn_init_two_entities_both_alive() {
-    let mut runtime = build_runtime(
+    let mut runtime = build_entity_runtime(
         &[
-            Instruction::SpawnEntity { r_dst: 0, type_idx: 1 },
+            Instruction::SpawnEntity {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
+            },
             Instruction::InitEntity { r_entity: 0 },
-            Instruction::SpawnEntity { r_dst: 1, type_idx: 1 },
+            Instruction::SpawnEntity {
+                r_dst: 1,
+                type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
+            },
             Instruction::InitEntity { r_entity: 1 },
             Instruction::RetVoid,
         ],
@@ -1830,15 +2162,28 @@ fn spawn_init_two_entities_both_alive() {
 
 #[test]
 fn destroy_one_entity_other_survives() {
-    let mut runtime = build_runtime(
+    let mut runtime = build_entity_runtime(
         &[
-            Instruction::SpawnEntity { r_dst: 0, type_idx: 1 },
+            Instruction::SpawnEntity {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
+            },
             Instruction::InitEntity { r_entity: 0 },
-            Instruction::SpawnEntity { r_dst: 1, type_idx: 1 },
+            Instruction::SpawnEntity {
+                r_dst: 1,
+                type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
+            },
             Instruction::InitEntity { r_entity: 1 },
             Instruction::DestroyEntity { r_entity: 0 },
             // Check destroyed entity
-            Instruction::EntityIsAlive { r_dst: 0, r_entity: 0 },
+            Instruction::EntityIsAlive {
+                r_dst: 0,
+                r_entity: 0,
+            },
             Instruction::Ret { r_src: 0 },
         ],
         2,
@@ -1868,8 +2213,14 @@ fn call_virt_int_add_dispatches_intrinsic() {
     let body = MethodBody {
         register_types: vec![0; 3],
         code: encode(&[
-            Instruction::LoadInt { r_dst: 0, value: 10 },
-            Instruction::LoadInt { r_dst: 1, value: 20 },
+            Instruction::LoadInt {
+                r_dst: 0,
+                value: 10,
+            },
+            Instruction::LoadInt {
+                r_dst: 1,
+                value: 20,
+            },
             // CALL_VIRT: r_dst=2, r_obj=0 (self=10), contract_idx=Add TypeRef,
             // slot=0, r_base=0 (self is first arg), argc=2 (self + other)
             Instruction::CallVirt {
@@ -1907,8 +2258,14 @@ fn call_virt_float_mul_dispatches_intrinsic() {
     let body = MethodBody {
         register_types: vec![0; 3],
         code: encode(&[
-            Instruction::LoadFloat { r_dst: 0, value: 3.0 },
-            Instruction::LoadFloat { r_dst: 1, value: 4.0 },
+            Instruction::LoadFloat {
+                r_dst: 0,
+                value: 3.0,
+            },
+            Instruction::LoadFloat {
+                r_dst: 1,
+                value: 4.0,
+            },
             Instruction::CallVirt {
                 r_dst: 2,
                 r_obj: 0,
@@ -2028,24 +2385,25 @@ fn call_virt_user_defined_contract_dispatch_table_populated() {
     builder.add_contract_method("compute", &[], 0);
 
     // Implement MyContract on MyType with a method that returns 42
-    builder.add_impl_def(my_type, my_contract);
+    let impl_token = builder.add_impl_def(my_type, my_contract);
     let impl_body = MethodBody {
         register_types: vec![0; 2],
         code: encode(&[
-            Instruction::LoadInt { r_dst: 1, value: 42 },
+            Instruction::LoadInt {
+                r_dst: 1,
+                value: 42,
+            },
             Instruction::Ret { r_src: 1 },
         ]),
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_method("compute", &[], 0, 2, impl_body);
+    builder.add_impl_method(impl_token, "compute", &[], 0, 2, impl_body);
 
     // Main method (not used, just needed to construct Runtime)
     let main_body = MethodBody {
         register_types: vec![0; 1],
-        code: encode(&[
-            Instruction::RetVoid,
-        ]),
+        code: encode(&[Instruction::RetVoid]),
         debug_locals: vec![],
         source_spans: vec![],
     };
@@ -2058,7 +2416,8 @@ fn call_virt_user_defined_contract_dispatch_table_populated() {
     // (67 intrinsic entries from virtual module + 1 user entry = 68 after Phase 108 additions)
     let dispatch_table = runtime.dispatch_table();
     assert_eq!(
-        dispatch_table.len(), 72,
+        dispatch_table.len(),
+        72,
         "dispatch table should have 71 intrinsic (67 base + 4 Hashable) + 1 user entry"
     );
 }
@@ -2067,7 +2426,7 @@ fn call_virt_user_defined_contract_dispatch_table_populated() {
 
 /// Helper: build a runtime with a named type of the given kind and N fields.
 /// Adds N field_defs after the type, then adds one "main" method with the
-/// provided instructions. The type will have 1-based type_idx=1 in instructions.
+/// provided instructions. The type has TypeDef token `0x0200_0001`.
 fn build_runtime_with_type(
     type_name: &str,
     kind: TypeDefKind,
@@ -2076,7 +2435,7 @@ fn build_runtime_with_type(
     reg_count: u16,
 ) -> Runtime<NullHost> {
     let mut builder = ModuleBuilder::new("test");
-    let token = builder.add_type_def(type_name, "", kind, 0);
+    builder.add_type_def(type_name, "", kind, 0);
     for i in 0..field_count {
         builder.add_field_def(&format!("f{}", i), &[0x01], 0); // type_sig placeholder
     }
@@ -2099,10 +2458,15 @@ fn test_new_struct_heap_alloc() {
         TypeDefKind::Struct,
         2,
         &[
-            Instruction::New { r_dst: 0, type_idx: 1 },
+            Instruction::New {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+                field_count: 2,
+                r_base: 0,
+            },
             Instruction::Ret { r_src: 0 },
         ],
-        1,
+        2,
     );
     let heap_before = rt.heap().object_count();
     let task_id = rt.spawn_task(0, vec![]).unwrap();
@@ -2111,12 +2475,16 @@ fn test_new_struct_heap_alloc() {
 
     assert_eq!(rt.task_state(task_id), Some(TaskState::Completed));
     // Struct NEW now allocates on heap (Copy-semantic HeapRef)
-    assert_eq!(heap_after, heap_before + 1, "struct NEW must allocate on heap");
+    assert_eq!(
+        heap_after,
+        heap_before + 1,
+        "struct NEW must allocate on heap"
+    );
 
     let ret = rt.return_value(task_id).unwrap();
     match ret {
         Value::Struct { type_idx, .. } => {
-            assert_eq!(type_idx, 1);
+            assert_eq!(type_idx, typedef_token(0));
         }
         other => panic!("expected Value::Struct, got {:?}", other),
     }
@@ -2130,10 +2498,15 @@ fn test_new_class_heap_alloc() {
         TypeDefKind::Class,
         2,
         &[
-            Instruction::New { r_dst: 0, type_idx: 1 },
+            Instruction::New {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+                field_count: 2,
+                r_base: 0,
+            },
             Instruction::Ret { r_src: 0 },
         ],
-        1,
+        2,
     );
     let heap_before = rt.heap().object_count();
     let task_id = rt.spawn_task(0, vec![]).unwrap();
@@ -2141,12 +2514,17 @@ fn test_new_class_heap_alloc() {
     let heap_after = rt.heap().object_count();
 
     assert_eq!(rt.task_state(task_id), Some(TaskState::Completed));
-    assert_eq!(heap_after, heap_before + 1, "class NEW must allocate on heap");
+    assert_eq!(
+        heap_after,
+        heap_before + 1,
+        "class NEW must allocate on heap"
+    );
 
     let ret = rt.return_value(task_id).unwrap();
     assert!(
         matches!(ret, Value::Ref(_)),
-        "expected Ref for class, got {:?}", ret
+        "expected Ref for class, got {:?}",
+        ret
     );
 }
 
@@ -2158,7 +2536,12 @@ fn test_new_enum_kind_crashes() {
         TypeDefKind::Enum,
         0,
         &[
-            Instruction::New { r_dst: 0, type_idx: 1 },
+            Instruction::New {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
+            },
             Instruction::Ret { r_src: 0 },
         ],
         1,
@@ -2184,13 +2567,29 @@ fn test_get_set_field_inline_struct() {
         2,
         &[
             // r0 = new MyStruct (Value::Struct with heap-allocated fields)
-            Instruction::New { r_dst: 0, type_idx: 1 },
+            Instruction::New {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+                field_count: 2,
+                r_base: 0,
+            },
             // r1 = 42
-            Instruction::LoadInt { r_dst: 1, value: 42 },
+            Instruction::LoadInt {
+                r_dst: 1,
+                value: 42,
+            },
             // r0.field[0] = r1
-            Instruction::SetField { r_obj: 0, field_idx: 0, r_val: 1 },
+            Instruction::SetField {
+                r_obj: 0,
+                field_token: 0x0500_0001,
+                r_val: 1,
+            },
             // r2 = r0.field[0]
-            Instruction::GetField { r_dst: 2, r_obj: 0, field_idx: 0 },
+            Instruction::GetField {
+                r_dst: 2,
+                r_obj: 0,
+                field_token: 0x0500_0001,
+            },
             Instruction::Ret { r_src: 2 },
         ],
         3,
@@ -2211,13 +2610,29 @@ fn test_get_set_field_class_ref() {
         2,
         &[
             // r0 = new MyClass (Ref on heap)
-            Instruction::New { r_dst: 0, type_idx: 1 },
+            Instruction::New {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+                field_count: 2,
+                r_base: 0,
+            },
             // r1 = 99
-            Instruction::LoadInt { r_dst: 1, value: 99 },
+            Instruction::LoadInt {
+                r_dst: 1,
+                value: 99,
+            },
             // r0.field[1] = r1
-            Instruction::SetField { r_obj: 0, field_idx: 1, r_val: 1 },
+            Instruction::SetField {
+                r_obj: 0,
+                field_token: 0x0500_0002,
+                r_val: 1,
+            },
             // r2 = r0.field[1]
-            Instruction::GetField { r_dst: 2, r_obj: 0, field_idx: 1 },
+            Instruction::GetField {
+                r_dst: 2,
+                r_obj: 0,
+                field_token: 0x0500_0002,
+            },
             Instruction::Ret { r_src: 2 },
         ],
         3,
@@ -2239,17 +2654,36 @@ fn test_box_unbox_inline_struct() {
         1,
         &[
             // r0 = new MyStruct
-            Instruction::New { r_dst: 0, type_idx: 1 },
+            Instruction::New {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+                field_count: 1,
+                r_base: 0,
+            },
             // r1 = 77
-            Instruction::LoadInt { r_dst: 1, value: 77 },
+            Instruction::LoadInt {
+                r_dst: 1,
+                value: 77,
+            },
             // r0.field[0] = 77
-            Instruction::SetField { r_obj: 0, field_idx: 0, r_val: 1 },
+            Instruction::SetField {
+                r_obj: 0,
+                field_token: 0x0500_0001,
+                r_val: 1,
+            },
             // r2 = Box(r0) — heap allocates Boxed(Value::Struct{...})
             Instruction::Box { r_dst: 2, r_val: 0 },
             // r3 = Unbox(r2) — recovers Value::Struct (shared HeapRef)
-            Instruction::Unbox { r_dst: 3, r_boxed: 2 },
+            Instruction::Unbox {
+                r_dst: 3,
+                r_boxed: 2,
+            },
             // r4 = r3.field[0] — should be 77
-            Instruction::GetField { r_dst: 4, r_obj: 3, field_idx: 0 },
+            Instruction::GetField {
+                r_dst: 4,
+                r_obj: 3,
+                field_token: 0x0500_0001,
+            },
             Instruction::Ret { r_src: 4 },
         ],
         5,
@@ -2271,17 +2705,21 @@ fn test_box_unbox_inline_struct() {
 /// If collect_value_refs does not push the href, the struct will be freed.
 #[test]
 fn test_gc_traces_struct_href_in_register() {
-    use writ_runtime::gc::{collect_value_refs, GcHeap, MarkSweepHeap};
+    use writ_runtime::gc::{GcHeap, MarkSweepHeap, collect_value_refs};
 
     let mut heap = MarkSweepHeap::new();
 
     // Allocate a struct with one field containing a string ref
     let string_href = heap.alloc_string("survive");
     let struct_href = heap.alloc_struct(u32::MAX, 1);
-    heap.set_field(struct_href, 0, Value::Ref(string_href)).unwrap();
+    heap.set_field(struct_href, 0, Value::Ref(string_href))
+        .unwrap();
 
     // Simulate a register holding Value::Struct
-    let reg_val = Value::Struct { type_idx: 1, href: struct_href };
+    let reg_val = Value::Struct {
+        type_idx: 1,
+        href: struct_href,
+    };
 
     // collect_value_refs must surface struct_href as a root
     let mut roots = Vec::new();
@@ -2325,9 +2763,17 @@ fn test_gc_traces_struct_href_in_register() {
 #[test]
 fn batch_dispatch_fib_correctness() {
     let main_instrs = vec![
-        Instruction::LoadInt { r_dst: 0, value: 10 },
+        Instruction::LoadInt {
+            r_dst: 0,
+            value: 10,
+        },
         // Call fib (method index 1, token 0x07000002)
-        Instruction::Call { r_dst: 1, method_idx: 0x07000002, r_base: 0, argc: 1 },
+        Instruction::Call {
+            r_dst: 1,
+            method_idx: 0x07000002,
+            r_base: 0,
+            argc: 1,
+        },
         Instruction::Ret { r_src: 1 },
     ];
 
@@ -2338,22 +2784,51 @@ fn batch_dispatch_fib_correctness() {
         // [0] r1 = 1
         Instruction::LoadInt { r_dst: 1, value: 1 },
         // [1] r2 = (1 < n)  i.e., n > 1
-        Instruction::CmpLtI { r_dst: 2, r_a: 1, r_b: 0 },
+        Instruction::CmpLtI {
+            r_dst: 2,
+            r_a: 1,
+            r_b: 0,
+        },
         // [2] BrFalse: if NOT (n > 1), jump to base case [10] at byte 92
         //              BrFalse is at byte 20, target byte = 92, offset = 92 - 20 = 72
-        Instruction::BrFalse { r_cond: 2, offset: 72 },
+        Instruction::BrFalse {
+            r_cond: 2,
+            offset: 72,
+        },
         // [3] r3 = n - 1  (r1 still holds 1)
-        Instruction::SubI { r_dst: 3, r_a: 0, r_b: 1 },
+        Instruction::SubI {
+            r_dst: 3,
+            r_a: 0,
+            r_b: 1,
+        },
         // [4] r4 = fib(n-1)
-        Instruction::Call { r_dst: 4, method_idx: 0x07000002, r_base: 3, argc: 1 },
+        Instruction::Call {
+            r_dst: 4,
+            method_idx: 0x07000002,
+            r_base: 3,
+            argc: 1,
+        },
         // [5] r1 = 2
         Instruction::LoadInt { r_dst: 1, value: 2 },
         // [6] r3 = n - 2
-        Instruction::SubI { r_dst: 3, r_a: 0, r_b: 1 },
+        Instruction::SubI {
+            r_dst: 3,
+            r_a: 0,
+            r_b: 1,
+        },
         // [7] r5 = fib(n-2)
-        Instruction::Call { r_dst: 5, method_idx: 0x07000002, r_base: 3, argc: 1 },
+        Instruction::Call {
+            r_dst: 5,
+            method_idx: 0x07000002,
+            r_base: 3,
+            argc: 1,
+        },
         // [8] r6 = fib(n-1) + fib(n-2)
-        Instruction::AddI { r_dst: 6, r_a: 4, r_b: 5 },
+        Instruction::AddI {
+            r_dst: 6,
+            r_a: 4,
+            r_b: 5,
+        },
         // [9] return r6
         Instruction::Ret { r_src: 6 },
         // [10] base case: return n  (byte 92)
@@ -2361,7 +2836,7 @@ fn batch_dispatch_fib_correctness() {
     ];
 
     // main: 3 registers, fib: 7 registers (r0..r6)
-    let mut rt = build_two_method_runtime(&main_instrs, 2, &fib_instrs, 7);
+    let mut rt = build_two_method_runtime(&main_instrs, 2, &fib_instrs, 7, 1);
     let task_id = rt.spawn_task(0, vec![]).unwrap();
     loop {
         match rt.tick(0.0, ExecutionLimit::None) {
@@ -2391,14 +2866,28 @@ fn batch_dispatch_fib_correctness() {
 #[test]
 fn batch_respects_execution_limit() {
     let instrs = vec![
-        Instruction::LoadInt { r_dst: 0, value: 0 },     // [0] r0 = 0
-        Instruction::LoadInt { r_dst: 1, value: 1 },     // [1] r1 = 1
-        Instruction::LoadInt { r_dst: 2, value: 100 },   // [2] r2 = 100
+        Instruction::LoadInt { r_dst: 0, value: 0 }, // [0] r0 = 0
+        Instruction::LoadInt { r_dst: 1, value: 1 }, // [1] r1 = 1
+        Instruction::LoadInt {
+            r_dst: 2,
+            value: 100,
+        }, // [2] r2 = 100
         // loop start:
-        Instruction::AddI { r_dst: 0, r_a: 0, r_b: 1 }, // [3] r0 += 1
-        Instruction::CmpLtI { r_dst: 3, r_a: 0, r_b: 2 }, // [4] r3 = r0 < 100
-        Instruction::BrTrue { r_cond: 3, offset: -16 },  // [5] if r3, goto [3] at byte 36 (52-16=36)
-        Instruction::Ret { r_src: 0 },                   // [6] return r0
+        Instruction::AddI {
+            r_dst: 0,
+            r_a: 0,
+            r_b: 1,
+        }, // [3] r0 += 1
+        Instruction::CmpLtI {
+            r_dst: 3,
+            r_a: 0,
+            r_b: 2,
+        }, // [4] r3 = r0 < 100
+        Instruction::BrTrue {
+            r_cond: 3,
+            offset: -16,
+        }, // [5] if r3, goto [3] at byte 36 (52-16=36)
+        Instruction::Ret { r_src: 0 }, // [6] return r0
     ];
     let mut runtime = build_runtime(&instrs, 4);
     let task_id = runtime.spawn_task(0, vec![]).unwrap();
@@ -2408,16 +2897,25 @@ fn batch_respects_execution_limit() {
     let result = runtime.tick(0.0, ExecutionLimit::Instructions(10));
     assert!(
         matches!(result, TickResult::ExecutionLimitReached),
-        "Expected ExecutionLimitReached with limit=10, got {:?}", result
+        "Expected ExecutionLimitReached with limit=10, got {:?}",
+        result
     );
 
     // Task should be Ready (re-queued by run_one_task on LimitReached), not Completed
     let state = runtime.task_state(task_id).unwrap();
-    assert_eq!(state, TaskState::Ready, "task should be re-queued as Ready after limit");
+    assert_eq!(
+        state,
+        TaskState::Ready,
+        "task should be re-queued as Ready after limit"
+    );
 
     // Now run unlimited — should complete with r0 = 100
     let result2 = runtime.tick(0.0, ExecutionLimit::None);
-    assert!(matches!(result2, TickResult::AllCompleted), "Expected AllCompleted, got {:?}", result2);
+    assert!(
+        matches!(result2, TickResult::AllCompleted),
+        "Expected AllCompleted, got {:?}",
+        result2
+    );
     let ret = runtime.return_value(task_id).unwrap();
     assert_eq!(ret, Value::Int(100), "loop should count to 100");
 }
@@ -2437,15 +2935,22 @@ fn test_gc_traces_boxed_inline_struct() {
 
     let inner_href = heap.alloc_string("inner string");
     let struct_href = heap.alloc_struct(u32::MAX, 1);
-    heap.set_field(struct_href, 0, Value::Ref(inner_href)).unwrap();
-    let struct_val = Value::Struct { type_idx: 1, href: struct_href };
+    heap.set_field(struct_href, 0, Value::Ref(inner_href))
+        .unwrap();
+    let struct_val = Value::Struct {
+        type_idx: 1,
+        href: struct_href,
+    };
     // Box the Value::Struct
     let boxed_href = heap.alloc_boxed(struct_val);
     assert_eq!(heap.heap_size(), 3);
 
     // GC with boxed_href as root — boxed, struct, and inner_href all survive
     let stats = heap.collect(&[boxed_href]);
-    assert_eq!(stats.objects_freed, 0, "boxed Value::Struct and its heap objects must survive GC");
+    assert_eq!(
+        stats.objects_freed, 0,
+        "boxed Value::Struct and its heap objects must survive GC"
+    );
     assert_eq!(heap.heap_size(), 3);
     assert_eq!(heap.read_string(inner_href).unwrap(), "inner string");
 

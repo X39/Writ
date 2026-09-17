@@ -1,6 +1,6 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
-    .method "main" () -> void mut {
+    .method "main" () -> void static {
         .locals {
             r0: bool "a" [4, 32)
             r1: bool "b" [8, 32)

@@ -13,20 +13,23 @@ pub struct ResolvedBreakpoint {
     pub id: u32,
     /// The actual source line (may differ from requested if snapped to nearest).
     pub line: u32,
+    pub module_idx: usize,
     pub method_idx: usize,
     pub pc: u32,
 }
 
 /// Maps source file lines to IL instruction addresses using SourceSpan data.
 pub struct BreakpointTable {
+    /// Loaded-module index whose source spans populate this table.
+    module_idx: usize,
     /// All valid breakpoint lines from the module's SourceSpan data.
     /// Maps line -> Vec<(method_idx, pc)>. A line may appear in multiple methods.
     /// Only the first pc per (method, line) is stored (earliest instruction on that line).
     line_index: HashMap<u32, Vec<(usize, u32)>>,
     /// Active breakpoints: breakpoint_id -> ResolvedBreakpoint.
     active: HashMap<u32, ResolvedBreakpoint>,
-    /// Reverse lookup: (method_idx, pc) -> breakpoint_id.
-    pc_lookup: HashMap<(usize, u32), u32>,
+    /// Reverse lookup: (module_idx, method_idx, pc) -> breakpoint_id.
+    pc_lookup: HashMap<(usize, usize, u32), u32>,
     next_id: u32,
 }
 
@@ -36,6 +39,11 @@ impl BreakpointTable {
     /// Iterates all method bodies' source_spans and maps line -> (method_idx, first_pc).
     /// If a line appears multiple times in the same method, only the smallest pc is kept.
     pub fn new(module: &Module) -> Self {
+        Self::for_module(0, module)
+    }
+
+    /// Build a breakpoint table bound to a loaded-module index.
+    pub fn for_module(module_idx: usize, module: &Module) -> Self {
         let mut line_index: HashMap<u32, Vec<(usize, u32)>> = HashMap::new();
 
         for (method_idx, body) in module.method_bodies.iter().enumerate() {
@@ -57,6 +65,7 @@ impl BreakpointTable {
         }
 
         BreakpointTable {
+            module_idx,
             line_index,
             active: HashMap::new(),
             pc_lookup: HashMap::new(),
@@ -101,10 +110,11 @@ impl BreakpointTable {
             let bp = ResolvedBreakpoint {
                 id,
                 line: actual_line,
+                module_idx: self.module_idx,
                 method_idx,
                 pc,
             };
-            self.pc_lookup.insert((method_idx, pc), id);
+            self.pc_lookup.insert((self.module_idx, method_idx, pc), id);
             self.active.insert(id, bp.clone());
             resolved.push(bp);
         }
@@ -112,11 +122,35 @@ impl BreakpointTable {
         resolved
     }
 
-    /// Check if a breakpoint is set at the given (method_idx, pc).
-    ///
-    /// Returns the breakpoint id if hit, `None` otherwise.
+    /// Check if a breakpoint is set at a location in this table's module.
     pub fn lookup(&self, method_idx: usize, pc: u32) -> Option<u32> {
-        self.pc_lookup.get(&(method_idx, pc)).copied()
+        self.lookup_in_module(self.module_idx, method_idx, pc)
+    }
+
+    /// Check if a breakpoint is set at the given domain-qualified location.
+    pub fn lookup_in_module(&self, module_idx: usize, method_idx: usize, pc: u32) -> Option<u32> {
+        self.pc_lookup.get(&(module_idx, method_idx, pc)).copied()
+    }
+
+    /// Rebind the table after the runtime assigns the compiled module its domain index.
+    pub fn set_module_idx(&mut self, module_idx: usize) {
+        if self.module_idx == module_idx {
+            return;
+        }
+        self.module_idx = module_idx;
+        for breakpoint in self.active.values_mut() {
+            breakpoint.module_idx = module_idx;
+        }
+        self.pc_lookup = self
+            .active
+            .values()
+            .map(|breakpoint| {
+                (
+                    (module_idx, breakpoint.method_idx, breakpoint.pc),
+                    breakpoint.id,
+                )
+            })
+            .collect();
     }
 
     /// Remove all active breakpoints.
@@ -171,7 +205,12 @@ mod tests {
     /// Build a minimal Module with the given (method_idx, line, pc) span entries.
     fn make_module(spans: &[(usize, u32, u32)]) -> Module {
         // Determine the number of method bodies needed.
-        let max_method = spans.iter().map(|(m, _, _)| *m).max().map(|m| m + 1).unwrap_or(0);
+        let max_method = spans
+            .iter()
+            .map(|(m, _, _)| *m)
+            .max()
+            .map(|m| m + 1)
+            .unwrap_or(0);
         let mut method_bodies: Vec<MethodBody> = (0..max_method)
             .map(|_| MethodBody {
                 register_types: vec![],
@@ -219,6 +258,23 @@ mod tests {
         // Different method — should not hit
         let result = table.lookup(1, 5);
         assert!(result.is_none(), "expected no hit at wrong method");
+    }
+
+    #[test]
+    fn test_breakpoint_identity_includes_module() {
+        let module = make_module(&[(0, 10, 5)]);
+        let mut table = BreakpointTable::for_module(2, &module);
+        table.set_breakpoints(&[10]);
+
+        assert!(table.lookup_in_module(2, 0, 5).is_some());
+        assert!(
+            table.lookup_in_module(1, 0, 5).is_none(),
+            "a colliding method row and pc in another module must not hit"
+        );
+
+        table.set_module_idx(3);
+        assert!(table.lookup_in_module(2, 0, 5).is_none());
+        assert!(table.lookup_in_module(3, 0, 5).is_some());
     }
 
     #[test]
@@ -289,7 +345,10 @@ mod tests {
         let module = make_module(&[]);
         let mut table = BreakpointTable::new(&module);
         let resolved = table.set_breakpoints(&[10]);
-        assert!(resolved.is_empty(), "no breakpoints should be resolved for empty module");
+        assert!(
+            resolved.is_empty(),
+            "no breakpoints should be resolved for empty module"
+        );
     }
 
     #[test]

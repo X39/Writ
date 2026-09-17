@@ -38,7 +38,10 @@ pub(super) fn emit_literal(emitter: &mut BodyEmitter<'_>, ty: Ty, value: &TypedL
             // and patch the LoadString instructions with correct string_idx values.
             let r_dst = emitter.alloc_reg(ty);
             let instr_idx = emitter.instructions.len();
-            emitter.emit(Instruction::LoadString { r_dst, string_idx: 0 }); // placeholder
+            emitter.emit(Instruction::LoadString {
+                r_dst,
+                string_idx: 0,
+            }); // placeholder
             emitter.pending_strings.push((instr_idx, s.clone()));
             r_dst
         }

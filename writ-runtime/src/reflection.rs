@@ -7,6 +7,8 @@
 
 use rustc_hash::FxHashMap;
 use writ_module::heap::read_string;
+use writ_module::instruction::ArrayDefaultKind;
+use writ_module::tables::{FIELD_FLAG_PUBLIC, FIELD_FLAG_READONLY, METHOD_FLAG_PUBLIC};
 
 use crate::gc::GcHeap;
 use crate::heap::HeapObject;
@@ -127,14 +129,14 @@ impl ReflectionIndex {
             // Field 3: is_generic (bool) — scan GenericParam table for any params owned by this TypeDef
             use writ_module::tables::TableId;
             let target_row = (typedef_idx + 1) as u32;
-            let is_generic = module.module.generic_params.iter().any(|p|
+            let is_generic = module.module.generic_params.iter().any(|p| {
                 p.owner.table_id() == TableId::TypeDef.as_u8()
-                && p.owner.row_index() == Some(target_row)
-            );
+                    && p.owner.row_index() == Some(target_row)
+            });
             let _ = heap.set_field(href, 3, Value::Bool(is_generic));
 
             // Field 4: type_args (Array<Type>) — empty for non-TypeSpec types
-            let empty_arr = heap.alloc_array(0);
+            let empty_arr = heap.alloc_array(ArrayDefaultKind::NullReference.operand());
             let _ = heap.set_field(href, 4, Value::Ref(empty_arr));
         }
 
@@ -147,11 +149,7 @@ impl ReflectionIndex {
     ///
     /// Uses synthetic cache keys `(usize::MAX, ordinal)` where ordinals are:
     /// Int=0, Float=1, Bool=2, String=3
-    pub fn get_or_alloc_primitive_type(
-        &mut self,
-        name: &str,
-        heap: &mut dyn GcHeap,
-    ) -> HeapRef {
+    pub fn get_or_alloc_primitive_type(&mut self, name: &str, heap: &mut dyn GcHeap) -> HeapRef {
         let ordinal = match name {
             "Int" => 0,
             "Float" => 1,
@@ -184,7 +182,7 @@ impl ReflectionIndex {
         let _ = heap.set_field(href, 3, Value::Bool(false));
 
         // Field 4: type_args (Array<Type>) — empty for primitives
-        let empty_arr = heap.alloc_array(0);
+        let empty_arr = heap.alloc_array(ArrayDefaultKind::NullReference.operand());
         let _ = heap.set_field(href, 4, Value::Ref(empty_arr));
 
         self.type_cache.insert(key, href);
@@ -224,9 +222,11 @@ impl ReflectionIndex {
     ///
     /// Returns `(field_start, field_end)` where `field_start..field_end` indexes into
     /// `modules[module_idx].module.field_defs`.
-    pub fn typedef_field_range_pub(modules: &[LoadedModule], module_idx: usize, typedef_idx: usize)
-        -> (usize, usize)
-    {
+    pub fn typedef_field_range_pub(
+        modules: &[LoadedModule],
+        module_idx: usize,
+        typedef_idx: usize,
+    ) -> (usize, usize) {
         if module_idx >= modules.len() {
             return (0, 0);
         }
@@ -237,35 +237,58 @@ impl ReflectionIndex {
         let td = &module.type_defs[typedef_idx];
         let start = td.field_list.saturating_sub(1) as usize;
         let end = if typedef_idx + 1 < module.type_defs.len() {
-            module.type_defs[typedef_idx + 1].field_list.saturating_sub(1) as usize
+            module.type_defs[typedef_idx + 1]
+                .field_list
+                .saturating_sub(1) as usize
         } else {
             module.field_defs.len()
         };
         (start, end)
     }
 
-    /// Get the range of method indices for a TypeDef (0-based start inclusive, exclusive end).
+    /// Get public field offsets within a TypeDef's physical field layout.
     ///
-    /// Returns `(method_start, method_end)` where `method_start..method_end` indexes into
-    /// `modules[module_idx].module.method_defs`.
-    pub fn typedef_method_range_pub(modules: &[LoadedModule], module_idx: usize, typedef_idx: usize)
-        -> (usize, usize)
-    {
+    /// Offsets are not compacted: a public field after a private field retains
+    /// its original heap-object slot for FieldInfo.get/set.
+    pub fn typedef_public_field_offsets(
+        modules: &[LoadedModule],
+        module_idx: usize,
+        typedef_idx: usize,
+    ) -> Vec<usize> {
         if module_idx >= modules.len() {
-            return (0, 0);
+            return Vec::new();
+        }
+        let module = &modules[module_idx].module;
+        let (start, end) = Self::typedef_field_range_pub(modules, module_idx, typedef_idx);
+        let end = end.min(module.field_defs.len());
+        if start >= end {
+            return Vec::new();
+        }
+        module.field_defs[start..end]
+            .iter()
+            .enumerate()
+            .filter_map(|(offset, field)| (field.flags & FIELD_FLAG_PUBLIC != 0).then_some(offset))
+            .collect()
+    }
+
+    /// Get the MethodDef indices explicitly owned by a TypeDef.
+    pub fn typedef_method_indices_pub(
+        modules: &[LoadedModule],
+        module_idx: usize,
+        typedef_idx: usize,
+    ) -> Vec<usize> {
+        if module_idx >= modules.len() {
+            return Vec::new();
         }
         let module = &modules[module_idx].module;
         if typedef_idx >= module.type_defs.len() {
-            return (0, 0);
+            return Vec::new();
         }
-        let td = &module.type_defs[typedef_idx];
-        let start = td.method_list.saturating_sub(1) as usize;
-        let end = if typedef_idx + 1 < module.type_defs.len() {
-            module.type_defs[typedef_idx + 1].method_list.saturating_sub(1) as usize
-        } else {
-            module.method_defs.len()
-        };
-        (start, end)
+        module
+            .type_method_indices(typedef_idx)
+            .into_iter()
+            .filter(|method_idx| module.method_defs[*method_idx].flags & METHOD_FLAG_PUBLIC != 0)
+            .collect()
     }
 
     /// Get or allocate a FieldInfo heap object for the given field.
@@ -280,7 +303,8 @@ impl ReflectionIndex {
         heap: &mut dyn GcHeap,
         modules: &[LoadedModule],
     ) -> HeapRef {
-        let (field_start, _field_end) = Self::typedef_field_range_pub(modules, module_idx, typedef_idx);
+        let (field_start, _field_end) =
+            Self::typedef_field_range_pub(modules, module_idx, typedef_idx);
         let absolute_field_idx = field_start + field_offset;
         let key = (module_idx, absolute_field_idx);
 
@@ -295,20 +319,25 @@ impl ReflectionIndex {
             let fd = &module.field_defs[absolute_field_idx];
 
             // Field 0 (name): string from field def
-            let name = read_string(&module.string_heap, fd.name).unwrap_or("").to_owned();
+            let name = read_string(&module.string_heap, fd.name)
+                .unwrap_or("")
+                .to_owned();
             let name_href = heap.alloc_string(&name);
             let _ = heap.set_field(href, 0, Value::Ref(name_href));
 
             // Field 1 (declared_type): Value::Void placeholder (full type resolution in Phase 106)
             let _ = heap.set_field(href, 1, Value::Void);
 
-            // Field 2 (is_mutable): 0x01 = FIELD_FLAG_READONLY; is_mutable = (flags & 0x01) == 0
-            let is_mutable = (fd.flags & 0x01) == 0;
+            // Source fields without `mut` set READONLY; source `mut` fields
+            // clear it. Runtime and programmatic modules control the same
+            // policy directly through FieldDef flags.
+            let is_mutable = (fd.flags & FIELD_FLAG_READONLY) == 0;
             let _ = heap.set_field(href, 2, Value::Bool(is_mutable));
         }
 
         self.field_cache.insert(key, href);
-        self.field_reverse.insert(href, (module_idx, typedef_idx, field_offset));
+        self.field_reverse
+            .insert(href, (module_idx, typedef_idx, field_offset));
         href
     }
 
@@ -342,7 +371,9 @@ impl ReflectionIndex {
             let md = &module.method_defs[method_idx];
 
             // Field 0 (name): string from method def
-            let name = read_string(&module.string_heap, md.name).unwrap_or("").to_owned();
+            let name = read_string(&module.string_heap, md.name)
+                .unwrap_or("")
+                .to_owned();
             let name_href = heap.alloc_string(&name);
             let _ = heap.set_field(href, 0, Value::Ref(name_href));
 
@@ -350,7 +381,7 @@ impl ReflectionIndex {
             let _ = heap.set_field(href, 1, Value::Void);
 
             // Field 2 (parameters): empty Array (full param population in Phase 106)
-            let arr_href = heap.alloc_array(0); // elem_type=0 (void/untyped)
+            let arr_href = heap.alloc_array(ArrayDefaultKind::NullReference.operand());
             let _ = heap.set_field(href, 2, Value::Ref(arr_href));
         }
 
@@ -407,30 +438,24 @@ impl ReflectionIndex {
         let _ = heap.set_field(href, 0, Value::Ref(name_href));
 
         // Field 1 (args): Array of boxed AttrValues
-        let arr_href = heap.alloc_array(0);
+        let arr_href = heap.alloc_array(ArrayDefaultKind::NullReference.operand());
         for arg in args {
             let boxed = match arg {
                 writ_module::attr::AttrValue::String(s) => {
                     let s_href = heap.alloc_string(s);
                     heap.alloc_boxed(Value::Ref(s_href))
                 }
-                writ_module::attr::AttrValue::Int(i) => {
-                    heap.alloc_boxed(Value::Int(*i))
-                }
-                writ_module::attr::AttrValue::Bool(b) => {
-                    heap.alloc_boxed(Value::Bool(*b))
-                }
-                writ_module::attr::AttrValue::Named { value, .. } => {
-                    match value.as_ref() {
-                        writ_module::attr::AttrValue::String(s) => {
-                            let s_href = heap.alloc_string(s);
-                            heap.alloc_boxed(Value::Ref(s_href))
-                        }
-                        writ_module::attr::AttrValue::Int(i) => heap.alloc_boxed(Value::Int(*i)),
-                        writ_module::attr::AttrValue::Bool(b) => heap.alloc_boxed(Value::Bool(*b)),
-                        _ => heap.alloc_boxed(Value::Void),
+                writ_module::attr::AttrValue::Int(i) => heap.alloc_boxed(Value::Int(*i)),
+                writ_module::attr::AttrValue::Bool(b) => heap.alloc_boxed(Value::Bool(*b)),
+                writ_module::attr::AttrValue::Named { value, .. } => match value.as_ref() {
+                    writ_module::attr::AttrValue::String(s) => {
+                        let s_href = heap.alloc_string(s);
+                        heap.alloc_boxed(Value::Ref(s_href))
                     }
-                }
+                    writ_module::attr::AttrValue::Int(i) => heap.alloc_boxed(Value::Int(*i)),
+                    writ_module::attr::AttrValue::Bool(b) => heap.alloc_boxed(Value::Bool(*b)),
+                    _ => heap.alloc_boxed(Value::Void),
+                },
             };
             if let Ok(HeapObject::Array { elements, .. }) = heap.get_object_mut(arr_href) {
                 elements.push(Value::Ref(boxed));
@@ -536,9 +561,14 @@ impl ReflectionIndex {
                 0x04 => self.get_or_alloc_primitive_type("String", heap),
                 0x10 if sig_blob.len() >= 6 => {
                     // TypeRef: next 4 bytes are a metadata token
-                    let token_val = u32::from_le_bytes([sig_blob[2], sig_blob[3], sig_blob[4], sig_blob[5]]);
+                    let token_val =
+                        u32::from_le_bytes([sig_blob[2], sig_blob[3], sig_blob[4], sig_blob[5]]);
                     let typedef_0based = ((token_val & 0x00FF_FFFF) as usize).saturating_sub(1);
-                    let type_module_idx = if (token_val >> 24) == 2 { module_idx } else { 0 };
+                    let type_module_idx = if (token_val >> 24) == 2 {
+                        module_idx
+                    } else {
+                        0
+                    };
                     self.get_or_alloc_type(type_module_idx, typedef_0based, heap, modules)
                 }
                 _ => self.get_or_alloc_primitive_type("Int", heap), // fallback
@@ -558,7 +588,7 @@ impl ReflectionIndex {
         let _ = heap.set_field(href, 3, Value::Bool(true));
 
         // Field 4: type_args array
-        let arr_href = heap.alloc_array(0);
+        let arr_href = heap.alloc_array(ArrayDefaultKind::NullReference.operand());
         if let Ok(HeapObject::Array { elements, .. }) = heap.get_object_mut(arr_href) {
             for v in type_arg_hrefs {
                 elements.push(v);
@@ -594,7 +624,9 @@ impl ReflectionIndex {
             let cd = &module.contract_defs[contract_idx];
 
             // Field 0 (name): string from contract def
-            let name = read_string(&module.string_heap, cd.name).unwrap_or("").to_owned();
+            let name = read_string(&module.string_heap, cd.name)
+                .unwrap_or("")
+                .to_owned();
             let name_href = heap.alloc_string(&name);
             let _ = heap.set_field(href, 0, Value::Ref(name_href));
 
@@ -634,11 +666,17 @@ mod tests {
         let href1 = idx.get_or_alloc_primitive_type("Int", &mut heap);
         let href2 = idx.get_or_alloc_primitive_type("Int", &mut heap);
         // Same cached object returned on second call
-        assert_eq!(href1.0, href2.0, "cached HeapRef should be returned on second call");
+        assert_eq!(
+            href1.0, href2.0,
+            "cached HeapRef should be returned on second call"
+        );
 
         // Different primitives get different objects
         let float_href = idx.get_or_alloc_primitive_type("Float", &mut heap);
-        assert_ne!(href1.0, float_href.0, "Int and Float should have separate Type objects");
+        assert_ne!(
+            href1.0, float_href.0,
+            "Int and Float should have separate Type objects"
+        );
     }
 
     #[test]
@@ -670,7 +708,13 @@ mod tests {
 
         // The Type object (5 fields struct) plus 3 string fields plus 1 empty Array (field 4)
         // = 5 heap objects total, all survive since transitively reachable from the root
-        assert_eq!(stats.objects_freed, 0, "cached Type object should survive GC");
-        assert!(heap.get_object(int_href).is_ok(), "Type object still accessible after GC");
+        assert_eq!(
+            stats.objects_freed, 0,
+            "cached Type object should survive GC"
+        );
+        assert!(
+            heap.get_object(int_href).is_ok(),
+            "Type object still accessible after GC"
+        );
     }
 }

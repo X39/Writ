@@ -8,8 +8,7 @@ use crate::check::ir::TypedExpr;
 use crate::check::ty::Ty;
 
 use super::super::BodyEmitter;
-use super::super::call::pack_args_consecutive;
-use super::emit_expr;
+use super::{emit_expr, pack_concrete_call_args, resolve_concrete_call_target};
 
 /// Emit an if/else expression.
 ///
@@ -40,7 +39,10 @@ pub(super) fn emit_if(
 
     // Emit then-branch; MOV result into shared register
     let r_then = emit_expr(emitter, then_branch);
-    emitter.emit(Instruction::Mov { r_dst: r_result, r_src: r_then });
+    emitter.emit(Instruction::Mov {
+        r_dst: r_result,
+        r_src: r_then,
+    });
 
     // Br to end_label — record fixup
     let br_idx = emitter.instructions.len();
@@ -53,7 +55,10 @@ pub(super) fn emit_if(
     // Emit else-branch (or Nop if None); MOV result into shared register
     if let Some(e) = else_branch {
         let r_else = emit_expr(emitter, e);
-        emitter.emit(Instruction::Mov { r_dst: r_result, r_src: r_else });
+        emitter.emit(Instruction::Mov {
+            r_dst: r_result,
+            r_src: r_else,
+        });
     } else {
         emitter.emit(Instruction::Nop);
     }
@@ -71,46 +76,39 @@ pub(super) fn emit_if(
 ///   1. Emit the inner call expression's arguments
 ///   2. SPAWN_TASK { r_dst, method_idx, r_base, argc }
 ///
-/// The inner expr must be a Call. method_idx is derived from the call's callee
-/// (using the builder's def_token_map, or 0 as placeholder).
-pub(super) fn emit_spawn(
-    emitter: &mut BodyEmitter<'_>,
-    ty: Ty,
-    inner: &TypedExpr,
-    detached: bool,
-) -> u16 {
+/// Type checking guarantees that the inner expression is a statically resolved
+/// concrete bytecode call. Emission therefore uses the same signature-aware
+/// target resolution and receiver ABI as an ordinary direct call.
+pub(super) fn emit_spawn(emitter: &mut BodyEmitter<'_>, ty: Ty, inner: &TypedExpr) -> u16 {
     let r_dst = emitter.alloc_reg(ty);
 
-    match inner {
-        TypedExpr::Call { args, callee_def_id, .. } => {
-            // Emit args into consecutive block (BUG-06 fix: skip MOV if already consecutive)
-            let arg_regs: Vec<u16> = args.iter().map(|a| emit_expr(emitter, a)).collect();
-            let argc = arg_regs.len() as u16;
-            let r_base = pack_args_consecutive(emitter, &arg_regs);
+    let TypedExpr::Call {
+        callee,
+        args,
+        callee_def_id,
+        callee_has_receiver,
+        ..
+    } = inner
+    else {
+        unreachable!("checked spawn operand must be a concrete call")
+    };
+    let target = resolve_concrete_call_target(
+        emitter,
+        callee,
+        callee.ty(),
+        *callee_def_id,
+        *callee_has_receiver,
+    )
+    .expect("checked spawn call has no concrete non-null method target");
+    let (r_base, argc) = pack_concrete_call_args(emitter, callee, args, target)
+        .expect("resolved instance spawn must have a field receiver");
 
-            // MC-01 fix: use callee_def_id from the Call node (populated during type checking)
-            // instead of extract_callee_def_id_opt which always returned None.
-            let method_idx = callee_def_id
-                .and_then(|id| emitter.builder.token_for_def(id))
-                .map(|t| t.0)
-                .unwrap_or(0);
-
-            if detached {
-                emitter.emit(Instruction::SpawnDetached { r_dst, method_idx, r_base, argc });
-            } else {
-                emitter.emit(Instruction::SpawnTask { r_dst, method_idx, r_base, argc });
-            }
-        }
-        _ => {
-            // Non-call inner expr: emit it and use a placeholder spawn
-            let _ = emit_expr(emitter, inner);
-            if detached {
-                emitter.emit(Instruction::SpawnDetached { r_dst, method_idx: 0, r_base: 0, argc: 0 });
-            } else {
-                emitter.emit(Instruction::SpawnTask { r_dst, method_idx: 0, r_base: 0, argc: 0 });
-            }
-        }
-    }
+    emitter.emit(Instruction::SpawnTask {
+        r_dst,
+        method_idx: target.token,
+        r_base,
+        argc,
+    });
 
     r_dst
 }
@@ -144,7 +142,10 @@ pub(super) fn emit_defer(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16
 
     // Emit DeferPush with placeholder method_idx; record index for patching
     let defer_push_idx = emitter.instructions.len();
-    emitter.emit(Instruction::DeferPush { r_dst, method_idx: 0 }); // placeholder
+    emitter.emit(Instruction::DeferPush {
+        r_dst,
+        method_idx: 0,
+    }); // placeholder
 
     // DeferPop: disarm the defer on normal exit path
     emitter.emit(Instruction::DeferPop);

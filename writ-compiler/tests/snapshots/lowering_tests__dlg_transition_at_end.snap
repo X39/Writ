@@ -68,17 +68,15 @@ Ast {
                         },
                         span: 14..30,
                     },
-                    Return {
-                        value: Some(
-                            Call {
-                                callee: Ident {
-                                    name: "farewell",
-                                    span: 34..42,
-                                },
-                                args: [],
-                                span: 31..42,
+                    Transition {
+                        call: Call {
+                            callee: Ident {
+                                name: "farewell",
+                                span: 34..42,
                             },
-                        ),
+                            args: [],
+                            span: 31..42,
+                        },
                         span: 31..42,
                     },
                 ],
