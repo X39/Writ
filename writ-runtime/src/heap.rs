@@ -12,10 +12,27 @@ pub enum HeapObject {
     /// `(module_idx << 16) | typedef_row_0based`. It is `u32::MAX`
     /// for allocations that do not need virtual-dispatch lookup
     /// (e.g., entity data buffers).
-    Struct { type_key: u32, fields: Vec<Value> },
-    Array { elem_type: u32, elements: Vec<Value> },
-    Delegate { method_idx: usize, target: Option<Value> },
-    Enum { type_idx: u32, tag: u16, fields: Vec<Value> },
+    Struct {
+        type_key: u32,
+        /// Module-scoped TypeSpec token for a constructed generic instance.
+        /// `None` denotes a bare nominal allocation.
+        type_spec: Option<(usize, u32)>,
+        fields: Vec<Value>,
+    },
+    Array {
+        default_kind: u32,
+        elements: Vec<Value>,
+    },
+    Delegate {
+        module_idx: usize,
+        method_idx: usize,
+        target: Option<Value>,
+    },
+    Enum {
+        type_idx: u32,
+        tag: u16,
+        fields: Vec<Value>,
+    },
     Boxed(Value),
 }
 
@@ -50,25 +67,51 @@ impl BumpHeap {
         let idx = self.objects.len() as u32;
         self.objects.push(HeapObject::Struct {
             type_key,
+            type_spec: None,
             fields: vec![Value::Void; field_count],
         });
         HeapRef(idx)
     }
 
-    /// Allocate an empty array with the given element type.
-    pub fn alloc_array(&mut self, elem_type: u32) -> HeapRef {
+    /// Allocate a struct or class with all fields initialized atomically.
+    pub fn alloc_struct_initialized(
+        &mut self,
+        type_key: u32,
+        type_spec: Option<(usize, u32)>,
+        fields: Vec<Value>,
+    ) -> HeapRef {
+        let idx = self.objects.len() as u32;
+        self.objects.push(HeapObject::Struct {
+            type_key,
+            type_spec,
+            fields,
+        });
+        HeapRef(idx)
+    }
+
+    /// Allocate an empty array with the given growth-default kind.
+    pub fn alloc_array(&mut self, default_kind: u32) -> HeapRef {
         let idx = self.objects.len() as u32;
         self.objects.push(HeapObject::Array {
-            elem_type,
+            default_kind,
             elements: Vec::new(),
         });
         HeapRef(idx)
     }
 
     /// Allocate a delegate (function pointer with optional captured target).
-    pub fn alloc_delegate(&mut self, method_idx: usize, target: Option<Value>) -> HeapRef {
+    pub fn alloc_delegate(
+        &mut self,
+        module_idx: usize,
+        method_idx: usize,
+        target: Option<Value>,
+    ) -> HeapRef {
         let idx = self.objects.len() as u32;
-        self.objects.push(HeapObject::Delegate { method_idx, target });
+        self.objects.push(HeapObject::Delegate {
+            module_idx,
+            method_idx,
+            target,
+        });
         HeapRef(idx)
     }
 
@@ -108,24 +151,20 @@ impl BumpHeap {
     /// Get a field value from a struct or enum heap object.
     pub fn get_field(&self, href: HeapRef, idx: usize) -> Result<Value, RuntimeError> {
         match self.objects.get(href.0 as usize) {
-            Some(HeapObject::Struct { fields, .. }) => {
-                fields.get(idx).cloned().ok_or_else(|| {
-                    RuntimeError::ExecutionError(format!(
-                        "field index {} out of range for struct with {} fields",
-                        idx,
-                        fields.len()
-                    ))
-                })
-            }
-            Some(HeapObject::Enum { fields, .. }) => {
-                fields.get(idx).cloned().ok_or_else(|| {
-                    RuntimeError::ExecutionError(format!(
-                        "field index {} out of range for enum with {} fields",
-                        idx,
-                        fields.len()
-                    ))
-                })
-            }
+            Some(HeapObject::Struct { fields, .. }) => fields.get(idx).cloned().ok_or_else(|| {
+                RuntimeError::ExecutionError(format!(
+                    "field index {} out of range for struct with {} fields",
+                    idx,
+                    fields.len()
+                ))
+            }),
+            Some(HeapObject::Enum { fields, .. }) => fields.get(idx).cloned().ok_or_else(|| {
+                RuntimeError::ExecutionError(format!(
+                    "field index {} out of range for enum with {} fields",
+                    idx,
+                    fields.len()
+                ))
+            }),
             Some(_) => Err(RuntimeError::ExecutionError(format!(
                 "heap object at {} does not have fields",
                 href.0
@@ -193,12 +232,26 @@ impl GcHeap for BumpHeap {
         BumpHeap::alloc_struct(self, type_key, field_count)
     }
 
-    fn alloc_array(&mut self, elem_type: u32) -> HeapRef {
-        BumpHeap::alloc_array(self, elem_type)
+    fn alloc_struct_initialized(
+        &mut self,
+        type_key: u32,
+        type_spec: Option<(usize, u32)>,
+        fields: Vec<Value>,
+    ) -> HeapRef {
+        BumpHeap::alloc_struct_initialized(self, type_key, type_spec, fields)
     }
 
-    fn alloc_delegate(&mut self, method_idx: usize, target: Option<Value>) -> HeapRef {
-        BumpHeap::alloc_delegate(self, method_idx, target)
+    fn alloc_array(&mut self, default_kind: u32) -> HeapRef {
+        BumpHeap::alloc_array(self, default_kind)
+    }
+
+    fn alloc_delegate(
+        &mut self,
+        module_idx: usize,
+        method_idx: usize,
+        target: Option<Value>,
+    ) -> HeapRef {
+        BumpHeap::alloc_delegate(self, module_idx, method_idx, target)
     }
 
     fn alloc_enum(&mut self, type_idx: u32, tag: u16, fields: Vec<Value>) -> HeapRef {
@@ -306,9 +359,14 @@ mod tests {
     #[test]
     fn alloc_delegate() {
         let mut heap = BumpHeap::new();
-        let href = heap.alloc_delegate(5, Some(Value::Int(10)));
+        let href = heap.alloc_delegate(2, 5, Some(Value::Int(10)));
         match heap.get_object(href).unwrap() {
-            HeapObject::Delegate { method_idx, target } => {
+            HeapObject::Delegate {
+                module_idx,
+                method_idx,
+                target,
+            } => {
+                assert_eq!(*module_idx, 2);
                 assert_eq!(*method_idx, 5);
                 assert_eq!(*target, Some(Value::Int(10)));
             }
@@ -321,9 +379,7 @@ mod tests {
         let mut heap = BumpHeap::new();
         let href = heap.alloc_enum(0, 1, vec![Value::Int(42)]);
         match heap.get_object(href).unwrap() {
-            HeapObject::Enum {
-                tag, fields, ..
-            } => {
+            HeapObject::Enum { tag, fields, .. } => {
                 assert_eq!(*tag, 1);
                 assert_eq!(fields.len(), 1);
                 assert_eq!(fields[0], Value::Int(42));

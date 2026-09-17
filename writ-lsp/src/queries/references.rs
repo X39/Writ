@@ -63,7 +63,13 @@ fn collect_refs_in_expr(
                 refs.push(*span);
             }
         }
-        TypedExpr::Call { callee_def_id: Some(id), span, callee, args, .. } => {
+        TypedExpr::Call {
+            callee_def_id: Some(id),
+            span,
+            callee,
+            args,
+            ..
+        } => {
             if *id == target_def_id {
                 refs.push(*span);
             }
@@ -79,7 +85,12 @@ fn collect_refs_in_expr(
                 collect_refs_in_expr(arg, target_def_id, def_map, refs);
             }
         }
-        TypedExpr::New { target_def_id: id, span, fields, .. } => {
+        TypedExpr::New {
+            target_def_id: id,
+            span,
+            fields,
+            ..
+        } => {
             if *id == target_def_id {
                 refs.push(*span);
             }
@@ -96,7 +107,9 @@ fn collect_refs_in_expr(
         TypedExpr::Field { receiver, .. } | TypedExpr::ComponentAccess { receiver, .. } => {
             collect_refs_in_expr(receiver, target_def_id, def_map, refs);
         }
-        TypedExpr::Index { receiver, index, .. } => {
+        TypedExpr::Index {
+            receiver, index, ..
+        } => {
             collect_refs_in_expr(receiver, target_def_id, def_map, refs);
             collect_refs_in_expr(index, target_def_id, def_map, refs);
         }
@@ -107,13 +120,20 @@ fn collect_refs_in_expr(
         TypedExpr::UnaryPrefix { expr: inner, .. } => {
             collect_refs_in_expr(inner, target_def_id, def_map, refs);
         }
-        TypedExpr::Match { scrutinee, arms, .. } => {
+        TypedExpr::Match {
+            scrutinee, arms, ..
+        } => {
             collect_refs_in_expr(scrutinee, target_def_id, def_map, refs);
             for arm in arms {
                 collect_refs_in_expr(&arm.body, target_def_id, def_map, refs);
             }
         }
-        TypedExpr::If { condition, then_branch, else_branch, .. } => {
+        TypedExpr::If {
+            condition,
+            then_branch,
+            else_branch,
+            ..
+        } => {
             collect_refs_in_expr(condition, target_def_id, def_map, refs);
             collect_refs_in_expr(then_branch, target_def_id, def_map, refs);
             if let Some(eb) = else_branch {
@@ -147,7 +167,6 @@ fn collect_refs_in_expr(
             }
         }
         TypedExpr::Spawn { expr: inner, .. }
-        | TypedExpr::SpawnDetached { expr: inner, .. }
         | TypedExpr::Join { expr: inner, .. }
         | TypedExpr::Cancel { expr: inner, .. }
         | TypedExpr::Defer { expr: inner, .. } => {
@@ -191,7 +210,9 @@ fn collect_refs_in_stmt(
             collect_refs_in_expr(iterable, target_def_id, def_map, refs);
             collect_refs_in_stmts(body, target_def_id, def_map, refs);
         }
-        TypedStmt::While { condition, body, .. } => {
+        TypedStmt::While {
+            condition, body, ..
+        } => {
             collect_refs_in_expr(condition, target_def_id, def_map, refs);
             collect_refs_in_stmts(body, target_def_id, def_map, refs);
         }
@@ -202,6 +223,9 @@ fn collect_refs_in_stmt(
             if let Some(v) = value {
                 collect_refs_in_expr(v, target_def_id, def_map, refs);
             }
+        }
+        TypedStmt::Transition { call, .. } => {
+            collect_refs_in_expr(call, target_def_id, def_map, refs);
         }
         TypedStmt::Break { value, .. } => {
             if let Some(v) = value {
@@ -240,18 +264,24 @@ pub fn binding_at_offset(
             continue;
         }
         match decl {
-            TypedDecl::Fn { def_id, body, param_name_spans } => {
+            TypedDecl::Fn {
+                def_id,
+                body,
+                param_name_spans,
+            } => {
                 // Check fn param name spans
                 if let Some(sig) = type_env.fn_sigs.get(def_id) {
                     for (i, (param_name, param_ty)) in sig.params.iter().enumerate() {
                         if let Some(span) = param_name_spans.get(i)
-                            && offset >= span.start && offset < span.end {
-                                return Some(BindingInfo {
-                                    name: param_name.to_string(),
-                                    ty: *param_ty,
-                                    name_span: *span,
-                                });
-                            }
+                            && offset >= span.start
+                            && offset < span.end
+                        {
+                            return Some(BindingInfo {
+                                name: param_name.to_string(),
+                                ty: *param_ty,
+                                name_span: *span,
+                            });
+                        }
                     }
                 }
                 // Check body bindings
@@ -282,23 +312,38 @@ fn find_binding_in_expr(expr: &TypedExpr, offset: usize) -> Option<BindingInfo> 
             }
             tail.as_ref().and_then(|t| find_binding_in_expr(t, offset))
         }
-        TypedExpr::If { condition, then_branch, else_branch, .. } => {
-            find_binding_in_expr(condition, offset)
-                .or_else(|| find_binding_in_expr(then_branch, offset))
-                .or_else(|| else_branch.as_ref().and_then(|e| find_binding_in_expr(e, offset)))
-        }
+        TypedExpr::If {
+            condition,
+            then_branch,
+            else_branch,
+            ..
+        } => find_binding_in_expr(condition, offset)
+            .or_else(|| find_binding_in_expr(then_branch, offset))
+            .or_else(|| {
+                else_branch
+                    .as_ref()
+                    .and_then(|e| find_binding_in_expr(e, offset))
+            }),
         TypedExpr::Lambda { body, .. } => find_binding_in_expr(body, offset),
-        TypedExpr::Match { scrutinee, arms, .. } => {
-            find_binding_in_expr(scrutinee, offset)
-                .or_else(|| arms.iter().find_map(|arm| find_binding_in_expr(&arm.body, offset)))
-        }
+        TypedExpr::Match {
+            scrutinee, arms, ..
+        } => find_binding_in_expr(scrutinee, offset).or_else(|| {
+            arms.iter()
+                .find_map(|arm| find_binding_in_expr(&arm.body, offset))
+        }),
         _ => None,
     }
 }
 
 fn find_binding_in_stmt(stmt: &TypedStmt, offset: usize) -> Option<BindingInfo> {
     match stmt {
-        TypedStmt::Let { name, name_span, ty, value, .. } => {
+        TypedStmt::Let {
+            name,
+            name_span,
+            ty,
+            value,
+            ..
+        } => {
             if offset >= name_span.start && offset < name_span.end {
                 return Some(BindingInfo {
                     name: name.clone(),
@@ -309,7 +354,14 @@ fn find_binding_in_stmt(stmt: &TypedStmt, offset: usize) -> Option<BindingInfo> 
             // Also recurse into the value expression
             find_binding_in_expr(value, offset)
         }
-        TypedStmt::For { binding, binding_span, binding_ty, iterable, body, .. } => {
+        TypedStmt::For {
+            binding,
+            binding_span,
+            binding_ty,
+            iterable,
+            body,
+            ..
+        } => {
             if offset >= binding_span.start && offset < binding_span.end {
                 return Some(BindingInfo {
                     name: binding.clone(),
@@ -320,17 +372,16 @@ fn find_binding_in_stmt(stmt: &TypedStmt, offset: usize) -> Option<BindingInfo> 
             find_binding_in_expr(iterable, offset)
                 .or_else(|| body.iter().find_map(|s| find_binding_in_stmt(s, offset)))
         }
-        TypedStmt::While { condition, body, .. } => {
-            find_binding_in_expr(condition, offset)
-                .or_else(|| body.iter().find_map(|s| find_binding_in_stmt(s, offset)))
-        }
-        TypedStmt::Atomic { body, .. } => {
-            body.iter().find_map(|s| find_binding_in_stmt(s, offset))
-        }
+        TypedStmt::While {
+            condition, body, ..
+        } => find_binding_in_expr(condition, offset)
+            .or_else(|| body.iter().find_map(|s| find_binding_in_stmt(s, offset))),
+        TypedStmt::Atomic { body, .. } => body.iter().find_map(|s| find_binding_in_stmt(s, offset)),
         TypedStmt::Expr { expr, .. } => find_binding_in_expr(expr, offset),
         TypedStmt::Return { value, .. } | TypedStmt::Break { value, .. } => {
             value.as_ref().and_then(|v| find_binding_in_expr(v, offset))
         }
+        TypedStmt::Transition { call, .. } => find_binding_in_expr(call, offset),
         TypedStmt::Continue { .. } | TypedStmt::Error { .. } => None,
     }
 }
@@ -394,44 +445,59 @@ fn find_type_ann_in_expr(expr: &TypedExpr, offset: usize) -> Option<DefId> {
             }
             tail.as_ref().and_then(|t| find_type_ann_in_expr(t, offset))
         }
-        TypedExpr::If { condition, then_branch, else_branch, .. } => {
-            find_type_ann_in_expr(condition, offset)
-                .or_else(|| find_type_ann_in_expr(then_branch, offset))
-                .or_else(|| else_branch.as_ref().and_then(|e| find_type_ann_in_expr(e, offset)))
-        }
+        TypedExpr::If {
+            condition,
+            then_branch,
+            else_branch,
+            ..
+        } => find_type_ann_in_expr(condition, offset)
+            .or_else(|| find_type_ann_in_expr(then_branch, offset))
+            .or_else(|| {
+                else_branch
+                    .as_ref()
+                    .and_then(|e| find_type_ann_in_expr(e, offset))
+            }),
         TypedExpr::Lambda { body, .. } => find_type_ann_in_expr(body, offset),
-        TypedExpr::Match { scrutinee, arms, .. } => {
-            find_type_ann_in_expr(scrutinee, offset)
-                .or_else(|| arms.iter().find_map(|arm| find_type_ann_in_expr(&arm.body, offset)))
-        }
+        TypedExpr::Match {
+            scrutinee, arms, ..
+        } => find_type_ann_in_expr(scrutinee, offset).or_else(|| {
+            arms.iter()
+                .find_map(|arm| find_type_ann_in_expr(&arm.body, offset))
+        }),
         _ => None,
     }
 }
 
 fn find_type_ann_in_stmt(stmt: &TypedStmt, offset: usize) -> Option<DefId> {
     match stmt {
-        TypedStmt::Let { type_ann_span, type_ann_def_id, value, .. } => {
+        TypedStmt::Let {
+            type_ann_span,
+            type_ann_def_id,
+            value,
+            ..
+        } => {
             if let (Some(ann_span), Some(def_id)) = (type_ann_span, type_ann_def_id)
-                && offset >= ann_span.start && offset < ann_span.end {
-                    return Some(*def_id);
-                }
+                && offset >= ann_span.start
+                && offset < ann_span.end
+            {
+                return Some(*def_id);
+            }
             find_type_ann_in_expr(value, offset)
         }
         TypedStmt::Expr { expr, .. } => find_type_ann_in_expr(expr, offset),
-        TypedStmt::For { iterable, body, .. } => {
-            find_type_ann_in_expr(iterable, offset)
-                .or_else(|| body.iter().find_map(|s| find_type_ann_in_stmt(s, offset)))
-        }
-        TypedStmt::While { condition, body, .. } => {
-            find_type_ann_in_expr(condition, offset)
-                .or_else(|| body.iter().find_map(|s| find_type_ann_in_stmt(s, offset)))
-        }
+        TypedStmt::For { iterable, body, .. } => find_type_ann_in_expr(iterable, offset)
+            .or_else(|| body.iter().find_map(|s| find_type_ann_in_stmt(s, offset))),
+        TypedStmt::While {
+            condition, body, ..
+        } => find_type_ann_in_expr(condition, offset)
+            .or_else(|| body.iter().find_map(|s| find_type_ann_in_stmt(s, offset))),
         TypedStmt::Atomic { body, .. } => {
             body.iter().find_map(|s| find_type_ann_in_stmt(s, offset))
         }
-        TypedStmt::Return { value, .. } | TypedStmt::Break { value, .. } => {
-            value.as_ref().and_then(|v| find_type_ann_in_expr(v, offset))
-        }
+        TypedStmt::Return { value, .. } | TypedStmt::Break { value, .. } => value
+            .as_ref()
+            .and_then(|v| find_type_ann_in_expr(v, offset)),
+        TypedStmt::Transition { call, .. } => find_type_ann_in_expr(call, offset),
         TypedStmt::Continue { .. } | TypedStmt::Error { .. } => None,
     }
 }
@@ -454,16 +520,17 @@ mod tests {
         let (ast, lower_errs) = writ_compiler::lower(cst);
         assert!(lower_errs.is_empty(), "lower errors: {:?}", lower_errs);
 
-        let (resolved, resolve_diags) = writ_compiler::resolve::resolve(
-            &[(file_id, &ast)],
-            &[(file_id, "test.writ")],
-            &[],
-        );
+        let (resolved, resolve_diags) =
+            writ_compiler::resolve::resolve(&[(file_id, &ast)], &[(file_id, "test.writ")], &[]);
         let resolve_errors: Vec<_> = resolve_diags
             .iter()
             .filter(|d| d.severity == Severity::Error)
             .collect();
-        assert!(resolve_errors.is_empty(), "resolve errors: {:?}", resolve_errors);
+        assert!(
+            resolve_errors.is_empty(),
+            "resolve errors: {:?}",
+            resolve_errors
+        );
 
         let (typed_ast, _interner, _type_env, type_diags) =
             writ_compiler::check::typecheck(resolved, &[(file_id, &ast)], &[]);
@@ -489,16 +556,17 @@ mod tests {
         let (ast, lower_errs) = writ_compiler::lower(cst);
         assert!(lower_errs.is_empty(), "lower errors: {:?}", lower_errs);
 
-        let (resolved, resolve_diags) = writ_compiler::resolve::resolve(
-            &[(file_id, &ast)],
-            &[(file_id, "test.writ")],
-            &[],
-        );
+        let (resolved, resolve_diags) =
+            writ_compiler::resolve::resolve(&[(file_id, &ast)], &[(file_id, "test.writ")], &[]);
         let resolve_errors: Vec<_> = resolve_diags
             .iter()
             .filter(|d| d.severity == Severity::Error)
             .collect();
-        assert!(resolve_errors.is_empty(), "resolve errors: {:?}", resolve_errors);
+        assert!(
+            resolve_errors.is_empty(),
+            "resolve errors: {:?}",
+            resolve_errors
+        );
 
         let (typed_ast, interner, type_env, type_diags) =
             writ_compiler::check::typecheck(resolved, &[(file_id, &ast)], &[]);
@@ -520,7 +588,8 @@ mod tests {
         let (ast, _interner, _type_env) = build_typed_ast_full(src);
 
         // Find the DefId for 'helper' (may be in by_fqn or file_private)
-        let helper_id = ast.def_map
+        let helper_id = ast
+            .def_map
             .by_fqn
             .values()
             .chain(ast.def_map.file_private.values().flat_map(|m| m.values()))
@@ -530,7 +599,11 @@ mod tests {
 
         let refs = collect_references(&ast, helper_id, &ast.def_map);
         // Expect two references (the two calls inside main)
-        assert!(refs.len() >= 2, "expected at least 2 references, got {:?}", refs);
+        assert!(
+            refs.len() >= 2,
+            "expected at least 2 references, got {:?}",
+            refs
+        );
     }
 
     // ── type_ann_def_id_at_offset tests ──────────────────────────────────────
@@ -543,9 +616,17 @@ mod tests {
         // Find the offset of "MyStruct" in the type annotation
         let ann_offset = src.find(": MyStruct").map(|i| i + 2).unwrap();
         let def_id = type_ann_def_id_at_offset(&ast, ann_offset, FileId(0));
-        assert!(def_id.is_some(), "expected DefId at type annotation 'MyStruct', offset {}", ann_offset);
+        assert!(
+            def_id.is_some(),
+            "expected DefId at type annotation 'MyStruct', offset {}",
+            ann_offset
+        );
         let entry = ast.def_map.get_entry(def_id.unwrap());
-        assert_eq!(entry.name, "MyStruct", "expected entry name 'MyStruct', got '{}'", entry.name);
+        assert_eq!(
+            entry.name, "MyStruct",
+            "expected entry name 'MyStruct', got '{}'",
+            entry.name
+        );
     }
 
     #[test]

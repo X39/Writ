@@ -15,6 +15,6 @@ pub mod string_utils;
 // Intentional re-export: cst module is the public API surface of writ-parser —
 // all CST types are re-exported for downstream consumers (compiler, LSP, DAP).
 pub use cst::*;
-pub use lexer::{lex, Token};
+pub use lexer::{Token, lex};
 pub use parser::parse;
-pub use string_utils::{dedent_raw_string, process_escapes, EscapeError};
+pub use string_utils::{EscapeError, dedent_raw_string, process_escapes};

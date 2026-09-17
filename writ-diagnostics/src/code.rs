@@ -23,7 +23,7 @@ pub const E0103: &str = "E0103"; // unsatisfied contract bound
 pub const E0104: &str = "E0104"; // not callable
 pub const E0105: &str = "E0105"; // cannot infer type
 pub const E0106: &str = "E0106"; // unknown field
-pub const E0107: &str = "E0107"; // immutable binding mutation
+pub const E0107: &str = "E0107"; // mutation through an immutable place
 pub const E0108: &str = "E0108"; // immutable binding reassignment
 pub const E0109: &str = "E0109"; // missing return
 pub const E0110: &str = "E0110"; // not a method receiver
@@ -41,6 +41,12 @@ pub const E0121: &str = "E0121"; // recursive struct has infinite size
 pub const E0122: &str = "E0122"; // contract used as type annotation
 pub const E0123: &str = "E0123"; // incomplete contract implementation
 pub const E0124: &str = "E0124"; // ambiguous overloaded call
+pub const E0125: &str = "E0125"; // ambiguous implementation specialization
+pub const E0126: &str = "E0126"; // unsupported spawn target
+pub const E0127: &str = "E0127"; // invalid dialogue transition target
+pub const E0128: &str = "E0128"; // duplicate field initializer
+pub const E0129: &str = "E0129"; // imported field default is unavailable
+pub const E0130: &str = "E0130"; // getOrCreate target has script fields
 
 // Warning codes
 pub const W0001: &str = "W0001"; // unused import

@@ -124,15 +124,17 @@ pub fn translate(
 
     // Track which body indices have been consumed to handle multiple methods
     // sharing the same DefId (all impl methods share the impl block's DefId).
-    let mut consumed_body_indices: std::collections::HashSet<usize> = std::collections::HashSet::new();
+    let mut consumed_body_indices: std::collections::HashSet<usize> =
+        std::collections::HashSet::new();
 
     for (def_id, md) in builder.finalized_method_def_entries() {
         // Find the body for this method (by DefId for named methods,
         // by position order for lambda methods with def_id == None).
         // When multiple bodies share a DefId (impl methods), skip already-consumed indices.
         let body_idx = if let Some(did) = def_id {
-            bodies.iter().enumerate()
-                .position(|(i, b)| b.method_def_id == Some(did) && !consumed_body_indices.contains(&i))
+            bodies.iter().enumerate().position(|(i, b)| {
+                b.method_def_id == Some(did) && !consumed_body_indices.contains(&i)
+            })
         } else {
             // Lambda MethodDef: match to the next orphaned body in order.
             let idx = orphaned_body_indices.get(orphan_cursor).copied();
@@ -154,6 +156,7 @@ pub fn translate(
             body_size: 0,
             reg_count: body_idx.map(|i| bodies[i].reg_count).unwrap_or(0),
             param_count: md.param_count,
+            owner: WmToken(md.owner.0),
         });
     }
 
@@ -163,6 +166,7 @@ pub fn translate(
             parent: WmToken(mr.parent.0),
             name: mr.name,
             signature: mr.signature,
+            flags: mr.flags,
         });
     }
 
@@ -300,7 +304,8 @@ pub fn translate(
             // Find source text for this body's file (for PREP-01 line/col computation).
             // If no source is available, fall back to line_starts = [0] which gives
             // line=1, col=offset+1 — acceptable for test-only paths without source text.
-            let line_starts: Vec<u32> = if let Some(file_id) = body.method_def_id
+            let line_starts: Vec<u32> = if let Some(file_id) = body
+                .method_def_id
                 .and(None::<FileId>) // bodies don't carry FileId directly
                 .or_else(|| sources.first().map(|(fid, _)| *fid))
             {
@@ -327,20 +332,20 @@ pub fn translate(
             } else {
                 Vec::new()
             };
-            let source_spans = build_source_spans(&body.source_spans, &instr_byte_starts, &line_starts);
+            let source_spans =
+                build_source_spans(&body.source_spans, &instr_byte_starts, &line_starts);
 
             // Register type table: encode each register's Ty into a blob heap offset.
             //
             // The token_for_def closure borrows only def_token_map_snapshot (not builder),
             // so builder.blob_heap can be mutated for intern() without borrow conflicts.
-            let token_for_def = |def_id: crate::resolve::def_map::DefId|
-                -> crate::emit::metadata::MetadataToken
-            {
-                def_token_map_snapshot
-                    .get(&def_id)
-                    .copied()
-                    .unwrap_or(crate::emit::metadata::MetadataToken::NULL)
-            };
+            let token_for_def =
+                |def_id: crate::resolve::def_map::DefId| -> crate::emit::metadata::MetadataToken {
+                    def_token_map_snapshot
+                        .get(&def_id)
+                        .copied()
+                        .unwrap_or(crate::emit::metadata::MetadataToken::NULL)
+                };
 
             // Clamp or pad reg_types to exactly reg_count entries.
             // In correct output reg_types.len() == reg_count; the pad is defensive only.
@@ -416,7 +421,7 @@ pub fn translate(
     module.string_heap = builder.string_heap.data().to_vec();
 
     // Format version 5: array opcode overhaul (Phase 120 — ArrayResize/Copy/NewArraySized/NewArrayFilled)
-    module.header.format_version = 5;
+    module.header.format_version = writ_module::FORMAT_VERSION;
     module.header.flags = if emit_debug_info { 1 } else { 0 };
 
     module
@@ -471,11 +476,17 @@ fn encode_instructions(
     // Pass 3: build a byte-position-keyed LabelAllocator and apply fixups
     let mut byte_labels = LabelAllocator::new();
     for (label_id, instr_idx) in labels.resolved_iter() {
-        let byte_pos = instr_byte_starts.get(instr_idx).copied().unwrap_or(code.len());
+        let byte_pos = instr_byte_starts
+            .get(instr_idx)
+            .copied()
+            .unwrap_or(code.len());
         byte_labels.mark(Label(label_id), byte_pos);
     }
     for &(branch_instr_idx, label) in labels.fixups_iter() {
-        let byte_pos = instr_byte_starts.get(branch_instr_idx).copied().unwrap_or(0);
+        let byte_pos = instr_byte_starts
+            .get(branch_instr_idx)
+            .copied()
+            .unwrap_or(0);
         byte_labels.add_fixup(byte_pos, label);
     }
     byte_labels.apply_fixups(&mut code);
@@ -509,7 +520,10 @@ fn encode_instructions(
                     code[patch_pos..patch_pos + 4].copy_from_slice(&byte_offset.to_le_bytes());
                 }
             }
-            Instruction::DeferPush { method_idx: handler_instr_idx, .. } => {
+            Instruction::DeferPush {
+                method_idx: handler_instr_idx,
+                ..
+            } => {
                 // DeferPush binary layout: opcode(2) + r_dst(2) + method_idx(4)
                 // method_idx stores the instruction index of the handler body start.
                 // The runtime expects the byte offset of the handler from method start.
@@ -562,17 +576,18 @@ fn build_debug_locals(
 ) -> Vec<DebugLocal> {
     // Build register -> (name, start_pc, end_pc) from the recorded debug locals.
     // If a register appears multiple times (shouldn't in practice), keep the first entry.
-    let mut reg_info: rustc_hash::FxHashMap<u16, (&str, u32, u32)> = rustc_hash::FxHashMap::default();
+    let mut reg_info: rustc_hash::FxHashMap<u16, (&str, u32, u32)> =
+        rustc_hash::FxHashMap::default();
     for (reg, name, start_pc, end_pc) in debug_locals {
-        reg_info.entry(*reg).or_insert((name.as_str(), *start_pc, *end_pc));
+        reg_info
+            .entry(*reg)
+            .or_insert((name.as_str(), *start_pc, *end_pc));
     }
 
     (0..reg_count)
         .map(|r| {
-            let (name_str, start_pc_instr, end_pc_instr) = reg_info
-                .get(&r)
-                .copied()
-                .unwrap_or(("", 0, u32::MAX));
+            let (name_str, start_pc_instr, end_pc_instr) =
+                reg_info.get(&r).copied().unwrap_or(("", 0, u32::MAX));
 
             // Convert instruction-index start_pc to byte-offset PC.
             let start_pc = instr_byte_starts
@@ -627,7 +642,9 @@ pub(crate) fn build_line_starts(src: &str) -> Vec<u32> {
 ///
 /// Both line and column are 1-based, matching LSP and DAP conventions.
 pub(crate) fn byte_offset_to_line_col(offset: u32, line_starts: &[u32]) -> (u32, u16) {
-    let line_idx = line_starts.partition_point(|&s| s <= offset).saturating_sub(1);
+    let line_idx = line_starts
+        .partition_point(|&s| s <= offset)
+        .saturating_sub(1);
     let line = line_idx as u32 + 1;
     let col = offset.saturating_sub(line_starts[line_idx]) + 1;
     (line, col.min(u16::MAX as u32) as u16)
@@ -675,7 +692,10 @@ mod tests {
         // [4] Nop                    (variant 1 arm target)
         let instructions = vec![
             Instruction::LoadInt { r_dst: 0, value: 1 },
-            Instruction::Switch { r_tag: 0, offsets: vec![2, 3] },
+            Instruction::Switch {
+                r_tag: 0,
+                offsets: vec![2, 3],
+            },
             Instruction::Nop,
             Instruction::Nop,
             Instruction::Nop,
@@ -703,18 +723,30 @@ mod tests {
         //   byte_offset = byte_starts[4] - byte_starts[1]
         let expected_off1 = (byte_starts[4] as i64 - switch_byte_start as i64) as i32;
 
-        let actual_off0 = i32::from_le_bytes(code[offset0_pos..offset0_pos + 4].try_into().unwrap());
-        let actual_off1 = i32::from_le_bytes(code[offset1_pos..offset1_pos + 4].try_into().unwrap());
+        let actual_off0 =
+            i32::from_le_bytes(code[offset0_pos..offset0_pos + 4].try_into().unwrap());
+        let actual_off1 =
+            i32::from_le_bytes(code[offset1_pos..offset1_pos + 4].try_into().unwrap());
 
-        assert_eq!(actual_off0, expected_off0,
-            "SWITCH offset[0] should be byte-relative, not instruction-index-relative");
-        assert_eq!(actual_off1, expected_off1,
-            "SWITCH offset[1] should be byte-relative, not instruction-index-relative");
+        assert_eq!(
+            actual_off0, expected_off0,
+            "SWITCH offset[0] should be byte-relative, not instruction-index-relative"
+        );
+        assert_eq!(
+            actual_off1, expected_off1,
+            "SWITCH offset[1] should be byte-relative, not instruction-index-relative"
+        );
 
         // Sanity: byte offsets should be > instruction-index offsets
         // because each instruction is at least 2 bytes
-        assert!(expected_off0 > 2, "byte offset should be larger than instruction-index offset (2)");
-        assert!(expected_off1 > 3, "byte offset should be larger than instruction-index offset (3)");
+        assert!(
+            expected_off0 > 2,
+            "byte offset should be larger than instruction-index offset (2)"
+        );
+        assert!(
+            expected_off1 > 3,
+            "byte offset should be larger than instruction-index offset (3)"
+        );
     }
 
     #[test]
@@ -768,7 +800,14 @@ mod tests {
         assert_eq!(line_starts, vec![0, 4]);
 
         // Instruction 0 at byte_start 0, span starting at byte 4 (start of "def")
-        let source_spans = vec![(0u32, SimpleSpan { start: 4usize, end: 6usize, context: () })];
+        let source_spans = vec![(
+            0u32,
+            SimpleSpan {
+                start: 4usize,
+                end: 6usize,
+                context: (),
+            },
+        )];
         let instr_byte_starts = vec![0usize, 10]; // instr 0 starts at byte 0
 
         let spans = build_source_spans(&source_spans, &instr_byte_starts, &line_starts);

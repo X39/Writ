@@ -10,7 +10,7 @@
 // API: add(item), get(i), set(i, v), len(), remove_at(i), has(item)
 
 pub class List<T> {
-    items: T[]
+    mut items: T[]
 }
 
 impl<T> List<T> {
@@ -52,7 +52,8 @@ impl<T> List<T> {
     }
 
     pub fn map(self, f: fn(T) -> T) -> List<T> {
-        let result: List<T> = new List<T> { items: [] };
+        // Preserve the source array's runtime element category through erasure.
+        let mut result: List<T> = new List<T> { items: self.items.slice(0, 0) };
         let mut i: int = 0;
         while i < self.items.len() {
             result.add(f(self.items[i]));
@@ -62,7 +63,8 @@ impl<T> List<T> {
     }
 
     pub fn filter(self, f: fn(T) -> bool) -> List<T> {
-        let result: List<T> = new List<T> { items: [] };
+        // Preserve the source array's runtime element category through erasure.
+        let mut result: List<T> = new List<T> { items: self.items.slice(0, 0) };
         let mut i: int = 0;
         while i < self.items.len() {
             if f(self.items[i]) {
@@ -89,7 +91,7 @@ impl<T> List<T> {
 
 pub class ListIterator<T> {
     source: T[],
-    index: int
+    mut index: int
 }
 
 impl<T> ListIterator<T> {
@@ -126,8 +128,8 @@ impl<T> Iterable<T> for List<T> {
 // Note: O(n) linear scan for Phase 117 (binary search deferred to COLL-07).
 
 pub class Map<K: Ord + Eq, V> {
-    keys: K[],
-    values: V[]
+    mut keys: K[],
+    mut values: V[]
 }
 
 impl<K: Ord + Eq, V> Map<K, V> {
@@ -203,7 +205,7 @@ impl<K: Ord + Eq, V> Map<K, V> {
 // API: add(v), remove(v), has(v), len()
 
 pub class Set<T: Eq> {
-    items: T[]
+    mut items: T[]
 }
 
 impl<T: Eq> Set<T> {
@@ -250,7 +252,7 @@ impl<T: Eq> Set<T> {
 
 pub class SetIterator<T: Eq> {
     source: T[],
-    index: int
+    mut index: int
 }
 
 impl<T: Eq> SetIterator<T> {
@@ -288,8 +290,8 @@ impl<T: Eq> Iterable<T> for Set<T> {
 // Note: O(n) linear scan for Phase 117 (hash bucketing deferred).
 
 pub class HashMap<K: Hashable, V> {
-    keys: K[],
-    values: V[]
+    mut keys: K[],
+    mut values: V[]
 }
 
 impl<K: Hashable, V> HashMap<K, V> {

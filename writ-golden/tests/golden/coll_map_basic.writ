@@ -1,6 +1,6 @@
 pub class Map<K: Ord + Eq, V> {
-    keys: K[],
-    values: V[]
+    mut keys: K[],
+    mut values: V[]
 }
 
 impl<K: Ord + Eq, V> Map<K, V> {
@@ -63,7 +63,7 @@ impl<K: Ord + Eq, V> Map<K, V> {
 }
 
 fn main() {
-    let map: Map<string, int> = new Map<string, int> { keys: [], values: [] };
+    let mut map: Map<string, int> = new Map<string, int> { keys: [], values: [] };
     map.set("a", 1);
     map.set("b", 2);
     let _v: int = map.get("a");

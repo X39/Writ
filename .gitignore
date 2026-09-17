@@ -515,5 +515,9 @@ target/
 # PGO profiling artifacts
 pgo-data/
 
+# WASM sample build outputs
+examples/wasm-runtime/pkg/
+examples/wasm-runtime/sample.writc
+
 # GitHub Pages worktree
 gh-pages/

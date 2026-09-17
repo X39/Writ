@@ -81,7 +81,11 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, Vec<AssembleError>> {
 
         // Newlines
         if ch == '\n' {
-            tokens.push(Token { kind: TokenKind::Newline, line, col });
+            tokens.push(Token {
+                kind: TokenKind::Newline,
+                line,
+                col,
+            });
             pos += 1;
             line += 1;
             col = 1;
@@ -145,9 +149,17 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, Vec<AssembleError>> {
                 col += 1;
             }
             if !terminated {
-                errors.push(AssembleError::new("unterminated string literal", start_line, start_col));
+                errors.push(AssembleError::new(
+                    "unterminated string literal",
+                    start_line,
+                    start_col,
+                ));
             }
-            tokens.push(Token { kind: TokenKind::StringLit(s), line: start_line, col: start_col });
+            tokens.push(Token {
+                kind: TokenKind::StringLit(s),
+                line: start_line,
+                col: start_col,
+            });
             continue;
         }
 
@@ -165,7 +177,11 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, Vec<AssembleError>> {
             }
 
             if pos == ident_start {
-                errors.push(AssembleError::new("expected identifier after '.'", line, start_col));
+                errors.push(AssembleError::new(
+                    "expected identifier after '.'",
+                    line,
+                    start_col,
+                ));
                 continue;
             }
 
@@ -175,14 +191,30 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, Vec<AssembleError>> {
             if pos < len && chars[pos] == ':' && !(pos + 1 < len && chars[pos + 1] == ':') {
                 pos += 1;
                 col += 1;
-                tokens.push(Token { kind: TokenKind::Label(name), line, col: start_col });
+                tokens.push(Token {
+                    kind: TokenKind::Label(name),
+                    line,
+                    col: start_col,
+                });
             } else {
                 // Determine if it's a directive or a label reference
                 // Known directives list
                 let known_directives = [
-                    "module", "type", "field", "method", "contract", "impl",
-                    "reg", "extern", "global", "regs",
-                    "extern_fn", "export", "component_slot", "locale", "attribute",
+                    "module",
+                    "type",
+                    "field",
+                    "method",
+                    "contract",
+                    "impl",
+                    "reg",
+                    "extern",
+                    "global",
+                    "regs",
+                    "extern_fn",
+                    "export",
+                    "component_slot",
+                    "locale",
+                    "attribute",
                 ];
                 let lower = name.to_lowercase();
                 if known_directives.contains(&lower.as_str()) {
@@ -193,7 +225,11 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, Vec<AssembleError>> {
                     });
                 } else {
                     // It's a label reference (used in branch instructions)
-                    tokens.push(Token { kind: TokenKind::LabelRef(name), line, col: start_col });
+                    tokens.push(Token {
+                        kind: TokenKind::LabelRef(name),
+                        line,
+                        col: start_col,
+                    });
                 }
             }
             continue;
@@ -201,55 +237,91 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, Vec<AssembleError>> {
 
         // Symbols
         if ch == '{' {
-            tokens.push(Token { kind: TokenKind::OpenBrace, line, col });
+            tokens.push(Token {
+                kind: TokenKind::OpenBrace,
+                line,
+                col,
+            });
             pos += 1;
             col += 1;
             continue;
         }
         if ch == '}' {
-            tokens.push(Token { kind: TokenKind::CloseBrace, line, col });
+            tokens.push(Token {
+                kind: TokenKind::CloseBrace,
+                line,
+                col,
+            });
             pos += 1;
             col += 1;
             continue;
         }
         if ch == '(' {
-            tokens.push(Token { kind: TokenKind::OpenParen, line, col });
+            tokens.push(Token {
+                kind: TokenKind::OpenParen,
+                line,
+                col,
+            });
             pos += 1;
             col += 1;
             continue;
         }
         if ch == ')' {
-            tokens.push(Token { kind: TokenKind::CloseParen, line, col });
+            tokens.push(Token {
+                kind: TokenKind::CloseParen,
+                line,
+                col,
+            });
             pos += 1;
             col += 1;
             continue;
         }
         if ch == ',' {
-            tokens.push(Token { kind: TokenKind::Comma, line, col });
+            tokens.push(Token {
+                kind: TokenKind::Comma,
+                line,
+                col,
+            });
             pos += 1;
             col += 1;
             continue;
         }
         if ch == '<' {
-            tokens.push(Token { kind: TokenKind::LAngle, line, col });
+            tokens.push(Token {
+                kind: TokenKind::LAngle,
+                line,
+                col,
+            });
             pos += 1;
             col += 1;
             continue;
         }
         if ch == '>' {
-            tokens.push(Token { kind: TokenKind::RAngle, line, col });
+            tokens.push(Token {
+                kind: TokenKind::RAngle,
+                line,
+                col,
+            });
             pos += 1;
             col += 1;
             continue;
         }
         if ch == '[' {
-            tokens.push(Token { kind: TokenKind::OpenBracket, line, col });
+            tokens.push(Token {
+                kind: TokenKind::OpenBracket,
+                line,
+                col,
+            });
             pos += 1;
             col += 1;
             continue;
         }
         if ch == ']' {
-            tokens.push(Token { kind: TokenKind::CloseBracket, line, col });
+            tokens.push(Token {
+                kind: TokenKind::CloseBracket,
+                line,
+                col,
+            });
             pos += 1;
             col += 1;
             continue;
@@ -257,7 +329,11 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, Vec<AssembleError>> {
 
         // Arrow (->) or minus (part of negative number handled elsewhere)
         if ch == '-' && pos + 1 < len && chars[pos + 1] == '>' {
-            tokens.push(Token { kind: TokenKind::Arrow, line, col });
+            tokens.push(Token {
+                kind: TokenKind::Arrow,
+                line,
+                col,
+            });
             pos += 2;
             col += 2;
             continue;
@@ -266,11 +342,19 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, Vec<AssembleError>> {
         // Colon or double colon
         if ch == ':' {
             if pos + 1 < len && chars[pos + 1] == ':' {
-                tokens.push(Token { kind: TokenKind::DoubleColon, line, col });
+                tokens.push(Token {
+                    kind: TokenKind::DoubleColon,
+                    line,
+                    col,
+                });
                 pos += 2;
                 col += 2;
             } else {
-                tokens.push(Token { kind: TokenKind::Colon, line, col });
+                tokens.push(Token {
+                    kind: TokenKind::Colon,
+                    line,
+                    col,
+                });
                 pos += 1;
                 col += 1;
             }
@@ -298,11 +382,18 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, Vec<AssembleError>> {
                         pos += 1;
                         col += 1;
                     }
-                    let hex_str: String = chars[hex_start..pos].iter().filter(|c| **c != '_').collect();
+                    let hex_str: String = chars[hex_start..pos]
+                        .iter()
+                        .filter(|c| **c != '_')
+                        .collect();
                     match i64::from_str_radix(&hex_str, 16) {
                         Ok(v) => {
                             let value = if negative { -v } else { v };
-                            tokens.push(Token { kind: TokenKind::IntLit(value), line, col: start_col });
+                            tokens.push(Token {
+                                kind: TokenKind::IntLit(value),
+                                line,
+                                col: start_col,
+                            });
                         }
                         Err(_) => {
                             errors.push(AssembleError::new("invalid hex literal", line, start_col));
@@ -315,18 +406,30 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, Vec<AssembleError>> {
                     pos += 2;
                     col += 2;
                     let bin_start = pos;
-                    while pos < len && (chars[pos] == '0' || chars[pos] == '1' || chars[pos] == '_') {
+                    while pos < len && (chars[pos] == '0' || chars[pos] == '1' || chars[pos] == '_')
+                    {
                         pos += 1;
                         col += 1;
                     }
-                    let bin_str: String = chars[bin_start..pos].iter().filter(|c| **c != '_').collect();
+                    let bin_str: String = chars[bin_start..pos]
+                        .iter()
+                        .filter(|c| **c != '_')
+                        .collect();
                     match i64::from_str_radix(&bin_str, 2) {
                         Ok(v) => {
                             let value = if negative { -v } else { v };
-                            tokens.push(Token { kind: TokenKind::IntLit(value), line, col: start_col });
+                            tokens.push(Token {
+                                kind: TokenKind::IntLit(value),
+                                line,
+                                col: start_col,
+                            });
                         }
                         Err(_) => {
-                            errors.push(AssembleError::new("invalid binary literal", line, start_col));
+                            errors.push(AssembleError::new(
+                                "invalid binary literal",
+                                line,
+                                start_col,
+                            ));
                         }
                     }
                     continue;
@@ -367,12 +470,19 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, Vec<AssembleError>> {
                 }
             }
 
-            let num_str: String = chars[num_start..pos].iter().filter(|c| **c != '_').collect();
+            let num_str: String = chars[num_start..pos]
+                .iter()
+                .filter(|c| **c != '_')
+                .collect();
             if is_float {
                 match num_str.parse::<f64>() {
                     Ok(v) => {
                         let value = if negative { -v } else { v };
-                        tokens.push(Token { kind: TokenKind::FloatLit(value), line, col: start_col });
+                        tokens.push(Token {
+                            kind: TokenKind::FloatLit(value),
+                            line,
+                            col: start_col,
+                        });
                     }
                     Err(_) => {
                         errors.push(AssembleError::new("invalid float literal", line, start_col));
@@ -382,10 +492,18 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, Vec<AssembleError>> {
                 match num_str.parse::<i64>() {
                     Ok(v) => {
                         let value = if negative { -v } else { v };
-                        tokens.push(Token { kind: TokenKind::IntLit(value), line, col: start_col });
+                        tokens.push(Token {
+                            kind: TokenKind::IntLit(value),
+                            line,
+                            col: start_col,
+                        });
                     }
                     Err(_) => {
-                        errors.push(AssembleError::new("invalid integer literal", line, start_col));
+                        errors.push(AssembleError::new(
+                            "invalid integer literal",
+                            line,
+                            start_col,
+                        ));
                     }
                 }
             }
@@ -403,18 +521,33 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, Vec<AssembleError>> {
             let ident: String = chars[ident_start..pos].iter().collect();
 
             // Check for register notation: r followed by digits only
-            if ident.starts_with('r') && ident.len() > 1 && ident[1..].chars().all(|c| c.is_ascii_digit()) {
+            if ident.starts_with('r')
+                && ident.len() > 1
+                && ident[1..].chars().all(|c| c.is_ascii_digit())
+            {
                 match ident[1..].parse::<u16>() {
                     Ok(n) => {
-                        tokens.push(Token { kind: TokenKind::Register(n), line, col: start_col });
+                        tokens.push(Token {
+                            kind: TokenKind::Register(n),
+                            line,
+                            col: start_col,
+                        });
                     }
                     Err(_) => {
                         // Too large for u16, treat as identifier
-                        tokens.push(Token { kind: TokenKind::Ident(ident), line, col: start_col });
+                        tokens.push(Token {
+                            kind: TokenKind::Ident(ident),
+                            line,
+                            col: start_col,
+                        });
                     }
                 }
             } else {
-                tokens.push(Token { kind: TokenKind::Ident(ident), line, col: start_col });
+                tokens.push(Token {
+                    kind: TokenKind::Ident(ident),
+                    line,
+                    col: start_col,
+                });
             }
             continue;
         }
@@ -430,7 +563,11 @@ pub fn tokenize(src: &str) -> Result<Vec<Token>, Vec<AssembleError>> {
     }
 
     // Add EOF
-    tokens.push(Token { kind: TokenKind::Eof, line, col });
+    tokens.push(Token {
+        kind: TokenKind::Eof,
+        line,
+        col,
+    });
 
     if errors.is_empty() {
         Ok(tokens)

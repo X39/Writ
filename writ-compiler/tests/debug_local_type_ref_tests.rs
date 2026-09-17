@@ -14,16 +14,16 @@
 use rustc_hash::FxHashMap;
 use std::sync::LazyLock;
 
+use chumsky::span::{SimpleSpan, Span as _};
 use writ_compiler::check::ty::{Ty, TyInterner};
-use writ_compiler::resolve::def_map::{DefEntry, DefId, DefKind, DefMap, DefVis};
 use writ_compiler::emit::body::EmittedBody;
 use writ_compiler::emit::body::labels::LabelAllocator;
 use writ_compiler::emit::module_builder::ModuleBuilder;
 use writ_compiler::emit::serialize;
-use writ_module::instruction::Instruction;
-use writ_module::heap::read_blob;
-use chumsky::span::{SimpleSpan, Span as _};
+use writ_compiler::resolve::def_map::{DefEntry, DefId, DefKind, DefMap, DefVis};
 use writ_diagnostics::FileId;
+use writ_module::heap::read_blob;
+use writ_module::instruction::Instruction;
 
 #[allow(dead_code)]
 static EMPTY_STRUCT_FIELD_TYPES: LazyLock<FxHashMap<DefId, Vec<(String, Ty)>>> =
@@ -55,11 +55,7 @@ fn make_def_id() -> (DefMap, DefId) {
 
 /// Build a minimal EmittedBody with one named register of the given type,
 /// including a debug_local entry for that register.
-fn make_body_with_named_local(
-    def_id: DefId,
-    ty: Ty,
-    reg_name: &str,
-) -> EmittedBody {
+fn make_body_with_named_local(def_id: DefId, ty: Ty, reg_name: &str) -> EmittedBody {
     EmittedBody {
         method_def_id: Some(def_id),
         instructions: vec![
@@ -94,10 +90,16 @@ fn type_ref_backfill_sets_nonzero_offset_for_int_register() {
     // Use translate() (not serialize()) so we can inspect the resulting Module directly
     let module = serialize::translate(&mut builder, &[body], &interner, true, &[]);
 
-    assert!(!module.method_bodies.is_empty(), "module should have at least one method body");
+    assert!(
+        !module.method_bodies.is_empty(),
+        "module should have at least one method body"
+    );
     let mb = &module.method_bodies[0];
 
-    assert!(!mb.debug_locals.is_empty(), "method body should have debug locals");
+    assert!(
+        !mb.debug_locals.is_empty(),
+        "method body should have debug locals"
+    );
     let dl = &mb.debug_locals[0];
 
     assert_eq!(dl.register, 0, "DebugLocal should be for register 0");
@@ -131,7 +133,8 @@ fn type_ref_backfill_produces_distinct_offsets_for_different_types() {
     let _h2 = builder_float.add_methoddef(None, "fn_float", 0, 0, Some(def_id_float), 0);
     builder_float.finalize();
     let body_float = make_body_with_named_local(def_id_float, ty_float, "b");
-    let module_float = serialize::translate(&mut builder_float, &[body_float], &interner, true, &[]);
+    let module_float =
+        serialize::translate(&mut builder_float, &[body_float], &interner, true, &[]);
 
     let type_ref_int = module_int.method_bodies[0].debug_locals[0].type_ref;
     let type_ref_float = module_float.method_bodies[0].debug_locals[0].type_ref;
@@ -146,7 +149,10 @@ fn type_ref_backfill_produces_distinct_offsets_for_different_types() {
     let blob_float = read_blob(&module_float.blob_heap, type_ref_float).unwrap_or(&[]);
 
     assert!(!blob_int.is_empty(), "int type blob should not be empty");
-    assert!(!blob_float.is_empty(), "float type blob should not be empty");
+    assert!(
+        !blob_float.is_empty(),
+        "float type blob should not be empty"
+    );
     assert_ne!(
         blob_int, blob_float,
         "int and float type blobs should differ"
@@ -217,8 +223,16 @@ fn type_ref_backfill_fills_all_registers_with_concrete_types() {
 
     assert_eq!(mb.debug_locals.len(), 2);
 
-    let dl_r0 = mb.debug_locals.iter().find(|d| d.register == 0).expect("r0 should be present");
-    let dl_r1 = mb.debug_locals.iter().find(|d| d.register == 1).expect("r1 should be present");
+    let dl_r0 = mb
+        .debug_locals
+        .iter()
+        .find(|d| d.register == 0)
+        .expect("r0 should be present");
+    let dl_r1 = mb
+        .debug_locals
+        .iter()
+        .find(|d| d.register == 1)
+        .expect("r1 should be present");
 
     assert_ne!(dl_r0.type_ref, 0, "r0 (int) should have non-zero type_ref");
     assert_ne!(dl_r1.type_ref, 0, "r1 (bool) should have non-zero type_ref");

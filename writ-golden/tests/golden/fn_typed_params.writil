@@ -1,6 +1,6 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
-    .method "add" (a: int, b: int) -> int pub mut {
+    .method "add" (a: int, b: int) -> int pub static {
         .locals {
             r0: int "a" [0, 12)
             r1: int "b" [0, 12)
@@ -12,7 +12,7 @@
         ADD_I r2, r0, r1  ; line:2 col:5
         RET r2  ; line:3 col:5
     }
-    .method "is_positive" (n: int) -> bool pub mut {
+    .method "is_positive" (n: int) -> bool pub static {
         .locals {
             r0: int "n" [0, 24)
         }
@@ -23,7 +23,7 @@
         CMP_LT_I r2, r1, r0
         RET r2
     }
-    .method "main" () -> void pub mut {
+    .method "main" () -> void pub static {
         .locals {
             r0: int "x" [36, 50)
             r3: bool "flag" [48, 50)
@@ -38,7 +38,7 @@
         CALL r3, 117440514, r0, 1  ; line:12 col:5
         RET_VOID
     }
+    .export "add" method 117440513
     .export "is_positive" method 117440514
     .export "main" method 117440515
-    .export "add" method 117440513
 }

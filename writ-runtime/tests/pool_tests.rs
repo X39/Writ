@@ -26,7 +26,10 @@ fn pool_reuse_clears_registers() {
     let reused = pool.acquire(4);
     assert_eq!(reused.len(), 4, "reused Vec must have len == reg_count");
     for val in &reused {
-        assert!(matches!(val, Value::Void), "every register must be Value::Void after reuse");
+        assert!(
+            matches!(val, Value::Void),
+            "every register must be Value::Void after reuse"
+        );
     }
 }
 
@@ -47,7 +50,11 @@ fn pool_cap_prevents_unbounded_growth() {
         acquired.push(pool.acquire(4));
     }
 
-    assert_eq!(acquired.len(), 65, "must be able to acquire 65 Vecs after releasing 70");
+    assert_eq!(
+        acquired.len(),
+        65,
+        "must be able to acquire 65 Vecs after releasing 70"
+    );
     // Every acquired Vec must have the correct length and all-Void contents.
     for v in &acquired {
         assert_eq!(v.len(), 4);
@@ -89,7 +96,10 @@ fn pool_acquire_from_empty() {
     let regs = pool.acquire(8);
     assert_eq!(regs.len(), 8, "len must equal reg_count");
     for val in &regs {
-        assert!(matches!(val, Value::Void), "every register must be Value::Void");
+        assert!(
+            matches!(val, Value::Void),
+            "every register must be Value::Void"
+        );
     }
 }
 
@@ -100,8 +110,15 @@ fn pool_with_pool_constructor() {
     let mut pool = RegisterPool::new();
 
     let frame = CallFrame::with_pool(&mut pool, 0, 6, 0);
-    assert_eq!(frame.registers.len(), 6, "frame must have exactly reg_count registers");
+    assert_eq!(
+        frame.registers.len(),
+        6,
+        "frame must have exactly reg_count registers"
+    );
     for val in &frame.registers {
-        assert!(matches!(val, Value::Void), "all registers must be Value::Void");
+        assert!(
+            matches!(val, Value::Void),
+            "all registers must be Value::Void"
+        );
     }
 }

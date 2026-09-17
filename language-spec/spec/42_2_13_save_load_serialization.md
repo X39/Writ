@@ -15,7 +15,7 @@ save:
 - All global variable values
 - The full heap (all live GC objects: structs, arrays, strings, closures, delegates)
 - The entity registry (all live entities with their script-side field values)
-- The task tree (parent-child relationships, scoped vs detached)
+- The task tree (parent-child relationships and root tasks)
 
 The following is explicitly **excluded** from the script save:
 

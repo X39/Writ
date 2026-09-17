@@ -23,7 +23,8 @@ let v = new Vec2 { x: 1.0, y: 2.0 };
 ## 1.8.1 Construction
 
 Structs are constructed with the `new` keyword followed by the type name and brace-enclosed field initializers. Fields
-with default values may be omitted. Fields without defaults are required at every construction site.
+with default values may be omitted when the compiler has the default expression available. Fields without defaults are
+required at every construction site. Version 9's cross-module limitation is specified in Section 2.11.
 
 `new` for a struct does **not** allocate heap memory. The value is initialized inline — the struct lives in a register
 or on the stack, not on the GC heap. This contrasts with classes, where `new` allocates on the GC heap (see Section 1.9).
@@ -57,17 +58,20 @@ Assignment copies all fields by value. Reference-typed fields (such as `string` 
 copies share the same referenced object, but the struct values themselves are independent.
 
 ```writ
-struct Vec2 { x: float, y: float }
+struct Vec2 { mut x: float, mut y: float }
 struct Note { text: string, priority: int }  // string field is a reference
 
 let a = new Vec2 { x: 1.0, y: 2.0 };
-let b = a;           // b is a fresh copy: { x: 1.0, y: 2.0 }
+let mut b = a;       // b is a fresh copy: { x: 1.0, y: 2.0 }
 // a and b are independent; mutation to b.x does NOT affect a.x
 
 let c = new Note { text: "hello", priority: 1 };
 let d = c;           // d.text and c.text point to the same string object
                      // but the Note struct itself is two independent copies
 ```
+
+Both requirements are visible in the example: `b` is a mutable binding and `x` is a mutable field. Either an
+immutable receiver path or a field without `mut` prevents the write.
 
 ## 1.8.3 Structural Equality
 
@@ -114,19 +118,21 @@ field of its own type holds a pointer, not an inline copy.
 `new Vec2 { x: 1.0, y: 2.0 }` compiles to the following IL:
 
 ```writ
-NEW           r0, Vec2_type        // initialize value inline (no heap allocation)
 LOAD_FLOAT    r1, 1.0
-SET_FIELD     r0, x_field, r1
-LOAD_FLOAT    r1, 2.0
-SET_FIELD     r0, y_field, r1
+LOAD_FLOAT    r2, 2.0
+NEW           r0, Vec2_type, 2, r1 // initialize both fields atomically from r1..r2
 ```
 
 No `CALL __on_create` step — value-type structs have no lifecycle hooks.
 
 The full sequence:
 
-1. **NEW** — initialize the struct value in-place (no GC heap allocation).
-2. **SET_FIELD** — apply default values for all fields that have them.
-3. **SET_FIELD** — apply construction-site overrides (these overwrite defaults where specified).
+1. Evaluate exactly one initializer for every field in declaration order. An explicit construction-site initializer
+   replaces that field's default expression. The resulting values are placed in consecutive registers.
+2. **NEW** validates the type, exact field count, and initializer register range, then creates the complete struct value
+   as one operation. A failure crashes the current task before a value is created or the destination register changes.
+
+Construction is the only operation permitted to establish a read-only field's initial value. After `NEW` completes,
+ordinary `SET_FIELD` follows the field's mutability metadata and crashes if the field is read-only.
 
 ---

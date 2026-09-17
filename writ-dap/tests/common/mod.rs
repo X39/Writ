@@ -11,7 +11,7 @@ use std::io::{BufReader, BufWriter, PipeReader, PipeWriter, Read, Write};
 use std::thread::{self, JoinHandle};
 
 use dap::prelude::*;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use writ_dap::server::DapServer;
 
 /// Bidirectional DAP test client that communicates with a `DapServer` over pipes.
@@ -90,7 +90,9 @@ impl DapClient {
         let mut header = String::new();
         loop {
             let mut byte = [0u8; 1];
-            self.reader.read_exact(&mut byte).expect("server closed unexpectedly");
+            self.reader
+                .read_exact(&mut byte)
+                .expect("server closed unexpectedly");
             header.push(byte[0] as char);
             if header.ends_with("\r\n\r\n") {
                 break;
@@ -107,7 +109,9 @@ impl DapClient {
             .expect("invalid Content-Length");
 
         let mut body = vec![0u8; length];
-        self.reader.read_exact(&mut body).expect("short read on body");
+        self.reader
+            .read_exact(&mut body)
+            .expect("short read on body");
         serde_json::from_slice(&body).expect("invalid JSON in response body")
     }
 
@@ -165,10 +169,13 @@ impl DapClient {
 
     /// Send initialize + initialized notification, return response body.
     pub fn initialize(&mut self) -> Value {
-        let seq = self.send("initialize", json!({
-            "adapterID": "writ-dap-test",
-            "clientName": "protocol-test"
-        }));
+        let seq = self.send(
+            "initialize",
+            json!({
+                "adapterID": "writ-dap-test",
+                "clientName": "protocol-test"
+            }),
+        );
         let (resp, events) = self.recv_response(seq);
         assert_eq!(
             resp.get("success").and_then(|v| v.as_bool()),
@@ -209,10 +216,13 @@ impl DapClient {
     /// Send setBreakpoints, return response body (contains breakpoints array).
     pub fn set_breakpoints(&mut self, path: &str, lines: &[i64]) -> Value {
         let bp_list: Vec<Value> = lines.iter().map(|&l| json!({ "line": l })).collect();
-        let seq = self.send("setBreakpoints", json!({
-            "source": { "path": path },
-            "breakpoints": bp_list
-        }));
+        let seq = self.send(
+            "setBreakpoints",
+            json!({
+                "source": { "path": path },
+                "breakpoints": bp_list
+            }),
+        );
         let (resp, _events) = self.recv_response(seq);
         assert_eq!(
             resp.get("success").and_then(|v| v.as_bool()),
@@ -226,10 +236,13 @@ impl DapClient {
     /// Send launch, return (response, events).
     /// After a successful launch, reads additional events until stopped/terminated.
     pub fn launch(&mut self, program: &str, stop_on_entry: bool) -> (Value, Vec<Value>) {
-        let seq = self.send("launch", json!({
-            "program": program,
-            "stopOnEntry": stop_on_entry
-        }));
+        let seq = self.send(
+            "launch",
+            json!({
+                "program": program,
+                "stopOnEntry": stop_on_entry
+            }),
+        );
         let (resp, mut events) = self.recv_response(seq);
         // Server sends response first, then runs the VM which emits events.
         if resp.get("success").and_then(|v| v.as_bool()) == Some(true) {
@@ -311,10 +324,13 @@ impl DapClient {
 
     /// Send evaluate request, return (response, events).
     pub fn evaluate(&mut self, expression: &str, frame_id: i64) -> (Value, Vec<Value>) {
-        let seq = self.send("evaluate", json!({
-            "expression": expression,
-            "frameId": frame_id
-        }));
+        let seq = self.send(
+            "evaluate",
+            json!({
+                "expression": expression,
+                "frameId": frame_id
+            }),
+        );
         self.recv_response(seq)
     }
 

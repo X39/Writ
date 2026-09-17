@@ -40,10 +40,10 @@ pub fn inject_log_extern_defs(
                 continue;
             }
             builder.add_extern_def(
-                &fqn,     // name in ExternDef table (e.g. "log::info")
+                &fqn, // name in ExternDef table (e.g. "log::info")
                 sig_blob,
-                &fqn,     // import_name = same as name
-                1,        // flags: pub
+                &fqn, // import_name = same as name
+                1,    // flags: pub
                 Some(def_id),
             );
         }
@@ -66,11 +66,6 @@ pub fn inject_dialogue_extern_defs(
     builder: &mut ModuleBuilder,
     called_ids: &FxHashSet<DefId>,
 ) {
-    // Pre-intern the fn() -> void blob for ChoiceOption's third param.
-    // fn() -> void sig blob: param_count=0 (u16 LE), void return tag.
-    let fn_void_blob_bytes: Vec<u8> = vec![0x00, 0x00, 0x00];
-    let fn_void_blob_offset = builder.blob_heap.intern(&fn_void_blob_bytes);
-
     // Build sig blobs for each dialogue builtin.
     let builtins: &[(&str, Vec<u8>)] = &[
         // say(speaker: Entity, text: string) -> void: 2 params, entity, string, void return
@@ -80,13 +75,11 @@ pub fn inject_dialogue_extern_defs(
         // choice(options: Array<int>) -> int: 1 param, Array<int>, int return
         ("choice", vec![0x01, 0x00, 0x20, 0x01, 0x01]),
         // ChoiceOption(label: string, key: string, body: fn() -> void) -> int:
-        // 3 params, string, string, func(blob_offset), int return
-        ("ChoiceOption", {
-            let mut blob = vec![0x03, 0x00, 0x04, 0x04, 0x30];
-            blob.extend_from_slice(&fn_void_blob_offset.to_le_bytes());
-            blob.push(0x01); // int return
-            blob
-        }),
+        // 3 params, string, string, inline fn() -> void, int return
+        (
+            "ChoiceOption",
+            vec![0x03, 0x00, 0x04, 0x04, 0x30, 0x00, 0x00, 0x00, 0x01],
+        ),
     ];
 
     for (name, sig_bytes) in builtins {

@@ -13,11 +13,22 @@ pub enum AstType {
     /// Generic type: `Option<T>`, `List<T>`, `Result<A, B>`
     ///
     /// NOTE: `T?` lowers to `Generic { name: "Option", args: [T] }` — no Nullable variant.
-    Generic { name: String, args: Vec<AstType>, span: SimpleSpan },
+    Generic {
+        name: String,
+        args: Vec<AstType>,
+        span: SimpleSpan,
+    },
     /// Array type: `T[]`
-    Array { elem: Box<AstType>, span: SimpleSpan },
+    Array {
+        elem: Box<AstType>,
+        span: SimpleSpan,
+    },
     /// Function type: `fn(int, string) -> bool`
-    Func { params: Vec<AstType>, ret: Option<Box<AstType>>, span: SimpleSpan },
+    Func {
+        params: Vec<AstType>,
+        ret: Option<Box<AstType>>,
+        span: SimpleSpan,
+    },
     /// Void type
     Void { span: SimpleSpan },
 }

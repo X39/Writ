@@ -12,36 +12,37 @@
 //! - `construction` — `new` struct/class/entity construction and array literals
 
 use chumsky::span::SimpleSpan;
+use rustc_hash::FxHashMap;
 
-use crate::ast::expr::{AstExpr, PrefixOp, PostfixOp};
+use crate::ast::expr::{AstExpr, PostfixOp, PrefixOp};
 use crate::resolve::def_map::{DefId, DefKind, DefMap};
 
 use super::env::{LocalEnv, TypeEnv};
 use super::error::TypeError;
-use super::ir::{TypedExpr, TypedStmt, TypedLiteral};
+use super::ir::{TypedExpr, TypedLiteral, TypedStmt};
 use super::ty::{Ty, TyInterner, TyKind};
 use super::unify::UnifyCtx;
 use writ_diagnostics::{Diagnostic, FileId};
 
-mod ident;
-mod path;
+mod access;
 mod binary;
 mod call;
-mod control;
-mod access;
-mod match_;
-mod lambda;
 mod construction;
+mod control;
+mod ident;
+mod lambda;
+mod match_;
+mod path;
 
-use ident::check_ident;
-use path::check_path;
+use access::{check_bracket_access, check_member_access};
 use binary::{check_binary, check_unary_prefix};
 use call::{check_call, check_generic_call};
+use construction::{check_array_lit, check_new_construction};
 use control::check_if;
-use access::{check_member_access, check_bracket_access};
-use match_::{check_match, check_pattern};
+use ident::check_ident;
 use lambda::check_lambda;
-use construction::{check_new_construction, check_array_lit};
+use match_::{check_match, check_pattern};
+use path::check_path;
 
 /// Central checking context threaded through all checking functions.
 pub struct CheckCtx<'def> {
@@ -54,6 +55,9 @@ pub struct CheckCtx<'def> {
     pub current_fn_ret: Option<Ty>,
     pub current_file: FileId,
     pub self_type: Option<Ty>,
+    /// Generic parameters visible in the declaration currently being checked.
+    /// Impl-level and method-level parameters share one ordinal space here.
+    pub current_generics: FxHashMap<String, u32>,
     /// The namespace of the currently-checked function or method (e.g. `"mymod"`).
     /// Set from `DefEntry::namespace` before checking a function/method body.
     /// Used for namespace-prefixed FQN lookup of type annotations in namespaced projects.
@@ -75,6 +79,141 @@ impl CheckCtx<'_> {
     /// Format a type for display in error messages.
     pub fn display_ty(&self, ty: Ty) -> String {
         self.interner.display(ty)
+    }
+
+    /// Resolve an annotation using the active declaration's generic scope.
+    pub fn resolve_ast_type(&mut self, ty: &crate::ast::types::AstType) -> Ty {
+        let generics = self.current_generics.clone();
+        super::env::resolve_ast_type_with_file(
+            ty,
+            self.def_map,
+            &mut self.interner,
+            &generics,
+            self.current_file,
+        )
+    }
+
+    /// Check the language's directional assignment relation and emit a focused
+    /// diagnostic on failure. Contract destinations accept a concrete value only
+    /// when one structurally matching impl exists for the exact specialization.
+    pub fn check_assignable(
+        &mut self,
+        expected: Ty,
+        found: Ty,
+        expected_span: SimpleSpan,
+        found_span: SimpleSpan,
+        help: Option<String>,
+    ) -> bool {
+        let expected = self.unify.resolve_ty_deep(expected, &mut self.interner);
+        let found = self.unify.resolve_ty_deep(found, &mut self.interner);
+
+        if self.is_error(expected) || self.is_error(found) {
+            return true;
+        }
+
+        let expected_contract = match self.interner.kind(expected) {
+            TyKind::Contract(def_id) => Some(*def_id),
+            _ => None,
+        };
+        let Some(contract_def_id) = expected_contract else {
+            if self
+                .unify
+                .unify(expected, found, &mut self.interner)
+                .is_ok()
+            {
+                return true;
+            }
+            self.emit_error(TypeError::TypeMismatch {
+                expected: self.display_ty(expected),
+                found: self.display_ty(found),
+                expected_span,
+                found_span,
+                file: self.current_file,
+                help,
+            });
+            return false;
+        };
+
+        // Contract values retain their specialization. They are assignable only
+        // to the same exact contract type; concrete-to-contract conversion is
+        // handled by matching ImplEntry patterns below.
+        if matches!(self.interner.kind(found), TyKind::Contract(_)) {
+            if super::infer::types_equal_strict(expected, found, &self.interner) {
+                return true;
+            }
+            self.emit_error(TypeError::TypeMismatch {
+                expected: self.display_ty(expected),
+                found: self.display_ty(found),
+                expected_span,
+                found_span,
+                file: self.current_file,
+                help,
+            });
+            return false;
+        }
+
+        let concrete_def_id = match self.interner.kind(found) {
+            TyKind::Struct(def_id)
+            | TyKind::Class(def_id)
+            | TyKind::Entity(def_id)
+            | TyKind::Enum(def_id) => Some(*def_id),
+            _ => None,
+        };
+
+        let matching_impls = concrete_def_id
+            .and_then(|def_id| self.type_env.impl_index.get(&def_id))
+            .map(|impls| {
+                impls
+                    .iter()
+                    .filter(|implementation| {
+                        if implementation.contract_def_id != Some(contract_def_id) {
+                            return false;
+                        }
+                        let Some(contract_pattern) = implementation.contract_ty else {
+                            return false;
+                        };
+                        let Some(mut bindings) = super::infer::match_type_pattern(
+                            implementation.target_ty,
+                            found,
+                            &self.interner,
+                        ) else {
+                            return false;
+                        };
+                        super::infer::match_type_pattern_with_bindings(
+                            contract_pattern,
+                            expected,
+                            &self.interner,
+                            &mut bindings,
+                        )
+                    })
+                    .count()
+            })
+            .unwrap_or(0);
+
+        if matching_impls == 1 {
+            return true;
+        }
+
+        let contract_name = self.display_ty(expected);
+        let found_name = self.display_ty(found);
+        if matching_impls > 1 {
+            self.emit_error(TypeError::AmbiguousImpl {
+                target_name: found_name,
+                member_name: contract_name,
+                candidate_count: matching_impls,
+                span: found_span,
+                file: self.current_file,
+            });
+        } else {
+            self.emit_error(TypeError::MissingContractImpl {
+                ty_name: found_name.clone(),
+                contract_name: contract_name.clone(),
+                span: found_span,
+                file: self.current_file,
+                suggestion: format!("add `impl {contract_name} for {found_name}`"),
+            });
+        }
+        false
     }
 }
 
@@ -115,16 +254,14 @@ pub fn check_expr(ctx: &mut CheckCtx, expr: &AstExpr) -> TypedExpr {
 
         AstExpr::UnaryPrefix { op, expr, span } => check_unary_prefix(ctx, op, expr, *span),
 
-        AstExpr::UnaryPostfix { expr: inner, op, span } => {
-            match op {
-                PostfixOp::NullPropagate => {
-                    super::desugar::desugar_question(ctx, inner, *span)
-                }
-                PostfixOp::Unwrap => {
-                    super::desugar::desugar_unwrap(ctx, inner, *span)
-                }
-            }
-        }
+        AstExpr::UnaryPostfix {
+            expr: inner,
+            op,
+            span,
+        } => match op {
+            PostfixOp::NullPropagate => super::desugar::desugar_question(ctx, inner, *span),
+            PostfixOp::Unwrap => super::desugar::desugar_unwrap(ctx, inner, *span),
+        },
 
         AstExpr::Call { callee, args, span } => check_call(ctx, callee, args, *span),
 
@@ -144,28 +281,47 @@ pub fn check_expr(ctx: &mut CheckCtx, expr: &AstExpr) -> TypedExpr {
 
         AstExpr::Block { stmts, span } => check_block(ctx, stmts, *span),
 
-        AstExpr::MemberAccess { object, field, field_span, span } => {
-            check_member_access(ctx, object, field, *field_span, *span)
-        },
-        AstExpr::BracketAccess { object, index, span } => {
-            check_bracket_access(ctx, object, index, *span)
-        },
+        AstExpr::MemberAccess {
+            object,
+            field,
+            field_span,
+            span,
+        } => check_member_access(ctx, object, field, *field_span, *span),
+        AstExpr::BracketAccess {
+            object,
+            index,
+            span,
+        } => check_bracket_access(ctx, object, index, *span),
         AstExpr::SelfLit { span } => {
             if let Some(self_ty) = ctx.self_type {
-                TypedExpr::SelfRef { ty: self_ty, span: *span }
+                TypedExpr::SelfRef {
+                    ty: self_ty,
+                    span: *span,
+                }
             } else {
                 let err_ty = ctx.emit_error(TypeError::UndefinedVariable {
                     name: "self".to_string(),
                     span: *span,
                     file: ctx.current_file,
                 });
-                TypedExpr::Error { ty: err_ty, span: *span }
+                TypedExpr::Error {
+                    ty: err_ty,
+                    span: *span,
+                }
             }
-        },
-        AstExpr::Match { scrutinee, arms, span } => {
-            check_match(ctx, scrutinee, arms, *span)
-        },
-        AstExpr::IfLet { pattern, value, then_block, else_block, span } => {
+        }
+        AstExpr::Match {
+            scrutinee,
+            arms,
+            span,
+        } => check_match(ctx, scrutinee, arms, *span),
+        AstExpr::IfLet {
+            pattern,
+            value,
+            then_block,
+            else_block,
+            span,
+        } => {
             let typed_value = check_expr(ctx, value);
             let value_ty = typed_value.ty();
 
@@ -183,7 +339,11 @@ pub fn check_expr(ctx: &mut CheckCtx, expr: &AstExpr) -> TypedExpr {
 
                 let result_ty = if ctx.is_error(then_ty) || ctx.is_error(else_ty) {
                     ctx.interner.error()
-                } else if ctx.unify.unify(then_ty, else_ty, &mut ctx.interner).is_err() {
+                } else if ctx
+                    .unify
+                    .unify(then_ty, else_ty, &mut ctx.interner)
+                    .is_err()
+                {
                     ctx.emit_error(TypeError::TypeMismatch {
                         expected: ctx.display_ty(then_ty),
                         found: ctx.display_ty(else_ty),
@@ -212,12 +372,23 @@ pub fn check_expr(ctx: &mut CheckCtx, expr: &AstExpr) -> TypedExpr {
                     else_branch: None,
                 }
             }
-        },
-        AstExpr::Lambda { params, return_type, body, span } => {
-            check_lambda(ctx, params, return_type.as_deref(), body, *span)
-        },
+        }
+        AstExpr::Lambda {
+            params,
+            return_type,
+            body,
+            span,
+        } => check_lambda(ctx, params, return_type.as_deref(), body, *span),
         AstExpr::Spawn { expr: inner, span } => {
             let typed_inner = check_expr(ctx, inner);
+            if let Some(reason) = unsupported_spawn_reason(ctx, &typed_inner) {
+                let ty = ctx.emit_error(TypeError::UnsupportedSpawnTarget {
+                    reason: reason.to_string(),
+                    span: *span,
+                    file: ctx.current_file,
+                });
+                return TypedExpr::Error { ty, span: *span };
+            }
             let inner_ty = typed_inner.ty();
             let task_ty = ctx.interner.task_handle(inner_ty);
             TypedExpr::Spawn {
@@ -225,15 +396,7 @@ pub fn check_expr(ctx: &mut CheckCtx, expr: &AstExpr) -> TypedExpr {
                 span: *span,
                 expr: Box::new(typed_inner),
             }
-        },
-        AstExpr::SpawnDetached { expr: inner, span } => {
-            let typed_inner = check_expr(ctx, inner);
-            TypedExpr::SpawnDetached {
-                ty: ctx.interner.void(),
-                span: *span,
-                expr: Box::new(typed_inner),
-            }
-        },
+        }
         AstExpr::Join { expr: inner, span } => {
             let typed_inner = check_expr(ctx, inner);
             let inner_ty = typed_inner.ty();
@@ -242,16 +405,14 @@ pub fn check_expr(ctx: &mut CheckCtx, expr: &AstExpr) -> TypedExpr {
             } else {
                 match ctx.interner.kind(inner_ty).clone() {
                     TyKind::TaskHandle(inner) => inner,
-                    _ => {
-                        ctx.emit_error(TypeError::TypeMismatch {
-                            expected: "TaskHandle<T>".to_string(),
-                            found: ctx.display_ty(inner_ty),
-                            expected_span: *span,
-                            found_span: typed_inner.span(),
-                            file: ctx.current_file,
-                            help: Some("join requires a TaskHandle".to_string()),
-                        })
-                    }
+                    _ => ctx.emit_error(TypeError::TypeMismatch {
+                        expected: "TaskHandle<T>".to_string(),
+                        found: ctx.display_ty(inner_ty),
+                        expected_span: *span,
+                        found_span: typed_inner.span(),
+                        file: ctx.current_file,
+                        help: Some("join requires a TaskHandle".to_string()),
+                    }),
                 }
             };
             TypedExpr::Join {
@@ -259,27 +420,28 @@ pub fn check_expr(ctx: &mut CheckCtx, expr: &AstExpr) -> TypedExpr {
                 span: *span,
                 expr: Box::new(typed_inner),
             }
-        },
+        }
         AstExpr::Cancel { expr: inner, span } => {
             let typed_inner = check_expr(ctx, inner);
             let inner_ty = typed_inner.ty();
             if !ctx.is_error(inner_ty)
-                && !matches!(ctx.interner.kind(inner_ty), TyKind::TaskHandle(_)) {
-                    ctx.emit_error(TypeError::TypeMismatch {
-                        expected: "TaskHandle<T>".to_string(),
-                        found: ctx.display_ty(inner_ty),
-                        expected_span: *span,
-                        found_span: typed_inner.span(),
-                        file: ctx.current_file,
-                        help: Some("cancel requires a TaskHandle".to_string()),
-                    });
-                }
+                && !matches!(ctx.interner.kind(inner_ty), TyKind::TaskHandle(_))
+            {
+                ctx.emit_error(TypeError::TypeMismatch {
+                    expected: "TaskHandle<T>".to_string(),
+                    found: ctx.display_ty(inner_ty),
+                    expected_span: *span,
+                    found_span: typed_inner.span(),
+                    file: ctx.current_file,
+                    help: Some("cancel requires a TaskHandle".to_string()),
+                });
+            }
             TypedExpr::Cancel {
                 ty: ctx.interner.void(),
                 span: *span,
                 expr: Box::new(typed_inner),
             }
-        },
+        }
         AstExpr::Defer { expr: inner, span } => {
             let typed_inner = check_expr(ctx, inner);
             TypedExpr::Defer {
@@ -287,36 +449,34 @@ pub fn check_expr(ctx: &mut CheckCtx, expr: &AstExpr) -> TypedExpr {
                 span: *span,
                 expr: Box::new(typed_inner),
             }
-        },
-        AstExpr::Try { expr: inner, span } => {
-            super::desugar::desugar_try(ctx, inner, *span)
-        },
-        AstExpr::New { ty: ast_ty, fields, span } => {
-            check_new_construction(ctx, ast_ty, fields, *span)
-        },
-        AstExpr::ArrayLit { elements, span } => {
-            check_array_lit(ctx, elements, *span)
-        },
-        AstExpr::Assign { target, value, span } => {
+        }
+        AstExpr::Try { expr: inner, span } => super::desugar::desugar_try(ctx, inner, *span),
+        AstExpr::New {
+            ty: ast_ty,
+            fields,
+            span,
+        } => check_new_construction(ctx, ast_ty, fields, *span),
+        AstExpr::ArrayLit { elements, span } => check_array_lit(ctx, elements, *span),
+        AstExpr::Assign {
+            target,
+            value,
+            span,
+        } => {
             let typed_target = check_expr(ctx, target);
             let typed_value = check_expr(ctx, value);
             let target_ty = typed_target.ty();
             let value_ty = typed_value.ty();
 
-            if !ctx.is_error(target_ty) && !ctx.is_error(value_ty)
-                && ctx.unify.unify(target_ty, value_ty, &mut ctx.interner).is_err() {
-                    ctx.emit_error(TypeError::TypeMismatch {
-                        expected: ctx.display_ty(target_ty),
-                        found: ctx.display_ty(value_ty),
-                        expected_span: typed_target.span(),
-                        found_span: typed_value.span(),
-                        file: ctx.current_file,
-                        help: None,
-                    });
-                }
+            ctx.check_assignable(
+                target_ty,
+                value_ty,
+                typed_target.span(),
+                typed_value.span(),
+                None,
+            );
 
             // Check mutability of the assignment target
-            check_assignment_mutability(ctx, &typed_target, *span);
+            super::mutability::check_assignment(ctx, &typed_target, *span);
 
             TypedExpr::Assign {
                 ty: ctx.interner.void(),
@@ -325,7 +485,12 @@ pub fn check_expr(ctx: &mut CheckCtx, expr: &AstExpr) -> TypedExpr {
                 value: Box::new(typed_value),
             }
         }
-        AstExpr::Range { start, kind, end, span } => {
+        AstExpr::Range {
+            start,
+            kind,
+            end,
+            span,
+        } => {
             let typed_start = start.as_ref().map(|s| check_expr(ctx, s));
             let typed_end = end.as_ref().map(|e| check_expr(ctx, e));
 
@@ -348,7 +513,7 @@ pub fn check_expr(ctx: &mut CheckCtx, expr: &AstExpr) -> TypedExpr {
                 end: typed_end.map(Box::new),
                 inclusive: matches!(kind, crate::ast::expr::RangeKind::Inclusive),
             }
-        },
+        }
         AstExpr::FromEnd { expr: inner, span } => {
             let typed_inner = check_expr(ctx, inner);
             let inner_ty = typed_inner.ty();
@@ -370,9 +535,12 @@ pub fn check_expr(ctx: &mut CheckCtx, expr: &AstExpr) -> TypedExpr {
                 op: PrefixOp::FromEnd,
                 expr: Box::new(typed_inner),
             }
-        },
+        }
 
-        AstExpr::TypeOf { expr: inner_expr, span } => {
+        AstExpr::TypeOf {
+            expr: inner_expr,
+            span,
+        } => {
             // typeof(Expr) — resolve the static type of the inner expression.
             //
             // Special case: when the inner expression is a bare identifier that names a
@@ -383,15 +551,12 @@ pub fn check_expr(ctx: &mut CheckCtx, expr: &AstExpr) -> TypedExpr {
             let static_ty = match inner_expr.as_ref() {
                 AstExpr::Ident { name, .. } => {
                     // Attempt to resolve the name as a type definition.
-                    let def_id = ctx
-                        .def_map
-                        .get(name)
-                        .or_else(|| {
-                            ctx.def_map
-                                .file_private
-                                .values()
-                                .find_map(|m| m.get(name.as_str()).copied())
-                        });
+                    let def_id = ctx.def_map.get(name).or_else(|| {
+                        ctx.def_map
+                            .file_private
+                            .values()
+                            .find_map(|m| m.get(name.as_str()).copied())
+                    });
                     if let Some(did) = def_id {
                         let entry = ctx.def_map.get_entry(did);
                         match entry.kind {
@@ -419,7 +584,10 @@ pub fn check_expr(ctx: &mut CheckCtx, expr: &AstExpr) -> TypedExpr {
                 }
             };
             if ctx.is_error(static_ty) {
-                return TypedExpr::Error { ty: ctx.interner.error(), span: *span };
+                return TypedExpr::Error {
+                    ty: ctx.interner.error(),
+                    span: *span,
+                };
             }
             let reflection_ty = ctx.interner.reflection_type(static_ty);
             TypedExpr::TypeOf {
@@ -427,12 +595,75 @@ pub fn check_expr(ctx: &mut CheckCtx, expr: &AstExpr) -> TypedExpr {
                 span: *span,
                 static_ty,
             }
-        },
+        }
 
         AstExpr::Error { span } => TypedExpr::Error {
             ty: ctx.interner.error(),
             span: *span,
         },
+    }
+}
+
+/// The task opcodes can start only concrete MethodDef/MethodRef bodies. Keep
+/// unsupported dispatch forms out of codegen instead of manufacturing a null
+/// metadata token or a hidden thunk.
+fn unsupported_spawn_reason(ctx: &CheckCtx<'_>, expr: &TypedExpr) -> Option<&'static str> {
+    let TypedExpr::Call {
+        callee,
+        callee_def_id,
+        callee_has_receiver,
+        ..
+    } = expr
+    else {
+        return Some("the operand is not a call");
+    };
+
+    if ctx.is_error(expr.ty()) || ctx.is_error(callee.ty()) {
+        return Some("the call target could not be resolved");
+    }
+
+    match callee.as_ref() {
+        TypedExpr::Field { receiver, .. } => {
+            let receiver_ty = ctx.interner.resolve_infer(receiver.ty());
+            match ctx.interner.kind(receiver_ty) {
+                TyKind::Struct(_) | TyKind::Class(_) | TyKind::Entity(_) | TyKind::Enum(_)
+                    if callee_has_receiver.is_some() =>
+                {
+                    None
+                }
+                TyKind::Struct(_) | TyKind::Class(_) | TyKind::Entity(_) | TyKind::Enum(_) => {
+                    Some("the concrete method did not resolve to a bytecode body")
+                }
+                TyKind::Contract(_) | TyKind::GenericParam(_) => {
+                    Some("virtual or contract dispatch has no single bytecode body")
+                }
+                _ => Some("built-in operations do not have spawnable bytecode bodies"),
+            }
+        }
+        _ => {
+            let Some(def_id) = callee_def_id else {
+                return Some(match callee.as_ref() {
+                    TypedExpr::Var { name, .. }
+                        if matches!(name.as_str(), "Some" | "None" | "Ok" | "Err") =>
+                    {
+                        "built-in operations do not have spawnable bytecode bodies"
+                    }
+                    TypedExpr::Path { segments, .. }
+                        if segments.last().is_some_and(|name| {
+                            matches!(name.as_str(), "Some" | "None" | "Ok" | "Err")
+                        }) =>
+                    {
+                        "built-in operations do not have spawnable bytecode bodies"
+                    }
+                    _ => "delegate calls do not name a concrete bytecode body",
+                });
+            };
+            match ctx.def_map.get_entry(*def_id).kind {
+                DefKind::Fn if *callee_has_receiver == Some(false) => None,
+                DefKind::ExternFn => Some("extern functions do not have bytecode bodies"),
+                _ => Some("the call target did not resolve to a bytecode function"),
+            }
+        }
     }
 }
 
@@ -466,7 +697,7 @@ pub fn check_block_stmts(
         .last()
         .and_then(|s| match s {
             TypedStmt::Expr { expr, .. } => Some(expr.ty()),
-            TypedStmt::Return { .. } => Some(ctx.interner.void()),
+            TypedStmt::Return { .. } | TypedStmt::Transition { .. } => Some(ctx.interner.void()),
             _ => None,
         })
         .unwrap_or_else(|| ctx.interner.void());
@@ -476,66 +707,6 @@ pub fn check_block_stmts(
         span,
         stmts: typed_stmts,
         tail: None,
-    }
-}
-
-/// Check whether an assignment target is mutable. If not, emit an error.
-pub fn check_assignment_mutability(ctx: &mut CheckCtx, target: &TypedExpr, assignment_span: SimpleSpan) {
-    if let Some((name, mutability, binding_span)) = find_root_binding(target, &ctx.local_env)
-        && mutability == super::env::Mutability::Immutable {
-            // Determine if this is a simple reassignment or a field mutation
-            match target {
-                TypedExpr::Var { .. } => {
-                    ctx.diags.push(TypeError::ImmutableReassignment {
-                        binding_name: name,
-                        binding_span,
-                        assignment_span,
-                        file: ctx.current_file,
-                    }.into());
-                }
-                TypedExpr::Index { receiver, .. } => {
-                    // Arrays are reference types: index-assignment mutates the heap object,
-                    // not the binding. Allow arr[i] = v even when arr is an immutable binding,
-                    // provided the receiver is an array type.
-                    let recv_kind = ctx.interner.kind(receiver.ty()).clone();
-                    if matches!(recv_kind, TyKind::Array(_)) {
-                        // Allowed — index-assigning into an array reference is always legal.
-                    } else {
-                        ctx.diags.push(TypeError::ImmutableMutation {
-                            binding_name: name,
-                            binding_span,
-                            mutation_span: assignment_span,
-                            mutation_kind: "field assignment".to_string(),
-                            file: ctx.current_file,
-                        }.into());
-                    }
-                }
-                TypedExpr::Field { .. } => {
-                    ctx.diags.push(TypeError::ImmutableMutation {
-                        binding_name: name,
-                        binding_span,
-                        mutation_span: assignment_span,
-                        mutation_kind: "field assignment".to_string(),
-                        file: ctx.current_file,
-                    }.into());
-                }
-                _ => {}
-            }
-        }
-}
-
-/// Walk a TypedExpr to find its root variable binding.
-fn find_root_binding(expr: &TypedExpr, local_env: &LocalEnv) -> Option<(String, super::env::Mutability, SimpleSpan)> {
-    match expr {
-        TypedExpr::Var { name, .. } => {
-            local_env.lookup(name).map(|(_, m, sp)| (name.clone(), m, sp))
-        }
-        TypedExpr::SelfRef { .. } => {
-            local_env.lookup("self").map(|(_, m, sp)| ("self".to_string(), m, sp))
-        }
-        TypedExpr::Field { receiver, .. } => find_root_binding(receiver, local_env),
-        TypedExpr::Index { receiver, .. } => find_root_binding(receiver, local_env),
-        _ => None,
     }
 }
 
@@ -553,7 +724,8 @@ pub(super) fn find_fn_def_id(ctx: &CheckCtx, name: &str) -> Option<DefId> {
 pub(super) fn find_fn_candidates(ctx: &CheckCtx, name: &str) -> Vec<DefId> {
     // Check by simple name in by_fqn / fn_overloads
     let candidates = ctx.def_map.get_fn_candidates(name);
-    let fn_candidates: Vec<DefId> = candidates.into_iter()
+    let fn_candidates: Vec<DefId> = candidates
+        .into_iter()
         .filter(|&id| {
             let entry = ctx.def_map.get_entry(id);
             matches!(entry.kind, DefKind::Fn | DefKind::ExternFn)
@@ -567,7 +739,8 @@ pub(super) fn find_fn_candidates(ctx: &CheckCtx, name: &str) -> Vec<DefId> {
     // Check file-private (including overloads)
     for &file_id in ctx.def_map.file_private.keys() {
         let candidates = ctx.def_map.get_private_fn_candidates(file_id, name);
-        let fn_candidates: Vec<DefId> = candidates.into_iter()
+        let fn_candidates: Vec<DefId> = candidates
+            .into_iter()
             .filter(|&id| {
                 let entry = ctx.def_map.get_entry(id);
                 matches!(entry.kind, DefKind::Fn | DefKind::ExternFn)
@@ -587,7 +760,9 @@ pub(super) fn find_fn_candidates(ctx: &CheckCtx, name: &str) -> Vec<DefId> {
             if matches!(entry.kind, DefKind::Fn | DefKind::ExternFn) {
                 // Check for overloads on this FQN
                 if let Some(overloads) = ctx.def_map.fn_overloads.get(fqn.as_str()) {
-                    let filtered: Vec<DefId> = overloads.iter().copied()
+                    let filtered: Vec<DefId> = overloads
+                        .iter()
+                        .copied()
                         .filter(|id| !ctx.type_env.conditional_fns.contains_key(id))
                         .collect();
                     return filtered;

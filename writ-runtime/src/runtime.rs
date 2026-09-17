@@ -1,5 +1,5 @@
-use crate::domain::Domain;
 use crate::dispatch::DispatchTable;
+use crate::domain::Domain;
 use crate::entity::EntityRegistry;
 use crate::error::{CrashInfo, RuntimeError};
 use crate::gc::{GcHeap, GcStats, MarkSweepHeap};
@@ -67,8 +67,7 @@ impl RuntimeBuilder<NullHost> {
     /// programs, consider spawning on a thread with 16 MB stack.
     #[cfg(feature = "compiler")]
     pub fn from_source(src: &'static str) -> Result<Self, RuntimeError> {
-        let bytes = writ_compiler::compile_source(src)
-            .map_err(RuntimeError::LoadError)?;
+        let bytes = writ_compiler::compile_source(src).map_err(RuntimeError::LoadError)?;
         let module = writ_module::Module::from_bytes(&bytes)
             .map_err(|e| RuntimeError::LoadError(format!("deserialize: {}", e)))?;
         Ok(Self::new(module))
@@ -102,8 +101,7 @@ impl<H: RuntimeHost> RuntimeBuilder<H> {
     /// Requires the `compiler` feature.
     #[cfg(feature = "compiler")]
     pub fn with_library_source(self, src: &'static str) -> Result<Self, RuntimeError> {
-        let bytes = writ_compiler::compile_source(src)
-            .map_err(RuntimeError::LoadError)?;
+        let bytes = writ_compiler::compile_source(src).map_err(RuntimeError::LoadError)?;
         let module = writ_module::Module::from_bytes(&bytes)
             .map_err(|e| RuntimeError::LoadError(format!("deserialize: {}", e)))?;
         Ok(self.with_library(module))
@@ -142,11 +140,12 @@ impl<H: RuntimeHost> RuntimeBuilder<H> {
         // Build dispatch table
         let dispatch_table = domain.build_dispatch_table();
 
-        let user_module = &domain.modules[user_idx];
-        let global_count = user_module.module.global_defs.len();
-
         let mut scheduler = Scheduler::new();
-        scheduler.globals = vec![Value::Void; global_count];
+        scheduler.globals = domain
+            .modules
+            .iter()
+            .map(|loaded| vec![Value::Void; loaded.module.global_defs.len()])
+            .collect();
 
         let heap: Box<dyn GcHeap> = if self.use_gc {
             Box::new(MarkSweepHeap::new())
@@ -372,7 +371,10 @@ impl<H: RuntimeHost> Runtime<H> {
             );
 
             // Cancel scoped children, mirrors the non-debug crash path in scheduler.rs.
-            let children = self.scheduler.tasks.get(&task_id)
+            let children = self
+                .scheduler
+                .tasks
+                .get(&task_id)
                 .map(|t| t.scoped_children.clone())
                 .unwrap_or_default();
             for child_id in children {
@@ -389,7 +391,10 @@ impl<H: RuntimeHost> Runtime<H> {
             }
 
             // Release any global locks held by this task.
-            let locks: Vec<u32> = self.scheduler.tasks.get(&task_id)
+            let locks: Vec<u32> = self
+                .scheduler
+                .tasks
+                .get(&task_id)
                 .map(|t| t.atomic_locks.clone())
                 .unwrap_or_default();
             for global_idx in locks {
@@ -424,15 +429,38 @@ impl<H: RuntimeHost> Runtime<H> {
                 method_idx
             )));
         }
-        let task_id =
-            self.scheduler
-                .create_task(method_idx, args, None, user_module);
+        let task_id = self
+            .scheduler
+            .create_task(method_idx, args, None, user_module);
         Ok(task_id)
     }
 
     /// Get the current state of a task.
     pub fn task_state(&self, task_id: TaskId) -> Option<TaskState> {
         self.scheduler.task_state(task_id)
+    }
+
+    /// Snapshot every host request currently suspending a task.
+    ///
+    /// Unlike [`TickResult::TasksSuspended`], this also reports requests while other tasks
+    /// remain ready and a tick reports [`TickResult::ExecutionLimitReached`].
+    pub fn pending_requests(&self) -> Vec<PendingRequest> {
+        self.scheduler
+            .tasks
+            .values()
+            .filter_map(|task| {
+                if task.state != TaskState::Suspended {
+                    return None;
+                }
+                task.pending_request
+                    .as_ref()
+                    .map(|(request_id, request)| PendingRequest {
+                        task_id: task.id,
+                        request_id: *request_id,
+                        request: request.clone(),
+                    })
+            })
+            .collect()
     }
 
     /// Read a register value from a task's top call frame.
@@ -494,11 +522,7 @@ impl<H: RuntimeHost> Runtime<H> {
 
     /// Run a method to completion synchronously, ignoring execution limits.
     /// Returns the return value on success, or CrashInfo on crash.
-    pub fn call_sync(
-        &mut self,
-        method_idx: usize,
-        args: Vec<Value>,
-    ) -> Result<Value, CrashInfo> {
+    pub fn call_sync(&mut self, method_idx: usize, args: Vec<Value>) -> Result<Value, CrashInfo> {
         let user_module = &self.domain.modules[self.user_module_idx];
         if method_idx >= user_module.decoded_bodies.len() {
             return Err(CrashInfo {
@@ -532,13 +556,19 @@ impl<H: RuntimeHost> Runtime<H> {
 
             match self.scheduler.task_state(task_id) {
                 Some(TaskState::Completed) => {
-                    let ret = self.scheduler.tasks.get(&task_id)
+                    let ret = self
+                        .scheduler
+                        .tasks
+                        .get(&task_id)
                         .and_then(|t| t.return_value.clone())
                         .unwrap_or(Value::Void);
                     return Ok(ret);
                 }
                 Some(TaskState::Cancelled) => {
-                    let crash = self.scheduler.tasks.get(&task_id)
+                    let crash = self
+                        .scheduler
+                        .tasks
+                        .get(&task_id)
                         .and_then(|t| t.crash_info.clone())
                         .unwrap_or(CrashInfo {
                             message: "task cancelled".into(),
@@ -620,12 +650,15 @@ impl<H: RuntimeHost> Runtime<H> {
         }
 
         // Globals
-        for global in &self.scheduler.globals {
-            collect_value_refs(global, &mut roots);
+        for module_globals in &self.scheduler.globals {
+            for global in module_globals {
+                collect_value_refs(global, &mut roots);
+            }
         }
 
-        // Entity data refs for alive entities
-        for (_entity_id, slot) in self.scheduler.entity_registry.alive_entities() {
+        // Entity data refs remain roots throughout construction, normal life,
+        // and destruction hooks.
+        for slot in self.scheduler.entity_registry.gc_root_entities() {
             if let Some(href) = slot.data_ref {
                 roots.push(href);
             }
@@ -639,7 +672,9 @@ impl<H: RuntimeHost> Runtime<H> {
 
     /// Get the crash info for a crashed/cancelled task.
     pub fn crash_info(&self, task_id: TaskId) -> Option<&CrashInfo> {
-        self.scheduler.tasks.get(&task_id)
+        self.scheduler
+            .tasks
+            .get(&task_id)
             .and_then(|t| t.crash_info.as_ref())
     }
 
@@ -693,17 +728,28 @@ impl<H: RuntimeHost> Runtime<H> {
     ///
     /// Returns `None` if the task does not exist or has no suspend reason set.
     pub fn suspend_reason(&self, task_id: TaskId) -> Option<&SuspendReason> {
-        self.scheduler.tasks.get(&task_id)
+        self.scheduler
+            .tasks
+            .get(&task_id)
             .and_then(|t| t.suspend_reason.as_ref())
     }
 
     /// Get a snapshot of all call stack frames for a task (used by the DAP server).
     ///
-    /// Returns `(method_idx, pc)` pairs ordered from bottom (oldest) to top (newest frame).
+    /// Returns domain-qualified frame locations ordered from bottom (oldest) to
+    /// top (newest frame).
     /// Returns `None` if the task does not exist.
-    pub fn call_stack_frames(&self, task_id: TaskId) -> Option<Vec<(usize, usize)>> {
-        self.scheduler.tasks.get(&task_id)
-            .map(|t| t.call_stack.iter().map(|f| (f.method_idx, f.pc)).collect())
+    pub fn call_stack_frames(&self, task_id: TaskId) -> Option<Vec<crate::frame::FrameLocation>> {
+        self.scheduler.tasks.get(&task_id).map(|t| {
+            t.call_stack
+                .iter()
+                .map(|f| crate::frame::FrameLocation {
+                    module_idx: f.module_idx.unwrap_or(self.user_module_idx),
+                    method_idx: f.method_idx,
+                    pc: f.pc,
+                })
+                .collect()
+        })
     }
 
     /// Get a clone of all registers for a specific call frame of a task.
@@ -711,7 +757,9 @@ impl<H: RuntimeHost> Runtime<H> {
     /// `frame_index` 0 is the bottom (oldest) frame; `frame_index N-1` is the top (innermost).
     /// Returns `None` if the task does not exist or the frame index is out of range.
     pub fn frame_registers(&self, task_id: TaskId, frame_index: usize) -> Option<Vec<Value>> {
-        self.scheduler.tasks.get(&task_id)
+        self.scheduler
+            .tasks
+            .get(&task_id)
             .and_then(|t| t.call_stack.get(frame_index))
             .map(|f| f.registers.clone())
     }
@@ -720,7 +768,9 @@ impl<H: RuntimeHost> Runtime<H> {
     ///
     /// Excludes tasks in Completed or Cancelled states.
     pub fn all_task_ids(&self) -> Vec<TaskId> {
-        self.scheduler.tasks.values()
+        self.scheduler
+            .tasks
+            .values()
             .filter(|t| !matches!(t.state, TaskState::Completed | TaskState::Cancelled))
             .map(|t| t.id)
             .collect()
@@ -772,8 +822,7 @@ impl<H: RuntimeHost> Runtime<H> {
             }
         }
 
-        let type_idx = found_idx
-            .ok_or_else(|| format!("type '{}' not found", type_name))?;
+        let type_idx = found_idx.ok_or_else(|| format!("type '{}' not found", type_name))?;
 
         let type_def = &module.type_defs[type_idx];
 
@@ -814,13 +863,13 @@ impl<H: RuntimeHost> Runtime<H> {
                     if !sig_bytes.is_empty() {
                         let expected_kind = sig_bytes[0];
                         let ok = match (expected_kind, field_val) {
-                            (_, Value::Void) => true,             // Void accepted as uninitialized
-                            (0x08, Value::Int(_)) => true,        // int32
-                            (0x0D, Value::Float(_)) => true,      // float64
-                            (0x02, Value::Bool(_)) => true,       // bool
-                            (0x0E, Value::Ref(_)) => true,        // string (heap ref)
-                            (0x01, _) => true,                    // void sig: accept anything
-                            (_, Value::Ref(_)) => true,           // ref types: accept ref
+                            (_, Value::Void) => true,        // Void accepted as uninitialized
+                            (0x08, Value::Int(_)) => true,   // int32
+                            (0x0D, Value::Float(_)) => true, // float64
+                            (0x02, Value::Bool(_)) => true,  // bool
+                            (0x0E, Value::Ref(_)) => true,   // string (heap ref)
+                            (0x01, _) => true,               // void sig: accept anything
+                            (_, Value::Ref(_)) => true,      // ref types: accept ref
                             _ => false,
                         };
                         if !ok {
@@ -836,10 +885,7 @@ impl<H: RuntimeHost> Runtime<H> {
 
         // Step 6: Allocate on heap
         let heap = self.heap.as_mut();
-        let obj_ref = heap.alloc_struct(type_idx as u32, expected_count);
-        for (i, val) in fields.into_iter().enumerate() {
-            let _ = heap.set_field(obj_ref, i, val);
-        }
+        let obj_ref = heap.alloc_struct_initialized(type_idx as u32, None, fields);
 
         Ok(Value::Ref(obj_ref))
     }
@@ -851,10 +897,121 @@ mod tests {
     use crate::frame::CallFrame;
     use crate::host::NullHost;
     use crate::task::Task;
+    use writ_module::module::MethodBody;
+    use writ_module::signature::{TypeSignature, encode_method_signature};
+    use writ_module::tables::TypeDefKind;
+    use writ_module::{Instruction, ModuleBuilder};
 
     fn make_runtime() -> Runtime<NullHost> {
-        let module = writ_module::Module::new();
+        let module = ModuleBuilder::new("runtime-test").build();
         RuntimeBuilder::new(module).build().expect("build runtime")
+    }
+
+    fn method_body(instructions: &[Instruction], reg_count: usize) -> MethodBody {
+        let mut code = Vec::new();
+        for instruction in instructions {
+            instruction.encode(&mut code).unwrap();
+        }
+        MethodBody {
+            register_types: vec![0; reg_count],
+            code,
+            debug_locals: vec![],
+            source_spans: vec![],
+        }
+    }
+
+    #[test]
+    fn library_method_uses_its_own_global_storage() {
+        let int_type = writ_module::signature::encode_type_signature(&TypeSignature::Int).unwrap();
+        let method_signature = encode_method_signature(&[], &TypeSignature::Int).unwrap();
+
+        let mut library = ModuleBuilder::new("global-library");
+        library.add_global_def("library_value", &int_type, 0, &[]);
+        let counter = library.add_type_def("Counter", "lib", TypeDefKind::Class, 0);
+        library.add_type_method(
+            counter,
+            "set_and_get",
+            &method_signature,
+            0,
+            2,
+            method_body(
+                &[
+                    Instruction::LoadInt {
+                        r_dst: 1,
+                        value: 41,
+                    },
+                    Instruction::StoreGlobal {
+                        global_idx: 0,
+                        r_src: 1,
+                    },
+                    Instruction::LoadGlobal {
+                        r_dst: 1,
+                        global_idx: 0,
+                    },
+                    Instruction::Ret { r_src: 1 },
+                ],
+                2,
+            ),
+        );
+        let library = library.build();
+
+        let mut user = ModuleBuilder::new("global-user");
+        user.add_global_def("user_value", &int_type, 0, &[]);
+        let library_ref = user.add_module_ref("global-library", "1.0.0");
+        let counter_ref = user.add_type_ref(library_ref, "Counter", "lib");
+        let method_ref = user.add_method_ref(counter_ref, "set_and_get", &method_signature);
+        user.add_method(
+            "main",
+            &method_signature,
+            0,
+            4,
+            method_body(
+                &[
+                    Instruction::LoadInt { r_dst: 0, value: 7 },
+                    Instruction::StoreGlobal {
+                        global_idx: 0,
+                        r_src: 0,
+                    },
+                    Instruction::New {
+                        r_dst: 0,
+                        type_idx: counter_ref.0,
+                        field_count: 0,
+                        r_base: 0,
+                    },
+                    Instruction::Call {
+                        r_dst: 1,
+                        method_idx: method_ref.0,
+                        r_base: 0,
+                        argc: 1,
+                    },
+                    Instruction::LoadGlobal {
+                        r_dst: 2,
+                        global_idx: 0,
+                    },
+                    Instruction::AddI {
+                        r_dst: 3,
+                        r_a: 1,
+                        r_b: 2,
+                    },
+                    Instruction::Ret { r_src: 3 },
+                ],
+                4,
+            ),
+        );
+
+        let mut runtime = RuntimeBuilder::new(user.build())
+            .with_library(library)
+            .build()
+            .unwrap();
+        let task_id = runtime.spawn_task(0, vec![]).unwrap();
+        runtime.tick(0.0, ExecutionLimit::None);
+
+        assert_eq!(runtime.task_state(task_id), Some(TaskState::Completed));
+        assert_eq!(runtime.return_value(task_id), Some(Value::Int(48)));
+        assert_eq!(
+            runtime.scheduler.globals[runtime.user_module_idx][0],
+            Value::Int(7)
+        );
     }
 
     /// Insert a task directly into the scheduler, bypassing method index checks.

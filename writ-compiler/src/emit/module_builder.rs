@@ -48,7 +48,10 @@ struct FieldDefEntry {
 
 #[derive(Debug, Clone)]
 struct MethodDefEntry {
+    /// Type used for name-based method lookup during body emission.
     parent: Option<TypeDefHandle>,
+    /// Explicit ImplDef owner. When set, this is authoritative over `parent`.
+    impl_owner: Option<ImplDefHandle>,
     row: MethodDefRow,
     def_id: Option<DefId>,
 }
@@ -73,6 +76,89 @@ struct ContractMethodEntry {
     row: ContractMethodRow,
 }
 
+fn type_signature_pattern_matches(
+    pattern: &writ_module::signature::TypeSignature,
+    actual: &writ_module::signature::TypeSignature,
+    bindings: &mut FxHashMap<u16, writ_module::signature::TypeSignature>,
+) -> bool {
+    use writ_module::signature::TypeSignature;
+    if let TypeSignature::GenericParam(ordinal) = pattern {
+        return match bindings.get(ordinal) {
+            Some(bound) => bound == actual,
+            None => {
+                bindings.insert(*ordinal, actual.clone());
+                true
+            }
+        };
+    }
+    match (pattern, actual) {
+        (TypeSignature::Void, TypeSignature::Void)
+        | (TypeSignature::Int, TypeSignature::Int)
+        | (TypeSignature::Float, TypeSignature::Float)
+        | (TypeSignature::Bool, TypeSignature::Bool)
+        | (TypeSignature::String, TypeSignature::String)
+        | (TypeSignature::Entity, TypeSignature::Entity) => true,
+        (TypeSignature::Named(left), TypeSignature::Named(right)) => left == right,
+        (
+            TypeSignature::Generic {
+                namespace: left_ns,
+                name: left_name,
+                args: left_args,
+            },
+            TypeSignature::Generic {
+                namespace: right_ns,
+                name: right_name,
+                args: right_args,
+            },
+        ) => {
+            left_ns == right_ns
+                && left_name == right_name
+                && left_args.len() == right_args.len()
+                && left_args
+                    .iter()
+                    .zip(right_args)
+                    .all(|(left, right)| type_signature_pattern_matches(left, right, bindings))
+        }
+        (TypeSignature::Array(left), TypeSignature::Array(right)) => {
+            type_signature_pattern_matches(left, right, bindings)
+        }
+        (
+            TypeSignature::Function {
+                params: left_params,
+                ret: left_ret,
+            },
+            TypeSignature::Function {
+                params: right_params,
+                ret: right_ret,
+            },
+        ) => {
+            left_params.len() == right_params.len()
+                && left_params
+                    .iter()
+                    .zip(right_params)
+                    .all(|(left, right)| type_signature_pattern_matches(left, right, bindings))
+                && type_signature_pattern_matches(left_ret, right_ret, bindings)
+        }
+        _ => false,
+    }
+}
+
+fn type_signature_specificity(signature: &writ_module::signature::TypeSignature) -> usize {
+    use writ_module::signature::TypeSignature;
+    match signature {
+        TypeSignature::GenericParam(_) => 0,
+        TypeSignature::Generic { args, .. } => {
+            1 + args.iter().map(type_signature_specificity).sum::<usize>()
+        }
+        TypeSignature::Array(element) => 1 + type_signature_specificity(element),
+        TypeSignature::Function { params, ret } => {
+            1 + params.iter().map(type_signature_specificity).sum::<usize>()
+                + type_signature_specificity(ret)
+        }
+        _ => 1,
+    }
+}
+
 /// The central builder for IL metadata tables.
 ///
 /// Accumulates rows during collection, then assigns final row indices
@@ -89,10 +175,18 @@ pub struct ModuleBuilder {
     type_def_def_ids: Vec<Option<DefId>>,
     type_refs: Vec<TypeRefRow>,
     type_specs: Vec<TypeSpecRow>,
+    type_spec_tokens: FxHashMap<crate::check::ty::Ty, MetadataToken>,
+    type_spec_signature_tokens: FxHashMap<u32, MetadataToken>,
     field_defs: Vec<FieldDefEntry>,
     field_refs: Vec<FieldRefRow>,
+    /// Imported field identity -> FieldRef row index. Field declarations do
+    /// not have source-level DefIds, so the owning type DefId and field name
+    /// form the stable identity used by checked body emission.
+    field_ref_by_owner_name: FxHashMap<(DefId, String), usize>,
     method_defs: Vec<MethodDefEntry>,
     method_refs: Vec<MethodRefRow>,
+    /// Compiler-only MethodRef origin metadata used for inherent preference.
+    method_ref_inherent: Vec<bool>,
     param_defs: Vec<ParamDefEntry>,
     contract_defs: Vec<ContractDefRow>,
     contract_def_def_ids: Vec<Option<DefId>>,
@@ -160,10 +254,14 @@ impl ModuleBuilder {
             type_def_def_ids: Vec::new(),
             type_refs: Vec::new(),
             type_specs: Vec::new(),
+            type_spec_tokens: FxHashMap::default(),
+            type_spec_signature_tokens: FxHashMap::default(),
             field_defs: Vec::new(),
             field_refs: Vec::new(),
+            field_ref_by_owner_name: FxHashMap::default(),
             method_defs: Vec::new(),
             method_refs: Vec::new(),
+            method_ref_inherent: Vec::new(),
             param_defs: Vec::new(),
             contract_defs: Vec::new(),
             contract_def_def_ids: Vec::new(),
@@ -237,6 +335,48 @@ impl ModuleBuilder {
         self.type_refs.len() - 1
     }
 
+    /// Add a MethodRef row for a method owned by a local or referenced type.
+    /// Returns the 0-based MethodRef row index.
+    pub fn add_method_ref(&mut self, parent: MetadataToken, name: &str, signature: &[u8]) -> usize {
+        self.add_method_ref_with_origin(parent, name, signature, true, true)
+    }
+
+    pub fn add_method_ref_with_origin(
+        &mut self,
+        parent: MetadataToken,
+        name: &str,
+        signature: &[u8],
+        inherent: bool,
+        has_receiver: bool,
+    ) -> usize {
+        let flags = if has_receiver {
+            writ_module::tables::METHOD_REF_FLAG_HAS_RECEIVER
+        } else {
+            0
+        };
+        if let Some(index) = self.method_refs.iter().position(|method_ref| {
+            method_ref.parent == parent
+                && self.string_heap.get_str(method_ref.name) == name
+                && writ_module::heap::read_blob(self.blob_heap.data(), method_ref.signature)
+                    .is_ok_and(|existing| existing == signature)
+                && method_ref.flags == flags
+        }) {
+            self.method_ref_inherent[index] |= inherent;
+            return index;
+        }
+
+        let name = self.string_heap.intern(name);
+        let signature = self.blob_heap.intern(signature);
+        self.method_refs.push(MethodRefRow {
+            parent,
+            name,
+            signature,
+            flags,
+        });
+        self.method_ref_inherent.push(inherent);
+        self.method_refs.len() - 1
+    }
+
     /// Add a TypeDef row. Returns a handle for child relationships.
     pub fn add_typedef(
         &mut self,
@@ -260,6 +400,61 @@ impl ModuleBuilder {
         TypeDefHandle(self.type_defs.len() - 1)
     }
 
+    /// Add or reuse an addressable generic type specialization.
+    ///
+    /// TypeSpec rows are not reordered during finalization, so the returned
+    /// token is stable and can be stored directly in ImplDef rows and method
+    /// bodies collected later in the same emission pass.
+    pub fn add_type_spec(&mut self, ty: crate::check::ty::Ty, signature: u32) -> MetadataToken {
+        if let Some(token) = self.type_spec_tokens.get(&ty) {
+            return *token;
+        }
+        if let Some(token) = self.type_spec_signature_tokens.get(&signature).copied() {
+            self.type_spec_tokens.insert(ty, token);
+            return token;
+        }
+
+        let token = self.add_type_spec_signature(signature);
+        self.type_spec_tokens.insert(ty, token);
+        token
+    }
+
+    /// Add an addressable descriptor that has no compiler `Ty` identity.
+    ///
+    /// This is used when remapping a library TypeSpec into a consuming module.
+    pub fn add_type_spec_signature(&mut self, signature: u32) -> MetadataToken {
+        if let Some(token) = self.type_spec_signature_tokens.get(&signature) {
+            return *token;
+        }
+        let token = MetadataToken::new(TableId::TypeSpec, (self.type_specs.len() + 1) as u32);
+        self.type_specs.push(TypeSpecRow { signature });
+        self.type_spec_signature_tokens.insert(signature, token);
+        token
+    }
+
+    /// Return the TypeSpec token previously registered for `ty`.
+    pub fn type_spec_token_for_ty(&self, ty: crate::check::ty::Ty) -> Option<MetadataToken> {
+        self.type_spec_tokens.get(&ty).copied()
+    }
+
+    /// Resolve a TypeSpec by its canonical descriptor, following inference
+    /// bindings recursively through nested generic arguments.
+    pub fn type_spec_token_for_encoded_ty(
+        &self,
+        ty: crate::check::ty::Ty,
+        interner: &crate::check::ty::TyInterner,
+    ) -> Option<MetadataToken> {
+        let token_for_def = |def_id| {
+            self.def_token_map
+                .get(&def_id)
+                .copied()
+                .unwrap_or(MetadataToken::NULL)
+        };
+        let signature = crate::emit::type_sig::encode_type_bytes(ty, interner, &token_for_def);
+        let signature = self.blob_heap.offset_of(&signature)?;
+        self.type_spec_signature_tokens.get(&signature).copied()
+    }
+
     /// Add a FieldDef row under a parent TypeDef.
     pub fn add_fielddef(
         &mut self,
@@ -280,6 +475,60 @@ impl ModuleBuilder {
         self.field_defs.len() - 1
     }
 
+    /// Add or reuse an imported FieldRef and bind it to its source-level owner.
+    ///
+    /// FieldRef identity includes the exact parent, name, and canonical type
+    /// signature. The `(owner_def_id, name)` map lets body emission recover the
+    /// corresponding metadata token without confusing it with a local ordinal.
+    pub fn add_field_ref(
+        &mut self,
+        owner_def_id: DefId,
+        parent: MetadataToken,
+        name: &str,
+        type_signature: &[u8],
+    ) -> usize {
+        let row = self.add_field_ref_row(parent, name, type_signature);
+
+        let identity = (owner_def_id, name.to_owned());
+        if let Some(previous) = self.field_ref_by_owner_name.insert(identity, row) {
+            assert_eq!(
+                previous, row,
+                "ambiguous imported field identity for `{name}`"
+            );
+        }
+        row
+    }
+
+    /// Add or reuse a FieldRef row without binding a source-level owner.
+    ///
+    /// Runtime-provided lowering paths that identify a field by its metadata
+    /// parent and name use this directly.
+    pub fn add_field_ref_row(
+        &mut self,
+        parent: MetadataToken,
+        name: &str,
+        type_signature: &[u8],
+    ) -> usize {
+        self.field_refs
+            .iter()
+            .position(|field_ref| {
+                field_ref.parent == parent
+                    && self.string_heap.get_str(field_ref.name) == name
+                    && writ_module::heap::read_blob(self.blob_heap.data(), field_ref.type_sig)
+                        .is_ok_and(|existing| existing == type_signature)
+            })
+            .unwrap_or_else(|| {
+                let name = self.string_heap.intern(name);
+                let type_sig = self.blob_heap.intern(type_signature);
+                self.field_refs.push(FieldRefRow {
+                    parent,
+                    name,
+                    type_sig,
+                });
+                self.field_refs.len() - 1
+            })
+    }
+
     /// Add a MethodDef row, optionally under a parent TypeDef.
     pub fn add_methoddef(
         &mut self,
@@ -293,6 +542,7 @@ impl ModuleBuilder {
         let name_offset = self.string_heap.intern(name);
         self.method_defs.push(MethodDefEntry {
             parent,
+            impl_owner: None,
             row: MethodDefRow {
                 name: name_offset,
                 signature,
@@ -301,6 +551,7 @@ impl ModuleBuilder {
                 body_size: 0,
                 reg_count: 0,
                 param_count,
+                owner: MetadataToken::NULL,
             },
             def_id,
         });
@@ -432,6 +683,12 @@ impl ModuleBuilder {
         self.impl_defs[handle.0].method_list = method_list;
     }
 
+    /// Mark a MethodDef as owned by an ImplDef while retaining its target type
+    /// for name-based lookup during emission.
+    pub fn set_method_impl_owner(&mut self, method: MethodDefHandle, owner: ImplDefHandle) {
+        self.method_defs[method.0].impl_owner = Some(owner);
+    }
+
     /// Get the method_list value for a TypeDef (after finalize).
     ///
     /// Used to find the 1-based row index of the first MethodDef parented to a TypeDef.
@@ -511,12 +768,7 @@ impl ModuleBuilder {
     }
 
     /// Add an ExportDef row.
-    pub fn add_export_def(
-        &mut self,
-        name: &str,
-        item_kind: u8,
-        item: MetadataToken,
-    ) -> usize {
+    pub fn add_export_def(&mut self, name: &str, item_kind: u8, item: MetadataToken) -> usize {
         let name_offset = self.string_heap.intern(name);
         self.export_defs.push(ExportDefRow {
             name: name_offset,
@@ -571,35 +823,49 @@ impl ModuleBuilder {
         self.field_defs.sort_by_key(|f| f.parent.0);
         self.final_field_def_count = self.field_defs.len() as u32;
 
-        // Set TypeDef.field_list to first child row (1-based).
+        // Set every TypeDef.field_list to its first child row (1-based), using
+        // the metadata-table "next index" convention. A type with no fields
+        // repeats the next type's start row; a trailing empty type stores
+        // FieldDef.len() + 1. Zero is not a valid finalized list index.
         {
-            let mut current_parent = None;
-            for (i, entry) in self.field_defs.iter().enumerate() {
-                let row_idx = (i + 1) as u32;
-                if current_parent != Some(entry.parent.0) {
-                    current_parent = Some(entry.parent.0);
-                    self.type_defs[entry.parent.0].field_list = row_idx;
+            let mut field_idx = 0usize;
+            for (type_idx, type_def) in self.type_defs.iter_mut().enumerate() {
+                type_def.field_list = (field_idx + 1) as u32;
+                while field_idx < self.field_defs.len()
+                    && self.field_defs[field_idx].parent.0 == type_idx
+                {
+                    field_idx += 1;
                 }
             }
+            debug_assert_eq!(
+                field_idx,
+                self.field_defs.len(),
+                "every FieldDef must have a TypeDef parent"
+            );
         }
 
-        // 3. MethodDef: group by parent, assign contiguous rows.
-        // Methods without parents (top-level fns) get parent index usize::MAX.
-        self.method_defs.sort_by_key(|m| {
-            m.parent.map(|p| p.0).unwrap_or(usize::MAX)
-        });
+        // 3. MethodDef: preserve collection order so provisional handles remain stable.
+        // Version 6 records an explicit owner on every row, so list contiguity is no
+        // longer needed to distinguish type, impl, and top-level methods.
         self.final_method_def_count = self.method_defs.len() as u32;
 
-        // Set TypeDef.method_list to first child row (1-based).
+        // Resolve explicit owners and retain method_list as a derived first-row index.
         {
-            let mut current_parent: Option<usize> = None;
-            for (i, entry) in self.method_defs.iter().enumerate() {
+            for (i, entry) in self.method_defs.iter_mut().enumerate() {
                 let row_idx = (i + 1) as u32;
-                if let Some(parent) = entry.parent
-                    && current_parent != Some(parent.0) {
-                        current_parent = Some(parent.0);
+                entry.row.owner = if let Some(owner) = entry.impl_owner {
+                    if self.impl_defs[owner.0].method_list == 0 {
+                        self.impl_defs[owner.0].method_list = row_idx;
+                    }
+                    MetadataToken::new(TableId::ImplDef, (owner.0 + 1) as u32)
+                } else if let Some(parent) = entry.parent {
+                    if self.type_defs[parent.0].method_list == 0 {
                         self.type_defs[parent.0].method_list = row_idx;
                     }
+                    MetadataToken::new(TableId::TypeDef, (parent.0 + 1) as u32)
+                } else {
+                    MetadataToken::NULL
+                };
                 // Map DefId -> token
                 let token = MetadataToken::new(TableId::MethodDef, row_idx);
                 if let Some(id) = entry.def_id {
@@ -624,15 +890,26 @@ impl ModuleBuilder {
         // 6. ContractMethod: group by parent ContractDef.
         self.contract_methods.sort_by_key(|cm| cm.parent.0);
         self.final_contract_method_count = self.contract_methods.len() as u32;
+
+        // Set every ContractDef.method_list to its first child row (1-based),
+        // using the metadata-table "next index" convention. Empty contracts
+        // repeat the next contract's start, and a trailing empty contract stores
+        // ContractMethod.len() + 1. Zero is not a valid finalized list index.
         {
-            let mut current_parent = None;
-            for (i, entry) in self.contract_methods.iter().enumerate() {
-                let row_idx = (i + 1) as u32;
-                if current_parent != Some(entry.parent.0) {
-                    current_parent = Some(entry.parent.0);
-                    self.contract_defs[entry.parent.0].method_list = row_idx;
+            let mut method_idx = 0usize;
+            for (contract_idx, contract_def) in self.contract_defs.iter_mut().enumerate() {
+                contract_def.method_list = (method_idx + 1) as u32;
+                while method_idx < self.contract_methods.len()
+                    && self.contract_methods[method_idx].parent.0 == contract_idx
+                {
+                    method_idx += 1;
                 }
             }
+            debug_assert_eq!(
+                method_idx,
+                self.contract_methods.len(),
+                "every ContractMethod must have a ContractDef parent"
+            );
         }
 
         // 7. ImplDef: assign row indices.
@@ -645,7 +922,8 @@ impl ModuleBuilder {
         }
 
         // 8. GenericParam: group by owner, assign rows.
-        self.generic_params.sort_by_key(|g| (g.owner_table as u8, g.owner_index));
+        self.generic_params
+            .sort_by_key(|g| (g.owner_table as u8, g.owner_index));
         self.final_generic_param_count = self.generic_params.len() as u32;
 
         // Resolve GenericParam.owner tokens.
@@ -655,12 +933,8 @@ impl ModuleBuilder {
                     MetadataToken::new(TableId::TypeDef, (entry.owner_index + 1) as u32)
                 }
                 TableId::MethodDef => {
-                    // MethodDef row indices were assigned above but method_defs were sorted.
-                    // We need the final row index for the method at original index owner_index.
-                    // Since method_defs were sorted, we need to find the method's final position.
-                    // For simplicity, use the original index + 1. This works if methods are
-                    // added in a consistent order relative to their GenericParams.
-                    // TODO: more robust mapping if method ordering changes during sort
+                    // MethodDef collection order is preserved, so handles map directly
+                    // to final 1-based rows.
                     MetadataToken::new(TableId::MethodDef, (entry.owner_index + 1) as u32)
                 }
                 TableId::ContractDef => {
@@ -670,18 +944,34 @@ impl ModuleBuilder {
             };
         }
 
-        // Set ContractDef.generic_param_list
+        // Set every ContractDef.generic_param_list to the first row owned by
+        // that contract. GenericParam rows belonging to earlier owner tables
+        // remain part of the absolute row index. Empty contracts repeat the
+        // next contract's start, including the row after the table for a
+        // trailing empty contract.
         {
-            let mut current_owner = None;
-            for (i, entry) in self.generic_params.iter().enumerate() {
-                if entry.owner_table == TableId::ContractDef {
-                    let row_idx = (i + 1) as u32;
-                    if current_owner != Some(entry.owner_index) {
-                        current_owner = Some(entry.owner_index);
-                        self.contract_defs[entry.owner_index].generic_param_list = row_idx;
-                    }
+            let contract_table_id = TableId::ContractDef as u8;
+            let mut generic_idx = self
+                .generic_params
+                .iter()
+                .position(|entry| entry.owner_table as u8 >= contract_table_id)
+                .unwrap_or(self.generic_params.len());
+
+            for (contract_idx, contract_def) in self.contract_defs.iter_mut().enumerate() {
+                contract_def.generic_param_list = (generic_idx + 1) as u32;
+                while generic_idx < self.generic_params.len()
+                    && self.generic_params[generic_idx].owner_table == TableId::ContractDef
+                    && self.generic_params[generic_idx].owner_index == contract_idx
+                {
+                    generic_idx += 1;
                 }
             }
+
+            debug_assert!(
+                generic_idx == self.generic_params.len()
+                    || self.generic_params[generic_idx].owner_table as u8 > contract_table_id,
+                "every contract-owned GenericParam must have a ContractDef parent"
+            );
         }
 
         // 9. GenericConstraint: resolve param_row to 1-based and constraint to MetadataToken.
@@ -691,7 +981,8 @@ impl ModuleBuilder {
             // Resolve contract DefId to MetadataToken via def_token_map.
             if i < self.generic_constraint_contract_ids.len() {
                 let contract_def_id = self.generic_constraint_contract_ids[i];
-                row.constraint = self.def_token_map
+                row.constraint = self
+                    .def_token_map
                     .get(&contract_def_id)
                     .copied()
                     .unwrap_or(MetadataToken::NULL);
@@ -735,7 +1026,10 @@ impl ModuleBuilder {
 
     /// Get function parameters for an impl method by MethodDefHandle index.
     /// Used when DefId-based lookup is ambiguous (all impl methods share impl_def_id).
-    pub fn get_fn_params_by_handle(&self, handle_idx: usize) -> Option<&Vec<(String, crate::check::ty::Ty)>> {
+    pub fn get_fn_params_by_handle(
+        &self,
+        handle_idx: usize,
+    ) -> Option<&Vec<(String, crate::check::ty::Ty)>> {
         self.impl_method_param_map.get(&handle_idx)
     }
 
@@ -754,6 +1048,41 @@ impl ModuleBuilder {
             }
         }
         None
+    }
+
+    /// Whether the method's declared return signature is `Option<T>`.
+    ///
+    /// Return emission uses this to apply the nullable-value lift required by
+    /// expression-bodied functions: a bare `T` tail in a `T?` method is encoded
+    /// as `Some(T)`, while an existing `Option<T>` is returned unchanged.
+    pub fn method_returns_option(&self, method_handle_idx: usize) -> bool {
+        let Some(method) = self.method_defs.get(method_handle_idx) else {
+            return false;
+        };
+        let Ok(signature) =
+            writ_module::heap::read_blob(self.blob_heap.data(), method.row.signature)
+        else {
+            return false;
+        };
+        writ_module::signature::decode_method_signature(signature).is_ok_and(|(_, ret)| {
+            matches!(
+                ret,
+                writ_module::signature::TypeSignature::Generic {
+                    ref namespace,
+                    ref name,
+                    ref args,
+                } if (namespace.is_empty() || namespace == "writ")
+                    && name == "Option"
+                    && args.len() == 1
+            )
+        })
+    }
+
+    /// Find a finalized MethodDef row by its source definition id.
+    pub fn find_method_handle(&self, def_id: DefId) -> Option<usize> {
+        self.method_defs
+            .iter()
+            .position(|method| method.def_id == Some(def_id))
     }
 
     /// Get the number of TypeDef rows.
@@ -798,11 +1127,13 @@ impl ModuleBuilder {
 
     /// Get the ContractDef method_list range for iteration.
     pub fn contract_method_range(&self, contract_idx: usize) -> std::ops::Range<usize> {
-        let start = self.contract_methods
+        let start = self
+            .contract_methods
             .iter()
             .position(|cm| cm.parent.0 == contract_idx)
             .unwrap_or(self.contract_methods.len());
-        let end = self.contract_methods
+        let end = self
+            .contract_methods
             .iter()
             .rposition(|cm| cm.parent.0 == contract_idx)
             .map(|p| p + 1)
@@ -833,6 +1164,32 @@ impl ModuleBuilder {
     /// Get a MethodDef row's flags by its handle.
     pub fn methoddef_flags(&self, handle: MethodDefHandle) -> u16 {
         self.method_defs[handle.0].row.flags
+    }
+
+    /// Whether a finalized MethodDef token names an instance method with a receiver.
+    pub fn methoddef_has_receiver(&self, token: MetadataToken) -> Option<bool> {
+        self.method_has_receiver(token)
+    }
+
+    /// Whether a MethodDef or MethodRef uses an implicit instance receiver.
+    pub fn method_has_receiver(&self, token: MetadataToken) -> Option<bool> {
+        match token.table() {
+            TableId::MethodDef => {
+                let index = token.row().checked_sub(1)? as usize;
+                let method = self.method_defs.get(index)?;
+                Some(
+                    (method.parent.is_some() || method.impl_owner.is_some())
+                        && method.row.flags & writ_module::tables::METHOD_FLAG_STATIC == 0,
+                )
+            }
+            TableId::MethodRef => {
+                let index = token.row().checked_sub(1)? as usize;
+                self.method_refs.get(index).map(|method| {
+                    method.flags & writ_module::tables::METHOD_REF_FLAG_HAS_RECEIVER != 0
+                })
+            }
+            _ => None,
+        }
     }
 
     /// Get the number of GlobalDef rows.
@@ -869,33 +1226,34 @@ impl ModuleBuilder {
     // Body emission helpers (used by call.rs and expr.rs)
     // =========================================================================
 
-    /// Look up the FieldDef token for a field by parent TypeDef DefId and field name.
+    /// Look up a field operand by parent type DefId and field name.
     ///
-    /// This is used by GET_FIELD / SET_FIELD emission. Returns the encoded MetadataToken
-    /// for the FieldDef row (1-based, assigned after finalize).
+    /// Local fields return an encoded table-5 FieldDef token. Imported fields
+    /// return an encoded table-6 FieldRef token.
     ///
     /// Returns None if the type is not registered or the field is not found.
     pub fn field_token_by_name(&self, parent_def_id: DefId, field_name: &str) -> Option<u32> {
-        // Find the parent TypeDef index
-        let parent_idx = self.type_def_def_ids
+        if let Some(parent_idx) = self
+            .type_def_def_ids
             .iter()
-            .position(|id| id.as_ref() == Some(&parent_def_id))?;
-
-        let parent_handle = TypeDefHandle(parent_idx);
-
-        // Return a 0-based local field index within the parent type.
-        // This matches what the runtime expects: fields[idx] indexed from 0.
-        let mut local_idx = 0u32;
-        for entry in self.field_defs.iter() {
-            if entry.parent == parent_handle {
-                let name_in_heap = self.string_heap.get_str(entry.row.name);
-                if name_in_heap == field_name {
-                    return Some(local_idx);
+            .position(|id| id.as_ref() == Some(&parent_def_id))
+        {
+            let parent_handle = TypeDefHandle(parent_idx);
+            for (field_idx, entry) in self.field_defs.iter().enumerate() {
+                if entry.parent == parent_handle {
+                    let name_in_heap = self.string_heap.get_str(entry.row.name);
+                    if name_in_heap == field_name {
+                        return Some(
+                            MetadataToken::new(TableId::FieldDef, (field_idx + 1) as u32).0,
+                        );
+                    }
                 }
-                local_idx += 1;
             }
         }
-        None
+
+        self.field_ref_by_owner_name
+            .get(&(parent_def_id, field_name.to_owned()))
+            .map(|row| MetadataToken::new(TableId::FieldRef, (*row + 1) as u32).0)
     }
 
     /// Look up an extern def token by DefId.
@@ -941,6 +1299,245 @@ impl ModuleBuilder {
         None
     }
 
+    /// Resolve a method by parent, name, and declaration signature using the
+    /// same policy as the checker: inherent methods win first, then the most
+    /// specific matching specialization, and remaining ambiguity fails closed.
+    pub fn method_token_by_parent_name_and_signature(
+        &self,
+        exact_parent: MetadataToken,
+        base_parent: Option<MetadataToken>,
+        method_name: &str,
+        signature: &[u8],
+        has_receiver: bool,
+    ) -> Option<u32> {
+        let mut candidates =
+            self.method_candidates_for_parent(exact_parent, method_name, signature, has_receiver);
+        candidates.extend(self.method_pattern_candidates(
+            exact_parent,
+            method_name,
+            signature,
+            has_receiver,
+        ));
+        if let Some(base_parent) = base_parent.filter(|parent| *parent != exact_parent) {
+            candidates.extend(self.method_candidates_for_parent(
+                base_parent,
+                method_name,
+                signature,
+                has_receiver,
+            ));
+        }
+        let mut deduplicated = Vec::new();
+        for candidate in candidates {
+            if !deduplicated
+                .iter()
+                .any(|(token, _, _)| *token == candidate.0)
+            {
+                deduplicated.push(candidate);
+            }
+        }
+        if deduplicated.iter().any(|(_, inherent, _)| *inherent) {
+            deduplicated.retain(|(_, inherent, _)| *inherent);
+        }
+        if let Some(max_specificity) = deduplicated.iter().map(|(_, _, score)| *score).max() {
+            deduplicated.retain(|(_, _, score)| *score == max_specificity);
+        }
+        (deduplicated.len() == 1).then(|| deduplicated[0].0)
+    }
+
+    fn method_pattern_candidates(
+        &self,
+        actual_parent: MetadataToken,
+        method_name: &str,
+        signature: &[u8],
+        has_receiver: bool,
+    ) -> Vec<(u32, bool, usize)> {
+        let Some(_actual) = self.type_spec_signature(actual_parent) else {
+            return Vec::new();
+        };
+        let mut candidates = Vec::new();
+        for (index, method) in self.method_defs.iter().enumerate() {
+            let token = MetadataToken::new(TableId::MethodDef, (index + 1) as u32);
+            let (parent, inherent) = if let Some(owner) = method.impl_owner {
+                let implementation = &self.impl_defs[owner.0];
+                (
+                    implementation.type_token,
+                    implementation.contract_token.is_null(),
+                )
+            } else {
+                continue;
+            };
+            let Some(pattern) = self.type_spec_signature(parent) else {
+                continue;
+            };
+            if self.method_has_receiver(token) != Some(has_receiver)
+                || self.string_heap.get_str(method.row.name) != method_name
+                || !self.method_signature_pattern_matches(
+                    parent,
+                    actual_parent,
+                    method.row.signature,
+                    signature,
+                )
+            {
+                continue;
+            }
+            candidates.push((token.0, inherent, type_signature_specificity(&pattern)));
+        }
+        for (index, method) in self.method_refs.iter().enumerate() {
+            let token = MetadataToken::new(TableId::MethodRef, (index + 1) as u32);
+            let Some(pattern) = self.type_spec_signature(method.parent) else {
+                continue;
+            };
+            if self.method_has_receiver(token) != Some(has_receiver)
+                || self.string_heap.get_str(method.name) != method_name
+                || !self.method_signature_pattern_matches(
+                    method.parent,
+                    actual_parent,
+                    method.signature,
+                    signature,
+                )
+            {
+                continue;
+            }
+            candidates.push((
+                token.0,
+                self.method_ref_inherent[index],
+                type_signature_specificity(&pattern),
+            ));
+        }
+        candidates
+    }
+
+    fn type_spec_signature(
+        &self,
+        token: MetadataToken,
+    ) -> Option<writ_module::signature::TypeSignature> {
+        if token.table() != TableId::TypeSpec {
+            return None;
+        }
+        let row = token.row().checked_sub(1)? as usize;
+        let type_spec = self.type_specs.get(row)?;
+        let blob = writ_module::heap::read_blob(self.blob_heap.data(), type_spec.signature).ok()?;
+        writ_module::signature::decode_type_signature(blob).ok()
+    }
+
+    /// Match an open declaration signature against a concrete call signature.
+    /// Parent and method generic ordinals share one binding map because impl
+    /// generics precede method generics in emitted metadata.
+    fn method_signature_pattern_matches(
+        &self,
+        declaration_parent: MetadataToken,
+        actual_parent: MetadataToken,
+        declaration_signature_offset: u32,
+        actual_signature: &[u8],
+    ) -> bool {
+        let mut bindings = FxHashMap::default();
+        match (
+            self.type_spec_signature(declaration_parent),
+            self.type_spec_signature(actual_parent),
+        ) {
+            (Some(pattern), Some(actual)) => {
+                if !type_signature_pattern_matches(&pattern, &actual, &mut bindings) {
+                    return false;
+                }
+            }
+            (None, None) if declaration_parent == actual_parent => {}
+            _ => return false,
+        }
+
+        let Some((declaration_params, declaration_ret)) =
+            writ_module::heap::read_blob(self.blob_heap.data(), declaration_signature_offset)
+                .ok()
+                .and_then(|blob| writ_module::signature::decode_method_signature(blob).ok())
+        else {
+            return false;
+        };
+        let Ok((actual_params, actual_ret)) =
+            writ_module::signature::decode_method_signature(actual_signature)
+        else {
+            return false;
+        };
+
+        declaration_params.len() == actual_params.len()
+            && declaration_params
+                .iter()
+                .zip(&actual_params)
+                .all(|(pattern, actual)| {
+                    type_signature_pattern_matches(pattern, actual, &mut bindings)
+                })
+            && type_signature_pattern_matches(&declaration_ret, &actual_ret, &mut bindings)
+    }
+
+    fn method_candidates_for_parent(
+        &self,
+        parent: MetadataToken,
+        method_name: &str,
+        signature: &[u8],
+        has_receiver: bool,
+    ) -> Vec<(u32, bool, usize)> {
+        let mut candidates = Vec::new();
+        for (index, method) in self.method_defs.iter().enumerate() {
+            let token = MetadataToken::new(TableId::MethodDef, (index + 1) as u32);
+            let (method_parent, inherent) = if let Some(owner) = method.impl_owner {
+                let implementation = &self.impl_defs[owner.0];
+                (
+                    implementation.type_token,
+                    implementation.contract_token.is_null(),
+                )
+            } else if let Some(owner) = method.parent {
+                (
+                    MetadataToken::new(TableId::TypeDef, (owner.0 + 1) as u32),
+                    true,
+                )
+            } else {
+                continue;
+            };
+            if self.method_has_receiver(token) != Some(has_receiver)
+                || method_parent != parent
+                || self.string_heap.get_str(method.row.name) != method_name
+                || !self.method_signature_pattern_matches(
+                    method_parent,
+                    parent,
+                    method.row.signature,
+                    signature,
+                )
+            {
+                continue;
+            }
+            candidates.push((
+                token.0,
+                inherent,
+                self.type_spec_signature(method_parent)
+                    .as_ref()
+                    .map(type_signature_specificity)
+                    .unwrap_or(0),
+            ));
+        }
+        for (index, method) in self.method_refs.iter().enumerate() {
+            let token = MetadataToken::new(TableId::MethodRef, (index + 1) as u32);
+            if self.method_has_receiver(token) != Some(has_receiver)
+                || method.parent != parent
+                || self.string_heap.get_str(method.name) != method_name
+                || !self.method_signature_pattern_matches(
+                    method.parent,
+                    parent,
+                    method.signature,
+                    signature,
+                )
+            {
+                continue;
+            }
+            candidates.push((
+                token.0,
+                self.method_ref_inherent[index],
+                self.type_spec_signature(method.parent)
+                    .as_ref()
+                    .map(type_signature_specificity)
+                    .unwrap_or(0),
+            ));
+        }
+        candidates
+    }
+
     /// Look up the MethodDef token by parent type DefId and method name.
     ///
     /// Used by the emitter to resolve impl method calls like `obj.method()` where
@@ -949,9 +1546,14 @@ impl ModuleBuilder {
     /// and whose name matches `method_name`.
     ///
     /// Returns None if not found.
-    pub fn methoddef_token_by_type_and_name(&self, parent_def_id: DefId, method_name: &str) -> Option<u32> {
+    pub fn methoddef_token_by_type_and_name(
+        &self,
+        parent_def_id: DefId,
+        method_name: &str,
+    ) -> Option<u32> {
         // Find the TypeDef index for the parent type.
-        let parent_idx = self.type_def_def_ids
+        let parent_idx = self
+            .type_def_def_ids
             .iter()
             .position(|id| id.as_ref() == Some(&parent_def_id))?;
         let parent_handle = TypeDefHandle(parent_idx);
@@ -969,6 +1571,23 @@ impl ModuleBuilder {
         None
     }
 
+    /// Look up a cross-module MethodRef token by its parent type DefId and name.
+    pub fn methodref_token_by_type_and_name(
+        &self,
+        parent_def_id: DefId,
+        method_name: &str,
+    ) -> Option<u32> {
+        let parent = self.def_token_map.get(&parent_def_id)?;
+        for (index, method_ref) in self.method_refs.iter().enumerate() {
+            if method_ref.parent == *parent
+                && self.string_heap.get_str(method_ref.name) == method_name
+            {
+                return Some(MetadataToken::new(TableId::MethodRef, (index + 1) as u32).0);
+            }
+        }
+        None
+    }
+
     /// Look up a FieldDef token by closure struct name and field name.
     ///
     /// This is the closure-specific version of `field_token_by_name`. Since closure
@@ -979,23 +1598,44 @@ impl ModuleBuilder {
         field_name: &str,
     ) -> Option<u32> {
         // Find the TypeDef by name
-        let parent_idx = self.type_defs.iter().position(|td| {
-            self.string_heap.get_str(td.name) == closure_type_name
-        })?;
+        let parent_idx = self
+            .type_defs
+            .iter()
+            .position(|td| self.string_heap.get_str(td.name) == closure_type_name)?;
         let parent_handle = TypeDefHandle(parent_idx);
 
-        // Return a 0-based local field index within the closure type.
-        let mut local_idx = 0u32;
-        for entry in self.field_defs.iter() {
+        // Return the absolute, 1-based FieldDef metadata token.
+        for (field_idx, entry) in self.field_defs.iter().enumerate() {
             if entry.parent == parent_handle {
                 let name_in_heap = self.string_heap.get_str(entry.row.name);
                 if name_in_heap == field_name {
-                    return Some(local_idx);
+                    return Some(MetadataToken::new(TableId::FieldDef, (field_idx + 1) as u32).0);
                 }
-                local_idx += 1;
             }
         }
         None
+    }
+
+    /// Look up an imported field token by the referenced type and field names.
+    ///
+    /// This is used by lowering for runtime-provided types such as `Range<T>`,
+    /// whose fields have no source-level `DefId` at the lowering site.
+    pub fn imported_field_token_by_type_name(
+        &self,
+        type_name: &str,
+        field_name: &str,
+    ) -> Option<u32> {
+        let parent_row = self
+            .type_refs
+            .iter()
+            .position(|type_ref| self.string_heap.get_str(type_ref.name) == type_name)?;
+        let parent = MetadataToken::new(TableId::TypeRef, (parent_row + 1) as u32);
+        self.field_refs
+            .iter()
+            .position(|field_ref| {
+                field_ref.parent == parent && self.string_heap.get_str(field_ref.name) == field_name
+            })
+            .map(|field_row| MetadataToken::new(TableId::FieldRef, (field_row + 1) as u32).0)
     }
 
     // =========================================================================
@@ -1023,7 +1663,9 @@ impl ModuleBuilder {
     }
 
     /// Get all finalized MethodDef entries with their DefIds (for body matching).
-    pub fn finalized_method_def_entries(&self) -> impl Iterator<Item = (Option<DefId>, &MethodDefRow)> {
+    pub fn finalized_method_def_entries(
+        &self,
+    ) -> impl Iterator<Item = (Option<DefId>, &MethodDefRow)> {
         self.method_defs.iter().map(|e| (e.def_id, &e.row))
     }
 
@@ -1106,8 +1748,13 @@ impl ModuleBuilder {
     /// FIX-02: Once the full pipeline registers all impl method → contract token
     /// mappings via this method, compiler-emitted CALL_VIRT instructions will carry
     /// the correct specialization contract token instead of the 0 placeholder.
-    pub fn register_impl_method_contract(&mut self, method_def_id: DefId, contract_token: MetadataToken) {
-        self.method_to_contract.insert(method_def_id, contract_token);
+    pub fn register_impl_method_contract(
+        &mut self,
+        method_def_id: DefId,
+        contract_token: MetadataToken,
+    ) {
+        self.method_to_contract
+            .insert(method_def_id, contract_token);
     }
 
     /// Look up the contract token for an impl method DefId.
@@ -1132,15 +1779,22 @@ impl ModuleBuilder {
     /// Slots are assigned by `assign_vtable_slots` in declaration order (0, 1, 2, ...).
     ///
     /// Returns None if the contract is not registered or the method is not found.
-    pub fn contract_method_slot_by_name(&self, contract_def_id: DefId, method_name: &str) -> Option<u16> {
+    pub fn contract_method_slot_by_name(
+        &self,
+        contract_def_id: DefId,
+        method_name: &str,
+    ) -> Option<u16> {
         // Find the ContractDef index for this DefId
-        let contract_idx = self.contract_def_def_ids
+        let contract_idx = self
+            .contract_def_def_ids
             .iter()
             .position(|id| id.as_ref() == Some(&contract_def_id))?;
         // Iterate the contract's methods in range order; slot = 0-based position
         let range = self.contract_method_range(contract_idx);
         for (slot, cm_idx) in range.enumerate() {
-            let name_in_heap = self.string_heap.get_str(self.contract_methods[cm_idx].row.name);
+            let name_in_heap = self
+                .string_heap
+                .get_str(self.contract_methods[cm_idx].row.name);
             if name_in_heap == method_name {
                 return Some(slot as u16);
             }
@@ -1195,5 +1849,143 @@ impl std::fmt::Debug for ModuleBuilder {
             .field("generic_params", &self.generic_params.len())
             .field("finalized", &self.finalized)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::check::ty::{InferVar, TyInterner, TyKind};
+    use crate::resolve::def_map::{DefEntry, DefKind, DefMap, DefVis};
+    use chumsky::span::{SimpleSpan, Span as _};
+    use writ_diagnostics::FileId;
+
+    #[test]
+    fn encoded_typespec_lookup_normalizes_nested_inference() {
+        let span = SimpleSpan::new((), 0..0);
+        let mut def_map = DefMap::new();
+        let crate_id = def_map.arena.alloc(DefEntry {
+            id: None,
+            kind: DefKind::Class,
+            vis: DefVis::Pub,
+            file_id: FileId(0),
+            namespace: "test".to_string(),
+            name: "Crate".to_string(),
+            name_span: span,
+            generics: vec!["T".to_string()],
+            span,
+        });
+
+        let mut interner = TyInterner::new();
+        let int_ty = interner.int();
+        let inferred_ty = interner.intern(TyKind::Infer(InferVar(0)));
+        interner.record_infer_resolution(InferVar(0), int_ty);
+        let base = interner.intern(TyKind::Class(crate_id));
+        let unresolved = interner.intern(TyKind::GenericInstance {
+            base,
+            namespace: "test".to_string(),
+            name: "Crate".to_string(),
+            args: vec![inferred_ty],
+        });
+        let resolved = interner.intern(TyKind::GenericInstance {
+            base,
+            namespace: "test".to_string(),
+            name: "Crate".to_string(),
+            args: vec![int_ty],
+        });
+
+        let mut builder = ModuleBuilder::new();
+        builder.add_typedef("Crate", "test", TypeDefKind::Class, 0, Some(crate_id));
+        builder.finalize();
+        let token_for_def = |def_id| builder.token_for_def(def_id).unwrap_or(MetadataToken::NULL);
+        let descriptor =
+            crate::emit::type_sig::encode_type_bytes(unresolved, &interner, &token_for_def);
+        let descriptor = builder.blob_heap.intern(&descriptor);
+        let token = builder.add_type_spec(unresolved, descriptor);
+
+        assert_eq!(
+            builder.type_spec_token_for_encoded_ty(resolved, &interner),
+            Some(token)
+        );
+    }
+
+    #[test]
+    fn method_lookup_filters_same_identity_by_receiver_abi() {
+        let mut builder = ModuleBuilder::new();
+        let module_ref = builder.add_module_ref("dependency", "1.0.0");
+        let type_ref = builder.add_type_ref(module_ref, "Utility", "");
+        let parent = MetadataToken::new(TableId::TypeRef, (type_ref + 1) as u32);
+        let signature = writ_module::signature::encode_method_signature(
+            &[writ_module::signature::TypeSignature::Int],
+            &writ_module::signature::TypeSignature::Int,
+        )
+        .unwrap();
+        let instance =
+            builder.add_method_ref_with_origin(parent, "identity", &signature, true, true);
+        let static_method =
+            builder.add_method_ref_with_origin(parent, "identity", &signature, true, false);
+
+        assert_ne!(instance, static_method);
+        assert_eq!(
+            builder.method_token_by_parent_name_and_signature(
+                parent, None, "identity", &signature, true,
+            ),
+            Some(MetadataToken::new(TableId::MethodRef, (instance + 1) as u32).0)
+        );
+        assert_eq!(
+            builder.method_token_by_parent_name_and_signature(
+                parent, None, "identity", &signature, false,
+            ),
+            Some(MetadataToken::new(TableId::MethodRef, (static_method + 1) as u32).0)
+        );
+    }
+
+    #[test]
+    fn local_field_lookup_returns_absolute_fielddef_tokens() {
+        let span = SimpleSpan::new((), 0..0);
+        let mut def_map = DefMap::new();
+        let first_id = def_map.arena.alloc(DefEntry {
+            id: None,
+            kind: DefKind::Struct,
+            vis: DefVis::Pub,
+            file_id: FileId(0),
+            namespace: "test".to_string(),
+            name: "First".to_string(),
+            name_span: span,
+            generics: vec![],
+            span,
+        });
+        let second_id = def_map.arena.alloc(DefEntry {
+            id: None,
+            kind: DefKind::Struct,
+            vis: DefVis::Pub,
+            file_id: FileId(0),
+            namespace: "test".to_string(),
+            name: "Second".to_string(),
+            name_span: span,
+            generics: vec![],
+            span,
+        });
+
+        let mut builder = ModuleBuilder::new();
+        let first = builder.add_typedef("First", "test", TypeDefKind::Struct, 0, Some(first_id));
+        builder.add_fielddef(first, "first", 0, 0);
+        let second = builder.add_typedef("Second", "test", TypeDefKind::Struct, 0, Some(second_id));
+        builder.add_fielddef(second, "second_0", 0, 0);
+        builder.add_fielddef(second, "second_1", 0, 0);
+        builder.finalize();
+
+        assert_eq!(
+            builder.field_token_by_name(first_id, "first"),
+            Some(MetadataToken::new(TableId::FieldDef, 1).0)
+        );
+        assert_eq!(
+            builder.field_token_by_name(second_id, "second_0"),
+            Some(MetadataToken::new(TableId::FieldDef, 2).0)
+        );
+        assert_eq!(
+            builder.field_token_by_name(second_id, "second_1"),
+            Some(MetadataToken::new(TableId::FieldDef, 3).0)
+        );
     }
 }

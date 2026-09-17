@@ -6,8 +6,8 @@
 //!
 //! All tests are self-contained and never call internal Backend methods directly.
 
+use serde_json::{Value, json};
 use std::time::Duration;
-use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tower_lsp::{LspService, Server};
 use url::Url;
@@ -192,11 +192,7 @@ impl LspClient {
     }
 
     /// Open a document, wait for analysis, and collect any publishDiagnostics notifications.
-    async fn open_document_and_collect_diagnostics(
-        &mut self,
-        uri: &str,
-        text: &str,
-    ) -> Vec<Value> {
+    async fn open_document_and_collect_diagnostics(&mut self, uri: &str, text: &str) -> Vec<Value> {
         self.send(json!({
             "jsonrpc": "2.0",
             "method": "textDocument/didOpen",
@@ -218,8 +214,7 @@ impl LspClient {
         let all = self.drain_notifications(200).await;
         all.into_iter()
             .filter(|msg| {
-                msg.get("method")
-                    .and_then(|v| v.as_str())
+                msg.get("method").and_then(|v| v.as_str())
                     == Some("textDocument/publishDiagnostics")
             })
             .collect()
@@ -249,12 +244,7 @@ impl LspClient {
     }
 
     /// Send a goto definition request and return the result.
-    async fn goto_definition(
-        &mut self,
-        uri: &str,
-        line: u32,
-        character: u32,
-    ) -> Option<Value> {
+    async fn goto_definition(&mut self, uri: &str, line: u32, character: u32) -> Option<Value> {
         let id = self.next_id();
         self.send(json!({
             "jsonrpc": "2.0",
@@ -419,10 +409,7 @@ async fn test_diagnostics_clean_file() {
     for notif in &diag_notifications {
         let params = notif.get("params").cloned().unwrap_or(json!({}));
         // Only check notifications that target our document
-        let notif_uri = params
-            .get("uri")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let notif_uri = params.get("uri").and_then(|v| v.as_str()).unwrap_or("");
         if notif_uri == FIXTURE_URI {
             let diagnostics = params
                 .get("diagnostics")
@@ -461,10 +448,7 @@ async fn test_diagnostics_invalid_source() {
     let mut all_diagnostics: Vec<Value> = Vec::new();
     for notif in &diag_notifications {
         let params = notif.get("params").cloned().unwrap_or(json!({}));
-        let notif_uri = params
-            .get("uri")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let notif_uri = params.get("uri").and_then(|v| v.as_str()).unwrap_or("");
         if notif_uri == error_uri {
             if let Some(diags) = params.get("diagnostics").and_then(|v| v.as_array()) {
                 all_diagnostics.extend(diags.iter().cloned());
@@ -527,9 +511,7 @@ async fn test_goto_definition() {
         result
     };
 
-    let range = location
-        .get("range")
-        .expect("location should have a range");
+    let range = location.get("range").expect("location should have a range");
     let start_line = range
         .get("start")
         .and_then(|s| s.get("line"))
@@ -623,9 +605,10 @@ async fn test_completion_identifiers() {
     }
 
     // Verify keyword sort_text starts with "6_"
-    let kw_item = items.iter().find(|item| {
-        item.get("label").and_then(|l| l.as_str()) == Some("let")
-    }).expect("should have 'let' keyword");
+    let kw_item = items
+        .iter()
+        .find(|item| item.get("label").and_then(|l| l.as_str()) == Some("let"))
+        .expect("should have 'let' keyword");
     let kw_sort = kw_item.get("sortText").and_then(|v| v.as_str()).unwrap();
     assert!(
         kw_sort.starts_with("6_"),
@@ -634,9 +617,10 @@ async fn test_completion_identifiers() {
     );
 
     // Verify user-defined function sort_text starts with "1_"
-    let fn_item = items.iter().find(|item| {
-        item.get("label").and_then(|l| l.as_str()) == Some("add")
-    }).expect("should have 'add' function");
+    let fn_item = items
+        .iter()
+        .find(|item| item.get("label").and_then(|l| l.as_str()) == Some("add"))
+        .expect("should have 'add' function");
     let fn_sort = fn_item.get("sortText").and_then(|v| v.as_str()).unwrap();
     assert!(
         fn_sort.starts_with("1_"),
@@ -645,7 +629,11 @@ async fn test_completion_identifiers() {
     );
     // Verify function kind is FUNCTION (3)
     let fn_kind = fn_item.get("kind").and_then(|v| v.as_i64()).unwrap();
-    assert_eq!(fn_kind, 3, "function kind should be FUNCTION (3), got: {}", fn_kind);
+    assert_eq!(
+        fn_kind, 3,
+        "function kind should be FUNCTION (3), got: {}",
+        fn_kind
+    );
 }
 
 /// Test 6: Shutdown and exit lifecycle completes gracefully.
@@ -829,7 +817,8 @@ async fn test_deprecated_hover_on_call_site() {
     // Line 0: [Deprecated("use bar instead")] fn foo() -> void { }
     // Line 1: fn main() -> void { foo(); }
     //         `foo` starts at col 20
-    let source = "[Deprecated(\"use bar instead\")] fn foo() -> void { }\nfn main() -> void { foo(); }\n";
+    let source =
+        "[Deprecated(\"use bar instead\")] fn foo() -> void { }\nfn main() -> void { foo(); }\n";
 
     client.open_document(DEPRECATED_URI, source).await;
 
@@ -995,9 +984,10 @@ async fn test_completion_after_new_keyword() {
     );
 
     // Verify sort_text on new-keyword completions starts with "0_"
-    let point_item = items.iter().find(|item| {
-        item.get("label").and_then(|l| l.as_str()) == Some("Point")
-    }).expect("should have 'Point'");
+    let point_item = items
+        .iter()
+        .find(|item| item.get("label").and_then(|l| l.as_str()) == Some("Point"))
+        .expect("should have 'Point'");
     let point_sort = point_item.get("sortText").and_then(|v| v.as_str()).unwrap();
     assert!(
         point_sort.starts_with("0_"),
@@ -1006,7 +996,11 @@ async fn test_completion_after_new_keyword() {
     );
     // Point is a struct — kind should be STRUCT (22)
     let point_kind = point_item.get("kind").and_then(|v| v.as_i64()).unwrap();
-    assert_eq!(point_kind, 22, "struct kind should be STRUCT (22), got: {}", point_kind);
+    assert_eq!(
+        point_kind, 22,
+        "struct kind should be STRUCT (22), got: {}",
+        point_kind
+    );
 }
 
 /// Test: Completion NOT after `new` returns the full identifier/keyword list.
@@ -1139,11 +1133,15 @@ async fn test_completion_shows_private_struct() {
     );
 
     // Verify kind is STRUCT (22)
-    let struct_item = items.iter().find(|item| {
-        item.get("label").and_then(|l| l.as_str()) == Some("SomeStruct")
-    }).expect("should have 'SomeStruct'");
+    let struct_item = items
+        .iter()
+        .find(|item| item.get("label").and_then(|l| l.as_str()) == Some("SomeStruct"))
+        .expect("should have 'SomeStruct'");
 
-    let struct_kind = struct_item.get("kind").and_then(|v| v.as_i64()).unwrap_or(-1);
+    let struct_kind = struct_item
+        .get("kind")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(-1);
     assert_eq!(
         struct_kind, 22,
         "SomeStruct kind should be STRUCT (22), got: {}",
@@ -1151,7 +1149,10 @@ async fn test_completion_shows_private_struct() {
     );
 
     // Verify sortText starts with "0_"
-    let struct_sort = struct_item.get("sortText").and_then(|v| v.as_str()).unwrap_or("");
+    let struct_sort = struct_item
+        .get("sortText")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     assert!(
         struct_sort.starts_with("0_"),
         "SomeStruct sortText should start with '0_', got: {}",
@@ -1203,11 +1204,15 @@ async fn test_completion_after_new_shows_private_struct_with_detail() {
     );
 
     // Verify detail contains field info
-    let point_item = items.iter().find(|item| {
-        item.get("label").and_then(|l| l.as_str()) == Some("Point")
-    }).expect("should have 'Point'");
+    let point_item = items
+        .iter()
+        .find(|item| item.get("label").and_then(|l| l.as_str()) == Some("Point"))
+        .expect("should have 'Point'");
 
-    let detail = point_item.get("detail").and_then(|v| v.as_str()).unwrap_or("");
+    let detail = point_item
+        .get("detail")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     assert!(
         !detail.is_empty(),
         "Point should have non-empty detail text, got empty string"
@@ -1273,7 +1278,11 @@ fn main() {
 
     let items: Vec<Value> = match result {
         Some(v) if v.is_array() => v.as_array().cloned().unwrap_or_default(),
-        Some(v) => v.get("items").and_then(|v| v.as_array()).cloned().unwrap_or_default(),
+        Some(v) => v
+            .get("items")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default(),
         None => vec![],
     };
 
@@ -1481,21 +1490,14 @@ pub fn main() {}
         "action should be a quickfix"
     );
 
-    let edit = action
-        .get("edit")
-        .expect("action should have an edit");
-    let changes = edit
-        .get("changes")
-        .expect("edit should have changes");
+    let edit = action.get("edit").expect("action should have an edit");
+    let changes = edit.get("changes").expect("edit should have changes");
     let file_edits = changes
         .get(uri)
         .and_then(|v| v.as_array())
         .expect("changes should contain edits for the document URI");
 
-    assert!(
-        !file_edits.is_empty(),
-        "should have at least one text edit"
-    );
+    assert!(!file_edits.is_empty(), "should have at least one text edit");
 
     // Verify the inserted text contains both missing method stubs
     let new_text = file_edits[0]
@@ -1554,11 +1556,7 @@ async fn test_deprecated_warning_published() {
     .unwrap();
 
     // main.writ: calls the deprecated function (triggers W0006 cross-file)
-    std::fs::write(
-        src_dir.join("main.writ"),
-        "pub fn main() { foo(); }\n",
-    )
-    .unwrap();
+    std::fs::write(src_dir.join("main.writ"), "pub fn main() { foo(); }\n").unwrap();
 
     let mut client = LspClient::start_raw().await;
 
@@ -1583,9 +1581,9 @@ async fn test_deprecated_warning_published() {
     }
 
     // W0006 should be emitted as a Warning (severity 2) with the deprecation message
-    let has_w0006 = all_diagnostics.iter().any(|d| {
-        d.get("code").and_then(|v| v.as_str()) == Some("W0006")
-    });
+    let has_w0006 = all_diagnostics
+        .iter()
+        .any(|d| d.get("code").and_then(|v| v.as_str()) == Some("W0006"));
     assert!(
         has_w0006,
         "Expected W0006 diagnostic for deprecated function call across files. Got diagnostics: {:?}",
@@ -1650,9 +1648,9 @@ dlg greet() {
     }
 
     // E0007 = invalid speaker (entity is not [Singleton])
-    let has_e0007 = all_diagnostics.iter().any(|d| {
-        d.get("code").and_then(|v| v.as_str()) == Some("E0007")
-    });
+    let has_e0007 = all_diagnostics
+        .iter()
+        .any(|d| d.get("code").and_then(|v| v.as_str()) == Some("E0007"));
     assert!(
         has_e0007,
         "Expected E0007 diagnostic for non-Singleton @speaker. Got diagnostics: {:?}",
@@ -1681,7 +1679,8 @@ dlg greet() {
 async fn test_hover_on_incomplete_source_no_crash() {
     let mut client = LspClient::start().await;
 
-    let incomplete_source = "pub fn main() {\n    let x: int = 42;\n    let y: string = \"unterminated\n}\n";
+    let incomplete_source =
+        "pub fn main() {\n    let x: int = 42;\n    let y: string = \"unterminated\n}\n";
     let uri = "file:///test/incomplete_hover.writ";
 
     // Open document with syntax error — gives server time to analyze
@@ -1689,15 +1688,17 @@ async fn test_hover_on_incomplete_source_no_crash() {
 
     // Send hover request at line 1, character 8 (over `x`)
     let id = client.next_id();
-    client.send(serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "method": "textDocument/hover",
-        "params": {
-            "textDocument": { "uri": uri },
-            "position": { "line": 1, "character": 8 }
-        }
-    })).await;
+    client
+        .send(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "textDocument/hover",
+            "params": {
+                "textDocument": { "uri": uri },
+                "position": { "line": 1, "character": 8 }
+            }
+        }))
+        .await;
 
     let resp = client.recv_response(id).await;
 
@@ -1724,7 +1725,8 @@ async fn test_hover_on_incomplete_source_no_crash() {
 async fn test_completion_on_incomplete_source_no_crash() {
     let mut client = LspClient::start().await;
 
-    let incomplete_source = "pub fn main() {\n    let x: int = 42;\n    let y: string = \"unterminated\n}\n";
+    let incomplete_source =
+        "pub fn main() {\n    let x: int = 42;\n    let y: string = \"unterminated\n}\n";
     let uri = "file:///test/incomplete_completion.writ";
 
     // Open document with syntax error — gives server time to analyze
@@ -1732,15 +1734,17 @@ async fn test_completion_on_incomplete_source_no_crash() {
 
     // Send completion request at line 1, character 12 (after `x: i`)
     let id = client.next_id();
-    client.send(serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": id,
-        "method": "textDocument/completion",
-        "params": {
-            "textDocument": { "uri": uri },
-            "position": { "line": 1, "character": 12 }
-        }
-    })).await;
+    client
+        .send(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "textDocument/completion",
+            "params": {
+                "textDocument": { "uri": uri },
+                "position": { "line": 1, "character": 12 }
+            }
+        }))
+        .await;
 
     let resp = client.recv_response(id).await;
 

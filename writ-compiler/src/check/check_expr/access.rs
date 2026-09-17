@@ -2,13 +2,14 @@
 
 use chumsky::span::SimpleSpan;
 
-use crate::ast::expr::AstExpr;
-use crate::resolve::def_map::DefKind;
-use super::CheckCtx;
-use super::check_expr;
 use super::super::error::TypeError;
 use super::super::ir::TypedExpr;
+use super::super::mutability;
 use super::super::ty::TyKind;
+use super::CheckCtx;
+use super::check_expr;
+use crate::ast::expr::AstExpr;
+use crate::resolve::def_map::DefKind;
 
 pub(super) fn check_member_access(
     ctx: &mut CheckCtx,
@@ -18,6 +19,16 @@ pub(super) fn check_member_access(
     span: SimpleSpan,
 ) -> TypedExpr {
     let typed_obj = check_expr(ctx, object);
+    check_typed_member_access(ctx, typed_obj, field, field_span, span)
+}
+
+pub(super) fn check_typed_member_access(
+    ctx: &mut CheckCtx,
+    typed_obj: TypedExpr,
+    field: &str,
+    field_span: SimpleSpan,
+    span: SimpleSpan,
+) -> TypedExpr {
     let obj_ty = typed_obj.ty();
 
     // Poison propagation
@@ -30,21 +41,30 @@ pub(super) fn check_member_access(
         };
     }
 
+    let instance_args = ctx.interner.generic_args(obj_ty).map(|args| args.to_vec());
     let kind = ctx.interner.kind(obj_ty).clone();
     match kind {
         TyKind::Struct(def_id) | TyKind::Class(def_id) | TyKind::Entity(def_id) => {
             // Look up in struct_fields or entity_fields
             let fields = if matches!(kind, TyKind::Struct(_) | TyKind::Class(_)) {
-                ctx.type_env.struct_fields.get(&def_id)
+                ctx.type_env
+                    .struct_fields
+                    .get(&def_id)
+                    .or_else(|| ctx.type_env.component_fields.get(&def_id))
             } else {
                 ctx.type_env.entity_fields.get(&def_id)
             };
 
             if let Some(field_list) = fields {
-                for (fname, fty, _fspan) in field_list {
-                    if fname == field {
+                for field_sig in field_list {
+                    if field_sig.name == field {
+                        let field_ty = if let Some(args) = &instance_args {
+                            super::super::infer::substitute(field_sig.ty, args, &mut ctx.interner)
+                        } else {
+                            field_sig.ty
+                        };
                         return TypedExpr::Field {
-                            ty: *fty,
+                            ty: field_ty,
                             span,
                             receiver: Box::new(typed_obj),
                             field: field.to_string(),
@@ -54,22 +74,18 @@ pub(super) fn check_member_access(
             }
 
             // Check impl_index for methods
-            if let Some(impls) = ctx.type_env.impl_index.get(&def_id) {
-                for impl_entry in impls {
-                    for (method_name, method_sig) in &impl_entry.methods {
-                        if method_name == field {
-                            // Method access: build a Func type for the method
-                            let param_tys: Vec<_> = method_sig.params.iter().map(|(_, t)| *t).collect();
-                            let fn_ty = ctx.interner.func(param_tys, method_sig.ret);
-                            return TypedExpr::Field {
-                                ty: fn_ty,
-                                span,
-                                receiver: Box::new(typed_obj),
-                                field: field.to_string(),
-                            };
-                        }
-                    }
+            if let Some((fn_ty, requires_mutable_receiver)) =
+                matching_impl_method_type(ctx, def_id, obj_ty, field, field_span)
+            {
+                if requires_mutable_receiver {
+                    mutability::check_mutable_receiver(ctx, &typed_obj, field, field_span);
                 }
+                return TypedExpr::Field {
+                    ty: fn_ty,
+                    span,
+                    receiver: Box::new(typed_obj),
+                    field: field.to_string(),
+                };
             }
 
             // Not found
@@ -89,20 +105,34 @@ pub(super) fn check_member_access(
         }
         TyKind::Contract(contract_def_id) => {
             // Contract types have no fields — only methods from the contract definition.
-            if let Some(methods) = ctx.type_env.contract_methods.get(&contract_def_id) {
-                for method_sig in methods {
-                    if method_sig.name == field {
-                        // Build Func type from the method signature (excluding self param).
-                        let param_tys: Vec<_> = method_sig.params.iter().map(|(_, t)| *t).collect();
-                        let fn_ty = ctx.interner.func(param_tys, method_sig.ret);
-                        return TypedExpr::Field {
-                            ty: fn_ty,
-                            span,
-                            receiver: Box::new(typed_obj),
-                            field: field.to_string(),
-                        };
-                    }
+            if let Some(method_sig) = ctx
+                .type_env
+                .contract_methods
+                .get(&contract_def_id)
+                .and_then(|methods| methods.iter().find(|method| method.name == field))
+                .cloned()
+            {
+                if method_sig.self_param == Some(true) {
+                    mutability::check_mutable_receiver(ctx, &typed_obj, field, field_span);
                 }
+
+                // Build Func type from the method signature (excluding self param).
+                let mut param_tys: Vec<_> = method_sig.params.iter().map(|(_, ty)| *ty).collect();
+                let mut ret_ty = method_sig.ret;
+                if let Some(args) = &instance_args {
+                    param_tys = param_tys
+                        .into_iter()
+                        .map(|ty| super::super::infer::substitute(ty, args, &mut ctx.interner))
+                        .collect();
+                    ret_ty = super::super::infer::substitute(ret_ty, args, &mut ctx.interner);
+                }
+                let fn_ty = ctx.interner.func(param_tys, ret_ty);
+                return TypedExpr::Field {
+                    ty: fn_ty,
+                    span,
+                    receiver: Box::new(typed_obj),
+                    field: field.to_string(),
+                };
             }
 
             // Method not found on contract
@@ -178,6 +208,9 @@ pub(super) fn check_member_access(
             }
         }
         TyKind::Array(elem_ty) => {
+            if matches!(field, "resize" | "copy_from") {
+                mutability::check_mutable_receiver(ctx, &typed_obj, field, field_span);
+            }
             let void_ty = ctx.interner.intern(TyKind::Void);
             let int_ty = ctx.interner.int();
             let fn_ty = match field {
@@ -190,7 +223,8 @@ pub(super) fn check_member_access(
                 "copy_from" => {
                     // copy_from(src: T[], src_idx: int, dst_idx: int, len: int) -> void
                     let arr_ty = ctx.interner.intern(TyKind::Array(elem_ty));
-                    ctx.interner.func(vec![arr_ty, int_ty, int_ty, int_ty], void_ty)
+                    ctx.interner
+                        .func(vec![arr_ty, int_ty, int_ty, int_ty], void_ty)
                 }
                 _ => {
                     let ty_name = ctx.display_ty(obj_ty);
@@ -258,21 +292,18 @@ pub(super) fn check_member_access(
         }
         TyKind::Enum(def_id) => {
             // Check for associated methods via impl_index
-            if let Some(impls) = ctx.type_env.impl_index.get(&def_id) {
-                for impl_entry in impls {
-                    for (method_name, method_sig) in &impl_entry.methods {
-                        if method_name == field {
-                            let param_tys: Vec<_> = method_sig.params.iter().map(|(_, t)| *t).collect();
-                            let fn_ty = ctx.interner.func(param_tys, method_sig.ret);
-                            return TypedExpr::Field {
-                                ty: fn_ty,
-                                span,
-                                receiver: Box::new(typed_obj),
-                                field: field.to_string(),
-                            };
-                        }
-                    }
+            if let Some((fn_ty, requires_mutable_receiver)) =
+                matching_impl_method_type(ctx, def_id, obj_ty, field, field_span)
+            {
+                if requires_mutable_receiver {
+                    mutability::check_mutable_receiver(ctx, &typed_obj, field, field_span);
                 }
+                return TypedExpr::Field {
+                    ty: fn_ty,
+                    span,
+                    receiver: Box::new(typed_obj),
+                    field: field.to_string(),
+                };
             }
 
             let ty_name = ctx.display_ty(obj_ty);
@@ -450,6 +481,75 @@ pub(super) fn check_member_access(
     }
 }
 
+fn matching_impl_method_type(
+    ctx: &mut CheckCtx,
+    def_id: crate::resolve::def_map::DefId,
+    receiver_ty: super::super::ty::Ty,
+    method_name: &str,
+    span: SimpleSpan,
+) -> Option<(super::super::ty::Ty, bool)> {
+    let mut candidates: Vec<_> = ctx
+        .type_env
+        .impl_index
+        .get(&def_id)
+        .into_iter()
+        .flatten()
+        .filter_map(|implementation| {
+            let bindings = super::super::infer::match_type_pattern(
+                implementation.target_ty,
+                receiver_ty,
+                &ctx.interner,
+            )?;
+            let signature = implementation
+                .methods
+                .iter()
+                .find_map(|(name, signature)| (name == method_name).then(|| signature.clone()))?;
+            Some((
+                implementation.contract_def_id.is_none(),
+                implementation.impl_generic_count,
+                bindings,
+                signature,
+            ))
+        })
+        .collect();
+
+    // Direct member calls prefer inherent methods. Contract implementations
+    // remain available when no inherent method exists, while two overlapping
+    // specializations in the same tier are an error (the spec defines no
+    // specialization-precedence rule).
+    if candidates.iter().any(|(is_inherent, _, _, _)| *is_inherent) {
+        candidates.retain(|(is_inherent, _, _, _)| *is_inherent);
+    }
+
+    if candidates.len() > 1 {
+        return Some((
+            ctx.emit_error(TypeError::AmbiguousImpl {
+                target_name: ctx.display_ty(receiver_ty),
+                member_name: method_name.to_string(),
+                candidate_count: candidates.len(),
+                span,
+                file: ctx.current_file,
+            }),
+            false,
+        ));
+    }
+
+    let (_, impl_generic_count, mut bindings, signature) = candidates.into_iter().next()?;
+    for method_index in 0..signature.generics.len() {
+        let var = ctx.unify.new_var();
+        let infer_ty = ctx.interner.intern(TyKind::Infer(var));
+        bindings.push((impl_generic_count + method_index as u32, infer_ty));
+    }
+    let requires_mutable_receiver = signature.self_param == Some(true);
+    let params = signature
+        .params
+        .into_iter()
+        .map(|(_, ty)| super::super::infer::substitute_bindings(ty, &bindings, &mut ctx.interner))
+        .collect();
+    let ret = super::super::infer::substitute_bindings(signature.ret, &bindings, &mut ctx.interner);
+    Some((ctx.interner.func(params, ret), requires_mutable_receiver))
+}
+
 pub(super) fn check_bracket_access(
     ctx: &mut CheckCtx,
     object: &AstExpr,
@@ -507,7 +607,9 @@ pub(super) fn check_bracket_access(
 
             if let Some(comp_name) = component_name {
                 // Check if the entity has this component declared (guaranteed access)
-                let has_component = ctx.type_env.entity_components
+                let has_component = ctx
+                    .type_env
+                    .entity_components
                     .get(&def_id)
                     .map(|comps| comps.iter().any(|c| c == comp_name))
                     .unwrap_or(false);

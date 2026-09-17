@@ -1,5 +1,5 @@
 pub class List<T> {
-    items: T[]
+    mut items: T[]
 }
 
 impl<T> List<T> {
@@ -18,7 +18,7 @@ impl<T> List<T> {
     }
 
     pub fn filter(self, f: fn(T) -> bool) -> List<T> {
-        let result: List<T> = new List<T> { items: [] };
+        let mut result: List<T> = new List<T> { items: [] };
         let mut i: int = 0;
         while i < self.items.len() {
             if f(self.items[i]) {
@@ -31,7 +31,7 @@ impl<T> List<T> {
 }
 
 fn main() {
-    let list: List<int> = new List<int> { items: [] };
+    let mut list: List<int> = new List<int> { items: [] };
     list.add(1);
     list.add(2);
     list.add(3);

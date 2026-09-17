@@ -6,7 +6,7 @@
 
 mod common;
 
-use common::{workspace_file, DapClient};
+use common::{DapClient, workspace_file};
 use serde_json::json;
 
 const FIXTURE: &str = "writ-golden/tests/golden/fn_typed_params.writ";
@@ -129,7 +129,9 @@ fn test_breakpoint_hit_and_inspect() {
         "should have at least 1 thread while stopped"
     );
     assert!(
-        threads.iter().any(|t| t.get("id").and_then(|v| v.as_i64()) == Some(thread_id)),
+        threads
+            .iter()
+            .any(|t| t.get("id").and_then(|v| v.as_i64()) == Some(thread_id)),
         "thread_id {} should appear in threads list: {:?}",
         thread_id,
         threads
@@ -153,10 +155,7 @@ fn test_breakpoint_hit_and_inspect() {
         .expect("top frame should have id");
 
     // Verify breakpoint line
-    let top_line = top_frame
-        .get("line")
-        .and_then(|v| v.as_i64())
-        .unwrap_or(0);
+    let top_line = top_frame.get("line").and_then(|v| v.as_i64()).unwrap_or(0);
     assert_eq!(
         top_line, 12,
         "top frame should be at breakpoint line 12, got: {}",
@@ -169,10 +168,7 @@ fn test_breakpoint_hit_and_inspect() {
         .get("scopes")
         .and_then(|v| v.as_array())
         .expect("scopes should have scopes array");
-    assert!(
-        !scopes.is_empty(),
-        "should have at least 1 scope"
-    );
+    assert!(!scopes.is_empty(), "should have at least 1 scope");
 
     let vars_ref = scopes[0]
         .get("variablesReference")
@@ -199,7 +195,11 @@ fn test_breakpoint_hit_and_inspect() {
     // Regression: no variable should have an empty name (unnamed temporaries must be filtered)
     for var in variables {
         let name = var.get("name").and_then(|v| v.as_str()).unwrap_or("");
-        assert!(!name.is_empty(), "variable should have a non-empty name, got: {}", var);
+        assert!(
+            !name.is_empty(),
+            "variable should have a non-empty name, got: {}",
+            var
+        );
     }
 
     // Continue → should terminate
@@ -275,10 +275,13 @@ fn test_launch_before_configuration_done_with_breakpoint() {
     assert_eq!(breakpoints.len(), 1);
 
     // Launch BEFORE configurationDone (VS Code ordering)
-    let launch_seq = client.send("launch", json!({
-        "program": fixture_path,
-        "stopOnEntry": false
-    }));
+    let launch_seq = client.send(
+        "launch",
+        json!({
+            "program": fixture_path,
+            "stopOnEntry": false
+        }),
+    );
     let (launch_resp, _pre_events) = client.recv_response(launch_seq);
     assert_eq!(
         launch_resp.get("success").and_then(|v| v.as_bool()),
@@ -291,10 +294,7 @@ fn test_launch_before_configuration_done_with_breakpoint() {
     // Now send configurationDone — this triggers execution.
     let cd_seq = client.send_no_args("configurationDone");
     let (cd_resp, _) = client.recv_response(cd_seq);
-    assert_eq!(
-        cd_resp.get("success").and_then(|v| v.as_bool()),
-        Some(true),
-    );
+    assert_eq!(cd_resp.get("success").and_then(|v| v.as_bool()), Some(true),);
 
     // Execution starts now — read the stopped/terminated event.
     let post_events = client.recv_execution_event();
@@ -304,7 +304,8 @@ fn test_launch_before_configuration_done_with_breakpoint() {
     assert!(
         stopped.is_some(),
         "should hit breakpoint after deferred execution, events: {:?}",
-        post_events.iter()
+        post_events
+            .iter()
             .map(|e| e.get("event").and_then(|v| v.as_str()).unwrap_or("?"))
             .collect::<Vec<_>>()
     );
@@ -405,7 +406,10 @@ fn test_halt_on_crash_inspect() {
         let body = e.get("body").cloned().unwrap_or(json!({}));
         let category = body.get("category").and_then(|v| v.as_str()).unwrap_or("");
         let output = body.get("output").and_then(|v| v.as_str()).unwrap_or("");
-        category == "stderr" && (output.contains("Runtime crash") || output.contains("crash") || output.contains("unwrap"))
+        category == "stderr"
+            && (output.contains("Runtime crash")
+                || output.contains("crash")
+                || output.contains("unwrap"))
     });
     assert!(
         has_crash_output,
@@ -438,7 +442,8 @@ fn test_halt_on_crash_inspect() {
         threads
     );
 
-    let thread_name = crashed_thread.unwrap()
+    let thread_name = crashed_thread
+        .unwrap()
         .get("name")
         .and_then(|v| v.as_str())
         .unwrap_or("");
@@ -666,15 +671,8 @@ fn test_breakpoint_variables_have_names() {
         x_value
     );
 
-    let x_type = x_var
-        .get("type")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    assert_eq!(
-        x_type, "int",
-        "x should have type 'int', got: '{}'",
-        x_type
-    );
+    let x_type = x_var.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    assert_eq!(x_type, "int", "x should have type 'int', got: '{}'", x_type);
 
     // Continue → should terminate
     let (_cont_resp, cont_events) = client.continue_(thread_id);

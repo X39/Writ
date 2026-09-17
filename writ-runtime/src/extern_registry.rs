@@ -56,7 +56,9 @@ pub enum ExternHandler {
     ///
     /// Use when the handler needs to allocate Writ values on the GC heap
     /// (strings, structs) to return to the script.
-    ImmediateWithHeap(Box<dyn FnMut(&[Value], &mut dyn GcHeap) -> Result<Value, String> + Send + Sync>),
+    ImmediateWithHeap(
+        Box<dyn FnMut(&[Value], &mut dyn GcHeap) -> Result<Value, String> + Send + Sync>,
+    ),
 
     /// Buffer the call for later confirmation. The task suspends until the
     /// game calls `Runtime::confirm()` with the result.
@@ -125,20 +127,33 @@ impl ExternRegistry {
     }
 
     /// Register an immediate handler using a closure shorthand.
-    pub fn on(&mut self, name: &str, f: impl FnMut(&[Value]) -> Result<Value, String> + Send + Sync + 'static) -> &mut Self {
-        self.handlers.insert(name.to_string(), ExternHandler::Immediate(Box::new(f)));
+    pub fn on(
+        &mut self,
+        name: &str,
+        f: impl FnMut(&[Value]) -> Result<Value, String> + Send + Sync + 'static,
+    ) -> &mut Self {
+        self.handlers
+            .insert(name.to_string(), ExternHandler::Immediate(Box::new(f)));
         self
     }
 
     /// Register an immediate handler with heap access using a closure shorthand.
-    pub fn on_with_heap(&mut self, name: &str, f: impl FnMut(&[Value], &mut dyn GcHeap) -> Result<Value, String> + Send + Sync + 'static) -> &mut Self {
-        self.handlers.insert(name.to_string(), ExternHandler::ImmediateWithHeap(Box::new(f)));
+    pub fn on_with_heap(
+        &mut self,
+        name: &str,
+        f: impl FnMut(&[Value], &mut dyn GcHeap) -> Result<Value, String> + Send + Sync + 'static,
+    ) -> &mut Self {
+        self.handlers.insert(
+            name.to_string(),
+            ExternHandler::ImmediateWithHeap(Box::new(f)),
+        );
         self
     }
 
     /// Mark an extern as deferred (ECS-safe). Calls will be buffered.
     pub fn defer(&mut self, name: &str) -> &mut Self {
-        self.handlers.insert(name.to_string(), ExternHandler::Deferred);
+        self.handlers
+            .insert(name.to_string(), ExternHandler::Deferred);
         self
     }
 
@@ -168,8 +183,14 @@ impl ExternRegistry {
     /// validation since the runtime handles them internally.
     pub fn validate(&self, module: &Module) -> Vec<String> {
         let builtins = [
-            "say", "say_localized", "choice",
-            "log::trace", "log::debug", "log::info", "log::warn", "log::error",
+            "say",
+            "say_localized",
+            "choice",
+            "log::trace",
+            "log::debug",
+            "log::info",
+            "log::warn",
+            "log::error",
         ];
         let mut missing = Vec::new();
         for ed in &module.extern_defs {
@@ -236,48 +257,81 @@ impl ExternHost {
     /// Get the name for an extern index.
     pub fn extern_name(&self, extern_idx: u32) -> &str {
         let idx = Self::decode_extern_idx(extern_idx);
-        self.extern_names.get(idx).map(|s| s.as_str()).unwrap_or("?")
+        self.extern_names
+            .get(idx)
+            .map(|s| s.as_str())
+            .unwrap_or("?")
     }
 }
 
 impl RuntimeHost for ExternHost {
     fn on_request(&mut self, id: RequestId, req: &HostRequest) -> HostResponse {
         match req {
-            HostRequest::ExternCall { extern_idx, args, display_args, task_id } => {
+            HostRequest::ExternCall {
+                extern_idx,
+                args,
+                display_args,
+                task_id,
+            } => {
                 let idx = Self::decode_extern_idx(*extern_idx);
                 let name = self.extern_names.get(idx).cloned().unwrap_or_default();
 
                 // Check for built-in log calls first
                 match name.as_str() {
-                    "log::trace" => { self.on_log(LogLevel::Trace, display_args.first().map(|s| s.as_str()).unwrap_or("")); return HostResponse::Value(Value::Void); }
-                    "log::debug" => { self.on_log(LogLevel::Debug, display_args.first().map(|s| s.as_str()).unwrap_or("")); return HostResponse::Value(Value::Void); }
-                    "log::info"  => { self.on_log(LogLevel::Info,  display_args.first().map(|s| s.as_str()).unwrap_or("")); return HostResponse::Value(Value::Void); }
-                    "log::warn"  => { self.on_log(LogLevel::Warn,  display_args.first().map(|s| s.as_str()).unwrap_or("")); return HostResponse::Value(Value::Void); }
-                    "log::error" => { self.on_log(LogLevel::Error, display_args.first().map(|s| s.as_str()).unwrap_or("")); return HostResponse::Value(Value::Void); }
+                    "log::trace" => {
+                        self.on_log(
+                            LogLevel::Trace,
+                            display_args.first().map(|s| s.as_str()).unwrap_or(""),
+                        );
+                        return HostResponse::Value(Value::Void);
+                    }
+                    "log::debug" => {
+                        self.on_log(
+                            LogLevel::Debug,
+                            display_args.first().map(|s| s.as_str()).unwrap_or(""),
+                        );
+                        return HostResponse::Value(Value::Void);
+                    }
+                    "log::info" => {
+                        self.on_log(
+                            LogLevel::Info,
+                            display_args.first().map(|s| s.as_str()).unwrap_or(""),
+                        );
+                        return HostResponse::Value(Value::Void);
+                    }
+                    "log::warn" => {
+                        self.on_log(
+                            LogLevel::Warn,
+                            display_args.first().map(|s| s.as_str()).unwrap_or(""),
+                        );
+                        return HostResponse::Value(Value::Void);
+                    }
+                    "log::error" => {
+                        self.on_log(
+                            LogLevel::Error,
+                            display_args.first().map(|s| s.as_str()).unwrap_or(""),
+                        );
+                        return HostResponse::Value(Value::Void);
+                    }
                     _ => {}
                 }
 
                 // Registered handler dispatch
                 if let Some(handler) = self.handlers.get_mut(&idx) {
                     match handler {
-                        ExternHandler::Immediate(f) => {
-                            match f(args) {
-                                Ok(val) => HostResponse::Value(val),
-                                Err(msg) => HostResponse::Error(
-                                    crate::host::HostError::Failed(msg),
-                                ),
-                            }
-                        }
+                        ExternHandler::Immediate(f) => match f(args) {
+                            Ok(val) => HostResponse::Value(val),
+                            Err(msg) => HostResponse::Error(crate::host::HostError::Failed(msg)),
+                        },
                         ExternHandler::ImmediateWithHeap(_f) => {
                             // ImmediateWithHeap needs heap access — handled via
                             // on_extern_call_with_heap in the dispatch loop.
                             // If we reach here, the dispatch loop didn't call
                             // on_extern_call_with_heap first. Fall through to deferred.
-                            HostResponse::Error(
-                                crate::host::HostError::Failed(
-                                    "ImmediateWithHeap handler requires heap-aware dispatch".to_string(),
-                                ),
-                            )
+                            HostResponse::Error(crate::host::HostError::Failed(
+                                "ImmediateWithHeap handler requires heap-aware dispatch"
+                                    .to_string(),
+                            ))
                         }
                         ExternHandler::Deferred => {
                             self.deferred_queue.push(DeferredCall {
@@ -320,15 +374,16 @@ impl RuntimeHost for ExternHost {
         req: &HostRequest,
         heap: &mut dyn GcHeap,
     ) -> Option<HostResponse> {
-        if let HostRequest::ExternCall { extern_idx, args, .. } = req {
+        if let HostRequest::ExternCall {
+            extern_idx, args, ..
+        } = req
+        {
             let idx = Self::decode_extern_idx(*extern_idx);
             if let Some(handler) = self.handlers.get_mut(&idx) {
                 if let ExternHandler::ImmediateWithHeap(f) = handler {
                     return Some(match f(args, heap) {
                         Ok(val) => HostResponse::Value(val),
-                        Err(msg) => HostResponse::Error(
-                            crate::host::HostError::Failed(msg),
-                        ),
+                        Err(msg) => HostResponse::Error(crate::host::HostError::Failed(msg)),
                     });
                 }
             }
@@ -378,7 +433,11 @@ mod tests {
         let mut reg = ExternRegistry::new();
         reg.on("storage_get", |_| Ok(Value::Int(0)));
         let missing = reg.validate(&module);
-        assert!(missing.is_empty(), "builtins should not be flagged, got: {:?}", missing);
+        assert!(
+            missing.is_empty(),
+            "builtins should not be flagged, got: {:?}",
+            missing
+        );
     }
 
     #[test]
@@ -407,8 +466,14 @@ mod tests {
         let module = module_with_externs(&["add"]);
         let mut reg = ExternRegistry::new();
         reg.on("add", |args| {
-            let a = match args.get(0) { Some(Value::Int(n)) => *n, _ => 0 };
-            let b = match args.get(1) { Some(Value::Int(n)) => *n, _ => 0 };
+            let a = match args.get(0) {
+                Some(Value::Int(n)) => *n,
+                _ => 0,
+            };
+            let b = match args.get(1) {
+                Some(Value::Int(n)) => *n,
+                _ => 0,
+            };
             Ok(Value::Int(a + b))
         });
         let mut host = reg.build(&module);
@@ -443,7 +508,10 @@ mod tests {
             display_args: vec!["10.0".into(), "20.0".into()],
         };
         let resp = host.on_request(RequestId(42), &req);
-        assert!(matches!(resp, HostResponse::Suspend), "deferred should return Suspend");
+        assert!(
+            matches!(resp, HostResponse::Suspend),
+            "deferred should return Suspend"
+        );
 
         assert!(host.has_deferred());
         let calls = host.drain_deferred();
@@ -512,13 +580,11 @@ mod tests {
     fn entity_handler_override() {
         let module = module_with_externs(&[]);
         let mut reg = ExternRegistry::new();
-        reg.with_entity_handler(|_id, req| {
-            match req {
-                HostRequest::EntitySpawn { .. } => {
-                    HostResponse::EntityHandle(crate::value::EntityId::new(42, 0))
-                }
-                _ => HostResponse::Confirmed,
+        reg.with_entity_handler(|_id, req| match req {
+            HostRequest::EntitySpawn { .. } => {
+                HostResponse::EntityHandle(crate::value::EntityId::new(42, 0))
             }
+            _ => HostResponse::Confirmed,
         });
         let mut host = reg.build(&module);
 

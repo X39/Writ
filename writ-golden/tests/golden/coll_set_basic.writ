@@ -1,5 +1,5 @@
 pub class Set<T: Eq> {
-    items: T[]
+    mut items: T[]
 }
 
 impl<T: Eq> Set<T> {
@@ -42,7 +42,7 @@ impl<T: Eq> Set<T> {
 }
 
 fn main() {
-    let s: Set<int> = new Set<int> { items: [] };
+    let mut s: Set<int> = new Set<int> { items: [] };
     s.add(1);
     s.add(2);
     s.add(1);

@@ -60,7 +60,7 @@ hljs.registerLanguage("writ", function(e) {
     keywords: {
       $pattern: /[A-Za-z_][A-Za-z0-9_]*/,
       keyword: "fn dlg entity struct enum contract impl class component namespace " +
-               "if else match for while return break continue spawn detached join " +
+               "if else match for while return break continue spawn join " +
                "cancel defer try on atomic",
       built_in: "let mut const pub priv use using in new self extern global",
       type: "void int float bool string",

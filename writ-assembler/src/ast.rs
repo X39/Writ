@@ -23,13 +23,14 @@ pub struct AsmExtern {
     pub min_version: String,
 }
 
-/// Type definition: `.type "Name" kind { fields }`.
+/// Type definition: `.type "Name" kind { fields and direct methods }`.
 #[derive(Debug, Clone)]
 pub struct AsmType {
     pub name: String,
     pub kind: AsmTypeKind,
     pub flags: u16,
     pub fields: Vec<AsmField>,
+    pub methods: Vec<AsmMethod>,
 }
 
 /// The kind of a type definition.

@@ -1,11 +1,12 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
-    .global "counter" int static
-    .method "main" () -> void mut {
+    .global "counter" int mut
+    .method "main" () -> void static {
         .locals {
-            r0: int "x" [0, 2)
+            r0: int "x" [8, 10)
         }
         .reg r0 int
-        RET_VOID  ; line:4 col:5
+        LOAD_GLOBAL r0, 0  ; line:4 col:5
+        RET_VOID
     }
 }

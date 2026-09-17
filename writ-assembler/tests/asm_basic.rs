@@ -74,6 +74,39 @@ fn assemble_method_with_registers() {
 }
 
 #[test]
+fn assemble_array_default_kinds_as_discriminants() {
+    for value in ["0", "1", "2", "3", "4", "0xFFFFFFFF"] {
+        let src = format!(
+            r#"
+.module "test" "1.0.0" {{
+    .method "main" () -> void {{
+        .reg r0 array<int>
+        NEW_ARRAY r0, {value}
+        RET_VOID
+    }}
+}}
+"#
+        );
+        writ_assembler::assemble(&src)
+            .unwrap_or_else(|errors| panic!("default kind {value} should assemble: {errors:?}"));
+    }
+
+    let src = r#"
+.module "test" "1.0.0" {
+    .method "main" () -> void {
+        .reg r0 array<int>
+        .reg r1 int
+        ARRAY_INIT r0, 0, 1, r1
+        NEW_ARRAY_SIZED r0, 0, r1
+        NEW_ARRAY_FILLED r0, 0, r1, r1
+        RET_VOID
+    }
+}
+"#;
+    writ_assembler::assemble(src).expect("all array constructors should accept a default kind");
+}
+
+#[test]
 fn assemble_impl_block() {
     let src = r#"
 .module "test" "1.0.0" {
@@ -147,4 +180,97 @@ fn test_typeof_assembles() {
     assert_eq!(module.method_bodies.len(), 1);
     // TYPEOF is 8 bytes (RI32 shape) + RET_VOID is 2 bytes = 10 bytes
     assert_eq!(module.method_bodies[0].code.len(), 10);
+}
+
+#[test]
+fn field_operands_assemble_as_metadata_tokens() {
+    use std::io::Cursor;
+    use writ_module::Instruction;
+
+    let src = r#"
+.module "test" "1.0.0" {
+    .type "First" struct {
+        .field "first" int pub
+    }
+    .type "Second" struct {
+        .field "second_0" int pub
+        .field "second_1" int pub
+    }
+    .method "main" () -> void {
+        .reg r0 int
+        .reg r1 int
+        GET_FIELD r0, r1, Second::second_1
+        SET_FIELD r1, token(83886083), r0
+        RET_VOID
+    }
+}
+"#;
+    let module = writ_assembler::assemble(src).expect("should assemble field tokens");
+    let mut cursor = Cursor::new(module.method_bodies[0].code.as_slice());
+
+    assert_eq!(
+        Instruction::decode(&mut cursor).unwrap(),
+        Instruction::GetField {
+            r_dst: 0,
+            r_obj: 1,
+            field_token: 0x0500_0003,
+        }
+    );
+    assert_eq!(
+        Instruction::decode(&mut cursor).unwrap(),
+        Instruction::SetField {
+            r_obj: 1,
+            field_token: 0x0500_0003,
+            r_val: 0,
+        }
+    );
+}
+
+#[test]
+fn atomic_construction_operands_assemble_in_wire_order() {
+    use std::io::Cursor;
+    use writ_module::Instruction;
+
+    let src = r#"
+.module "test" "1.0.0" {
+    .type "Thing" struct {
+        .field "left" int
+        .field "right" int
+    }
+    .type "Actor" entity {
+    }
+    .method "main" () -> void {
+        .reg r0 int
+        .reg r1 int
+        .reg r2 int
+        .reg r3 int
+        NEW r0, Thing, 2, r1
+        SPAWN_ENTITY r1, Actor, 0, r3
+        RET_VOID
+    }
+}
+"#;
+    let module = writ_assembler::assemble(src).expect("should assemble atomic constructors");
+    let code = &module.method_bodies[0].code;
+    assert_eq!(code.len(), 26, "two 12-byte constructors plus RET_VOID");
+    let mut cursor = Cursor::new(code.as_slice());
+
+    assert_eq!(
+        Instruction::decode(&mut cursor).unwrap(),
+        Instruction::New {
+            r_dst: 0,
+            type_idx: 0x0200_0001,
+            field_count: 2,
+            r_base: 1,
+        }
+    );
+    assert_eq!(
+        Instruction::decode(&mut cursor).unwrap(),
+        Instruction::SpawnEntity {
+            r_dst: 1,
+            type_idx: 0x0200_0002,
+            field_count: 0,
+            r_base: 3,
+        }
+    );
 }

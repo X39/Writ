@@ -14,13 +14,15 @@
 //! - REFL-09: typeof(T) == typeof(T) is true (interned singleton); typeof(T) == typeof(U) is false
 //! - REFL-09: GC survival after full reflection op chain (TypeOf → fields() → FieldInfo.get)
 
-use writ_module::module::MethodBody;
-use writ_module::tables::TypeDefKind;
-use writ_module::token::MetadataToken;
 use writ_module::Instruction;
 use writ_module::ModuleBuilder;
-use writ_runtime::{ExecutionLimit, RuntimeBuilder, TaskState, Value};
+use writ_module::module::MethodBody;
+use writ_module::tables::{
+    FIELD_FLAG_PUBLIC, FIELD_FLAG_READONLY, METHOD_FLAG_PUBLIC, TypeDefKind,
+};
+use writ_module::token::MetadataToken;
 use writ_runtime::heap::HeapObject;
+use writ_runtime::{ExecutionLimit, RuntimeBuilder, TaskState, Value};
 
 // ── Encoding helper ───────────────────────────────────────────────────
 
@@ -52,7 +54,10 @@ fn test_typeof_returns_type_ref() {
         register_types: vec![0; 2],
         code: encode(&[
             // TypeOf r0, type_token (local TypeDef at 0-based index 0 in this module)
-            Instruction::TypeOf { r_dst: 0, type_idx: typedef_token(0) },
+            Instruction::TypeOf {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+            },
             Instruction::Ret { r_src: 0 },
         ]),
         debug_locals: vec![],
@@ -88,7 +93,10 @@ fn test_primitive_get_type_returns_ref() {
     let body = MethodBody {
         register_types: vec![0; 2],
         code: encode(&[
-            Instruction::LoadInt { r_dst: 0, value: 42 },
+            Instruction::LoadInt {
+                r_dst: 0,
+                value: 42,
+            },
             // Call get_type() on the Int via Reflectable contract (slot 0)
             Instruction::CallVirt {
                 r_dst: 1,
@@ -133,7 +141,10 @@ fn test_type_object_survives_gc() {
         register_types: vec![0; 1],
         code: encode(&[
             // Allocate a Type object — it gets cached in ReflectionIndex
-            Instruction::TypeOf { r_dst: 0, type_idx: typedef_token(0) },
+            Instruction::TypeOf {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+            },
             // Drop the register by loading null — the only remaining reference is from
             // ReflectionIndex's permanent type_cache.
             Instruction::LoadNull { r_dst: 0 },
@@ -153,14 +164,20 @@ fn test_type_object_survives_gc() {
     // Before GC: the Type object + 3 string fields (name, namespace, kind) + 1 empty Array
     // (type_args field 4) are on the heap. is_generic is Value::Bool (inline). Total >= 5.
     let before = runtime.heap().object_count();
-    assert!(before >= 5, "Type object (1) + 3 string fields + 1 Array (type_args) should be on heap; got {}", before);
+    assert!(
+        before >= 5,
+        "Type object (1) + 3 string fields + 1 Array (type_args) should be on heap; got {}",
+        before
+    );
 
     // Run GC — the Type object must survive because ReflectionIndex registers it as a root
     let stats = runtime.collect_garbage();
 
     // All Type objects must survive (they are permanent GC roots from ReflectionIndex)
-    assert_eq!(stats.objects_freed, 0,
-        "Type heap object and its string fields should survive GC (permanent roots)");
+    assert_eq!(
+        stats.objects_freed, 0,
+        "Type heap object and its string fields should survive GC (permanent roots)"
+    );
 
     // Heap size should be unchanged
     let after = runtime.heap().object_count();
@@ -175,10 +192,12 @@ fn test_type_object_survives_gc() {
 fn test_type_fields_returns_array() {
     let mut builder = ModuleBuilder::new("test");
 
-    // Struct with 2 fields: `x` (mutable, flags=0), `y` (readonly, flags=1)
+    // A private physical field between public fields must be omitted without
+    // shifting the second public field's FieldInfo metadata/layout offset.
     builder.add_type_def("Vec2", "", TypeDefKind::Struct, 0);
-    builder.add_field_def("x", &[0x01], 0);   // int, flags=0 (mutable)
-    builder.add_field_def("y", &[0x01], 1);   // int, flags=1 (readonly = let)
+    builder.add_field_def("x", &[0x01], FIELD_FLAG_PUBLIC);
+    builder.add_field_def("hidden", &[0x01], 0);
+    builder.add_field_def("y", &[0x01], FIELD_FLAG_PUBLIC | FIELD_FLAG_READONLY);
 
     // Add TypeRef to writ-runtime "Type.fields" contract
     let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
@@ -188,7 +207,10 @@ fn test_type_fields_returns_array() {
         register_types: vec![0; 3],
         code: encode(&[
             // r0 = TypeOf Vec2
-            Instruction::TypeOf { r_dst: 0, type_idx: typedef_token(0) },
+            Instruction::TypeOf {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+            },
             // r1 = r0.fields()
             Instruction::CallVirt {
                 r_dst: 1,
@@ -216,33 +238,53 @@ fn test_type_fields_returns_array() {
     let arr_val = runtime.return_value(tid);
     let arr_href = match arr_val {
         Some(Value::Ref(href)) => href,
-        other => panic!("expected Array (Value::Ref) from Type.fields(), got {:?}", other),
+        other => panic!(
+            "expected Array (Value::Ref) from Type.fields(), got {:?}",
+            other
+        ),
     };
 
-    // Check the array has 2 elements
-    let arr_obj = runtime.heap().get_object(arr_href).expect("array object exists");
+    // Only public x/y are visible; private `hidden` is excluded.
+    let arr_obj = runtime
+        .heap()
+        .get_object(arr_href)
+        .expect("array object exists");
     let elements = match arr_obj {
         HeapObject::Array { elements, .. } => elements.clone(),
         other => panic!("expected Array heap object, got {:?}", other),
     };
     assert_eq!(elements.len(), 2, "Vec2 should have 2 fields");
 
-    // Check FieldInfo[0]: is_mutable=true (flags=0)
+    // Check FieldInfo[0]: public visibility does not make the field read-only.
     let fi0_href = match elements[0] {
         Value::Ref(href) => href,
         other => panic!("expected Ref for FieldInfo[0], got {:?}", other),
     };
     // FieldInfo field 2 = is_mutable
-    let is_mutable_0 = runtime.heap().get_field(fi0_href, 2).expect("is_mutable field");
-    assert_eq!(is_mutable_0, Value::Bool(true), "field 'x' (flags=0) should be mutable");
+    let is_mutable_0 = runtime
+        .heap()
+        .get_field(fi0_href, 2)
+        .expect("is_mutable field");
+    assert_eq!(
+        is_mutable_0,
+        Value::Bool(true),
+        "public field 'x' should be mutable"
+    );
 
-    // Check FieldInfo[1]: is_mutable=false (flags=1 = readonly)
+    // Check FieldInfo[1]: the distinct read-only bit makes it immutable.
     let fi1_href = match elements[1] {
         Value::Ref(href) => href,
         other => panic!("expected Ref for FieldInfo[1], got {:?}", other),
     };
-    let is_mutable_1 = runtime.heap().get_field(fi1_href, 2).expect("is_mutable field");
-    assert_eq!(is_mutable_1, Value::Bool(false), "field 'y' (flags=1) should be readonly");
+    let is_mutable_1 = runtime
+        .heap()
+        .get_field(fi1_href, 2)
+        .expect("is_mutable field");
+    assert_eq!(
+        is_mutable_1,
+        Value::Bool(false),
+        "field 'y' should be read-only"
+    );
 }
 
 // ── Test: Type.attributes() uses unified attribute path (RT-05) ───────
@@ -268,7 +310,10 @@ fn test_type_attributes_from_module_attribute_view() {
         register_types: vec![0; 3],
         code: encode(&[
             // r0 = TypeOf MyEntity
-            Instruction::TypeOf { r_dst: 0, type_idx: typedef_token(0) },
+            Instruction::TypeOf {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+            },
             // r1 = r0.attributes() -> Array<AttributeInfo>
             Instruction::CallVirt {
                 r_dst: 1,
@@ -296,16 +341,26 @@ fn test_type_attributes_from_module_attribute_view() {
     let arr_val = runtime.return_value(tid);
     let arr_href = match arr_val {
         Some(Value::Ref(href)) => href,
-        other => panic!("expected Array (Value::Ref) from Type.attributes(), got {:?}", other),
+        other => panic!(
+            "expected Array (Value::Ref) from Type.attributes(), got {:?}",
+            other
+        ),
     };
 
     // Check the array has 1 element (the Singleton attribute)
-    let arr_obj = runtime.heap().get_object(arr_href).expect("array object exists");
+    let arr_obj = runtime
+        .heap()
+        .get_object(arr_href)
+        .expect("array object exists");
     let elements = match arr_obj {
         HeapObject::Array { elements, .. } => elements.clone(),
         other => panic!("expected Array heap object, got {:?}", other),
     };
-    assert_eq!(elements.len(), 1, "MyEntity should have 1 attribute (Singleton)");
+    assert_eq!(
+        elements.len(),
+        1,
+        "MyEntity should have 1 attribute (Singleton)"
+    );
 
     // Verify the AttributeInfo has name = "Singleton" (field 0)
     let ai_href = match elements[0] {
@@ -317,9 +372,14 @@ fn test_type_attributes_from_module_attribute_view() {
         Value::Ref(href) => href,
         other => panic!("expected string Ref for attribute name, got {:?}", other),
     };
-    let name_str = runtime.heap().read_string(name_href).expect("readable string");
-    assert_eq!(name_str, "Singleton",
-        "AttributeInfo field 0 should be the attribute name");
+    let name_str = runtime
+        .heap()
+        .read_string(name_href)
+        .expect("readable string");
+    assert_eq!(
+        name_str, "Singleton",
+        "AttributeInfo field 0 should be the attribute name"
+    );
 }
 
 // ── Test: FieldInfo.get(instance) returns field value (RT-04) ─────────
@@ -332,8 +392,8 @@ fn test_field_info_get() {
 
     // Struct with 2 fields
     builder.add_type_def("Point", "", TypeDefKind::Struct, 0);
-    builder.add_field_def("x", &[0x01], 0); // int
-    builder.add_field_def("y", &[0x01], 0); // int
+    builder.add_field_def("x", &[0x01], FIELD_FLAG_PUBLIC); // int
+    builder.add_field_def("y", &[0x01], FIELD_FLAG_PUBLIC); // int
 
     // Add TypeRefs for Type.fields and FieldInfo.get contracts
     let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
@@ -344,15 +404,35 @@ fn test_field_info_get() {
         register_types: vec![0; 9],
         code: encode(&[
             // r0 = new Point struct
-            Instruction::New { r_dst: 0, type_idx: typedef_token(0) },
-            Instruction::LoadInt { r_dst: 1, value: 10 },
-            Instruction::SetField { r_obj: 0, field_idx: 0, r_val: 1 },  // x = 10
-            Instruction::LoadInt { r_dst: 2, value: 20 },
-            Instruction::SetField { r_obj: 0, field_idx: 1, r_val: 2 },  // y = 20
-
+            Instruction::New {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+                field_count: 2,
+                r_base: 0,
+            },
+            Instruction::LoadInt {
+                r_dst: 1,
+                value: 10,
+            },
+            Instruction::SetField {
+                r_obj: 0,
+                field_token: 0x0500_0001,
+                r_val: 1,
+            }, // x = 10
+            Instruction::LoadInt {
+                r_dst: 2,
+                value: 20,
+            },
+            Instruction::SetField {
+                r_obj: 0,
+                field_token: 0x0500_0002,
+                r_val: 2,
+            }, // y = 20
             // r3 = TypeOf Point
-            Instruction::TypeOf { r_dst: 3, type_idx: typedef_token(0) },
-
+            Instruction::TypeOf {
+                r_dst: 3,
+                type_idx: typedef_token(0),
+            },
             // r4 = r3.fields()  (self=r3, argc=1)
             Instruction::CallVirt {
                 r_dst: 4,
@@ -362,16 +442,17 @@ fn test_field_info_get() {
                 r_base: 3,
                 argc: 1,
             },
-
             // r5 = 0 (index into fields array)
             // r6 = r4[r5]  (FieldInfo for field 'x')
             Instruction::LoadInt { r_dst: 5, value: 0 },
-            Instruction::ArrayLoad { r_dst: 6, r_arr: 4, r_idx: 5 },
-
+            Instruction::ArrayLoad {
+                r_dst: 6,
+                r_arr: 4,
+                r_idx: 5,
+            },
             // FieldInfo.get(instance): r_base=6 (self=FieldInfo), r_base+1=7 (instance=Point)
             // MOV r7 <- r0 to provide the instance in r7
             Instruction::Mov { r_dst: 7, r_src: 0 },
-
             // r8 = r6.get(r7)  (read field 'x' from Point instance at r7)
             Instruction::CallVirt {
                 r_dst: 8,
@@ -381,7 +462,6 @@ fn test_field_info_get() {
                 r_base: 6, // r_base=6(self=FieldInfo), r_base+1=7(arg=instance)
                 argc: 2,   // self + instance
             },
-
             Instruction::Ret { r_src: 8 },
         ]),
         debug_locals: vec![],
@@ -405,6 +485,167 @@ fn test_field_info_get() {
 
 // ── Phase 106 additions ────────────────────────────────────────────────
 
+// ── Test: FieldInfo rejects an unrelated owner type ─────────────────
+
+/// A FieldInfo is tied to its declaring type, not merely to a field offset.
+/// Passing an unrelated object with a field at the same offset must crash for
+/// both get and set, and the rejected set must leave that object unchanged.
+#[test]
+fn test_field_info_rejects_unrelated_same_offset_instance() {
+    let mut builder = ModuleBuilder::new("test");
+
+    builder.add_type_def("Expected", "", TypeDefKind::Struct, 0);
+    builder.add_field_def("expected_value", &[0x01], FIELD_FLAG_PUBLIC);
+    builder.add_type_def("Unrelated", "", TypeDefKind::Struct, 0);
+    builder.add_field_def("unrelated_value", &[0x01], FIELD_FLAG_PUBLIC);
+
+    let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
+    let type_fields_ref = builder.add_type_ref(mod_ref, "Type.fields", "writ");
+    let fieldinfo_get_ref = builder.add_type_ref(mod_ref, "FieldInfo.get", "writ");
+    let fieldinfo_set_ref = builder.add_type_ref(mod_ref, "FieldInfo.set", "writ");
+
+    // Method 0 constructs the unrelated object with field 0 set to a sentinel.
+    let make_unrelated = MethodBody {
+        register_types: vec![0; 2],
+        code: encode(&[
+            Instruction::LoadInt {
+                r_dst: 0,
+                value: 73,
+            },
+            Instruction::New {
+                r_dst: 1,
+                type_idx: typedef_token(1),
+                field_count: 1,
+                r_base: 0,
+            },
+            Instruction::Ret { r_src: 1 },
+        ]),
+        debug_locals: vec![],
+        source_spans: vec![],
+    };
+    builder.add_method("make_unrelated", &[0], 0, 2, make_unrelated);
+
+    // Method 1 gets Expected.expected_value's FieldInfo, then attempts to read
+    // field 0 from an Unrelated instance supplied in r0.
+    let wrong_get = MethodBody {
+        register_types: vec![0; 7],
+        code: encode(&[
+            Instruction::TypeOf {
+                r_dst: 1,
+                type_idx: typedef_token(0),
+            },
+            Instruction::CallVirt {
+                r_dst: 2,
+                r_obj: 1,
+                contract_idx: type_fields_ref.0,
+                slot: 0,
+                r_base: 1,
+                argc: 1,
+            },
+            Instruction::LoadInt { r_dst: 3, value: 0 },
+            Instruction::ArrayLoad {
+                r_dst: 4,
+                r_arr: 2,
+                r_idx: 3,
+            },
+            Instruction::Mov { r_dst: 5, r_src: 0 },
+            Instruction::CallVirt {
+                r_dst: 6,
+                r_obj: 4,
+                contract_idx: fieldinfo_get_ref.0,
+                slot: 0,
+                r_base: 4,
+                argc: 2,
+            },
+            Instruction::Ret { r_src: 6 },
+        ]),
+        debug_locals: vec![],
+        source_spans: vec![],
+    };
+    builder.add_method("wrong_get", &[0], 0, 7, wrong_get);
+
+    // Method 2 attempts the equivalent cross-type write at the same offset.
+    let wrong_set = MethodBody {
+        register_types: vec![0; 8],
+        code: encode(&[
+            Instruction::TypeOf {
+                r_dst: 1,
+                type_idx: typedef_token(0),
+            },
+            Instruction::CallVirt {
+                r_dst: 2,
+                r_obj: 1,
+                contract_idx: type_fields_ref.0,
+                slot: 0,
+                r_base: 1,
+                argc: 1,
+            },
+            Instruction::LoadInt { r_dst: 3, value: 0 },
+            Instruction::ArrayLoad {
+                r_dst: 4,
+                r_arr: 2,
+                r_idx: 3,
+            },
+            Instruction::Mov { r_dst: 5, r_src: 0 },
+            Instruction::LoadInt {
+                r_dst: 6,
+                value: 99,
+            },
+            Instruction::CallVirt {
+                r_dst: 7,
+                r_obj: 4,
+                contract_idx: fieldinfo_set_ref.0,
+                slot: 0,
+                r_base: 4,
+                argc: 3,
+            },
+            Instruction::RetVoid,
+        ]),
+        debug_locals: vec![],
+        source_spans: vec![],
+    };
+    builder.add_method("wrong_set", &[0], 0, 8, wrong_set);
+
+    let module = builder.build();
+    let mut runtime = RuntimeBuilder::new(module).with_gc().build().unwrap();
+    let unrelated = runtime.call_sync(0, vec![]).unwrap();
+    let unrelated_href = match unrelated {
+        Value::Struct { href, .. } => href,
+        other => panic!("expected Unrelated struct instance, got {other:?}"),
+    };
+    assert_eq!(
+        runtime.heap().get_field(unrelated_href, 0).unwrap(),
+        Value::Int(73)
+    );
+
+    let get_crash = runtime
+        .call_sync(1, vec![unrelated])
+        .expect_err("FieldInfo.get must reject an unrelated object type");
+    assert!(
+        get_crash.message.contains("does not match declaring type"),
+        "unexpected get crash: {}",
+        get_crash.message
+    );
+    assert_eq!(
+        runtime.heap().get_field(unrelated_href, 0).unwrap(),
+        Value::Int(73)
+    );
+
+    let set_crash = runtime
+        .call_sync(2, vec![unrelated])
+        .expect_err("FieldInfo.set must reject an unrelated object type");
+    assert!(
+        set_crash.message.contains("does not match declaring type"),
+        "unexpected set crash: {}",
+        set_crash.message
+    );
+    assert_eq!(
+        runtime.heap().get_field(unrelated_href, 0).unwrap(),
+        Value::Int(73),
+        "rejected cross-type FieldInfo.set must not mutate the unrelated object"
+    );
+}
+
 // ── Test: Type.methods() returns Array of MethodInfo (REFL-04) ────────
 
 /// Test that Type.methods() returns an Array of MethodInfo with at least one entry
@@ -414,29 +655,46 @@ fn test_type_methods_returns_array() {
     let mut builder = ModuleBuilder::new("test");
 
     // Struct "Greeter" with one method "greet"
-    builder.add_type_def("Greeter", "", TypeDefKind::Struct, 0);
+    let greeter_type = builder.add_type_def("Greeter", "", TypeDefKind::Struct, 0);
 
     // Add TypeRef to writ-runtime "Type.methods" contract
     let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
     let type_methods_ref = builder.add_type_ref(mod_ref, "Type.methods", "writ");
 
-    // Add "greet" as a method on Greeter (registers r0=void, RetVoid body)
+    // Private methods must be omitted from Type.methods().
+    let private_body = MethodBody {
+        register_types: vec![0; 1],
+        code: encode(&[Instruction::RetVoid]),
+        debug_locals: vec![],
+        source_spans: vec![],
+    };
+    builder.add_type_method(greeter_type, "whisper", &[0], 0, 1, private_body);
+
+    // Add public "greet" as a method on Greeter.
     let greet_body = MethodBody {
         register_types: vec![0; 1],
         code: encode(&[Instruction::RetVoid]),
         debug_locals: vec![],
         source_spans: vec![],
     };
-    // method_def at index 0 = "main" (added below); greet must come first so typedef_method_range finds it.
-    // We need greet to belong to Greeter's method range.  Add it before "main".
-    builder.add_method("greet", &[0], 0, 1, greet_body);
+    builder.add_type_method(
+        greeter_type,
+        "greet",
+        &[0],
+        METHOD_FLAG_PUBLIC,
+        1,
+        greet_body,
+    );
 
     // Main body: TypeOf Greeter → CallVirt Type.methods() → Ret array
     let body = MethodBody {
         register_types: vec![0; 3],
         code: encode(&[
             // r0 = TypeOf Greeter (typedef_idx=0)
-            Instruction::TypeOf { r_dst: 0, type_idx: typedef_token(0) },
+            Instruction::TypeOf {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+            },
             // r1 = r0.methods()
             Instruction::CallVirt {
                 r_dst: 1,
@@ -455,8 +713,8 @@ fn test_type_methods_returns_array() {
     let module = builder.build();
 
     let mut runtime = RuntimeBuilder::new(module).with_gc().build().unwrap();
-    // spawn_task(method_idx=1, ...) because "greet" is method 0, "main" is method 1
-    let tid = runtime.spawn_task(1, vec![]).unwrap();
+    // whisper=0, greet=1, main=2.
+    let tid = runtime.spawn_task(2, vec![]).unwrap();
     runtime.tick(0.0, ExecutionLimit::None);
 
     assert_eq!(runtime.task_state(tid), Some(TaskState::Completed));
@@ -464,16 +722,22 @@ fn test_type_methods_returns_array() {
     // Result should be an Array
     let arr_href = match runtime.return_value(tid) {
         Some(Value::Ref(href)) => href,
-        other => panic!("expected Array (Value::Ref) from Type.methods(), got {:?}", other),
+        other => panic!(
+            "expected Array (Value::Ref) from Type.methods(), got {:?}",
+            other
+        ),
     };
 
-    // Check array has at least 1 element (the "greet" method)
-    let arr_obj = runtime.heap().get_object(arr_href).expect("array object exists");
+    // Only the public "greet" method is reflected.
+    let arr_obj = runtime
+        .heap()
+        .get_object(arr_href)
+        .expect("array object exists");
     let elements = match arr_obj {
         HeapObject::Array { elements, .. } => elements.clone(),
         other => panic!("expected Array heap object, got {:?}", other),
     };
-    assert!(!elements.is_empty(), "Greeter.methods() should contain at least one method (greet)");
+    assert_eq!(elements.len(), 1, "private method must be excluded");
 
     // Verify first MethodInfo has name "greet" (field 0 = name string)
     let mi_href = match elements[0] {
@@ -485,8 +749,14 @@ fn test_type_methods_returns_array() {
         Value::Ref(href) => href,
         other => panic!("expected string Ref for method name, got {:?}", other),
     };
-    let name_str = runtime.heap().read_string(name_href).expect("readable string");
-    assert_eq!(name_str, "greet", "MethodInfo field 0 should be the method name 'greet'");
+    let name_str = runtime
+        .heap()
+        .read_string(name_href)
+        .expect("readable string");
+    assert_eq!(
+        name_str, "greet",
+        "MethodInfo field 0 should be the method name 'greet'"
+    );
 }
 
 // ── Test: Type.contracts() returns Array of ContractInfo (REFL-06) ────
@@ -498,7 +768,7 @@ fn test_type_contracts_returns_array() {
     let mut builder = ModuleBuilder::new("test");
 
     // Struct "Printable"
-    builder.add_type_def("Widget", "", TypeDefKind::Struct, 0);
+    let widget_type = builder.add_type_def("Widget", "", TypeDefKind::Struct, 0);
 
     // Define a local contract "Drawable" in this module (table_id=10)
     let drawable_contract = builder.add_contract_def("Drawable", "writ");
@@ -509,8 +779,8 @@ fn test_type_contracts_returns_array() {
     let type_contracts_ref = builder.add_type_ref(mod_ref, "Type.contracts", "writ");
 
     // Register Widget as implementing Drawable via ImplDef
-    let widget_token = MetadataToken::new(2, 1); // TypeDef table=2, row=1 (1-based)
-    builder.add_impl_def(widget_token, drawable_contract);
+    let widget_token = widget_type;
+    let drawable_impl = builder.add_impl_def(widget_token, drawable_contract);
     // Intrinsic flag not needed for user contracts; this method body is never called in tests
     let impl_body = MethodBody {
         register_types: vec![0; 1],
@@ -518,13 +788,16 @@ fn test_type_contracts_returns_array() {
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_method("drawable_draw", &[0], 0, 1, impl_body);
+    builder.add_impl_method(drawable_impl, "drawable_draw", &[0], 0, 1, impl_body);
 
     // Main body: TypeOf Widget → contracts() → Ret array
     let main_body = MethodBody {
         register_types: vec![0; 3],
         code: encode(&[
-            Instruction::TypeOf { r_dst: 0, type_idx: typedef_token(0) },
+            Instruction::TypeOf {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+            },
             Instruction::CallVirt {
                 r_dst: 1,
                 r_obj: 0,
@@ -551,15 +824,25 @@ fn test_type_contracts_returns_array() {
 
     let arr_href = match runtime.return_value(tid) {
         Some(Value::Ref(href)) => href,
-        other => panic!("expected Array (Value::Ref) from Type.contracts(), got {:?}", other),
+        other => panic!(
+            "expected Array (Value::Ref) from Type.contracts(), got {:?}",
+            other
+        ),
     };
 
-    let arr_obj = runtime.heap().get_object(arr_href).expect("array object exists");
+    let arr_obj = runtime
+        .heap()
+        .get_object(arr_href)
+        .expect("array object exists");
     let elements = match arr_obj {
         HeapObject::Array { elements, .. } => elements.clone(),
         other => panic!("expected Array heap object, got {:?}", other),
     };
-    assert_eq!(elements.len(), 1, "Widget should implement exactly 1 contract (Drawable)");
+    assert_eq!(
+        elements.len(),
+        1,
+        "Widget should implement exactly 1 contract (Drawable)"
+    );
 
     // Verify ContractInfo field 0 = name = "Drawable"
     let ci_href = match elements[0] {
@@ -571,8 +854,14 @@ fn test_type_contracts_returns_array() {
         Value::Ref(href) => href,
         other => panic!("expected string Ref for contract name, got {:?}", other),
     };
-    let name_str = runtime.heap().read_string(name_href).expect("readable string");
-    assert_eq!(name_str, "Drawable", "ContractInfo field 0 should be the contract name 'Drawable'");
+    let name_str = runtime
+        .heap()
+        .read_string(name_href)
+        .expect("readable string");
+    assert_eq!(
+        name_str, "Drawable",
+        "ContractInfo field 0 should be the contract name 'Drawable'"
+    );
 }
 
 // ── Test: Type.implements(contract) returns bool (REFL-07) ────────────
@@ -588,7 +877,7 @@ fn test_type_implements_returns_bool() {
     let mut builder = ModuleBuilder::new("test");
 
     // TypeDef 0: "Widget" — the struct being queried
-    builder.add_type_def("Widget", "", TypeDefKind::Struct, 0);
+    let widget_type = builder.add_type_def("Widget", "", TypeDefKind::Struct, 0);
     // TypeDef 1: "Drawable" — used only to produce a Type heap object with name="Drawable"
     // (TypeImplements matches the contract by its name string read from the Type object)
     builder.add_type_def("Drawable", "", TypeDefKind::Struct, 0);
@@ -602,15 +891,15 @@ fn test_type_implements_returns_bool() {
     let type_implements_ref = builder.add_type_ref(mod_ref, "Type.implements", "writ");
 
     // Register Widget as implementing Drawable
-    let widget_token = MetadataToken::new(2, 1); // TypeDef table=2, row=1 (Widget)
-    builder.add_impl_def(widget_token, drawable_contract);
+    let widget_token = widget_type;
+    let drawable_impl = builder.add_impl_def(widget_token, drawable_contract);
     let impl_body = MethodBody {
         register_types: vec![0; 1],
         code: encode(&[Instruction::RetVoid]),
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_method("drawable_draw_impl", &[0], 0, 1, impl_body);
+    builder.add_impl_method(drawable_impl, "drawable_draw_impl", &[0], 0, 1, impl_body);
 
     // Main body:
     //   r0 = TypeOf Widget      (typedef_idx=0)
@@ -620,8 +909,14 @@ fn test_type_implements_returns_bool() {
     let main_body = MethodBody {
         register_types: vec![0; 4],
         code: encode(&[
-            Instruction::TypeOf { r_dst: 0, type_idx: typedef_token(0) }, // Widget Type
-            Instruction::TypeOf { r_dst: 1, type_idx: typedef_token(1) }, // Drawable Type
+            Instruction::TypeOf {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+            }, // Widget Type
+            Instruction::TypeOf {
+                r_dst: 1,
+                type_idx: typedef_token(1),
+            }, // Drawable Type
             // CallVirt Type.implements(contract): r_base=0 (self=Widget Type), r_base+1=1 (contract=Drawable Type)
             Instruction::CallVirt {
                 r_dst: 2,
@@ -669,7 +964,10 @@ fn test_type_equality_same_type() {
     let body0 = MethodBody {
         register_types: vec![0; 1],
         code: encode(&[
-            Instruction::TypeOf { r_dst: 0, type_idx: typedef_token(0) },
+            Instruction::TypeOf {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+            },
             Instruction::Ret { r_src: 0 },
         ]),
         debug_locals: vec![],
@@ -681,7 +979,10 @@ fn test_type_equality_same_type() {
     let body1 = MethodBody {
         register_types: vec![0; 1],
         code: encode(&[
-            Instruction::TypeOf { r_dst: 0, type_idx: typedef_token(0) },
+            Instruction::TypeOf {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+            },
             Instruction::Ret { r_src: 0 },
         ]),
         debug_locals: vec![],
@@ -705,11 +1006,17 @@ fn test_type_equality_same_type() {
     // Both must be Value::Ref
     match (&val0, &val1) {
         (Some(Value::Ref(h0)), Some(Value::Ref(h1))) => {
-            assert_eq!(h0, h1,
+            assert_eq!(
+                h0, h1,
                 "typeof(Alpha) must return the same HeapRef singleton on every call (interning): \
-                 first={:?}, second={:?}", h0, h1);
+                 first={:?}, second={:?}",
+                h0, h1
+            );
         }
-        _ => panic!("expected Value::Ref from both TypeOf calls, got {:?} and {:?}", val0, val1),
+        _ => panic!(
+            "expected Value::Ref from both TypeOf calls, got {:?} and {:?}",
+            val0, val1
+        ),
     }
 }
 
@@ -722,13 +1029,16 @@ fn test_type_equality_same_type() {
 fn test_type_inequality_different_types() {
     let mut builder = ModuleBuilder::new("test");
     builder.add_type_def("Alpha", "", TypeDefKind::Struct, 0);
-    builder.add_type_def("Beta",  "", TypeDefKind::Struct, 0);
+    builder.add_type_def("Beta", "", TypeDefKind::Struct, 0);
 
     // Task 0: TypeOf Alpha → Ret
     let body_alpha = MethodBody {
         register_types: vec![0; 1],
         code: encode(&[
-            Instruction::TypeOf { r_dst: 0, type_idx: typedef_token(0) },
+            Instruction::TypeOf {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+            },
             Instruction::Ret { r_src: 0 },
         ]),
         debug_locals: vec![],
@@ -740,7 +1050,10 @@ fn test_type_inequality_different_types() {
     let body_beta = MethodBody {
         register_types: vec![0; 1],
         code: encode(&[
-            Instruction::TypeOf { r_dst: 0, type_idx: typedef_token(1) },
+            Instruction::TypeOf {
+                r_dst: 0,
+                type_idx: typedef_token(1),
+            },
             Instruction::Ret { r_src: 0 },
         ]),
         debug_locals: vec![],
@@ -763,11 +1076,17 @@ fn test_type_inequality_different_types() {
 
     match (&val_alpha, &val_beta) {
         (Some(Value::Ref(h_alpha)), Some(Value::Ref(h_beta))) => {
-            assert_ne!(h_alpha, h_beta,
+            assert_ne!(
+                h_alpha, h_beta,
                 "typeof(Alpha) and typeof(Beta) must return different HeapRef singletons: \
-                 alpha={:?}, beta={:?}", h_alpha, h_beta);
+                 alpha={:?}, beta={:?}",
+                h_alpha, h_beta
+            );
         }
-        _ => panic!("expected Value::Ref from both TypeOf calls, got {:?} and {:?}", val_alpha, val_beta),
+        _ => panic!(
+            "expected Value::Ref from both TypeOf calls, got {:?} and {:?}",
+            val_alpha, val_beta
+        ),
     }
 }
 
@@ -787,7 +1106,7 @@ fn test_gc_survival_after_reflection_ops() {
 
     // Struct with 1 field
     builder.add_type_def("Sample", "", TypeDefKind::Struct, 0);
-    builder.add_field_def("a", &[0x01], 0); // int, mutable
+    builder.add_field_def("a", &[0x01], FIELD_FLAG_PUBLIC); // int, mutable
 
     // TypeRefs for Type.fields and FieldInfo.get
     let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
@@ -799,13 +1118,26 @@ fn test_gc_survival_after_reflection_ops() {
         register_types: vec![0; 8],
         code: encode(&[
             // r0 = new Sample
-            Instruction::New { r_dst: 0, type_idx: typedef_token(0) },
-            Instruction::LoadInt { r_dst: 1, value: 77 },
-            Instruction::SetField { r_obj: 0, field_idx: 0, r_val: 1 }, // a = 77
-
+            Instruction::New {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+                field_count: 1,
+                r_base: 0,
+            },
+            Instruction::LoadInt {
+                r_dst: 1,
+                value: 77,
+            },
+            Instruction::SetField {
+                r_obj: 0,
+                field_token: 0x0500_0001,
+                r_val: 1,
+            }, // a = 77
             // r2 = TypeOf Sample
-            Instruction::TypeOf { r_dst: 2, type_idx: typedef_token(0) },
-
+            Instruction::TypeOf {
+                r_dst: 2,
+                type_idx: typedef_token(0),
+            },
             // r3 = r2.fields()  (Array of FieldInfo — temporary, will be freed by GC)
             Instruction::CallVirt {
                 r_dst: 3,
@@ -815,15 +1147,16 @@ fn test_gc_survival_after_reflection_ops() {
                 r_base: 2,
                 argc: 1,
             },
-
             // r4 = 0 (index for field 'a')
             Instruction::LoadInt { r_dst: 4, value: 0 },
             // r5 = r3[r4] (FieldInfo for 'a' — permanent singleton in ReflectionIndex)
-            Instruction::ArrayLoad { r_dst: 5, r_arr: 3, r_idx: 4 },
-
+            Instruction::ArrayLoad {
+                r_dst: 5,
+                r_arr: 3,
+                r_idx: 4,
+            },
             // r6 = r0 (Sample instance for FieldInfo.get argument)
             Instruction::Mov { r_dst: 6, r_src: 0 },
-
             // r7 = r5.get(r6) — reads field 'a' value
             Instruction::CallVirt {
                 r_dst: 7,
@@ -833,7 +1166,6 @@ fn test_gc_survival_after_reflection_ops() {
                 r_base: 5,
                 argc: 2, // self + instance
             },
-
             Instruction::Ret { r_src: 7 },
         ]),
         debug_locals: vec![],
@@ -845,7 +1177,10 @@ fn test_gc_survival_after_reflection_ops() {
     let body1 = MethodBody {
         register_types: vec![0; 1],
         code: encode(&[
-            Instruction::TypeOf { r_dst: 0, type_idx: typedef_token(0) },
+            Instruction::TypeOf {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+            },
             Instruction::Ret { r_src: 0 },
         ]),
         debug_locals: vec![],
@@ -892,9 +1227,12 @@ fn test_gc_survival_after_reflection_ops() {
         other => panic!("expected Value::Ref from TypeOf after GC, got {:?}", other),
     };
 
-    assert_eq!(href_before_gc, href_after_gc,
+    assert_eq!(
+        href_before_gc, href_after_gc,
         "Type singleton HeapRef must be identical before and after GC: \
-         before={:?}, after={:?}", href_before_gc, href_after_gc);
+         before={:?}, after={:?}",
+        href_before_gc, href_after_gc
+    );
 }
 
 // ── Phase 108 additions (GEN-01, GEN-02, GEN-03) ──────────────────────
@@ -920,7 +1258,10 @@ fn test_is_generic_true_for_generic_typedef() {
         register_types: vec![0; 2],
         code: encode(&[
             // r0 = TypeOf MyList
-            Instruction::TypeOf { r_dst: 0, type_idx: typedef_token(0) },
+            Instruction::TypeOf {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+            },
             // r1 = r0.is_generic  (Type.get_is_generic contract, slot 0)
             Instruction::CallVirt {
                 r_dst: 1,
@@ -967,7 +1308,10 @@ fn test_is_generic_false_for_non_generic_typedef() {
     let body = MethodBody {
         register_types: vec![0; 2],
         code: encode(&[
-            Instruction::TypeOf { r_dst: 0, type_idx: typedef_token(0) },
+            Instruction::TypeOf {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+            },
             Instruction::CallVirt {
                 r_dst: 1,
                 r_obj: 0,
@@ -1014,7 +1358,14 @@ fn test_type_args_static_typeof() {
     //   sig[2..6] = token for Elem: (table_id=2 << 24) | 1 = 0x02000001 in LE = [0x01, 0x00, 0x00, 0x02]
     let elem_token: u32 = (2u32 << 24) | 1; // table_id=TypeDef=2, row=1
     let elem_token_le = elem_token.to_le_bytes();
-    let typespec_sig = vec![0x20u8, 0x10, elem_token_le[0], elem_token_le[1], elem_token_le[2], elem_token_le[3]];
+    let typespec_sig = vec![
+        0x20u8,
+        0x10,
+        elem_token_le[0],
+        elem_token_le[1],
+        elem_token_le[2],
+        elem_token_le[3],
+    ];
     let typespec_token = builder.add_type_spec(&typespec_sig);
 
     let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
@@ -1027,7 +1378,10 @@ fn test_type_args_static_typeof() {
         register_types: vec![0; 2],
         code: encode(&[
             // r0 = TypeOf Array<Elem>  (uses TypeSpec token)
-            Instruction::TypeOf { r_dst: 0, type_idx: typespec_instr_token },
+            Instruction::TypeOf {
+                r_dst: 0,
+                type_idx: typespec_instr_token,
+            },
             // r1 = r0.type_args()
             Instruction::CallVirt {
                 r_dst: 1,
@@ -1054,28 +1408,46 @@ fn test_type_args_static_typeof() {
     // Result is an Array<Type> with exactly 1 element
     let arr_href = match runtime.return_value(tid) {
         Some(Value::Ref(href)) => href,
-        other => panic!("expected Array (Value::Ref) from type_args(), got {:?}", other),
+        other => panic!(
+            "expected Array (Value::Ref) from type_args(), got {:?}",
+            other
+        ),
     };
-    let arr_obj = runtime.heap().get_object(arr_href).expect("array object exists");
+    let arr_obj = runtime
+        .heap()
+        .get_object(arr_href)
+        .expect("array object exists");
     let elements = match arr_obj {
         HeapObject::Array { elements, .. } => elements.clone(),
         other => panic!("expected Array heap object, got {:?}", other),
     };
-    assert_eq!(elements.len(), 1, "type_args() for Array<Elem> should contain exactly 1 element");
+    assert_eq!(
+        elements.len(),
+        1,
+        "type_args() for Array<Elem> should contain exactly 1 element"
+    );
 
     // The element should be a Type with name "Elem"
     let elem_type_href = match elements[0] {
         Value::Ref(href) => href,
         other => panic!("expected Ref for type arg element, got {:?}", other),
     };
-    let name_val = runtime.heap().get_field(elem_type_href, 0).expect("name field (field 0) on Type");
+    let name_val = runtime
+        .heap()
+        .get_field(elem_type_href, 0)
+        .expect("name field (field 0) on Type");
     let name_href = match name_val {
         Value::Ref(href) => href,
         other => panic!("expected string Ref for type arg name, got {:?}", other),
     };
-    let name_str = runtime.heap().read_string(name_href).expect("readable string");
-    assert_eq!(name_str, "Elem",
-        "type_args()[0].name should be 'Elem' for Array<Elem>");
+    let name_str = runtime
+        .heap()
+        .read_string(name_href)
+        .expect("readable string");
+    assert_eq!(
+        name_str, "Elem",
+        "type_args()[0].name should be 'Elem' for Array<Elem>"
+    );
 }
 
 // ── Test: Type.type_args() returns empty array for non-generic (GEN-02) ─
@@ -1094,7 +1466,10 @@ fn test_type_args_empty_for_non_generic() {
     let body = MethodBody {
         register_types: vec![0; 2],
         code: encode(&[
-            Instruction::TypeOf { r_dst: 0, type_idx: typedef_token(0) },
+            Instruction::TypeOf {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+            },
             Instruction::CallVirt {
                 r_dst: 1,
                 r_obj: 0,
@@ -1119,15 +1494,24 @@ fn test_type_args_empty_for_non_generic() {
 
     let arr_href = match runtime.return_value(tid) {
         Some(Value::Ref(href)) => href,
-        other => panic!("expected Array (Value::Ref) from type_args(), got {:?}", other),
+        other => panic!(
+            "expected Array (Value::Ref) from type_args(), got {:?}",
+            other
+        ),
     };
-    let arr_obj = runtime.heap().get_object(arr_href).expect("array object exists");
+    let arr_obj = runtime
+        .heap()
+        .get_object(arr_href)
+        .expect("array object exists");
     let elements = match arr_obj {
         HeapObject::Array { elements, .. } => elements.clone(),
         other => panic!("expected Array heap object, got {:?}", other),
     };
-    assert_eq!(elements.len(), 0,
-        "type_args() for non-generic type should return an empty array");
+    assert_eq!(
+        elements.len(),
+        0,
+        "type_args() for non-generic type should return an empty array"
+    );
 }
 
 // ── Test: MethodInfo.attributes() returns 1 element (GEN-03) ──────────
@@ -1140,7 +1524,7 @@ fn test_method_info_attributes() {
     let mut builder = ModuleBuilder::new("test");
 
     // TypeDef "Widget" with one method "update"
-    builder.add_type_def("Widget", "", TypeDefKind::Struct, 0);
+    let widget_type = builder.add_type_def("Widget", "", TypeDefKind::Struct, 0);
 
     // "update" is method 0 in this module; add it before "main" so it belongs to Widget.
     let update_body = MethodBody {
@@ -1149,7 +1533,14 @@ fn test_method_info_attributes() {
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_method("update", &[0], 0, 1, update_body);
+    builder.add_type_method(
+        widget_type,
+        "update",
+        &[0],
+        METHOD_FLAG_PUBLIC,
+        1,
+        update_body,
+    );
 
     // Add an AttributeDef with owner pointing to method "update" (MethodDef table_id=7, row=1).
     // owner_kind=1 (not ATTR_OWNER_KIND_DECL=3, so the intrinsic will include it).
@@ -1157,15 +1548,18 @@ fn test_method_info_attributes() {
     builder.add_attribute_def(method_owner_token, 1u8, "Transient", &[]);
 
     let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
-    let type_methods_ref         = builder.add_type_ref(mod_ref, "Type.methods",         "writ");
-    let methodinfo_attrs_ref     = builder.add_type_ref(mod_ref, "MethodInfo.attributes", "writ");
+    let type_methods_ref = builder.add_type_ref(mod_ref, "Type.methods", "writ");
+    let methodinfo_attrs_ref = builder.add_type_ref(mod_ref, "MethodInfo.attributes", "writ");
 
     // main: TypeOf Widget -> methods() -> [0] -> attributes() -> Ret array
     let main_body = MethodBody {
         register_types: vec![0; 6],
         code: encode(&[
             // r0 = TypeOf Widget
-            Instruction::TypeOf { r_dst: 0, type_idx: typedef_token(0) },
+            Instruction::TypeOf {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+            },
             // r1 = r0.methods()
             Instruction::CallVirt {
                 r_dst: 1,
@@ -1178,7 +1572,11 @@ fn test_method_info_attributes() {
             // r2 = 0 (index)
             Instruction::LoadInt { r_dst: 2, value: 0 },
             // r3 = r1[r2]  (MethodInfo for "update")
-            Instruction::ArrayLoad { r_dst: 3, r_arr: 1, r_idx: 2 },
+            Instruction::ArrayLoad {
+                r_dst: 3,
+                r_arr: 1,
+                r_idx: 2,
+            },
             // r4 = r3.attributes()
             Instruction::CallVirt {
                 r_dst: 4,
@@ -1205,28 +1603,46 @@ fn test_method_info_attributes() {
 
     let arr_href = match runtime.return_value(tid) {
         Some(Value::Ref(href)) => href,
-        other => panic!("expected Array (Value::Ref) from MethodInfo.attributes(), got {:?}", other),
+        other => panic!(
+            "expected Array (Value::Ref) from MethodInfo.attributes(), got {:?}",
+            other
+        ),
     };
-    let arr_obj = runtime.heap().get_object(arr_href).expect("array object exists");
+    let arr_obj = runtime
+        .heap()
+        .get_object(arr_href)
+        .expect("array object exists");
     let elements = match arr_obj {
         HeapObject::Array { elements, .. } => elements.clone(),
         other => panic!("expected Array heap object, got {:?}", other),
     };
-    assert_eq!(elements.len(), 1, "method 'update' should have 1 attribute (Transient)");
+    assert_eq!(
+        elements.len(),
+        1,
+        "method 'update' should have 1 attribute (Transient)"
+    );
 
     // Verify AttributeInfo[0].name == "Transient"
     let ai_href = match elements[0] {
         Value::Ref(href) => href,
         other => panic!("expected Ref for AttributeInfo, got {:?}", other),
     };
-    let name_val = runtime.heap().get_field(ai_href, 0).expect("name field on AttributeInfo");
+    let name_val = runtime
+        .heap()
+        .get_field(ai_href, 0)
+        .expect("name field on AttributeInfo");
     let name_href = match name_val {
         Value::Ref(href) => href,
         other => panic!("expected string Ref for attribute name, got {:?}", other),
     };
-    let name_str = runtime.heap().read_string(name_href).expect("readable string");
-    assert_eq!(name_str, "Transient",
-        "AttributeInfo.name should be 'Transient' for the method attribute");
+    let name_str = runtime
+        .heap()
+        .read_string(name_href)
+        .expect("readable string");
+    assert_eq!(
+        name_str, "Transient",
+        "AttributeInfo.name should be 'Transient' for the method attribute"
+    );
 }
 
 // ── Test: FieldInfo.attributes() returns 1 element (GEN-03) ──────────
@@ -1240,7 +1656,7 @@ fn test_field_info_attributes() {
 
     // TypeDef "Item" with one field "price"
     builder.add_type_def("Item", "", TypeDefKind::Struct, 0);
-    builder.add_field_def("price", &[0x01], 0); // int, mutable
+    builder.add_field_def("price", &[0x01], FIELD_FLAG_PUBLIC); // int, mutable
 
     // Add an AttributeDef with owner pointing to field "price" (FieldDef table_id=5, row=1).
     // owner_kind=1 (not ATTR_OWNER_KIND_DECL=3).
@@ -1248,14 +1664,17 @@ fn test_field_info_attributes() {
     builder.add_attribute_def(field_owner_token, 1u8, "Validated", &[]);
 
     let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
-    let type_fields_ref       = builder.add_type_ref(mod_ref, "Type.fields",           "writ");
-    let fieldinfo_attrs_ref   = builder.add_type_ref(mod_ref, "FieldInfo.attributes",  "writ");
+    let type_fields_ref = builder.add_type_ref(mod_ref, "Type.fields", "writ");
+    let fieldinfo_attrs_ref = builder.add_type_ref(mod_ref, "FieldInfo.attributes", "writ");
 
     let body = MethodBody {
         register_types: vec![0; 5],
         code: encode(&[
             // r0 = TypeOf Item
-            Instruction::TypeOf { r_dst: 0, type_idx: typedef_token(0) },
+            Instruction::TypeOf {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+            },
             // r1 = r0.fields()
             Instruction::CallVirt {
                 r_dst: 1,
@@ -1268,7 +1687,11 @@ fn test_field_info_attributes() {
             // r2 = 0
             Instruction::LoadInt { r_dst: 2, value: 0 },
             // r3 = r1[r2]  (FieldInfo for "price")
-            Instruction::ArrayLoad { r_dst: 3, r_arr: 1, r_idx: 2 },
+            Instruction::ArrayLoad {
+                r_dst: 3,
+                r_arr: 1,
+                r_idx: 2,
+            },
             // r4 = r3.attributes()
             Instruction::CallVirt {
                 r_dst: 4,
@@ -1294,27 +1717,45 @@ fn test_field_info_attributes() {
 
     let arr_href = match runtime.return_value(tid) {
         Some(Value::Ref(href)) => href,
-        other => panic!("expected Array (Value::Ref) from FieldInfo.attributes(), got {:?}", other),
+        other => panic!(
+            "expected Array (Value::Ref) from FieldInfo.attributes(), got {:?}",
+            other
+        ),
     };
-    let arr_obj = runtime.heap().get_object(arr_href).expect("array object exists");
+    let arr_obj = runtime
+        .heap()
+        .get_object(arr_href)
+        .expect("array object exists");
     let elements = match arr_obj {
         HeapObject::Array { elements, .. } => elements.clone(),
         other => panic!("expected Array heap object, got {:?}", other),
     };
-    assert_eq!(elements.len(), 1, "field 'price' should have 1 attribute (Validated)");
+    assert_eq!(
+        elements.len(),
+        1,
+        "field 'price' should have 1 attribute (Validated)"
+    );
 
     let ai_href = match elements[0] {
         Value::Ref(href) => href,
         other => panic!("expected Ref for AttributeInfo, got {:?}", other),
     };
-    let name_val = runtime.heap().get_field(ai_href, 0).expect("name field on AttributeInfo");
+    let name_val = runtime
+        .heap()
+        .get_field(ai_href, 0)
+        .expect("name field on AttributeInfo");
     let name_href = match name_val {
         Value::Ref(href) => href,
         other => panic!("expected string Ref for attribute name, got {:?}", other),
     };
-    let name_str = runtime.heap().read_string(name_href).expect("readable string");
-    assert_eq!(name_str, "Validated",
-        "AttributeInfo.name should be 'Validated' for the field attribute");
+    let name_str = runtime
+        .heap()
+        .read_string(name_href)
+        .expect("readable string");
+    assert_eq!(
+        name_str, "Validated",
+        "AttributeInfo.name should be 'Validated' for the field attribute"
+    );
 }
 
 // ── Test: MethodInfo.attributes() returns empty when none (GEN-03) ────
@@ -1326,7 +1767,7 @@ fn test_method_info_attributes_empty_when_none() {
     let mut builder = ModuleBuilder::new("test");
 
     // TypeDef "Pure" with one method "run" — no attributes added
-    builder.add_type_def("Pure", "", TypeDefKind::Struct, 0);
+    let pure_type = builder.add_type_def("Pure", "", TypeDefKind::Struct, 0);
 
     let run_body = MethodBody {
         register_types: vec![0; 1],
@@ -1334,16 +1775,19 @@ fn test_method_info_attributes_empty_when_none() {
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_method("run", &[0], 0, 1, run_body);
+    builder.add_type_method(pure_type, "run", &[0], METHOD_FLAG_PUBLIC, 1, run_body);
 
     let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
-    let type_methods_ref     = builder.add_type_ref(mod_ref, "Type.methods",         "writ");
+    let type_methods_ref = builder.add_type_ref(mod_ref, "Type.methods", "writ");
     let methodinfo_attrs_ref = builder.add_type_ref(mod_ref, "MethodInfo.attributes", "writ");
 
     let main_body = MethodBody {
         register_types: vec![0; 5],
         code: encode(&[
-            Instruction::TypeOf { r_dst: 0, type_idx: typedef_token(0) },
+            Instruction::TypeOf {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+            },
             Instruction::CallVirt {
                 r_dst: 1,
                 r_obj: 0,
@@ -1353,7 +1797,11 @@ fn test_method_info_attributes_empty_when_none() {
                 argc: 1,
             },
             Instruction::LoadInt { r_dst: 2, value: 0 },
-            Instruction::ArrayLoad { r_dst: 3, r_arr: 1, r_idx: 2 },
+            Instruction::ArrayLoad {
+                r_dst: 3,
+                r_arr: 1,
+                r_idx: 2,
+            },
             Instruction::CallVirt {
                 r_dst: 4,
                 r_obj: 3,
@@ -1379,15 +1827,24 @@ fn test_method_info_attributes_empty_when_none() {
 
     let arr_href = match runtime.return_value(tid) {
         Some(Value::Ref(href)) => href,
-        other => panic!("expected Array (Value::Ref) from MethodInfo.attributes(), got {:?}", other),
+        other => panic!(
+            "expected Array (Value::Ref) from MethodInfo.attributes(), got {:?}",
+            other
+        ),
     };
-    let arr_obj = runtime.heap().get_object(arr_href).expect("array object exists");
+    let arr_obj = runtime
+        .heap()
+        .get_object(arr_href)
+        .expect("array object exists");
     let elements = match arr_obj {
         HeapObject::Array { elements, .. } => elements.clone(),
         other => panic!("expected Array heap object, got {:?}", other),
     };
-    assert_eq!(elements.len(), 0,
-        "method 'run' with no attributes should return empty array from attributes()");
+    assert_eq!(
+        elements.len(),
+        0,
+        "method 'run' with no attributes should return empty array from attributes()"
+    );
 }
 
 // ── Phase 107 additions (DYN-01, DYN-02, DYN-04) ──────────────────────
@@ -1408,12 +1865,12 @@ fn test_method_info_attributes_empty_when_none() {
 fn test_field_info_set_mut_field() {
     let mut builder = ModuleBuilder::new("test");
 
-    // Struct with one mutable int field (flags=0 = mutable)
+    // Struct with one public, writable int field.
     builder.add_type_def("Counter", "", TypeDefKind::Struct, 0);
-    builder.add_field_def("val", &[0x01], 0); // int, flags=0 (mutable)
+    builder.add_field_def("val", &[0x01], FIELD_FLAG_PUBLIC);
 
     let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
-    let type_fields_ref  = builder.add_type_ref(mod_ref, "Type.fields",  "writ");
+    let type_fields_ref = builder.add_type_ref(mod_ref, "Type.fields", "writ");
     let fieldinfo_set_ref = builder.add_type_ref(mod_ref, "FieldInfo.set", "writ");
 
     // Register count: r0=instance, r1=tmp_int, r2=type_obj, r3=fields_arr,
@@ -1422,14 +1879,27 @@ fn test_field_info_set_mut_field() {
         register_types: vec![0; 9],
         code: encode(&[
             // r0 = new Counter
-            Instruction::New { r_dst: 0, type_idx: typedef_token(0) },
+            Instruction::New {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+                field_count: 1,
+                r_base: 0,
+            },
             // r0.val = 42
-            Instruction::LoadInt { r_dst: 1, value: 42 },
-            Instruction::SetField { r_obj: 0, field_idx: 0, r_val: 1 },
-
+            Instruction::LoadInt {
+                r_dst: 1,
+                value: 42,
+            },
+            Instruction::SetField {
+                r_obj: 0,
+                field_token: 0x0500_0001,
+                r_val: 1,
+            },
             // r2 = TypeOf Counter
-            Instruction::TypeOf { r_dst: 2, type_idx: typedef_token(0) },
-
+            Instruction::TypeOf {
+                r_dst: 2,
+                type_idx: typedef_token(0),
+            },
             // r3 = r2.fields()
             Instruction::CallVirt {
                 r_dst: 3,
@@ -1439,17 +1909,21 @@ fn test_field_info_set_mut_field() {
                 r_base: 2,
                 argc: 1,
             },
-
             // r4 = 0 (index for field 'val')
             Instruction::LoadInt { r_dst: 4, value: 0 },
             // r5 = r3[r4]  (FieldInfo for 'val')
-            Instruction::ArrayLoad { r_dst: 5, r_arr: 3, r_idx: 4 },
-
+            Instruction::ArrayLoad {
+                r_dst: 5,
+                r_arr: 3,
+                r_idx: 4,
+            },
             // Set up args for FieldInfo.set(instance, new_val):
             //   r_base=5 (self=FieldInfo), r_base+1=6 (instance), r_base+2=7 (new_val)
-            Instruction::Mov { r_dst: 6, r_src: 0 },        // r6 = instance
-            Instruction::LoadInt { r_dst: 7, value: 99 },   // r7 = 99 (new value)
-
+            Instruction::Mov { r_dst: 6, r_src: 0 }, // r6 = instance
+            Instruction::LoadInt {
+                r_dst: 7,
+                value: 99,
+            }, // r7 = 99 (new value)
             // r8 = r5.set(r6, r7)  — FieldInfo.set(instance=r6, value=r7)
             Instruction::CallVirt {
                 r_dst: 8,
@@ -1457,12 +1931,14 @@ fn test_field_info_set_mut_field() {
                 contract_idx: fieldinfo_set_ref.0,
                 slot: 0,
                 r_base: 5,
-                argc: 3,  // self + instance + value
+                argc: 3, // self + instance + value
             },
-
             // Read back the field to confirm the write took effect
-            Instruction::GetField { r_dst: 8, r_obj: 0, field_idx: 0 },
-
+            Instruction::GetField {
+                r_dst: 8,
+                r_obj: 0,
+                field_token: 0x0500_0001,
+            },
             Instruction::Ret { r_src: 8 },
         ]),
         debug_locals: vec![],
@@ -1485,34 +1961,46 @@ fn test_field_info_set_mut_field() {
 
 // ── Test: FieldInfo.set() on a readonly field crashes (DYN-01) ────────
 
-/// Test that FieldInfo.set(instance, value) crashes with "immutable field" message
-/// when the field has flags=0x01 (readonly / let-field).
-/// Verifies DYN-01: FieldInfo.set() on a let field crashes with descriptive message.
+/// Test that FieldInfo.set(instance, value) crashes with a clear "read-only field" message
+/// when the field has the FieldDef read-only metadata bit.
+/// Verifies DYN-01: FieldInfo.set() on a read-only field crashes descriptively.
 #[test]
 fn test_field_info_set_readonly_crashes() {
     let mut builder = ModuleBuilder::new("test");
 
-    // Struct with one readonly int field (flags=0x01 = readonly)
+    // Struct with one public, metadata-read-only int field.
     builder.add_type_def("Frozen", "", TypeDefKind::Struct, 0);
-    builder.add_field_def("immut_val", &[0x01], 1); // int, flags=1 (readonly)
+    builder.add_field_def(
+        "immut_val",
+        &[0x01],
+        FIELD_FLAG_PUBLIC | FIELD_FLAG_READONLY,
+    );
 
     let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
-    let type_fields_ref   = builder.add_type_ref(mod_ref, "Type.fields",   "writ");
+    let type_fields_ref = builder.add_type_ref(mod_ref, "Type.fields", "writ");
     let fieldinfo_set_ref = builder.add_type_ref(mod_ref, "FieldInfo.set", "writ");
 
     // r0=instance, r1=tmp, r2=type_obj, r3=fields_arr, r4=idx, r5=fi0, r6=inst_copy, r7=new_val, r8=dst
     let body = MethodBody {
         register_types: vec![0; 9],
         code: encode(&[
-            // r0 = new Frozen
-            Instruction::New { r_dst: 0, type_idx: typedef_token(0) },
-            // r0.immut_val = 42 (initial write via direct SetField — still allowed at module level)
-            Instruction::LoadInt { r_dst: 1, value: 42 },
-            Instruction::SetField { r_obj: 0, field_idx: 0, r_val: 1 },
-
+            // Constructor input for the read-only field.
+            Instruction::LoadInt {
+                r_dst: 1,
+                value: 42,
+            },
+            // Atomic construction may initialize a read-only field exactly once.
+            Instruction::New {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+                field_count: 1,
+                r_base: 1,
+            },
             // r2 = TypeOf Frozen
-            Instruction::TypeOf { r_dst: 2, type_idx: typedef_token(0) },
-
+            Instruction::TypeOf {
+                r_dst: 2,
+                type_idx: typedef_token(0),
+            },
             // r3 = r2.fields()
             Instruction::CallVirt {
                 r_dst: 3,
@@ -1522,16 +2010,20 @@ fn test_field_info_set_readonly_crashes() {
                 r_base: 2,
                 argc: 1,
             },
-
             // r4 = 0, r5 = fields[0] (FieldInfo for 'immut_val')
             Instruction::LoadInt { r_dst: 4, value: 0 },
-            Instruction::ArrayLoad { r_dst: 5, r_arr: 3, r_idx: 4 },
-
+            Instruction::ArrayLoad {
+                r_dst: 5,
+                r_arr: 3,
+                r_idx: 4,
+            },
             // r6 = instance, r7 = 99 (new value to attempt)
             Instruction::Mov { r_dst: 6, r_src: 0 },
-            Instruction::LoadInt { r_dst: 7, value: 99 },
-
-            // FieldInfo.set(instance, 99) — this MUST crash with "immutable field"
+            Instruction::LoadInt {
+                r_dst: 7,
+                value: 99,
+            },
+            // FieldInfo.set(instance, 99) — this MUST crash with "read-only field".
             Instruction::CallVirt {
                 r_dst: 8,
                 r_obj: 5,
@@ -1540,7 +2032,6 @@ fn test_field_info_set_readonly_crashes() {
                 r_base: 5,
                 argc: 3,
             },
-
             Instruction::RetVoid,
         ]),
         debug_locals: vec![],
@@ -1553,12 +2044,17 @@ fn test_field_info_set_readonly_crashes() {
     let tid = runtime.spawn_task(0, vec![]).unwrap();
     runtime.tick(0.0, ExecutionLimit::None);
 
-    assert_eq!(runtime.task_state(tid), Some(TaskState::Cancelled),
-        "FieldInfo.set() on readonly field should crash the task");
+    assert_eq!(
+        runtime.task_state(tid),
+        Some(TaskState::Cancelled),
+        "FieldInfo.set() on readonly field should crash the task"
+    );
     let crash = runtime.crash_info(tid).unwrap();
     assert!(
-        crash.message.contains("Reflection write to immutable field"),
-        "crash message should contain 'Reflection write to immutable field', got: {}",
+        crash
+            .message
+            .contains("Reflection write to read-only field"),
+        "crash message should contain 'Reflection write to read-only field', got: {}",
         crash.message
     );
 }
@@ -1575,10 +2071,10 @@ fn test_field_info_set_wrong_instance_type_crashes() {
     // Struct with one mutable field — we'll get a FieldInfo for this field
     // but then try to call set() with an int as the instance
     builder.add_type_def("Target", "", TypeDefKind::Struct, 0);
-    builder.add_field_def("x", &[0x01], 0); // int, mutable
+    builder.add_field_def("x", &[0x01], FIELD_FLAG_PUBLIC); // int, mutable
 
     let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
-    let type_fields_ref   = builder.add_type_ref(mod_ref, "Type.fields",  "writ");
+    let type_fields_ref = builder.add_type_ref(mod_ref, "Type.fields", "writ");
     let fieldinfo_set_ref = builder.add_type_ref(mod_ref, "FieldInfo.set", "writ");
 
     // r0=type_obj, r1=fields_arr, r2=idx, r3=fi0, r4=bad_instance(int), r5=new_val, r6=dst
@@ -1586,7 +2082,10 @@ fn test_field_info_set_wrong_instance_type_crashes() {
         register_types: vec![0; 7],
         code: encode(&[
             // r0 = TypeOf Target
-            Instruction::TypeOf { r_dst: 0, type_idx: typedef_token(0) },
+            Instruction::TypeOf {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+            },
             // r1 = r0.fields()
             Instruction::CallVirt {
                 r_dst: 1,
@@ -1598,13 +2097,21 @@ fn test_field_info_set_wrong_instance_type_crashes() {
             },
             // r2 = 0, r3 = fields[0] (FieldInfo for 'x')
             Instruction::LoadInt { r_dst: 2, value: 0 },
-            Instruction::ArrayLoad { r_dst: 3, r_arr: 1, r_idx: 2 },
-
+            Instruction::ArrayLoad {
+                r_dst: 3,
+                r_arr: 1,
+                r_idx: 2,
+            },
             // r4 = 42 (an int — NOT a struct instance)
-            Instruction::LoadInt { r_dst: 4, value: 42 },
+            Instruction::LoadInt {
+                r_dst: 4,
+                value: 42,
+            },
             // r5 = 99 (the new value to attempt)
-            Instruction::LoadInt { r_dst: 5, value: 99 },
-
+            Instruction::LoadInt {
+                r_dst: 5,
+                value: 99,
+            },
             // FieldInfo.set(int_instance, 99) — must crash: instance is not a struct/ref
             Instruction::CallVirt {
                 r_dst: 6,
@@ -1614,7 +2121,6 @@ fn test_field_info_set_wrong_instance_type_crashes() {
                 r_base: 3,
                 argc: 3,
             },
-
             Instruction::RetVoid,
         ]),
         debug_locals: vec![],
@@ -1627,8 +2133,11 @@ fn test_field_info_set_wrong_instance_type_crashes() {
     let tid = runtime.spawn_task(0, vec![]).unwrap();
     runtime.tick(0.0, ExecutionLimit::None);
 
-    assert_eq!(runtime.task_state(tid), Some(TaskState::Cancelled),
-        "FieldInfo.set() with non-struct instance should crash the task");
+    assert_eq!(
+        runtime.task_state(tid),
+        Some(TaskState::Cancelled),
+        "FieldInfo.set() with non-struct instance should crash the task"
+    );
     let crash = runtime.crash_info(tid).unwrap();
     assert!(
         crash.message.contains("instance"),
@@ -1640,41 +2149,47 @@ fn test_field_info_set_wrong_instance_type_crashes() {
 // ── Test: MethodInfo.invoke() executes the target method (DYN-02) ──────
 
 /// Test that MethodInfo.invoke(instance, args) pushes a CallFrame and the
-/// scheduler drives the callee to completion. The invoked method writes a
-/// fixed value (100) to the instance's field; the caller reads it back.
+/// scheduler drives the callee to completion. The invoked method writes its
+/// regular argument (100) to the instance's field; the caller reads it back.
 /// Verifies DYN-02: MethodInfo.invoke() executes the target method.
 ///
-/// Target method (index 0): r0=instance (struct ref), writes field 0 = 100, RetVoid.
+/// Target method (index 0): r0=instance, r1=value, writes field 0, RetVoid.
 /// Main method (index 1): allocates instance, sets field to 0, invokes target, reads back.
-///
-/// Note: param_count=0 in ModuleBuilder (builder limitation), so the args Array must be empty.
 #[test]
 fn test_method_info_invoke_executes_method() {
     let mut builder = ModuleBuilder::new("test");
 
     // Struct with one mutable int field
-    builder.add_type_def("Widget", "", TypeDefKind::Struct, 0);
+    let widget_type = builder.add_type_def("Widget", "", TypeDefKind::Struct, 0);
     builder.add_field_def("data", &[0x01], 0); // int, mutable
 
     let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
-    let type_methods_ref    = builder.add_type_ref(mod_ref, "Type.methods",     "writ");
+    let type_methods_ref = builder.add_type_ref(mod_ref, "Type.methods", "writ");
     let methodinfo_invoke_ref = builder.add_type_ref(mod_ref, "MethodInfo.invoke", "writ");
 
-    // Target method (method index 0): takes only self (r0=Widget instance), sets data=100, returns void
-    // param_count=0 (builder limitation) means invoke passes 0 args; self is always r_base+1.
+    // Target method (method index 0): r0=self, r1=value.
     let target_body = MethodBody {
         register_types: vec![0; 2],
         code: encode(&[
-            // r1 = 100
-            Instruction::LoadInt { r_dst: 1, value: 100 },
-            // r0.data = 100  (r0 is the instance provided by MethodInfoInvoke as callee.registers[0])
-            Instruction::SetField { r_obj: 0, field_idx: 0, r_val: 1 },
+            // r0.data = r1
+            Instruction::SetField {
+                r_obj: 0,
+                field_token: 0x0500_0001,
+                r_val: 1,
+            },
             Instruction::RetVoid,
         ]),
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_method("set_data", &[0], 0, 2, target_body);
+    builder.add_type_method(
+        widget_type,
+        "set_data",
+        &[1, 0, 0x01, 0x00], // (int) -> void; param_count = self + value = 2
+        METHOD_FLAG_PUBLIC,
+        2,
+        target_body,
+    );
 
     // Main method (method index 1):
     //   r0=instance, r1=tmp, r2=type_obj, r3=methods_arr, r4=idx_0, r5=mi0,
@@ -1683,14 +2198,24 @@ fn test_method_info_invoke_executes_method() {
         register_types: vec![0; 10],
         code: encode(&[
             // r0 = new Widget
-            Instruction::New { r_dst: 0, type_idx: typedef_token(0) },
+            Instruction::New {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+                field_count: 1,
+                r_base: 0,
+            },
             // r0.data = 0
             Instruction::LoadInt { r_dst: 1, value: 0 },
-            Instruction::SetField { r_obj: 0, field_idx: 0, r_val: 1 },
-
+            Instruction::SetField {
+                r_obj: 0,
+                field_token: 0x0500_0001,
+                r_val: 1,
+            },
             // r2 = TypeOf Widget
-            Instruction::TypeOf { r_dst: 2, type_idx: typedef_token(0) },
-
+            Instruction::TypeOf {
+                r_dst: 2,
+                type_idx: typedef_token(0),
+            },
             // r3 = r2.methods()
             Instruction::CallVirt {
                 r_dst: 3,
@@ -1700,17 +2225,35 @@ fn test_method_info_invoke_executes_method() {
                 r_base: 2,
                 argc: 1,
             },
-
             // r4 = 0, r5 = methods[0] (MethodInfo for 'set_data')
             Instruction::LoadInt { r_dst: 4, value: 0 },
-            Instruction::ArrayLoad { r_dst: 5, r_arr: 3, r_idx: 4 },
-
-            // r7 = empty args array (param_count=0, so no args beyond self)
-            Instruction::NewArray { r_dst: 7, elem_type: 0 },
-
+            Instruction::ArrayLoad {
+                r_dst: 5,
+                r_arr: 3,
+                r_idx: 4,
+            },
+            // r7 = args array [100]
+            Instruction::NewArray {
+                r_dst: 7,
+                default_kind: 0,
+            },
+            Instruction::LoadInt { r_dst: 1, value: 1 },
+            Instruction::ArrayResize {
+                r_arr: 7,
+                r_new_len: 1,
+            },
+            Instruction::LoadInt { r_dst: 1, value: 0 },
+            Instruction::LoadInt {
+                r_dst: 8,
+                value: 100,
+            },
+            Instruction::ArrayStore {
+                r_arr: 7,
+                r_idx: 1,
+                r_val: 8,
+            },
             // r6 = instance (self for the invoked method)
             Instruction::Mov { r_dst: 6, r_src: 0 },
-
             // r8 = r5.invoke(r6, r7)  — MethodInfo.invoke(instance=r6, args=r7)
             Instruction::CallVirt {
                 r_dst: 8,
@@ -1718,12 +2261,14 @@ fn test_method_info_invoke_executes_method() {
                 contract_idx: methodinfo_invoke_ref.0,
                 slot: 0,
                 r_base: 5,
-                argc: 3,  // self (MethodInfo) + instance + args array
+                argc: 3, // self (MethodInfo) + instance + args array
             },
-
             // Read back the field: should now be 100 (set by the invoked method)
-            Instruction::GetField { r_dst: 9, r_obj: 0, field_idx: 0 },
-
+            Instruction::GetField {
+                r_dst: 9,
+                r_obj: 0,
+                field_token: 0x0500_0001,
+            },
             Instruction::Ret { r_src: 9 },
         ]),
         debug_locals: vec![],
@@ -1731,6 +2276,7 @@ fn test_method_info_invoke_executes_method() {
     };
     builder.add_method("main", &[0], 0, 10, main_body);
     let module = builder.build();
+    assert_eq!(module.method_defs[0].param_count, 2);
 
     let mut runtime = RuntimeBuilder::new(module).with_gc().build().unwrap();
     // method 0 = set_data, method 1 = main
@@ -1746,32 +2292,162 @@ fn test_method_info_invoke_executes_method() {
     );
 }
 
+fn static_method_info_invoke_module() -> writ_module::module::Module {
+    let mut builder = ModuleBuilder::new("test");
+    let stub_type = builder.add_type_def("Stub", "", TypeDefKind::Struct, 0);
+
+    let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
+    let type_methods_ref = builder.add_type_ref(mod_ref, "Type.methods", "writ");
+    let methodinfo_invoke_ref = builder.add_type_ref(mod_ref, "MethodInfo.invoke", "writ");
+
+    // Static target: one regular parameter enters at r0 and is returned unchanged.
+    let target_body = MethodBody {
+        register_types: vec![0; 1],
+        code: encode(&[Instruction::Ret { r_src: 0 }]),
+        debug_locals: vec![],
+        source_spans: vec![],
+    };
+    builder.add_type_method(
+        stub_type,
+        "identity",
+        &[1, 0, 0x01, 0x01],           // (int) -> int
+        METHOD_FLAG_PUBLIC | (1 << 1), // public, is_static
+        1,
+        target_body,
+    );
+
+    // r0=type, r1=methods, r2=index, r3=MethodInfo, r4=null instance,
+    // r5=args, r6=array scratch, r7=argument/result.
+    let main_body = MethodBody {
+        register_types: vec![0; 8],
+        code: encode(&[
+            Instruction::TypeOf {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+            },
+            Instruction::CallVirt {
+                r_dst: 1,
+                r_obj: 0,
+                contract_idx: type_methods_ref.0,
+                slot: 0,
+                r_base: 0,
+                argc: 1,
+            },
+            Instruction::LoadInt { r_dst: 2, value: 0 },
+            Instruction::ArrayLoad {
+                r_dst: 3,
+                r_arr: 1,
+                r_idx: 2,
+            },
+            Instruction::LoadNull { r_dst: 4 },
+            Instruction::NewArray {
+                r_dst: 5,
+                default_kind: 0,
+            },
+            Instruction::LoadInt { r_dst: 6, value: 1 },
+            Instruction::ArrayResize {
+                r_arr: 5,
+                r_new_len: 6,
+            },
+            Instruction::LoadInt { r_dst: 6, value: 0 },
+            Instruction::LoadInt {
+                r_dst: 7,
+                value: 42,
+            },
+            Instruction::ArrayStore {
+                r_arr: 5,
+                r_idx: 6,
+                r_val: 7,
+            },
+            Instruction::CallVirt {
+                r_dst: 7,
+                r_obj: 3,
+                contract_idx: methodinfo_invoke_ref.0,
+                slot: 0,
+                r_base: 3,
+                argc: 3,
+            },
+            Instruction::Ret { r_src: 7 },
+        ]),
+        debug_locals: vec![],
+        source_spans: vec![],
+    };
+    builder.add_method("main", &[0, 0, 0x01], 1 << 1, 8, main_body);
+    let module = builder.build();
+    assert_eq!(module.method_defs[0].param_count, 1);
+    assert_ne!(module.method_defs[0].flags & (1 << 1), 0);
+    module
+}
+
+#[test]
+fn test_method_info_invoke_static_method_uses_r0_for_first_argument() {
+    let module = static_method_info_invoke_module();
+    let mut runtime = RuntimeBuilder::new(module).with_gc().build().unwrap();
+    let tid = runtime.spawn_task(1, vec![]).unwrap();
+    runtime.tick(0.0, ExecutionLimit::None);
+
+    assert_eq!(
+        runtime.task_state(tid),
+        Some(TaskState::Completed),
+        "unexpected crash: {:?}",
+        runtime.crash_info(tid)
+    );
+    assert_eq!(runtime.return_value(tid), Some(Value::Int(42)));
+}
+
+#[test]
+fn test_method_info_invoke_rejects_param_count_above_register_count() {
+    let mut module = static_method_info_invoke_module();
+    module.method_defs[0].reg_count = 0;
+    module.method_bodies[0].register_types.clear();
+    module.method_bodies[0].code = encode(&[Instruction::RetVoid]);
+
+    let mut runtime = RuntimeBuilder::new(module).with_gc().build().unwrap();
+    let tid = runtime.spawn_task(1, vec![]).unwrap();
+    runtime.tick(0.0, ExecutionLimit::None);
+
+    assert_eq!(runtime.task_state(tid), Some(TaskState::Cancelled));
+    let crash = runtime.crash_info(tid).unwrap();
+    assert!(
+        crash.message.contains("invalid parameter/register layout"),
+        "unexpected crash: {}",
+        crash.message
+    );
+}
+
 // ── Test: MethodInfo.invoke() with wrong arg count crashes (DYN-02) ────
 
 /// Test that MethodInfo.invoke(instance, args) crashes when the args array
 /// has the wrong number of elements (param_count mismatch).
 /// Verifies DYN-02: wrong arg count produces a descriptive crash.
 ///
-/// Method has param_count=0 (builder limitation). We pass an args array with
-/// 1 element — the mismatch triggers "MethodInfo.invoke: expected 0 args, got 1".
+/// Method has param_count=1 for self and no regular parameters. We pass an args
+/// array with 1 element — the mismatch reports "expected 0 args, got 1".
 #[test]
 fn test_method_info_invoke_wrong_argc_crashes() {
     let mut builder = ModuleBuilder::new("test");
 
-    builder.add_type_def("Stub", "", TypeDefKind::Struct, 0);
+    let stub_type = builder.add_type_def("Stub", "", TypeDefKind::Struct, 0);
 
     let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
-    let type_methods_ref    = builder.add_type_ref(mod_ref, "Type.methods",     "writ");
+    let type_methods_ref = builder.add_type_ref(mod_ref, "Type.methods", "writ");
     let methodinfo_invoke_ref = builder.add_type_ref(mod_ref, "MethodInfo.invoke", "writ");
 
-    // Target method (index 0): trivial body, param_count=0
+    // Target method (index 0): trivial instance body, param_count=1 for self.
     let noop_body = MethodBody {
         register_types: vec![0; 1],
         code: encode(&[Instruction::RetVoid]),
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_method("noop", &[0], 0, 1, noop_body);
+    builder.add_type_method(
+        stub_type,
+        "noop",
+        &[0, 0, 0],
+        METHOD_FLAG_PUBLIC,
+        1,
+        noop_body,
+    );
 
     // Main method (index 1): pass args array with 1 element to method expecting 0
     // r0=instance, r1=type_obj, r2=methods_arr, r3=idx, r4=mi0,
@@ -1780,11 +2456,17 @@ fn test_method_info_invoke_wrong_argc_crashes() {
         register_types: vec![0; 9],
         code: encode(&[
             // r0 = new Stub
-            Instruction::New { r_dst: 0, type_idx: typedef_token(0) },
-
+            Instruction::New {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+                field_count: 0,
+                r_base: 0,
+            },
             // r1 = TypeOf Stub
-            Instruction::TypeOf { r_dst: 1, type_idx: typedef_token(0) },
-
+            Instruction::TypeOf {
+                r_dst: 1,
+                type_idx: typedef_token(0),
+            },
             // r2 = r1.methods()
             Instruction::CallVirt {
                 r_dst: 2,
@@ -1794,22 +2476,35 @@ fn test_method_info_invoke_wrong_argc_crashes() {
                 r_base: 1,
                 argc: 1,
             },
-
             // r3 = 0, r4 = methods[0] (MethodInfo for 'noop')
             Instruction::LoadInt { r_dst: 3, value: 0 },
-            Instruction::ArrayLoad { r_dst: 4, r_arr: 2, r_idx: 3 },
-
+            Instruction::ArrayLoad {
+                r_dst: 4,
+                r_arr: 2,
+                r_idx: 3,
+            },
             // r6 = args array with 1 element (wrong count — method expects 0)
-            Instruction::NewArray { r_dst: 6, elem_type: 0 },
+            Instruction::NewArray {
+                r_dst: 6,
+                default_kind: 0,
+            },
             Instruction::LoadInt { r_dst: 7, value: 1 },
-            Instruction::ArrayResize { r_arr: 6, r_new_len: 7 },
+            Instruction::ArrayResize {
+                r_arr: 6,
+                r_new_len: 7,
+            },
             Instruction::LoadInt { r_dst: 7, value: 0 },
-            Instruction::LoadInt { r_dst: 8, value: 42 },
-            Instruction::ArrayStore { r_arr: 6, r_idx: 7, r_val: 8 },
-
+            Instruction::LoadInt {
+                r_dst: 8,
+                value: 42,
+            },
+            Instruction::ArrayStore {
+                r_arr: 6,
+                r_idx: 7,
+                r_val: 8,
+            },
             // r5 = instance
             Instruction::Mov { r_dst: 5, r_src: 0 },
-
             // invoke with wrong arg count — should crash
             Instruction::CallVirt {
                 r_dst: 8,
@@ -1819,7 +2514,6 @@ fn test_method_info_invoke_wrong_argc_crashes() {
                 r_base: 4,
                 argc: 3,
             },
-
             Instruction::RetVoid,
         ]),
         debug_locals: vec![],
@@ -1832,8 +2526,11 @@ fn test_method_info_invoke_wrong_argc_crashes() {
     let tid = runtime.spawn_task(1, vec![]).unwrap();
     runtime.tick(0.0, ExecutionLimit::None);
 
-    assert_eq!(runtime.task_state(tid), Some(TaskState::Cancelled),
-        "MethodInfo.invoke() with wrong arg count should crash the task");
+    assert_eq!(
+        runtime.task_state(tid),
+        Some(TaskState::Cancelled),
+        "MethodInfo.invoke() with wrong arg count should crash the task"
+    );
     let crash = runtime.crash_info(tid).unwrap();
     assert!(
         crash.message.contains("MethodInfo.invoke: expected"),
@@ -1857,11 +2554,11 @@ fn test_method_info_invoke_wrong_argc_crashes() {
 fn test_method_info_invoke_cooperative_scheduling() {
     let mut builder = ModuleBuilder::new("test");
 
-    builder.add_type_def("Box", "", TypeDefKind::Struct, 0);
+    let box_type = builder.add_type_def("Box", "", TypeDefKind::Struct, 0);
     builder.add_field_def("n", &[0x01], 0); // int, mutable
 
     let mod_ref = builder.add_module_ref("writ-runtime", "1.0.0");
-    let type_methods_ref    = builder.add_type_ref(mod_ref, "Type.methods",     "writ");
+    let type_methods_ref = builder.add_type_ref(mod_ref, "Type.methods", "writ");
     let methodinfo_invoke_ref = builder.add_type_ref(mod_ref, "MethodInfo.invoke", "writ");
 
     // Target method (index 0): writes n=999, returns void
@@ -1869,24 +2566,50 @@ fn test_method_info_invoke_cooperative_scheduling() {
     let target_body = MethodBody {
         register_types: vec![0; 2],
         code: encode(&[
-            Instruction::LoadInt { r_dst: 1, value: 999 },
-            Instruction::SetField { r_obj: 0, field_idx: 0, r_val: 1 },
+            Instruction::LoadInt {
+                r_dst: 1,
+                value: 999,
+            },
+            Instruction::SetField {
+                r_obj: 0,
+                field_token: 0x0500_0001,
+                r_val: 1,
+            },
             Instruction::RetVoid,
         ]),
         debug_locals: vec![],
         source_spans: vec![],
     };
-    builder.add_method("write_n", &[0], 0, 2, target_body);
+    builder.add_type_method(
+        box_type,
+        "write_n",
+        &[0, 0, 0],
+        METHOD_FLAG_PUBLIC,
+        2,
+        target_body,
+    );
 
     // Main method (index 1): allocate, TypeOf, methods(), extract, build args, invoke, GetField, Ret
     // Total instructions before invoke completes: many — a tight limit causes mid-execution pause
     let main_body = MethodBody {
         register_types: vec![0; 9],
         code: encode(&[
-            Instruction::New { r_dst: 0, type_idx: typedef_token(0) },
+            Instruction::New {
+                r_dst: 0,
+                type_idx: typedef_token(0),
+                field_count: 1,
+                r_base: 0,
+            },
             Instruction::LoadInt { r_dst: 1, value: 0 },
-            Instruction::SetField { r_obj: 0, field_idx: 0, r_val: 1 },
-            Instruction::TypeOf { r_dst: 2, type_idx: typedef_token(0) },
+            Instruction::SetField {
+                r_obj: 0,
+                field_token: 0x0500_0001,
+                r_val: 1,
+            },
+            Instruction::TypeOf {
+                r_dst: 2,
+                type_idx: typedef_token(0),
+            },
             Instruction::CallVirt {
                 r_dst: 3,
                 r_obj: 2,
@@ -1896,8 +2619,15 @@ fn test_method_info_invoke_cooperative_scheduling() {
                 argc: 1,
             },
             Instruction::LoadInt { r_dst: 4, value: 0 },
-            Instruction::ArrayLoad { r_dst: 5, r_arr: 3, r_idx: 4 },
-            Instruction::NewArray { r_dst: 7, elem_type: 0 },
+            Instruction::ArrayLoad {
+                r_dst: 5,
+                r_arr: 3,
+                r_idx: 4,
+            },
+            Instruction::NewArray {
+                r_dst: 7,
+                default_kind: 0,
+            },
             Instruction::Mov { r_dst: 6, r_src: 0 },
             Instruction::CallVirt {
                 r_dst: 8,
@@ -1907,7 +2637,11 @@ fn test_method_info_invoke_cooperative_scheduling() {
                 r_base: 5,
                 argc: 3,
             },
-            Instruction::GetField { r_dst: 1, r_obj: 0, field_idx: 0 },
+            Instruction::GetField {
+                r_dst: 1,
+                r_obj: 0,
+                field_token: 0x0500_0001,
+            },
             Instruction::Ret { r_src: 1 },
         ]),
         debug_locals: vec![],
@@ -1929,9 +2663,11 @@ fn test_method_info_invoke_cooperative_scheduling() {
     // inside the intrinsic body.
     let state_after_limit = runtime.task_state(tid);
     assert!(
-        state_after_limit == Some(TaskState::Ready) || state_after_limit == Some(TaskState::Running),
+        state_after_limit == Some(TaskState::Ready)
+            || state_after_limit == Some(TaskState::Running),
         "With ExecutionLimit::Instructions(3), the task should be preempted (Ready or Running), \
-         not Completed — got {:?}", state_after_limit
+         not Completed — got {:?}",
+        state_after_limit
     );
     assert_ne!(
         state_after_limit,
@@ -1941,7 +2677,12 @@ fn test_method_info_invoke_cooperative_scheduling() {
 
     // Now run to completion to verify correctness end-to-end
     runtime.tick(0.0, ExecutionLimit::None);
-    assert_eq!(runtime.task_state(tid), Some(TaskState::Completed));
+    assert_eq!(
+        runtime.task_state(tid),
+        Some(TaskState::Completed),
+        "unexpected crash: {:?}",
+        runtime.crash_info(tid)
+    );
     assert_eq!(
         runtime.return_value(tid),
         Some(Value::Int(999)),

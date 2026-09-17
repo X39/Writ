@@ -15,10 +15,10 @@
 //! - `bom_utils` -- BOM detection and encoding utilities
 //! - `pipeline`  -- Shared compilation pipeline (parse -> lower -> resolve -> check -> emit)
 //! - `commands`  -- Subcommand implementations (new, build, compile, assemble, disasm, run)
-mod cli_host;
 mod bom_utils;
-mod pipeline;
+mod cli_host;
 mod commands;
+mod pipeline;
 
 use std::process;
 
@@ -122,7 +122,6 @@ enum Commands {
         /// Print execution stats and GC info after run
         #[arg(long)]
         verbose: bool,
-
         // NOTE: `args: Vec<String>` for passing CLI arguments to the entry method is DEFERRED
         // to a future phase. Implementing it requires decoding the method's blob-heap signature
         // to detect param count, and allocating an Array<String> on the GC heap before the
@@ -137,13 +136,28 @@ fn main() {
 
     let result = match cli.command {
         Commands::New { name } => commands::cmd_new(name),
-        Commands::Build { path, release, debug: _, name, condition, deny_warnings } => commands::cmd_build(path, release, name, condition, deny_warnings),
-        Commands::Compile { input, output, condition, deny_warnings } => commands::cmd_compile(input, output, condition, deny_warnings),
+        Commands::Build {
+            path,
+            release,
+            debug: _,
+            name,
+            condition,
+            deny_warnings,
+        } => commands::cmd_build(path, release, name, condition, deny_warnings),
+        Commands::Compile {
+            input,
+            output,
+            condition,
+            deny_warnings,
+        } => commands::cmd_compile(input, output, condition, deny_warnings),
         Commands::Assemble { input, output } => commands::cmd_assemble(input, output),
         Commands::Disasm { input, verbose } => commands::cmd_disasm(input, verbose),
-        Commands::Run { input, entry, interactive, verbose } => {
-            commands::cmd_run(input, entry, interactive, verbose)
-        }
+        Commands::Run {
+            input,
+            entry,
+            interactive,
+            verbose,
+        } => commands::cmd_run(input, entry, interactive, verbose),
     };
 
     if let Err(e) = result {

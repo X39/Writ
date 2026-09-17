@@ -179,7 +179,8 @@ impl Iterable<Entity> for Party {
 
 // Now usable in for loops:
 for member in party {
-    if let Option::Some(hp) = member[Health] {
+    if let Option::Some(found_hp) = member[Health] {
+        let mut hp = found_hp;
         hp.current = min(hp.current + 10, hp.max);
     }
 }

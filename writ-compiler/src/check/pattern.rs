@@ -72,7 +72,12 @@ pub fn check_exhaustiveness(
             let mut has_wildcard = false;
 
             for arm in arms {
-                check_bool_coverage(&arm.pattern, &mut has_true, &mut has_false, &mut has_wildcard);
+                check_bool_coverage(
+                    &arm.pattern,
+                    &mut has_true,
+                    &mut has_false,
+                    &mut has_wildcard,
+                );
             }
 
             if !has_wildcard && (!has_true || !has_false) {
@@ -102,7 +107,11 @@ pub fn check_exhaustiveness(
     }
 }
 
-fn collect_covered_variants(pattern: &TypedPattern, covered: &mut Vec<String>, has_wildcard: &mut bool) {
+fn collect_covered_variants(
+    pattern: &TypedPattern,
+    covered: &mut Vec<String>,
+    has_wildcard: &mut bool,
+) {
     match pattern {
         TypedPattern::Wildcard { .. } | TypedPattern::Variable { .. } => {
             *has_wildcard = true;
@@ -129,7 +138,10 @@ fn check_bool_coverage(
         TypedPattern::Wildcard { .. } | TypedPattern::Variable { .. } => {
             *has_wildcard = true;
         }
-        TypedPattern::Literal { value: super::ir::TypedLiteral::Bool(b), .. } => {
+        TypedPattern::Literal {
+            value: super::ir::TypedLiteral::Bool(b),
+            ..
+        } => {
             if *b {
                 *has_true = true;
             } else {
@@ -148,5 +160,8 @@ fn check_bool_coverage(
 /// Check if a pattern is a catch-all (wildcard or variable binding).
 #[allow(dead_code)]
 fn pattern_is_exhaustive(pattern: &TypedPattern) -> bool {
-    matches!(pattern, TypedPattern::Wildcard { .. } | TypedPattern::Variable { .. })
+    matches!(
+        pattern,
+        TypedPattern::Wildcard { .. } | TypedPattern::Variable { .. }
+    )
 }

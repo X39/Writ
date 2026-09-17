@@ -62,17 +62,18 @@ pub fn to_bytes(module: &Module) -> Result<Vec<u8>, EncodeError> {
     let mut body_idx = 0usize;
     for method in &module.method_defs {
         if (method.body_size > 0 || body_idx < module.method_bodies.len())
-            && body_idx < module.method_bodies.len() {
-                let body = &module.method_bodies[body_idx];
-                // Align to 4 bytes
-                let align_pad = (4 - (current_body_offset % 4)) % 4;
-                current_body_offset += align_pad;
+            && body_idx < module.method_bodies.len()
+        {
+            let body = &module.method_bodies[body_idx];
+            // Align to 4 bytes
+            let align_pad = (4 - (current_body_offset % 4)) % 4;
+            current_body_offset += align_pad;
 
-                let body_size = compute_body_size(body, module.header.flags);
-                body_offsets.push((current_body_offset as u32, body_size as u32));
-                current_body_offset += body_size;
-                body_idx += 1;
-            }
+            let body_size = compute_body_size(body, module.header.flags);
+            body_offsets.push((current_body_offset as u32, body_size as u32));
+            current_body_offset += body_size;
+            body_idx += 1;
+        }
     }
 
     let total_size = current_body_offset;
@@ -296,7 +297,12 @@ fn write_field_ref(out: &mut Vec<u8>, row: &FieldRefRow) -> Result<(), EncodeErr
     Ok(())
 }
 
-fn write_method_def_with_offset(out: &mut Vec<u8>, row: &MethodDefRow, body_offset: u32, body_size: u32) -> Result<(), EncodeError> {
+fn write_method_def_with_offset(
+    out: &mut Vec<u8>,
+    row: &MethodDefRow,
+    body_offset: u32,
+    body_size: u32,
+) -> Result<(), EncodeError> {
     out.write_u32::<LittleEndian>(row.name)?;
     out.write_u32::<LittleEndian>(row.signature)?;
     out.write_u16::<LittleEndian>(row.flags)?;
@@ -305,6 +311,7 @@ fn write_method_def_with_offset(out: &mut Vec<u8>, row: &MethodDefRow, body_offs
     out.write_u16::<LittleEndian>(row.reg_count)?;
     out.write_u16::<LittleEndian>(row.param_count)?;
     out.write_u16::<LittleEndian>(0)?; // 2-byte alignment pad
+    out.write_u32::<LittleEndian>(row.owner.0)?;
     Ok(())
 }
 
@@ -312,6 +319,8 @@ fn write_method_ref(out: &mut Vec<u8>, row: &MethodRefRow) -> Result<(), EncodeE
     out.write_u32::<LittleEndian>(row.parent.0)?;
     out.write_u32::<LittleEndian>(row.name)?;
     out.write_u32::<LittleEndian>(row.signature)?;
+    out.write_u16::<LittleEndian>(row.flags)?;
+    out.write_u16::<LittleEndian>(0)?; // padding to 16 bytes
     Ok(())
 }
 
@@ -355,7 +364,10 @@ fn write_generic_param(out: &mut Vec<u8>, row: &GenericParamRow) -> Result<(), E
     Ok(())
 }
 
-fn write_generic_constraint(out: &mut Vec<u8>, row: &GenericConstraintRow) -> Result<(), EncodeError> {
+fn write_generic_constraint(
+    out: &mut Vec<u8>,
+    row: &GenericConstraintRow,
+) -> Result<(), EncodeError> {
     out.write_u32::<LittleEndian>(row.param)?;
     out.write_u32::<LittleEndian>(row.constraint.0)?;
     Ok(())

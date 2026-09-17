@@ -15,7 +15,9 @@ environment.
 
 Each task maintains a **managed call stack**: an ordered sequence of **call frames**. Each frame contains:
 
-- **method**: The MethodDef token identifying the executing method.
+- **method**: The loaded module identity and module-local MethodDef token identifying the executing method. Frame
+  snapshots, crash traces, and debugger locations must retain both parts because MethodDef row indices may collide
+  across modules.
 - **pc**: The program counter — byte offset into the method body's code section.
 - **registers**: An array of typed register slots, sized per the method body's `reg_count`.
 - **defer_stack**: A LIFO stack of pending defer handler offsets (pushed by `DEFER_PUSH`, popped by `DEFER_POP`).
@@ -47,7 +49,7 @@ Cancelled task crashes the joining task — there is no return value to deliver.
 
 | From      | To        | Trigger                                                                      |
 |-----------|-----------|------------------------------------------------------------------------------|
-| *(new)*   | Ready     | `SPAWN_TASK`, `SPAWN_DETACHED`, or host command (fire event, start dialogue) |
+| *(new)*   | Ready     | `SPAWN_TASK` or host command (fire event, start dialogue)                    |
 | Ready     | Running   | Scheduler selects the task for execution                                     |
 | Running   | Suspended | Task hits a transition point (§2.17.3) or `JOIN` on an incomplete task       |
 | Running   | Ready     | Execution limit reached (§2.17.5) — task paused mid-execution                |
@@ -73,8 +75,8 @@ The task moves from Running to Suspended and does not resume until the host or a
 | `SET_FIELD` (component field, post-construction) | Proxied to host via suspend-and-confirm (§2.14.2).                   |
 | `GET_FIELD` (component field)                    | Host provides the current native value.                              |
 | `GET_COMPONENT`                                  | Host resolves whether the entity has the component.                  |
-| `SPAWN_ENTITY`                                   | Host creates native representation for attached components.          |
-| `INIT_ENTITY`                                    | Flushes buffered component field writes to host as a batch.          |
+| `SPAWN_ENTITY`                                   | After atomic script-field initialization, host provisions attached components. |
+| `INIT_ENTITY`                                    | Host confirms initialization before the entity becomes alive and `on_create` runs. |
 | `DESTROY_ENTITY`                                 | Notifies host of entity destruction after `on_destroy` completes.    |
 | `GET_OR_CREATE`                                  | May trigger entity spawn if the singleton does not yet exist.        |
 | `JOIN`                                           | Suspends until the target task reaches Completed or Cancelled state. |
@@ -178,14 +180,11 @@ handlers firing at each frame.
 
 ## 2.17.8 Task Tree
 
-Tasks form a tree based on their spawn relationships:
+Tasks created by `SPAWN_TASK` are children of the spawning task. When the parent completes, crashes, or is cancelled,
+all children are automatically cancelled first (defer handlers run). The parent's own completion is deferred until
+all children have terminated. Host-created entry tasks and runtime-owned maintenance tasks are roots rather than
+children of a script task.
 
-- **Scoped tasks** (`SPAWN_TASK`): Children of the spawning task. When the parent completes, crashes, or is cancelled,
-  all scoped children are automatically cancelled first (defer handlers run). The parent's own completion is deferred
-  until all scoped children have terminated.
-- **Detached tasks** (`SPAWN_DETACHED`): Independent of the spawning task. They are not affected by the parent's
-  lifecycle and must be explicitly cancelled or allowed to run to completion.
-
-Scoped task cancellation is recursive: cancelling a parent cancels its scoped children, which cancels their scoped
-children, and so on. Defer handlers fire at each level during unwinding.
+Task cancellation is recursive: cancelling a parent cancels its children, which cancels their children, and so on.
+Defer handlers fire at each level during unwinding.
 
