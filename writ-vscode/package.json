@@ -134,12 +134,12 @@
     "package": "npm run compile && npm run build-binaries && npm run copy-binaries && npx vsce package"
   },
   "dependencies": {
-    "vscode-languageclient": "^9.0.0"
+    "vscode-languageclient": "^10.1.0"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
     "@types/vscode": "^1.74.0",
-    "@vscode/vsce": "^3.0.0",
+    "@vscode/vsce": "^3.9.2",
     "typescript": "^5.0.0"
   }
 }
