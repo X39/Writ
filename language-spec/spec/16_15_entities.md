@@ -10,7 +10,7 @@ engine registrations.
 entity Guard {
     // Properties (with defaults)
     name: string = "Guard",
-    health: int = 80,
+    mut health: int = 80,
     maxHealth: int = 80,
     patrolRoute: List<vec2> = List::new(),
 
@@ -83,8 +83,10 @@ Entity references, component access returns `Option`.
 
 ```writ
 // On a known entity type — guaranteed, no optional
-guard[Sprite].visible = false;
-guard[Collider].width = 48;
+let mut sprite = guard[Sprite];
+sprite.visible = false;
+let mut collider = guard[Collider];
+collider.width = 48;
 
 // On a generic Entity reference — returns Option
 fn checkHealth(target: Entity) {
@@ -127,8 +129,6 @@ entity OldTim {
     use Sprite {
         texture: "res://sprites/tim.png",
     },
-    gold: int = 500,
-
     on interact(who: Entity) {
         -> shopDialog(who)
     }
@@ -136,14 +136,12 @@ entity OldTim {
 
 // Explicit access in code
 let tim = Entity.getOrCreate<OldTim>();
-tim.gold -= 10;
+log(Entity.isAlive(tim));
 
 // In dialogue, @OldTim auto-resolves via Entity.getOrCreate<OldTim>()
 dlg shopDialog(customer: Entity) {
     @Narrator You enter the shop.
     @OldTim Welcome, traveler!
-    $ let tim = Entity.getOrCreate<OldTim>();
-    $ tim.gold -= 10;
     @OldTim Here, a discount for you.
 }
 ```
@@ -156,7 +154,7 @@ entities.
 ```writ
 entity Party {
     leader: Player,
-    members: EntityList<Entity> = EntityList::new(),
+    mut members: EntityList<Entity> = EntityList::new(),
 
     fn addMember(mut self, e: Entity) {
         self.members.add(e);
@@ -164,7 +162,8 @@ entity Party {
 
     fn healAll(self, amount: int) {
         for member in self.members {
-            if let Option::Some(hp) = member[Health] {
+            if let Option::Some(found_hp) = member[Health] {
+                let mut hp = found_hp;
                 hp.current = min(hp.current + amount, hp.max);
             }
         }
@@ -260,8 +259,8 @@ An entity declaration lowers to a TypeDef with fields, component slots, methods,
 
 Each `entity` declaration produces a TypeDef in the IL metadata with kind `Entity`. The TypeDef contains:
 
-- **Fields:** All entity properties (`name: string`, etc.) become regular fields on the TypeDef, with default values
-  stored in the metadata.
+- **Fields:** All entity properties (`name: string`, etc.) become regular fields on the TypeDef. FieldDef records
+  whether a default exists, while version 9 does not serialize the default expression itself.
 - **Component slots:** Each `use Component { ... }` declaration registers a component type index on the entity type.
   Component instances are allocated and attached by the host engine during `SPAWN_ENTITY` — they are not stored as
   inline fields on the entity class.
@@ -317,20 +316,25 @@ Component access via `[]` lowers to IL instructions based on context:
 `new Guard { name: "Steve" }` compiles to the following IL:
 
 ```writ
-SPAWN_ENTITY  r0, Guard_type      // 1. Allocate entity, notify host to create components
-                                   //    with defaults and overrides
-LOAD_STRING   r1, "Steve"_idx     // 2. Load override value
-SET_FIELD     r0, name_field, r1  // 3. Override entity field
-INIT_ENTITY   r0                  // 4. Fire on_create (calls Guard::__on_create)
+LOAD_STRING   r1, "Steve"_idx
+SPAWN_ENTITY  r0, Guard_type, 1, r1 // atomically install all script fields,
+                                     // then register and notify the host
+INIT_ENTITY   r0                     // publish as alive and fire on_create
 ```
 
 The full sequence:
 
-1. **SPAWN_ENTITY** — allocates the entity object, notifies the host to create all declared component instances with
-   their TypeDef defaults and component overrides, and registers the entity with the entity runtime. Does NOT fire
+1. Evaluate exactly one initializer for every script field in declaration order and place the values in consecutive
+   registers.
+2. **SPAWN_ENTITY** validates the type, exact field count, and initializer register range before any allocation,
+   registry update, destination write, request-id change, or host notification. It then creates the entity in pending
+   state with its complete script-field vector and asks the host to provision declared components. It does not fire
    `on_create`.
-2. **SET_FIELD** (zero or more) — applies field overrides from the construction expression.
-3. **INIT_ENTITY** — fires `on_create`. At this point, all fields and components are fully initialized.
+3. **INIT_ENTITY** transitions the complete pending entity to alive, confirms host initialization, and fires
+   `on_create`.
+
+There is no construction-time `SET_FIELD` window. Construction may establish read-only fields; any later `SET_FIELD`
+to one of those fields crashes the current task before the field changes.
 
 ---
 

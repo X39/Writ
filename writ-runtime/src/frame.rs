@@ -1,11 +1,24 @@
 use crate::value::Value;
 
+/// Domain-qualified location of a runtime call frame.
+///
+/// Method indices are local to a loaded module, so consumers such as debuggers
+/// must retain `module_idx` alongside `method_idx` and `pc`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FrameLocation {
+    pub module_idx: usize,
+    pub method_idx: usize,
+    pub pc: usize,
+}
+
 /// A single call frame in a task's call stack.
 ///
 /// Each executing function has one CallFrame. The frame owns the register file
 /// and tracks the program counter, defer handler stack, and the caller's
 /// destination register for return value delivery.
 pub struct CallFrame {
+    /// Module containing `method_idx`. `None` denotes the task's root module.
+    pub module_idx: Option<usize>,
     /// Index into LoadedModule.decoded_bodies (0-based).
     pub method_idx: usize,
     /// Instruction index within the decoded instruction vector (not byte offset).
@@ -22,12 +35,25 @@ impl CallFrame {
     /// Create a new call frame for the given method with `reg_count` registers.
     pub fn new(method_idx: usize, reg_count: usize, return_register: u16) -> Self {
         Self {
+            module_idx: None,
             method_idx,
             pc: 0,
             registers: vec![Value::Void; reg_count],
             defer_stack: Vec::new(),
             return_register,
         }
+    }
+
+    /// Create a frame for a method in an explicitly selected module.
+    pub fn new_in_module(
+        module_idx: usize,
+        method_idx: usize,
+        reg_count: usize,
+        return_register: u16,
+    ) -> Self {
+        let mut frame = Self::new(method_idx, reg_count, return_register);
+        frame.module_idx = Some(module_idx);
+        frame
     }
 
     /// Create a new call frame acquiring the register Vec from a pool.
@@ -41,12 +67,26 @@ impl CallFrame {
         return_register: u16,
     ) -> Self {
         Self {
+            module_idx: None,
             method_idx,
             pc: 0,
             registers: pool.acquire(reg_count),
             defer_stack: Vec::new(),
             return_register,
         }
+    }
+
+    /// Acquire registers for a method in an explicitly selected module.
+    pub fn with_pool_in_module(
+        pool: &mut RegisterPool,
+        module_idx: usize,
+        method_idx: usize,
+        reg_count: usize,
+        return_register: u16,
+    ) -> Self {
+        let mut frame = Self::with_pool(pool, method_idx, reg_count, return_register);
+        frame.module_idx = Some(module_idx);
+        frame
     }
 }
 

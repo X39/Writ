@@ -20,9 +20,22 @@ pub enum SuspendReason {
     /// Suspended waiting for a host response (e.g., extern call, entity spawn).
     HostRequest(crate::host::RequestId),
     /// Suspended at a debug breakpoint.
-    Breakpoint { method_idx: u32, pc: u32, line: u32, col: u16 },
+    Breakpoint {
+        module_idx: usize,
+        method_idx: u32,
+        pc: u32,
+        line: u32,
+        col: u16,
+    },
     /// Suspended after a debug step completed.
-    DebugStep { mode: crate::host::DebugAction, method_idx: u32, pc: u32, line: u32, col: u16 },
+    DebugStep {
+        mode: crate::host::DebugAction,
+        module_idx: usize,
+        method_idx: u32,
+        pc: u32,
+        line: u32,
+        col: u16,
+    },
     /// Suspended before crash unwind so the debugger can inspect the live stack.
     /// On resume, the runtime will execute the full crash unwind (defers, cancellation).
     CrashPending { message: String },
@@ -105,9 +118,21 @@ mod tests {
 
     #[test]
     fn suspend_reason_breakpoint_can_be_constructed() {
-        let reason = SuspendReason::Breakpoint { method_idx: 1, pc: 10, line: 5, col: 3 };
+        let reason = SuspendReason::Breakpoint {
+            module_idx: 2,
+            method_idx: 1,
+            pc: 10,
+            line: 5,
+            col: 3,
+        };
         match reason {
-            SuspendReason::Breakpoint { method_idx: 1, pc: 10, line: 5, col: 3 } => {}
+            SuspendReason::Breakpoint {
+                module_idx: 2,
+                method_idx: 1,
+                pc: 10,
+                line: 5,
+                col: 3,
+            } => {}
             _ => panic!("unexpected variant"),
         }
     }
@@ -116,20 +141,28 @@ mod tests {
     fn suspend_reason_debug_step_can_be_constructed() {
         let reason = SuspendReason::DebugStep {
             mode: DebugAction::StepOver,
+            module_idx: 3,
             method_idx: 2,
             pc: 20,
             line: 8,
             col: 0,
         };
         match reason {
-            SuspendReason::DebugStep { mode: DebugAction::StepOver, method_idx: 2, .. } => {}
+            SuspendReason::DebugStep {
+                mode: DebugAction::StepOver,
+                module_idx: 3,
+                method_idx: 2,
+                ..
+            } => {}
             _ => panic!("unexpected variant"),
         }
     }
 
     #[test]
     fn suspend_reason_crash_pending_can_be_constructed() {
-        let reason = SuspendReason::CrashPending { message: "unwrap on None".into() };
+        let reason = SuspendReason::CrashPending {
+            message: "unwrap on None".into(),
+        };
         match reason {
             SuspendReason::CrashPending { ref message } if message == "unwrap on None" => {}
             _ => panic!("unexpected variant"),

@@ -4,13 +4,12 @@
 //! symmetric with `assembler::assemble_module`. The output is round-trippable: feeding
 //! it back to `assemble()` produces a module with the same table structure.
 
-use std::collections::HashSet;
 use std::fmt::Write;
 use std::io::Cursor;
 
-use writ_module::{Instruction, Module};
 use writ_module::heap::{read_blob, read_string};
 use writ_module::tables::TypeDefKind;
+use writ_module::{Instruction, Module};
 
 /// Disassemble a binary `Module` into clean `.writil` text.
 ///
@@ -31,30 +30,47 @@ fn disassemble_inner(module: &Module, verbose: bool) -> String {
     let mut out = String::new();
 
     // Helper: resolve string heap offset to &str
-    let s = |offset: u32| -> &str {
-        read_string(&module.string_heap, offset).unwrap_or("")
-    };
+    let s = |offset: u32| -> &str { read_string(&module.string_heap, offset).unwrap_or("") };
 
-    // Precompute cumulative param_def offsets for each MethodDef.
-    // method_param_start[i] = index into module.param_defs where method i's params begin.
+    // Precompute cumulative ParamDef offsets for each MethodDef. MethodDef.param_count
+    // includes an implicit instance receiver, while method signatures and ParamDef rows
+    // describe regular source parameters only. Derive each range from the signature so
+    // receiver registers cannot shift every later method's parameter names.
     let mut method_param_start: Vec<usize> = Vec::with_capacity(module.method_defs.len() + 1);
     {
         let mut running = 0usize;
         for md in &module.method_defs {
             method_param_start.push(running);
-            running += md.param_count as usize;
+            let regular_param_count = read_blob(&module.blob_heap, md.signature)
+                .ok()
+                .and_then(|blob| blob.get(..2))
+                .map(|bytes| u16::from_le_bytes([bytes[0], bytes[1]]) as usize)
+                .unwrap_or(0);
+            running += regular_param_count;
         }
         method_param_start.push(running); // sentinel
     }
 
     // Helper: get param names for a method index from the ParamDef table.
     let get_param_names = |method_idx: usize| -> Vec<String> {
-        let start = method_param_start.get(method_idx).copied().unwrap_or(0);
-        let end = method_param_start.get(method_idx + 1).copied().unwrap_or(start);
-        let end = end.min(module.param_defs.len());
+        let start = method_param_start
+            .get(method_idx)
+            .copied()
+            .unwrap_or(0)
+            .min(module.param_defs.len());
+        let end = method_param_start
+            .get(method_idx + 1)
+            .copied()
+            .unwrap_or(start)
+            .min(module.param_defs.len())
+            .max(start);
         module.param_defs[start..end]
             .iter()
-            .map(|pd| read_string(&module.string_heap, pd.name).unwrap_or("").to_string())
+            .map(|pd| {
+                read_string(&module.string_heap, pd.name)
+                    .unwrap_or("")
+                    .to_string()
+            })
             .collect()
     };
 
@@ -68,10 +84,7 @@ fn disassemble_inner(module: &Module, verbose: bool) -> String {
         writeln!(out, "    .extern {:?} {:?}", s(mr.name), s(mr.min_version)).unwrap();
     }
 
-    // ── 2. Type defs with their fields ──
-    // Compute method ownership sets before emitting types (needed for top-level method detection)
-    let (type_owned_methods, impl_owned_methods) = compute_method_ownership(module);
-
+    // ── 2. Type defs with their fields and directly-owned methods ──
     for (ti, td) in module.type_defs.iter().enumerate() {
         let kind_str = match TypeDefKind::from_u8(td.kind) {
             Some(TypeDefKind::Struct) => "struct",
@@ -82,27 +95,80 @@ fn disassemble_inner(module: &Module, verbose: bool) -> String {
             None => unreachable!("reader validates TypeDef kinds"),
         };
 
-        // Emit type flags as keyword(s) if recognized, otherwise as integer
-        let type_flags_str = flags_to_str(td.flags);
+        // Emit type flags as keyword(s) if recognized, otherwise as integer.
+        let type_flags_str = type_flags_to_str(td.flags);
         if type_flags_str.is_empty() {
             writeln!(out, "    .type {:?} {} {{", s(td.name), kind_str).unwrap();
         } else {
-            writeln!(out, "    .type {:?} {} {} {{", s(td.name), kind_str, type_flags_str).unwrap();
+            writeln!(
+                out,
+                "    .type {:?} {} {} {{",
+                s(td.name),
+                kind_str,
+                type_flags_str
+            )
+            .unwrap();
         }
 
         // Fields: field_list range [field_list-1, next_type.field_list-1)
         let field_start = td.field_list.saturating_sub(1) as usize;
-        let field_end = module.type_defs.get(ti + 1)
+        let field_end = module
+            .type_defs
+            .get(ti + 1)
             .map(|next| next.field_list.saturating_sub(1) as usize)
             .unwrap_or(module.field_defs.len());
         for fd in &module.field_defs[field_start..field_end] {
             let type_text = decode_type_sig(&module.blob_heap, fd.type_sig, module);
-            let field_flags_str = flags_to_str(fd.flags);
+            let field_flags_str = field_flags_to_str(fd.flags);
             if field_flags_str.is_empty() {
                 writeln!(out, "        .field {:?} {}", s(fd.name), type_text).unwrap();
             } else {
-                writeln!(out, "        .field {:?} {} {}", s(fd.name), type_text, field_flags_str).unwrap();
+                writeln!(
+                    out,
+                    "        .field {:?} {} {}",
+                    s(fd.name),
+                    type_text,
+                    field_flags_str
+                )
+                .unwrap();
             }
+        }
+
+        for method_idx in module.type_method_indices(ti) {
+            let md = &module.method_defs[method_idx];
+            let param_names = get_param_names(method_idx);
+            let (params, ret) =
+                decode_method_sig(&module.blob_heap, md.signature, module, &param_names);
+            let method_flags_str = method_flags_to_str(md.flags);
+
+            if method_flags_str.is_empty() {
+                writeln!(
+                    out,
+                    "        .method {:?} ({}) -> {} {{",
+                    s(md.name),
+                    params.join(", "),
+                    ret
+                )
+                .unwrap();
+            } else {
+                writeln!(
+                    out,
+                    "        .method {:?} ({}) -> {} {} {{",
+                    s(md.name),
+                    params.join(", "),
+                    ret,
+                    method_flags_str
+                )
+                .unwrap();
+            }
+
+            if method_idx < module.method_bodies.len() {
+                let body = &module.method_bodies[method_idx];
+                let body_text = disassemble_body(body, module, verbose, "            ");
+                out.push_str(&body_text);
+            }
+
+            writeln!(out, "        }}").unwrap();
         }
 
         writeln!(out, "    }}").unwrap();
@@ -116,22 +182,33 @@ fn disassemble_inner(module: &Module, verbose: bool) -> String {
         if generic_params.is_empty() {
             writeln!(out, "    .contract {:?} {{", s(cd.name)).unwrap();
         } else {
-            writeln!(out, "    .contract {:?} <{}> {{", s(cd.name), generic_params.join(", ")).unwrap();
+            writeln!(
+                out,
+                "    .contract {:?} <{}> {{",
+                s(cd.name),
+                generic_params.join(", ")
+            )
+            .unwrap();
         }
 
         // Contract methods: method_list range
         let cm_start = cd.method_list.saturating_sub(1) as usize;
-        let cm_end = module.contract_defs.get(ci + 1)
+        let cm_end = module
+            .contract_defs
+            .get(ci + 1)
             .map(|next| next.method_list.saturating_sub(1) as usize)
             .unwrap_or(module.contract_methods.len());
         for cm in &module.contract_methods[cm_start..cm_end] {
             let (params, ret) = decode_method_sig(&module.blob_heap, cm.signature, module, &[]);
-            writeln!(out, "        .method {:?} ({}) -> {} slot {}",
+            writeln!(
+                out,
+                "        .method {:?} ({}) -> {} slot {}",
                 s(cm.name),
                 params.join(", "),
                 ret,
                 cm.slot
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         writeln!(out, "    }}").unwrap();
@@ -146,30 +223,32 @@ fn disassemble_inner(module: &Module, verbose: bool) -> String {
 
         writeln!(out, "    .impl {} : {} {{", type_name, contract_name).unwrap();
 
-        // Methods owned by this impl.
-        // method_list is 1-based; 0 means "unset" (user impl blocks compiled with method_list=0).
-        // When method_list=0, saturating_sub(1)=0; for method_list=1, result=0 (first method).
-        let method_start = id.method_list.saturating_sub(1) as usize;
-        let method_end_raw = module.impl_defs.get(ii + 1)
-            .map(|next| next.method_list.saturating_sub(1) as usize)
-            .unwrap_or_else(|| {
-                // Find the end: next impl or end of impl-owned methods
-                find_last_impl_method_end(module, &impl_owned_methods)
-            });
-        // Clamp to avoid invalid range when next impl's method_list < this impl's method_list
-        // (happens when user impl blocks have method_list=0 after a Reflectable impl with non-zero).
-        let method_end = method_end_raw.max(method_start);
-
-        for (mi, md) in module.method_defs[method_start..method_end].iter().enumerate() {
-            let real_idx = method_start + mi;
+        for real_idx in module.impl_method_indices(ii) {
+            let md = &module.method_defs[real_idx];
             let param_names = get_param_names(real_idx);
-            let (params, ret) = decode_method_sig(&module.blob_heap, md.signature, module, &param_names);
-            let method_flags_str = flags_to_str(md.flags);
+            let (params, ret) =
+                decode_method_sig(&module.blob_heap, md.signature, module, &param_names);
+            let method_flags_str = method_flags_to_str(md.flags);
 
             if method_flags_str.is_empty() {
-                writeln!(out, "        .method {:?} ({}) -> {} {{", s(md.name), params.join(", "), ret).unwrap();
+                writeln!(
+                    out,
+                    "        .method {:?} ({}) -> {} {{",
+                    s(md.name),
+                    params.join(", "),
+                    ret
+                )
+                .unwrap();
             } else {
-                writeln!(out, "        .method {:?} ({}) -> {} {} {{", s(md.name), params.join(", "), ret, method_flags_str).unwrap();
+                writeln!(
+                    out,
+                    "        .method {:?} ({}) -> {} {} {{",
+                    s(md.name),
+                    params.join(", "),
+                    ret,
+                    method_flags_str
+                )
+                .unwrap();
             }
 
             // Emit method body if available
@@ -188,11 +267,18 @@ fn disassemble_inner(module: &Module, verbose: bool) -> String {
     // ── 5. Global defs ──
     for gd in &module.global_defs {
         let type_text = decode_type_sig(&module.blob_heap, gd.type_sig, module);
-        let global_flags_str = flags_to_str(gd.flags);
+        let global_flags_str = global_flags_to_str(gd.flags);
         if global_flags_str.is_empty() {
             writeln!(out, "    .global {:?} {}", s(gd.name), type_text).unwrap();
         } else {
-            writeln!(out, "    .global {:?} {} {}", s(gd.name), type_text, global_flags_str).unwrap();
+            writeln!(
+                out,
+                "    .global {:?} {} {}",
+                s(gd.name),
+                type_text,
+                global_flags_str
+            )
+            .unwrap();
         }
     }
 
@@ -200,27 +286,58 @@ fn disassemble_inner(module: &Module, verbose: bool) -> String {
     // Module-level extern function declarations (different from module refs).
     for ed in &module.extern_defs {
         let (params, ret) = decode_method_sig(&module.blob_heap, ed.signature, module, &[]);
-        writeln!(out, "    .extern_fn {:?} ({}) -> {} {:?}",
-            s(ed.name),
-            params.join(", "),
-            ret,
-            s(ed.import_name)
-        ).unwrap();
+        let extern_flags_str = extern_flags_to_str(ed.flags);
+        if extern_flags_str.is_empty() {
+            writeln!(
+                out,
+                "    .extern_fn {:?} ({}) -> {} {:?}",
+                s(ed.name),
+                params.join(", "),
+                ret,
+                s(ed.import_name)
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                out,
+                "    .extern_fn {:?} ({}) -> {} {:?} {}",
+                s(ed.name),
+                params.join(", "),
+                ret,
+                s(ed.import_name),
+                extern_flags_str
+            )
+            .unwrap();
+        }
     }
 
-    // ── 7. Top-level methods (not owned by any type or impl) ──
-    for (mi, md) in module.method_defs.iter().enumerate() {
-        if type_owned_methods.contains(&mi) || impl_owned_methods.contains(&mi) {
-            continue;
-        }
+    // ── 7. Top-level methods (explicitly owned by the module) ──
+    for mi in module.top_level_method_indices() {
+        let md = &module.method_defs[mi];
         let param_names = get_param_names(mi);
-        let (params, ret) = decode_method_sig(&module.blob_heap, md.signature, module, &param_names);
-        let method_flags_str = flags_to_str(md.flags);
+        let (params, ret) =
+            decode_method_sig(&module.blob_heap, md.signature, module, &param_names);
+        let method_flags_str = method_flags_to_str(md.flags);
 
         if method_flags_str.is_empty() {
-            writeln!(out, "    .method {:?} ({}) -> {} {{", s(md.name), params.join(", "), ret).unwrap();
+            writeln!(
+                out,
+                "    .method {:?} ({}) -> {} {{",
+                s(md.name),
+                params.join(", "),
+                ret
+            )
+            .unwrap();
         } else {
-            writeln!(out, "    .method {:?} ({}) -> {} {} {{", s(md.name), params.join(", "), ret, method_flags_str).unwrap();
+            writeln!(
+                out,
+                "    .method {:?} ({}) -> {} {} {{",
+                s(md.name),
+                params.join(", "),
+                ret,
+                method_flags_str
+            )
+            .unwrap();
         }
 
         // Emit method body if available
@@ -241,78 +358,52 @@ fn disassemble_inner(module: &Module, verbose: bool) -> String {
             2 => "global",
             _ => "unknown",
         };
-        writeln!(out, "    .export {:?} {} {}", s(ed.name), item_kind_str, ed.item.0).unwrap();
+        writeln!(
+            out,
+            "    .export {:?} {} {}",
+            s(ed.name),
+            item_kind_str,
+            ed.item.0
+        )
+        .unwrap();
     }
 
     // ── 9. Component slots ──
     for cs in &module.component_slots {
-        writeln!(out, "    .component_slot {} {}", cs.owner_entity.0, cs.component_type.0).unwrap();
+        writeln!(
+            out,
+            "    .component_slot {} {}",
+            cs.owner_entity.0, cs.component_type.0
+        )
+        .unwrap();
     }
 
     // ── 10. Locale defs ──
     for ld in &module.locale_defs {
-        writeln!(out, "    .locale {} {:?} {}", ld.dlg_method.0, s(ld.locale), ld.loc_method.0).unwrap();
+        writeln!(
+            out,
+            "    .locale {} {:?} {}",
+            ld.dlg_method.0,
+            s(ld.locale),
+            ld.loc_method.0
+        )
+        .unwrap();
     }
 
     // ── 11. Attribute defs ──
     for ad in &module.attribute_defs {
-        writeln!(out, "    .attribute {} {} {:?}", ad.owner.0, ad.owner_kind, s(ad.name)).unwrap();
+        writeln!(
+            out,
+            "    .attribute {} {} {:?}",
+            ad.owner.0,
+            ad.owner_kind,
+            s(ad.name)
+        )
+        .unwrap();
     }
 
     writeln!(out, "}}").unwrap();
     out
-}
-
-/// Compute which method indices are owned by types (method_list ranges in type_defs)
-/// and which are owned by impls (method_list ranges in impl_defs).
-///
-/// Returns (type_owned, impl_owned).
-fn compute_method_ownership(module: &Module) -> (HashSet<usize>, HashSet<usize>) {
-    let mut type_owned = HashSet::new();
-    let mut impl_owned = HashSet::new();
-
-    // Type-owned methods (methods declared directly on type structs - not used in current assembler)
-    // TypeDefRow.method_list is typically 1 (pointing to beginning) with 0-length ranges for types
-    // that have no directly-owned methods (all methods go through impls in current spec).
-    // However, we compute it properly for future use.
-    for (ti, td) in module.type_defs.iter().enumerate() {
-        let start = td.method_list.saturating_sub(1) as usize;
-        let end = module.type_defs.get(ti + 1)
-            .map(|next| next.method_list.saturating_sub(1) as usize)
-            .unwrap_or(start); // Default: empty range (types don't directly own methods in current spec)
-        for mi in start..end {
-            type_owned.insert(mi);
-        }
-    }
-
-    // Impl-owned methods
-    for (ii, id) in module.impl_defs.iter().enumerate() {
-        let start = id.method_list.saturating_sub(1) as usize;
-        let end_raw = module.impl_defs.get(ii + 1)
-            .map(|next| next.method_list.saturating_sub(1) as usize)
-            .unwrap_or_else(|| {
-                // Last impl owns methods up to the first top-level method
-                // We use a heuristic: the end of all impl-related methods
-                // is determined by what's left after all impls
-                module.method_defs.len()
-            });
-        // Clamp to avoid invalid ranges when method_list=0 follows a non-zero method_list.
-        let end = end_raw.max(start);
-        for mi in start..end {
-            impl_owned.insert(mi);
-        }
-    }
-
-    (type_owned, impl_owned)
-}
-
-/// Find the end of the last impl's method range.
-fn find_last_impl_method_end(module: &Module, impl_owned: &HashSet<usize>) -> usize {
-    if impl_owned.is_empty() {
-        return module.method_defs.len();
-    }
-    let max = impl_owned.iter().copied().max().unwrap_or(0);
-    max + 1
 }
 
 /// Collect generic parameter names for a given owner (identified by ordinal in type or contract table).
@@ -328,10 +419,14 @@ fn collect_generic_params(module: &Module, owner_ordinal: u32, owner_kind: u8) -
     };
     let expected_token = (expected_table_id << 24) | (owner_ordinal + 1);
 
-    let mut params: Vec<(u16, String)> = module.generic_params.iter()
+    let mut params: Vec<(u16, String)> = module
+        .generic_params
+        .iter()
         .filter(|gp| gp.owner.0 == expected_token && gp.owner_kind == owner_kind)
         .map(|gp| {
-            let name = read_string(&module.string_heap, gp.name).unwrap_or("T").to_string();
+            let name = read_string(&module.string_heap, gp.name)
+                .unwrap_or("T")
+                .to_string();
             (gp.ordinal, name)
         })
         .collect();
@@ -347,9 +442,7 @@ fn resolve_type_name(module: &Module, token: u32) -> String {
         return "?".to_string();
     }
     let idx = row_idx - 1;
-    let s = |offset: u32| -> &str {
-        read_string(&module.string_heap, offset).unwrap_or("?")
-    };
+    let s = |offset: u32| -> &str { read_string(&module.string_heap, offset).unwrap_or("?") };
     if let Some(td) = module.type_defs.get(idx) {
         s(td.name).to_string()
     } else if let Some(tr) = module.type_refs.get(idx) {
@@ -366,9 +459,7 @@ fn resolve_contract_name(module: &Module, token: u32) -> String {
         return "?".to_string();
     }
     let idx = row_idx - 1;
-    let s = |offset: u32| -> &str {
-        read_string(&module.string_heap, offset).unwrap_or("?")
-    };
+    let s = |offset: u32| -> &str { read_string(&module.string_heap, offset).unwrap_or("?") };
     if let Some(cd) = module.contract_defs.get(idx) {
         s(cd.name).to_string()
     } else {
@@ -386,74 +477,85 @@ pub(crate) fn decode_type_sig(blob_heap: &[u8], sig_offset: u32, module: &Module
 /// Decode a type reference from a blob byte slice starting at `*pos`.
 /// Advances `*pos` past the consumed bytes.
 pub(crate) fn decode_type_ref(blob: &[u8], pos: &mut usize, module: &Module) -> String {
-    let s = |offset: u32| -> &str {
-        read_string(&module.string_heap, offset).unwrap_or("?")
+    let Some(bytes) = blob.get(*pos..) else {
+        return "?".to_string();
     };
-
-    match blob.get(*pos).copied() {
-        Some(0x00) => {
-            *pos += 1;
-            "void".to_string()
+    match writ_module::signature::decode_type_signature_prefix(bytes) {
+        Ok((signature, consumed)) => {
+            *pos += consumed;
+            render_type_signature(&signature, module)
         }
-        Some(0x01) => {
-            *pos += 1;
-            "int".to_string()
-        }
-        Some(0x02) => {
-            *pos += 1;
-            "float".to_string()
-        }
-        Some(0x03) => {
-            *pos += 1;
-            "bool".to_string()
-        }
-        Some(0x04) => {
-            *pos += 1;
-            "string".to_string()
-        }
-        Some(0x10) => {
-            *pos += 1;
-            if *pos + 4 <= blob.len() {
-                let token = u32::from_le_bytes(blob[*pos..*pos + 4].try_into().unwrap());
-                *pos += 4;
-                // Token: bits 31-24 = table_id, bits 23-0 = 1-based row index
-                let row_idx = (token & 0x00FF_FFFF) as usize;
-                let table_id = (token >> 24) as usize;
-                if row_idx == 0 {
-                    return "?".to_string();
-                }
-                let idx = row_idx - 1;
-                // Table 2 = TypeDef, Table 3 = TypeRef
-                if table_id == 2 || table_id == 0 {
-                    // TypeDef (table_id=2) or untagged (table_id=0, treat as TypeDef)
-                    if let Some(td) = module.type_defs.get(idx) {
-                        return s(td.name).to_string();
-                    }
-                }
-                if table_id == 3 {
-                    // TypeRef
-                    if let Some(tr) = module.type_refs.get(idx) {
-                        return s(tr.name).to_string();
-                    }
-                }
-                // Fallback: try TypeDef if table_id was unrecognized
-                if let Some(td) = module.type_defs.get(idx) {
-                    return s(td.name).to_string();
-                }
-                format!("type_{}", token)
-            } else {
-                *pos = blob.len();
-                "?".to_string()
-            }
-        }
-        Some(0x20) => {
-            *pos += 1;
-            let elem = decode_type_ref(blob, pos, module);
-            format!("array<{}>", elem)
-        }
-        _ => {
+        Err(_) => {
             *pos = blob.len();
             "?".to_string()
+        }
+    }
+}
+
+fn render_type_signature(
+    signature: &writ_module::signature::TypeSignature,
+    module: &Module,
+) -> String {
+    use writ_module::signature::TypeSignature;
+    match signature {
+        TypeSignature::Void => "void".to_string(),
+        TypeSignature::Int => "int".to_string(),
+        TypeSignature::Float => "float".to_string(),
+        TypeSignature::Bool => "bool".to_string(),
+        TypeSignature::String => "string".to_string(),
+        TypeSignature::Entity => "Entity".to_string(),
+        TypeSignature::Named(token) => {
+            let Some(row) = token.row_index() else {
+                return "?".to_string();
+            };
+            let idx = row as usize - 1;
+            match token.table_id() {
+                2 | 0 => module
+                    .type_defs
+                    .get(idx)
+                    .and_then(|row| read_string(&module.string_heap, row.name).ok()),
+                3 => module
+                    .type_refs
+                    .get(idx)
+                    .and_then(|row| read_string(&module.string_heap, row.name).ok()),
+                _ => None,
+            }
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("type_{}", token.0))
+        }
+        TypeSignature::Generic {
+            namespace,
+            name,
+            args,
+        } => {
+            let constructor = if namespace.is_empty() {
+                name.clone()
+            } else {
+                format!("{}::{}", namespace, name)
+            };
+            let args = args
+                .iter()
+                .map(|arg| render_type_signature(arg, module))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{}<{}>", constructor, args)
+        }
+        TypeSignature::GenericParam(ordinal) => format!("T{}", ordinal),
+        TypeSignature::Array(element) => {
+            format!("array<{}>", render_type_signature(element, module))
+        }
+        TypeSignature::Function { params, ret } => {
+            let params = params
+                .iter()
+                .map(|param| render_type_signature(param, module))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let ret = render_type_signature(ret, module);
+            if matches!(ret.as_str(), "void") {
+                format!("fn({})", params)
+            } else {
+                format!("fn({}) -> {}", params, ret)
+            }
         }
     }
 }
@@ -464,7 +566,12 @@ pub(crate) fn decode_type_ref(blob: &[u8], pos: &mut usize, module: &Module) -> 
 ///
 /// If `param_names` is non-empty, each parameter is rendered as "name: type".
 /// If `param_names` is shorter than the param count, unnamed params fall back to type-only.
-pub(crate) fn decode_method_sig(blob_heap: &[u8], sig_offset: u32, module: &Module, param_names: &[String]) -> (Vec<String>, String) {
+pub(crate) fn decode_method_sig(
+    blob_heap: &[u8],
+    sig_offset: u32,
+    module: &Module,
+    param_names: &[String],
+) -> (Vec<String>, String) {
     let blob = read_blob(blob_heap, sig_offset).unwrap_or(&[]);
     if blob.len() < 2 {
         return (vec![], "void".to_string());
@@ -497,7 +604,12 @@ pub(crate) fn decode_method_sig(blob_heap: &[u8], sig_offset: u32, module: &Modu
 }
 
 /// Disassemble a method body into text lines with the given indentation.
-fn disassemble_body(body: &writ_module::module::MethodBody, module: &Module, verbose: bool, indent: &str) -> String {
+fn disassemble_body(
+    body: &writ_module::module::MethodBody,
+    module: &Module,
+    verbose: bool,
+    indent: &str,
+) -> String {
     let mut out = String::new();
 
     // ── .locals section (PREP-05) ──────────────────────────────────────────────
@@ -598,7 +710,12 @@ fn disassemble_body(body: &writ_module::module::MethodBody, module: &Module, ver
                 }
             }
             Err(e) => {
-                writeln!(out, "{}// decode error at +{:#06x}: {:?}", indent, byte_offset, e).unwrap();
+                writeln!(
+                    out,
+                    "{}// decode error at +{:#06x}: {:?}",
+                    indent, byte_offset, e
+                )
+                .unwrap();
                 break;
             }
         }
@@ -621,48 +738,95 @@ fn instr_to_text(instr: &Instruction) -> (String, Vec<String>) {
 
         // ── 0x01 Data Movement ──
         Instruction::Mov { r_dst, r_src } => ("MOV".into(), vec![r(*r_dst), r(*r_src)]),
-        Instruction::LoadInt { r_dst, value } => ("LOAD_INT".into(), vec![r(*r_dst), format!("{}", value)]),
-        Instruction::LoadFloat { r_dst, value } => ("LOAD_FLOAT".into(), vec![r(*r_dst), format!("{}", value)]),
+        Instruction::LoadInt { r_dst, value } => {
+            ("LOAD_INT".into(), vec![r(*r_dst), format!("{}", value)])
+        }
+        Instruction::LoadFloat { r_dst, value } => {
+            ("LOAD_FLOAT".into(), vec![r(*r_dst), format!("{}", value)])
+        }
         Instruction::LoadTrue { r_dst } => ("LOAD_TRUE".into(), vec![r(*r_dst)]),
         Instruction::LoadFalse { r_dst } => ("LOAD_FALSE".into(), vec![r(*r_dst)]),
-        Instruction::LoadString { r_dst, string_idx } => ("LOAD_STRING".into(), vec![r(*r_dst), format!("{}", string_idx)]),
+        Instruction::LoadString { r_dst, string_idx } => (
+            "LOAD_STRING".into(),
+            vec![r(*r_dst), format!("{}", string_idx)],
+        ),
         Instruction::LoadNull { r_dst } => ("LOAD_NULL".into(), vec![r(*r_dst)]),
 
         // ── 0x02 Integer Arithmetic ──
-        Instruction::AddI { r_dst, r_a, r_b } => ("ADD_I".into(), vec![r(*r_dst), r(*r_a), r(*r_b)]),
-        Instruction::SubI { r_dst, r_a, r_b } => ("SUB_I".into(), vec![r(*r_dst), r(*r_a), r(*r_b)]),
-        Instruction::MulI { r_dst, r_a, r_b } => ("MUL_I".into(), vec![r(*r_dst), r(*r_a), r(*r_b)]),
-        Instruction::DivI { r_dst, r_a, r_b } => ("DIV_I".into(), vec![r(*r_dst), r(*r_a), r(*r_b)]),
-        Instruction::ModI { r_dst, r_a, r_b } => ("MOD_I".into(), vec![r(*r_dst), r(*r_a), r(*r_b)]),
+        Instruction::AddI { r_dst, r_a, r_b } => {
+            ("ADD_I".into(), vec![r(*r_dst), r(*r_a), r(*r_b)])
+        }
+        Instruction::SubI { r_dst, r_a, r_b } => {
+            ("SUB_I".into(), vec![r(*r_dst), r(*r_a), r(*r_b)])
+        }
+        Instruction::MulI { r_dst, r_a, r_b } => {
+            ("MUL_I".into(), vec![r(*r_dst), r(*r_a), r(*r_b)])
+        }
+        Instruction::DivI { r_dst, r_a, r_b } => {
+            ("DIV_I".into(), vec![r(*r_dst), r(*r_a), r(*r_b)])
+        }
+        Instruction::ModI { r_dst, r_a, r_b } => {
+            ("MOD_I".into(), vec![r(*r_dst), r(*r_a), r(*r_b)])
+        }
         Instruction::NegI { r_dst, r_src } => ("NEG_I".into(), vec![r(*r_dst), r(*r_src)]),
 
         // ── 0x03 Float Arithmetic ──
-        Instruction::AddF { r_dst, r_a, r_b } => ("ADD_F".into(), vec![r(*r_dst), r(*r_a), r(*r_b)]),
-        Instruction::SubF { r_dst, r_a, r_b } => ("SUB_F".into(), vec![r(*r_dst), r(*r_a), r(*r_b)]),
-        Instruction::MulF { r_dst, r_a, r_b } => ("MUL_F".into(), vec![r(*r_dst), r(*r_a), r(*r_b)]),
-        Instruction::DivF { r_dst, r_a, r_b } => ("DIV_F".into(), vec![r(*r_dst), r(*r_a), r(*r_b)]),
-        Instruction::ModF { r_dst, r_a, r_b } => ("MOD_F".into(), vec![r(*r_dst), r(*r_a), r(*r_b)]),
+        Instruction::AddF { r_dst, r_a, r_b } => {
+            ("ADD_F".into(), vec![r(*r_dst), r(*r_a), r(*r_b)])
+        }
+        Instruction::SubF { r_dst, r_a, r_b } => {
+            ("SUB_F".into(), vec![r(*r_dst), r(*r_a), r(*r_b)])
+        }
+        Instruction::MulF { r_dst, r_a, r_b } => {
+            ("MUL_F".into(), vec![r(*r_dst), r(*r_a), r(*r_b)])
+        }
+        Instruction::DivF { r_dst, r_a, r_b } => {
+            ("DIV_F".into(), vec![r(*r_dst), r(*r_a), r(*r_b)])
+        }
+        Instruction::ModF { r_dst, r_a, r_b } => {
+            ("MOD_F".into(), vec![r(*r_dst), r(*r_a), r(*r_b)])
+        }
         Instruction::NegF { r_dst, r_src } => ("NEG_F".into(), vec![r(*r_dst), r(*r_src)]),
 
         // ── 0x04 Bitwise & Logical ──
-        Instruction::BitAnd { r_dst, r_a, r_b } => ("BIT_AND".into(), vec![r(*r_dst), r(*r_a), r(*r_b)]),
-        Instruction::BitOr { r_dst, r_a, r_b } => ("BIT_OR".into(), vec![r(*r_dst), r(*r_a), r(*r_b)]),
+        Instruction::BitAnd { r_dst, r_a, r_b } => {
+            ("BIT_AND".into(), vec![r(*r_dst), r(*r_a), r(*r_b)])
+        }
+        Instruction::BitOr { r_dst, r_a, r_b } => {
+            ("BIT_OR".into(), vec![r(*r_dst), r(*r_a), r(*r_b)])
+        }
         Instruction::Shl { r_dst, r_a, r_b } => ("SHL".into(), vec![r(*r_dst), r(*r_a), r(*r_b)]),
         Instruction::Shr { r_dst, r_a, r_b } => ("SHR".into(), vec![r(*r_dst), r(*r_a), r(*r_b)]),
         Instruction::Not { r_dst, r_src } => ("NOT".into(), vec![r(*r_dst), r(*r_src)]),
 
         // ── 0x05 Comparison ──
-        Instruction::CmpEqI { r_dst, r_a, r_b } => ("CMP_EQ_I".into(), vec![r(*r_dst), r(*r_a), r(*r_b)]),
-        Instruction::CmpEqF { r_dst, r_a, r_b } => ("CMP_EQ_F".into(), vec![r(*r_dst), r(*r_a), r(*r_b)]),
-        Instruction::CmpEqB { r_dst, r_a, r_b } => ("CMP_EQ_B".into(), vec![r(*r_dst), r(*r_a), r(*r_b)]),
-        Instruction::CmpEqS { r_dst, r_a, r_b } => ("CMP_EQ_S".into(), vec![r(*r_dst), r(*r_a), r(*r_b)]),
-        Instruction::CmpLtI { r_dst, r_a, r_b } => ("CMP_LT_I".into(), vec![r(*r_dst), r(*r_a), r(*r_b)]),
-        Instruction::CmpLtF { r_dst, r_a, r_b } => ("CMP_LT_F".into(), vec![r(*r_dst), r(*r_a), r(*r_b)]),
+        Instruction::CmpEqI { r_dst, r_a, r_b } => {
+            ("CMP_EQ_I".into(), vec![r(*r_dst), r(*r_a), r(*r_b)])
+        }
+        Instruction::CmpEqF { r_dst, r_a, r_b } => {
+            ("CMP_EQ_F".into(), vec![r(*r_dst), r(*r_a), r(*r_b)])
+        }
+        Instruction::CmpEqB { r_dst, r_a, r_b } => {
+            ("CMP_EQ_B".into(), vec![r(*r_dst), r(*r_a), r(*r_b)])
+        }
+        Instruction::CmpEqS { r_dst, r_a, r_b } => {
+            ("CMP_EQ_S".into(), vec![r(*r_dst), r(*r_a), r(*r_b)])
+        }
+        Instruction::CmpLtI { r_dst, r_a, r_b } => {
+            ("CMP_LT_I".into(), vec![r(*r_dst), r(*r_a), r(*r_b)])
+        }
+        Instruction::CmpLtF { r_dst, r_a, r_b } => {
+            ("CMP_LT_F".into(), vec![r(*r_dst), r(*r_a), r(*r_b)])
+        }
 
         // ── 0x06 Control Flow ──
         Instruction::Br { offset } => ("BR".into(), vec![format!("{}", offset)]),
-        Instruction::BrTrue { r_cond, offset } => ("BR_TRUE".into(), vec![r(*r_cond), format!("{}", offset)]),
-        Instruction::BrFalse { r_cond, offset } => ("BR_FALSE".into(), vec![r(*r_cond), format!("{}", offset)]),
+        Instruction::BrTrue { r_cond, offset } => {
+            ("BR_TRUE".into(), vec![r(*r_cond), format!("{}", offset)])
+        }
+        Instruction::BrFalse { r_cond, offset } => {
+            ("BR_FALSE".into(), vec![r(*r_cond), format!("{}", offset)])
+        }
         Instruction::Switch { r_tag, offsets } => {
             let mut ops = vec![r(*r_tag)];
             for o in offsets {
@@ -674,77 +838,210 @@ fn instr_to_text(instr: &Instruction) -> (String, Vec<String>) {
         Instruction::RetVoid => ("RET_VOID".into(), vec![]),
 
         // ── 0x07 Calls & Delegates ──
-        Instruction::Call { r_dst, method_idx, r_base, argc } => (
+        Instruction::Call {
+            r_dst,
+            method_idx,
+            r_base,
+            argc,
+        } => (
             "CALL".into(),
             vec![r(*r_dst), tok(*method_idx), r(*r_base), format!("{}", argc)],
         ),
-        Instruction::CallVirt { r_dst, r_obj, contract_idx, slot, r_base, argc } => (
+        Instruction::CallVirt {
+            r_dst,
+            r_obj,
+            contract_idx,
+            slot,
+            r_base,
+            argc,
+        } => (
             "CALL_VIRT".into(),
-            vec![r(*r_dst), r(*r_obj), tok(*contract_idx), format!("{}", slot), r(*r_base), format!("{}", argc)],
+            vec![
+                r(*r_dst),
+                r(*r_obj),
+                tok(*contract_idx),
+                format!("{}", slot),
+                r(*r_base),
+                format!("{}", argc),
+            ],
         ),
-        Instruction::CallExtern { r_dst, extern_idx, r_base, argc } => (
+        Instruction::CallExtern {
+            r_dst,
+            extern_idx,
+            r_base,
+            argc,
+        } => (
             "CALL_EXTERN".into(),
             vec![r(*r_dst), tok(*extern_idx), r(*r_base), format!("{}", argc)],
         ),
-        Instruction::NewDelegate { r_dst, method_idx, r_target } => (
+        Instruction::NewDelegate {
+            r_dst,
+            method_idx,
+            r_target,
+        } => (
             "NEW_DELEGATE".into(),
             vec![r(*r_dst), tok(*method_idx), r(*r_target)],
         ),
-        Instruction::CallIndirect { r_dst, r_delegate, r_base, argc } => (
+        Instruction::CallIndirect {
+            r_dst,
+            r_delegate,
+            r_base,
+            argc,
+        } => (
             "CALL_INDIRECT".into(),
             vec![r(*r_dst), r(*r_delegate), r(*r_base), format!("{}", argc)],
         ),
-        Instruction::TailCall { method_idx, r_base, argc } => (
+        Instruction::TailCall {
+            method_idx,
+            r_base,
+            argc,
+        } => (
             "TAIL_CALL".into(),
             vec![tok(*method_idx), r(*r_base), format!("{}", argc)],
         ),
 
         // ── 0x08 Object Model ──
-        Instruction::New { r_dst, type_idx } => ("NEW".into(), vec![r(*r_dst), tok(*type_idx)]),
-        Instruction::GetField { r_dst, r_obj, field_idx } => (
+        Instruction::New {
+            r_dst,
+            type_idx,
+            field_count,
+            r_base,
+        } => (
+            "NEW".into(),
+            vec![
+                r(*r_dst),
+                tok(*type_idx),
+                format!("{}", field_count),
+                r(*r_base),
+            ],
+        ),
+        Instruction::GetField {
+            r_dst,
+            r_obj,
+            field_token,
+        } => (
             "GET_FIELD".into(),
-            vec![r(*r_dst), r(*r_obj), format!("{}", field_idx)],
+            vec![r(*r_dst), r(*r_obj), format!("token({})", field_token)],
         ),
-        Instruction::SetField { r_obj, field_idx, r_val } => (
+        Instruction::SetField {
+            r_obj,
+            field_token,
+            r_val,
+        } => (
             "SET_FIELD".into(),
-            vec![r(*r_obj), format!("{}", field_idx), r(*r_val)],
+            vec![r(*r_obj), format!("token({})", field_token), r(*r_val)],
         ),
-        Instruction::SpawnEntity { r_dst, type_idx } => ("SPAWN_ENTITY".into(), vec![r(*r_dst), tok(*type_idx)]),
+        Instruction::SpawnEntity {
+            r_dst,
+            type_idx,
+            field_count,
+            r_base,
+        } => (
+            "SPAWN_ENTITY".into(),
+            vec![
+                r(*r_dst),
+                tok(*type_idx),
+                format!("{}", field_count),
+                r(*r_base),
+            ],
+        ),
         Instruction::InitEntity { r_entity } => ("INIT_ENTITY".into(), vec![r(*r_entity)]),
-        Instruction::GetComponent { r_dst, r_entity, comp_type_idx } => (
+        Instruction::GetComponent {
+            r_dst,
+            r_entity,
+            comp_type_idx,
+        } => (
             "GET_COMPONENT".into(),
             vec![r(*r_dst), r(*r_entity), tok(*comp_type_idx)],
         ),
-        Instruction::GetOrCreate { r_dst, type_idx } => ("GET_OR_CREATE".into(), vec![r(*r_dst), tok(*type_idx)]),
-        Instruction::FindAll { r_dst, type_idx } => ("FIND_ALL".into(), vec![r(*r_dst), tok(*type_idx)]),
+        Instruction::GetOrCreate { r_dst, type_idx } => {
+            ("GET_OR_CREATE".into(), vec![r(*r_dst), tok(*type_idx)])
+        }
+        Instruction::FindAll { r_dst, type_idx } => {
+            ("FIND_ALL".into(), vec![r(*r_dst), tok(*type_idx)])
+        }
         Instruction::DestroyEntity { r_entity } => ("DESTROY_ENTITY".into(), vec![r(*r_entity)]),
-        Instruction::EntityIsAlive { r_dst, r_entity } => ("ENTITY_IS_ALIVE".into(), vec![r(*r_dst), r(*r_entity)]),
+        Instruction::EntityIsAlive { r_dst, r_entity } => {
+            ("ENTITY_IS_ALIVE".into(), vec![r(*r_dst), r(*r_entity)])
+        }
 
         // ── 0x09 Arrays ──
-        Instruction::NewArray { r_dst, elem_type } => ("NEW_ARRAY".into(), vec![r(*r_dst), tok(*elem_type)]),
-        Instruction::ArrayInit { r_dst, elem_type, count, r_base } => (
+        Instruction::NewArray {
+            r_dst,
+            default_kind,
+        } => (
+            "NEW_ARRAY".into(),
+            vec![r(*r_dst), format!("{default_kind}")],
+        ),
+        Instruction::ArrayInit {
+            r_dst,
+            default_kind,
+            count,
+            r_base,
+        } => (
             "ARRAY_INIT".into(),
-            vec![r(*r_dst), tok(*elem_type), format!("{}", count), r(*r_base)],
+            vec![
+                r(*r_dst),
+                format!("{default_kind}"),
+                format!("{}", count),
+                r(*r_base),
+            ],
         ),
-        Instruction::ArrayLoad { r_dst, r_arr, r_idx } => ("ARRAY_LOAD".into(), vec![r(*r_dst), r(*r_arr), r(*r_idx)]),
-        Instruction::ArrayStore { r_arr, r_idx, r_val } => ("ARRAY_STORE".into(), vec![r(*r_arr), r(*r_idx), r(*r_val)]),
+        Instruction::ArrayLoad {
+            r_dst,
+            r_arr,
+            r_idx,
+        } => ("ARRAY_LOAD".into(), vec![r(*r_dst), r(*r_arr), r(*r_idx)]),
+        Instruction::ArrayStore {
+            r_arr,
+            r_idx,
+            r_val,
+        } => ("ARRAY_STORE".into(), vec![r(*r_arr), r(*r_idx), r(*r_val)]),
         Instruction::ArrayLen { r_dst, r_arr } => ("ARRAY_LEN".into(), vec![r(*r_dst), r(*r_arr)]),
-        Instruction::ArrayResize { r_arr, r_new_len } => ("ARRAY_RESIZE".into(), vec![r(*r_arr), r(*r_new_len)]),
-        Instruction::ArrayCopy { r_dst_arr, r_dst_idx, r_src_arr, r_src_idx, r_len } => (
+        Instruction::ArrayResize { r_arr, r_new_len } => {
+            ("ARRAY_RESIZE".into(), vec![r(*r_arr), r(*r_new_len)])
+        }
+        Instruction::ArrayCopy {
+            r_dst_arr,
+            r_dst_idx,
+            r_src_arr,
+            r_src_idx,
+            r_len,
+        } => (
             "ARRAY_COPY".into(),
-            vec![r(*r_dst_arr), r(*r_dst_idx), r(*r_src_arr), r(*r_src_idx), r(*r_len)],
+            vec![
+                r(*r_dst_arr),
+                r(*r_dst_idx),
+                r(*r_src_arr),
+                r(*r_src_idx),
+                r(*r_len),
+            ],
         ),
-        Instruction::ArraySlice { r_dst, r_arr, r_start, r_end } => (
+        Instruction::ArraySlice {
+            r_dst,
+            r_arr,
+            r_start,
+            r_end,
+        } => (
             "ARRAY_SLICE".into(),
             vec![r(*r_dst), r(*r_arr), r(*r_start), r(*r_end)],
         ),
-        Instruction::NewArraySized { r_dst, elem_type, r_len } => (
+        Instruction::NewArraySized {
+            r_dst,
+            default_kind,
+            r_len,
+        } => (
             "NEW_ARRAY_SIZED".into(),
-            vec![r(*r_dst), tok(*elem_type), r(*r_len)],
+            vec![r(*r_dst), format!("{default_kind}"), r(*r_len)],
         ),
-        Instruction::NewArrayFilled { r_dst, elem_type, r_len, r_fill } => (
+        Instruction::NewArrayFilled {
+            r_dst,
+            default_kind,
+            r_len,
+            r_fill,
+        } => (
             "NEW_ARRAY_FILLED".into(),
-            vec![r(*r_dst), tok(*elem_type), r(*r_len), r(*r_fill)],
+            vec![r(*r_dst), format!("{default_kind}"), r(*r_len), r(*r_fill)],
         ),
 
         // ── 0x0A Type Operations — Option ──
@@ -756,43 +1053,72 @@ fn instr_to_text(instr: &Instruction) -> (String, Vec<String>) {
         // ── 0x0A Type Operations — Result ──
         Instruction::WrapOk { r_dst, r_val } => ("WRAP_OK".into(), vec![r(*r_dst), r(*r_val)]),
         Instruction::WrapErr { r_dst, r_err } => ("WRAP_ERR".into(), vec![r(*r_dst), r(*r_err)]),
-        Instruction::UnwrapOk { r_dst, r_result } => ("UNWRAP_OK".into(), vec![r(*r_dst), r(*r_result)]),
+        Instruction::UnwrapOk { r_dst, r_result } => {
+            ("UNWRAP_OK".into(), vec![r(*r_dst), r(*r_result)])
+        }
         Instruction::IsOk { r_dst, r_result } => ("IS_OK".into(), vec![r(*r_dst), r(*r_result)]),
         Instruction::IsErr { r_dst, r_result } => ("IS_ERR".into(), vec![r(*r_dst), r(*r_result)]),
-        Instruction::ExtractErr { r_dst, r_result } => ("EXTRACT_ERR".into(), vec![r(*r_dst), r(*r_result)]),
+        Instruction::ExtractErr { r_dst, r_result } => {
+            ("EXTRACT_ERR".into(), vec![r(*r_dst), r(*r_result)])
+        }
 
         // ── 0x0A Type Operations — Enum ──
-        Instruction::NewEnum { r_dst, type_idx, tag, field_count, r_base } => (
+        Instruction::NewEnum {
+            r_dst,
+            type_idx,
+            tag,
+            field_count,
+            r_base,
+        } => (
             "NEW_ENUM".into(),
-            vec![r(*r_dst), tok(*type_idx), format!("{}", tag), format!("{}", field_count), r(*r_base)],
+            vec![
+                r(*r_dst),
+                tok(*type_idx),
+                format!("{}", tag),
+                format!("{}", field_count),
+                r(*r_base),
+            ],
         ),
         Instruction::GetTag { r_dst, r_enum } => ("GET_TAG".into(), vec![r(*r_dst), r(*r_enum)]),
-        Instruction::ExtractField { r_dst, r_enum, field_idx } => (
+        Instruction::ExtractField {
+            r_dst,
+            r_enum,
+            field_idx,
+        } => (
             "EXTRACT_FIELD".into(),
             vec![r(*r_dst), r(*r_enum), format!("{}", field_idx)],
         ),
 
         // ── 0x0A Type Operations — Reflection ──
-        Instruction::TypeOf { r_dst, type_idx } => ("TYPEOF".into(), vec![r(*r_dst), tok(*type_idx)]),
+        Instruction::TypeOf { r_dst, type_idx } => {
+            ("TYPEOF".into(), vec![r(*r_dst), tok(*type_idx)])
+        }
 
         // ── 0x0B Concurrency ──
-        Instruction::SpawnTask { r_dst, method_idx, r_base, argc } => (
+        Instruction::SpawnTask {
+            r_dst,
+            method_idx,
+            r_base,
+            argc,
+        } => (
             "SPAWN_TASK".into(),
-            vec![r(*r_dst), tok(*method_idx), r(*r_base), format!("{}", argc)],
-        ),
-        Instruction::SpawnDetached { r_dst, method_idx, r_base, argc } => (
-            "SPAWN_DETACHED".into(),
             vec![r(*r_dst), tok(*method_idx), r(*r_base), format!("{}", argc)],
         ),
         Instruction::Join { r_dst, r_task } => ("JOIN".into(), vec![r(*r_dst), r(*r_task)]),
         Instruction::Cancel { r_task } => ("CANCEL".into(), vec![r(*r_task)]),
-        Instruction::DeferPush { r_dst, method_idx } => ("DEFER_PUSH".into(), vec![r(*r_dst), tok(*method_idx)]),
+        Instruction::DeferPush { r_dst, method_idx } => {
+            ("DEFER_PUSH".into(), vec![r(*r_dst), tok(*method_idx)])
+        }
         Instruction::DeferPop => ("DEFER_POP".into(), vec![]),
         Instruction::DeferEnd => ("DEFER_END".into(), vec![]),
 
         // ── 0x0C Globals & Atomics ──
-        Instruction::LoadGlobal { r_dst, global_idx } => ("LOAD_GLOBAL".into(), vec![r(*r_dst), tok(*global_idx)]),
-        Instruction::StoreGlobal { global_idx, r_src } => ("STORE_GLOBAL".into(), vec![tok(*global_idx), r(*r_src)]),
+        Instruction::LoadGlobal { r_dst, global_idx } => {
+            ("LOAD_GLOBAL".into(), vec![r(*r_dst), tok(*global_idx)])
+        }
+        Instruction::StoreGlobal { global_idx, r_src } => {
+            ("STORE_GLOBAL".into(), vec![tok(*global_idx), r(*r_src)])
+        }
         Instruction::AtomicBegin => ("ATOMIC_BEGIN".into(), vec![]),
         Instruction::AtomicEnd => ("ATOMIC_END".into(), vec![]),
 
@@ -802,7 +1128,11 @@ fn instr_to_text(instr: &Instruction) -> (String, Vec<String>) {
         Instruction::I2s { r_dst, r_src } => ("I2S".into(), vec![r(*r_dst), r(*r_src)]),
         Instruction::F2s { r_dst, r_src } => ("F2S".into(), vec![r(*r_dst), r(*r_src)]),
         Instruction::B2s { r_dst, r_src } => ("B2S".into(), vec![r(*r_dst), r(*r_src)]),
-        Instruction::Convert { r_dst, r_src, target_type } => (
+        Instruction::Convert {
+            r_dst,
+            r_src,
+            target_type,
+        } => (
             "CONVERT".into(),
             vec![r(*r_dst), r(*r_src), tok(*target_type)],
         ),
@@ -811,20 +1141,60 @@ fn instr_to_text(instr: &Instruction) -> (String, Vec<String>) {
         Instruction::S2b { r_dst, r_src } => ("S2B".into(), vec![r(*r_dst), r(*r_src)]),
 
         // ── 0x0E Strings ──
-        Instruction::StrConcat { r_dst, r_a, r_b } => ("STR_CONCAT".into(), vec![r(*r_dst), r(*r_a), r(*r_b)]),
-        Instruction::StrBuild { r_dst, count, r_base } => (
+        Instruction::StrConcat { r_dst, r_a, r_b } => {
+            ("STR_CONCAT".into(), vec![r(*r_dst), r(*r_a), r(*r_b)])
+        }
+        Instruction::StrBuild {
+            r_dst,
+            count,
+            r_base,
+        } => (
             "STR_BUILD".into(),
             vec![r(*r_dst), format!("{}", count), r(*r_base)],
         ),
         Instruction::StrLen { r_dst, r_str } => ("STR_LEN".into(), vec![r(*r_dst), r(*r_str)]),
         Instruction::StrTrim { r_dst, r_src } => ("STR_TRIM".into(), vec![r(*r_dst), r(*r_src)]),
-        Instruction::StrToUpper { r_dst, r_src } => ("STR_TO_UPPER".into(), vec![r(*r_dst), r(*r_src)]),
-        Instruction::StrToLower { r_dst, r_src } => ("STR_TO_LOWER".into(), vec![r(*r_dst), r(*r_src)]),
-        Instruction::StrStartsWith { r_dst, r_str, r_prefix } => ("STR_STARTS_WITH".into(), vec![r(*r_dst), r(*r_str), r(*r_prefix)]),
-        Instruction::StrEndsWith { r_dst, r_str, r_suffix } => ("STR_ENDS_WITH".into(), vec![r(*r_dst), r(*r_str), r(*r_suffix)]),
-        Instruction::StrContains { r_dst, r_str, r_sub } => ("STR_CONTAINS".into(), vec![r(*r_dst), r(*r_str), r(*r_sub)]),
-        Instruction::StrSplit { r_dst, r_str, r_sep } => ("STR_SPLIT".into(), vec![r(*r_dst), r(*r_str), r(*r_sep)]),
-        Instruction::StrReplace { r_dst, r_str, r_from, r_to } => ("STR_REPLACE".into(), vec![r(*r_dst), r(*r_str), r(*r_from), r(*r_to)]),
+        Instruction::StrToUpper { r_dst, r_src } => {
+            ("STR_TO_UPPER".into(), vec![r(*r_dst), r(*r_src)])
+        }
+        Instruction::StrToLower { r_dst, r_src } => {
+            ("STR_TO_LOWER".into(), vec![r(*r_dst), r(*r_src)])
+        }
+        Instruction::StrStartsWith {
+            r_dst,
+            r_str,
+            r_prefix,
+        } => (
+            "STR_STARTS_WITH".into(),
+            vec![r(*r_dst), r(*r_str), r(*r_prefix)],
+        ),
+        Instruction::StrEndsWith {
+            r_dst,
+            r_str,
+            r_suffix,
+        } => (
+            "STR_ENDS_WITH".into(),
+            vec![r(*r_dst), r(*r_str), r(*r_suffix)],
+        ),
+        Instruction::StrContains {
+            r_dst,
+            r_str,
+            r_sub,
+        } => ("STR_CONTAINS".into(), vec![r(*r_dst), r(*r_str), r(*r_sub)]),
+        Instruction::StrSplit {
+            r_dst,
+            r_str,
+            r_sep,
+        } => ("STR_SPLIT".into(), vec![r(*r_dst), r(*r_str), r(*r_sep)]),
+        Instruction::StrReplace {
+            r_dst,
+            r_str,
+            r_from,
+            r_to,
+        } => (
+            "STR_REPLACE".into(),
+            vec![r(*r_dst), r(*r_str), r(*r_from), r(*r_to)],
+        ),
 
         // ── 0x0F Boxing ──
         Instruction::Box { r_dst, r_val } => ("BOX".into(), vec![r(*r_dst), r(*r_val)]),
@@ -832,34 +1202,117 @@ fn instr_to_text(instr: &Instruction) -> (String, Vec<String>) {
     }
 }
 
-/// Convert a flags u16 to keyword string(s) for text output.
+const FLAG_PUBLIC: u16 = 1 << 0;
+
+const FIELD_FLAG_HAS_DEFAULT: u16 = 1 << 1;
+const FIELD_FLAG_COMPONENT: u16 = 1 << 2;
+const FIELD_FLAG_READONLY: u16 = 1 << 3;
+
+const METHOD_FLAG_STATIC: u16 = 1 << 1;
+const METHOD_FLAG_MUT_SELF: u16 = 1 << 2;
+const METHOD_HOOK_SHIFT: u16 = 3;
+const METHOD_HOOK_MASK: u16 = 0x07 << METHOD_HOOK_SHIFT;
+const METHOD_FLAG_INTRINSIC: u16 = 1 << 7;
+const METHOD_FLAG_DIALOGUE: u16 = 1 << 8;
+
+const GLOBAL_FLAG_CONST: u16 = 1 << 1;
+const GLOBAL_FLAG_MUTABLE: u16 = 1 << 2;
+
+/// Convert a simple table-specific flag bitset to assembly keywords.
 ///
-/// Supports: 0x0001=pub, 0x0002=mut, 0x0004=static. Unknown flags emitted as integer.
-fn flags_to_str(flags: u16) -> String {
+/// If any bit has no keyword in that table's grammar, emit the complete numeric
+/// value so disassembly remains lossless.
+fn simple_flags_to_str(flags: u16, known: &[(u16, &'static str)]) -> String {
     if flags == 0 {
         return String::new();
     }
 
-    let mut parts = Vec::new();
-    let mut remaining = flags;
-
-    if remaining & 0x0001 != 0 {
-        parts.push("pub");
-        remaining &= !0x0001;
-    }
-    if remaining & 0x0002 != 0 {
-        parts.push("mut");
-        remaining &= !0x0002;
-    }
-    if remaining & 0x0004 != 0 {
-        parts.push("static");
-        remaining &= !0x0004;
-    }
-
-    if remaining != 0 {
-        // Unknown flags: emit as integer
+    let known_mask = known.iter().fold(0, |mask, (bit, _)| mask | bit);
+    if flags & !known_mask != 0 {
         return format!("{}", flags);
     }
 
+    let parts: Vec<_> = known
+        .iter()
+        .filter_map(|(bit, name)| (flags & bit != 0).then_some(*name))
+        .collect();
     parts.join(" ")
+}
+
+fn type_flags_to_str(flags: u16) -> String {
+    simple_flags_to_str(flags, &[(FLAG_PUBLIC, "pub")])
+}
+
+fn field_flags_to_str(flags: u16) -> String {
+    simple_flags_to_str(
+        flags,
+        &[
+            (FLAG_PUBLIC, "pub"),
+            (FIELD_FLAG_HAS_DEFAULT, "has_default"),
+            (FIELD_FLAG_COMPONENT, "component"),
+            (FIELD_FLAG_READONLY, "readonly"),
+        ],
+    )
+}
+
+fn method_flags_to_str(flags: u16) -> String {
+    const KNOWN_MASK: u16 = FLAG_PUBLIC
+        | METHOD_FLAG_STATIC
+        | METHOD_FLAG_MUT_SELF
+        | METHOD_HOOK_MASK
+        | METHOD_FLAG_INTRINSIC
+        | METHOD_FLAG_DIALOGUE;
+
+    if flags == 0 {
+        return String::new();
+    }
+
+    let hook = (flags & METHOD_HOOK_MASK) >> METHOD_HOOK_SHIFT;
+    if flags & !KNOWN_MASK != 0 || hook == 7 {
+        return format!("{}", flags);
+    }
+
+    let mut parts = Vec::new();
+    if flags & FLAG_PUBLIC != 0 {
+        parts.push("pub");
+    }
+    if flags & METHOD_FLAG_STATIC != 0 {
+        parts.push("static");
+    }
+    if flags & METHOD_FLAG_MUT_SELF != 0 {
+        parts.push("mut_self");
+    }
+    if hook != 0 {
+        parts.push(match hook {
+            1 => "hook_create",
+            2 => "hook_destroy",
+            3 => "hook_finalize",
+            4 => "hook_serialize",
+            5 => "hook_deserialize",
+            6 => "hook_interact",
+            _ => unreachable!("hook value 7 was rejected above"),
+        });
+    }
+    if flags & METHOD_FLAG_INTRINSIC != 0 {
+        parts.push("intrinsic");
+    }
+    if flags & METHOD_FLAG_DIALOGUE != 0 {
+        parts.push("dialogue");
+    }
+    parts.join(" ")
+}
+
+fn global_flags_to_str(flags: u16) -> String {
+    simple_flags_to_str(
+        flags,
+        &[
+            (FLAG_PUBLIC, "pub"),
+            (GLOBAL_FLAG_CONST, "const"),
+            (GLOBAL_FLAG_MUTABLE, "mut"),
+        ],
+    )
+}
+
+fn extern_flags_to_str(flags: u16) -> String {
+    simple_flags_to_str(flags, &[(FLAG_PUBLIC, "pub")])
 }

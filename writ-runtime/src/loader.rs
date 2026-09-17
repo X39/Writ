@@ -1,7 +1,7 @@
 use rustc_hash::FxHashMap;
 use std::io::Cursor;
 
-use writ_module::{Instruction, Module};
+use writ_module::{FORMAT_VERSION, Instruction, Module};
 
 use crate::domain::ResolvedRefs;
 use crate::error::RuntimeError;
@@ -20,12 +20,30 @@ pub struct LoadedModule {
     pub byte_offsets: Vec<Vec<u32>>,
     /// Cross-module reference resolution results. Populated by Domain::resolve_refs().
     pub resolved_refs: ResolvedRefs,
+    /// Absolute FieldDef row index -> declaring TypeDef and local object-layout offset.
+    ///
+    /// Built and validated once at load time so field instructions never infer
+    /// ownership from an unchecked ordinal while executing.
+    pub field_def_locations: Vec<FieldDefLocation>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FieldDefLocation {
+    pub owner_type_idx: usize,
+    pub field_offset: usize,
 }
 
 impl LoadedModule {
     /// Decode all method bodies from raw code bytes into `Vec<Instruction>`,
     /// converting branch byte offsets to instruction indices.
     pub fn from_module(module: Module) -> Result<Self, RuntimeError> {
+        if module.header.format_version != FORMAT_VERSION {
+            return Err(RuntimeError::LoadError(format!(
+                "unsupported format version: {} (expected {})",
+                module.header.format_version, FORMAT_VERSION
+            )));
+        }
+        let field_def_locations = build_field_def_locations(&module)?;
         let mut decoded_bodies = Vec::with_capacity(module.method_bodies.len());
         let mut byte_offsets_all = Vec::with_capacity(module.method_bodies.len());
         for (method_idx, body) in module.method_bodies.iter().enumerate() {
@@ -38,8 +56,73 @@ impl LoadedModule {
             decoded_bodies,
             byte_offsets: byte_offsets_all,
             resolved_refs: ResolvedRefs::new(),
+            field_def_locations,
         })
     }
+}
+
+fn build_field_def_locations(module: &Module) -> Result<Vec<FieldDefLocation>, RuntimeError> {
+    let field_count = module.field_defs.len();
+    if module.type_defs.is_empty() {
+        return if field_count == 0 {
+            Ok(Vec::new())
+        } else {
+            Err(RuntimeError::LoadError(
+                "FieldDef rows exist without an owning TypeDef".into(),
+            ))
+        };
+    }
+
+    let mut starts = Vec::with_capacity(module.type_defs.len());
+    for (type_idx, type_def) in module.type_defs.iter().enumerate() {
+        let start = type_def.field_list.checked_sub(1).ok_or_else(|| {
+            RuntimeError::LoadError(format!(
+                "TypeDef row {} has invalid zero field_list",
+                type_idx + 1
+            ))
+        })? as usize;
+        if start > field_count {
+            return Err(RuntimeError::LoadError(format!(
+                "TypeDef row {} field_list {} exceeds FieldDef row count {}",
+                type_idx + 1,
+                type_def.field_list,
+                field_count
+            )));
+        }
+        if starts.last().is_some_and(|previous| *previous > start) {
+            return Err(RuntimeError::LoadError(format!(
+                "TypeDef row {} field_list is not monotonic",
+                type_idx + 1
+            )));
+        }
+        starts.push(start);
+    }
+
+    if field_count != 0 && starts[0] != 0 {
+        return Err(RuntimeError::LoadError(
+            "FieldDef rows precede the first TypeDef field_list".into(),
+        ));
+    }
+
+    let mut locations = Vec::with_capacity(field_count);
+    for type_idx in 0..module.type_defs.len() {
+        let start = starts[type_idx];
+        let end = starts.get(type_idx + 1).copied().unwrap_or(field_count);
+        for field_idx in start..end {
+            debug_assert_eq!(locations.len(), field_idx);
+            locations.push(FieldDefLocation {
+                owner_type_idx: type_idx,
+                field_offset: field_idx - start,
+            });
+        }
+    }
+    if locations.len() != field_count {
+        return Err(RuntimeError::LoadError(format!(
+            "{} FieldDef row(s) have no owning TypeDef",
+            field_count - locations.len()
+        )));
+    }
+    Ok(locations)
 }
 
 /// Decode raw instruction bytes and reindex branch targets.
@@ -51,7 +134,10 @@ impl LoadedModule {
 /// Returns `(instructions, byte_offsets)` where `byte_offsets[i]` is the byte offset
 /// in `raw_code` where instruction `i` starts. Used by `LoadedModule` to map instruction
 /// indices back to byte offsets for SourceSpan and breakpoint lookups.
-fn decode_and_reindex(raw_code: &[u8], method_idx: usize) -> Result<(Vec<Instruction>, Vec<u32>), RuntimeError> {
+fn decode_and_reindex(
+    raw_code: &[u8],
+    method_idx: usize,
+) -> Result<(Vec<Instruction>, Vec<u32>), RuntimeError> {
     if raw_code.is_empty() {
         return Ok((Vec::new(), Vec::new()));
     }
@@ -67,12 +153,10 @@ fn decode_and_reindex(raw_code: &[u8], method_idx: usize) -> Result<(Vec<Instruc
             break;
         }
         byte_offsets.push(pos);
-        let instr = Instruction::decode(&mut cursor).map_err(|e| {
-            RuntimeError::DecodeError {
-                method_idx,
-                offset: pos as usize,
-                detail: format!("{}", e),
-            }
+        let instr = Instruction::decode(&mut cursor).map_err(|e| RuntimeError::DecodeError {
+            method_idx,
+            offset: pos as usize,
+            detail: format!("{}", e),
         })?;
         instructions.push(instr);
     }
@@ -93,76 +177,84 @@ fn decode_and_reindex(raw_code: &[u8], method_idx: usize) -> Result<(Vec<Instruc
         match instr {
             Instruction::Br { offset } => {
                 let target_byte = (current_byte_offset as i64 + *offset as i64) as u32;
-                let target_idx = offset_map.get(&target_byte).ok_or_else(|| {
-                    RuntimeError::DecodeError {
-                        method_idx,
-                        offset: current_byte_offset as usize,
-                        detail: format!(
-                            "Br target byte offset {} not found in offset map",
-                            target_byte
-                        ),
-                    }
-                })?;
+                let target_idx =
+                    offset_map
+                        .get(&target_byte)
+                        .ok_or_else(|| RuntimeError::DecodeError {
+                            method_idx,
+                            offset: current_byte_offset as usize,
+                            detail: format!(
+                                "Br target byte offset {} not found in offset map",
+                                target_byte
+                            ),
+                        })?;
                 *offset = *target_idx as i32;
             }
             Instruction::BrTrue { offset, .. } => {
                 let target_byte = (current_byte_offset as i64 + *offset as i64) as u32;
-                let target_idx = offset_map.get(&target_byte).ok_or_else(|| {
-                    RuntimeError::DecodeError {
-                        method_idx,
-                        offset: current_byte_offset as usize,
-                        detail: format!(
-                            "BrTrue target byte offset {} not found in offset map",
-                            target_byte
-                        ),
-                    }
-                })?;
+                let target_idx =
+                    offset_map
+                        .get(&target_byte)
+                        .ok_or_else(|| RuntimeError::DecodeError {
+                            method_idx,
+                            offset: current_byte_offset as usize,
+                            detail: format!(
+                                "BrTrue target byte offset {} not found in offset map",
+                                target_byte
+                            ),
+                        })?;
                 *offset = *target_idx as i32;
             }
             Instruction::BrFalse { offset, .. } => {
                 let target_byte = (current_byte_offset as i64 + *offset as i64) as u32;
-                let target_idx = offset_map.get(&target_byte).ok_or_else(|| {
-                    RuntimeError::DecodeError {
-                        method_idx,
-                        offset: current_byte_offset as usize,
-                        detail: format!(
-                            "BrFalse target byte offset {} not found in offset map",
-                            target_byte
-                        ),
-                    }
-                })?;
+                let target_idx =
+                    offset_map
+                        .get(&target_byte)
+                        .ok_or_else(|| RuntimeError::DecodeError {
+                            method_idx,
+                            offset: current_byte_offset as usize,
+                            detail: format!(
+                                "BrFalse target byte offset {} not found in offset map",
+                                target_byte
+                            ),
+                        })?;
                 *offset = *target_idx as i32;
             }
             Instruction::Switch { offsets, .. } => {
                 for off in offsets.iter_mut() {
                     let target_byte = (current_byte_offset as i64 + *off as i64) as u32;
-                    let target_idx = offset_map.get(&target_byte).ok_or_else(|| {
-                        RuntimeError::DecodeError {
-                            method_idx,
-                            offset: current_byte_offset as usize,
-                            detail: format!(
-                                "Switch target byte offset {} not found in offset map",
-                                target_byte
-                            ),
-                        }
-                    })?;
+                    let target_idx =
+                        offset_map
+                            .get(&target_byte)
+                            .ok_or_else(|| RuntimeError::DecodeError {
+                                method_idx,
+                                offset: current_byte_offset as usize,
+                                detail: format!(
+                                    "Switch target byte offset {} not found in offset map",
+                                    target_byte
+                                ),
+                            })?;
                     *off = *target_idx as i32;
                 }
             }
-            Instruction::DeferPush { method_idx: handler_offset, .. } => {
+            Instruction::DeferPush {
+                method_idx: handler_offset,
+                ..
+            } => {
                 // DeferPush's method_idx field is actually a byte offset from method start
                 // (per spec §3.11). Convert to instruction index.
                 let byte_off = *handler_offset;
-                let target_idx = offset_map.get(&byte_off).ok_or_else(|| {
-                    RuntimeError::DecodeError {
-                        method_idx,
-                        offset: current_byte_offset as usize,
-                        detail: format!(
-                            "DeferPush handler byte offset {} not found in offset map",
-                            byte_off
-                        ),
-                    }
-                })?;
+                let target_idx =
+                    offset_map
+                        .get(&byte_off)
+                        .ok_or_else(|| RuntimeError::DecodeError {
+                            method_idx,
+                            offset: current_byte_offset as usize,
+                            detail: format!(
+                                "DeferPush handler byte offset {} not found in offset map",
+                                byte_off
+                            ),
+                        })?;
                 *handler_offset = *target_idx as u32;
             }
             _ => {}
@@ -175,7 +267,7 @@ fn decode_and_reindex(raw_code: &[u8], method_idx: usize) -> Result<(Vec<Instruc
 #[cfg(test)]
 mod tests {
     use super::*;
-    use writ_module::Instruction;
+    use writ_module::{Instruction, ModuleBuilder};
 
     fn encode_instructions(instrs: &[Instruction]) -> Vec<u8> {
         let mut code = Vec::new();
@@ -193,15 +285,53 @@ mod tests {
     }
 
     #[test]
+    fn rejects_in_memory_module_from_older_format_version() {
+        let mut module = Module::new();
+        module.header.format_version = FORMAT_VERSION - 1;
+
+        match LoadedModule::from_module(module) {
+            Err(RuntimeError::LoadError(message)) => {
+                assert!(message.contains("unsupported format version"));
+            }
+            _ => panic!("older in-memory module must be rejected"),
+        }
+    }
+
+    #[test]
+    fn rejects_zero_typedef_field_list() {
+        let mut builder = ModuleBuilder::new("invalid-field-list");
+        builder.add_type_def("Broken", "", writ_module::tables::TypeDefKind::Struct, 0);
+        builder.add_field_def("field", &[0x01], 0);
+        let mut module = builder.build();
+        module.type_defs[0].field_list = 0;
+
+        match LoadedModule::from_module(module) {
+            Err(RuntimeError::LoadError(message)) => {
+                assert!(message.contains("invalid zero field_list"));
+            }
+            _ => panic!("zero field_list must be rejected"),
+        }
+    }
+
+    #[test]
     fn linear_body_no_branches() {
         let instrs = vec![
-            Instruction::LoadInt { r_dst: 0, value: 42 },
+            Instruction::LoadInt {
+                r_dst: 0,
+                value: 42,
+            },
             Instruction::Ret { r_src: 0 },
         ];
         let code = encode_instructions(&instrs);
         let (decoded, offsets) = decode_and_reindex(&code, 0).unwrap();
         assert_eq!(decoded.len(), 2);
-        assert_eq!(decoded[0], Instruction::LoadInt { r_dst: 0, value: 42 });
+        assert_eq!(
+            decoded[0],
+            Instruction::LoadInt {
+                r_dst: 0,
+                value: 42
+            }
+        );
         assert_eq!(decoded[1], Instruction::Ret { r_src: 0 });
         assert_eq!(offsets.len(), 2);
         assert_eq!(offsets[0], 0, "first instruction starts at byte 0");
@@ -251,7 +381,7 @@ mod tests {
 
         let mut buf = Vec::new();
         load.encode(&mut buf).unwrap(); // position 0, 12 bytes
-        br.encode(&mut buf).unwrap();   // position 12
+        br.encode(&mut buf).unwrap(); // position 12
 
         let (decoded, offsets) = decode_and_reindex(&buf, 0).unwrap();
         assert_eq!(decoded.len(), 2);
@@ -267,7 +397,10 @@ mod tests {
     fn conditional_branch_forward() {
         // [LoadTrue(4B)] [BrTrue(8B) forward past LoadInt to Ret] [LoadInt(12B)] [Ret(4B)]
         let load_true = Instruction::LoadTrue { r_dst: 0 };
-        let load_int = Instruction::LoadInt { r_dst: 1, value: 99 };
+        let load_int = Instruction::LoadInt {
+            r_dst: 1,
+            value: 99,
+        };
         let ret = Instruction::Ret { r_src: 0 };
 
         let mut buf = Vec::new();
@@ -275,7 +408,10 @@ mod tests {
         // BrTrue is 8 bytes
         // LoadInt is at 4+8=12, 12 bytes, so Ret is at 24
         // offset = 24 - 4 = 20
-        let br_true = Instruction::BrTrue { r_cond: 0, offset: 20 };
+        let br_true = Instruction::BrTrue {
+            r_cond: 0,
+            offset: 20,
+        };
         br_true.encode(&mut buf).unwrap();
         load_int.encode(&mut buf).unwrap();
         ret.encode(&mut buf).unwrap();
@@ -299,14 +435,20 @@ mod tests {
         // handler position 20 should map to instruction index 2
 
         // Actually: DeferPush is at byte 0 (8 bytes), LoadInt at byte 8 (12 bytes), Ret at byte 20 (4 bytes)
-        let defer_push = Instruction::DeferPush { r_dst: 0, method_idx: 20 }; // byte offset 20
-        let load_int = Instruction::LoadInt { r_dst: 0, value: 42 };
+        let defer_push = Instruction::DeferPush {
+            r_dst: 0,
+            method_idx: 20,
+        }; // byte offset 20
+        let load_int = Instruction::LoadInt {
+            r_dst: 0,
+            value: 42,
+        };
         let ret = Instruction::Ret { r_src: 0 };
 
         let mut buf = Vec::new();
         defer_push.encode(&mut buf).unwrap(); // 8 bytes
-        load_int.encode(&mut buf).unwrap();   // 12 bytes, at position 8
-        ret.encode(&mut buf).unwrap();        // 4 bytes, at position 20
+        load_int.encode(&mut buf).unwrap(); // 12 bytes, at position 8
+        ret.encode(&mut buf).unwrap(); // 4 bytes, at position 20
 
         let (decoded, offsets) = decode_and_reindex(&buf, 0).unwrap();
         assert_eq!(decoded.len(), 3);
@@ -366,7 +508,13 @@ mod tests {
         assert_eq!(loaded.byte_offsets.len(), 2);
         assert_eq!(loaded.byte_offsets[0].len(), 2);
         assert_eq!(loaded.byte_offsets[1].len(), 2);
-        assert_eq!(loaded.byte_offsets[0][0], 0, "first instruction of body 0 starts at byte 0");
-        assert_eq!(loaded.byte_offsets[1][0], 0, "first instruction of body 1 starts at byte 0");
+        assert_eq!(
+            loaded.byte_offsets[0][0], 0,
+            "first instruction of body 0 starts at byte 0"
+        );
+        assert_eq!(
+            loaded.byte_offsets[1][0], 0,
+            "first instruction of body 1 starts at byte 0"
+        );
     }
 }

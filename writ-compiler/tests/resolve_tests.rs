@@ -17,7 +17,11 @@ fn parse_and_lower(src: &'static str) -> Ast {
     let error_msgs: Vec<String> = parse_errors.iter().map(|e| format!("{e:?}")).collect();
     assert!(error_msgs.is_empty(), "parse errors: {:?}", error_msgs);
     let (ast, lower_errors) = lower(items);
-    assert!(lower_errors.is_empty(), "lowering errors: {:?}", lower_errors);
+    assert!(
+        lower_errors.is_empty(),
+        "lowering errors: {:?}",
+        lower_errors
+    );
     ast
 }
 
@@ -99,17 +103,44 @@ pub global mut tick_count: int = 0;
     assert!(def_map.get("tick_count").is_some(), "global tick_count");
 
     // Check kinds
-    assert_eq!(def_map.get_entry(def_map.get("greet").unwrap()).kind, DefKind::Fn);
-    assert_eq!(def_map.get_entry(def_map.get("Potion").unwrap()).kind, DefKind::Struct);
-    assert_eq!(def_map.get_entry(def_map.get("Player").unwrap()).kind, DefKind::Entity);
-    assert_eq!(def_map.get_entry(def_map.get("Direction").unwrap()).kind, DefKind::Enum);
-    assert_eq!(def_map.get_entry(def_map.get("Movable").unwrap()).kind, DefKind::Contract);
-    assert_eq!(def_map.get_entry(def_map.get("get_time").unwrap()).kind, DefKind::ExternFn);
-    assert_eq!(def_map.get_entry(def_map.get("MAX_HP").unwrap()).kind, DefKind::Const);
-    assert_eq!(def_map.get_entry(def_map.get("tick_count").unwrap()).kind, DefKind::Global);
+    assert_eq!(
+        def_map.get_entry(def_map.get("greet").unwrap()).kind,
+        DefKind::Fn
+    );
+    assert_eq!(
+        def_map.get_entry(def_map.get("Potion").unwrap()).kind,
+        DefKind::Struct
+    );
+    assert_eq!(
+        def_map.get_entry(def_map.get("Player").unwrap()).kind,
+        DefKind::Entity
+    );
+    assert_eq!(
+        def_map.get_entry(def_map.get("Direction").unwrap()).kind,
+        DefKind::Enum
+    );
+    assert_eq!(
+        def_map.get_entry(def_map.get("Movable").unwrap()).kind,
+        DefKind::Contract
+    );
+    assert_eq!(
+        def_map.get_entry(def_map.get("get_time").unwrap()).kind,
+        DefKind::ExternFn
+    );
+    assert_eq!(
+        def_map.get_entry(def_map.get("MAX_HP").unwrap()).kind,
+        DefKind::Const
+    );
+    assert_eq!(
+        def_map.get_entry(def_map.get("tick_count").unwrap()).kind,
+        DefKind::Global
+    );
 
     // Impl block tracked separately
-    assert!(!def_map.impl_blocks.is_empty(), "impl block should be tracked");
+    assert!(
+        !def_map.impl_blocks.is_empty(),
+        "impl block should be tracked"
+    );
     assert_eq!(
         def_map.get_entry(def_map.impl_blocks[0]).kind,
         DefKind::Impl
@@ -135,7 +166,10 @@ extern component Health {
 
     // Extern component without pub is private
     let file_privates = def_map.file_private.get(&FileId(0)).unwrap();
-    assert!(file_privates.contains_key("Health"), "Health in file_private");
+    assert!(
+        file_privates.contains_key("Health"),
+        "Health in file_private"
+    );
     let health_id = file_privates["Health"];
     assert_eq!(def_map.get_entry(health_id).kind, DefKind::ExternComponent);
 }
@@ -154,12 +188,21 @@ pub fn brew() {}
 "#,
     );
 
-    assert!(diags.iter().all(|d| d.code != "E0001" && d.code != "E0002"),
-        "unexpected errors: {:?}", diags);
+    assert!(
+        diags.iter().all(|d| d.code != "E0001" && d.code != "E0002"),
+        "unexpected errors: {:?}",
+        diags
+    );
 
-    assert!(def_map.get("survival::Potion").is_some(), "survival::Potion");
+    assert!(
+        def_map.get("survival::Potion").is_some(),
+        "survival::Potion"
+    );
     assert!(def_map.get("survival::brew").is_some(), "survival::brew");
-    assert!(def_map.get("Potion").is_none(), "bare Potion should not exist");
+    assert!(
+        def_map.get("Potion").is_none(),
+        "bare Potion should not exist"
+    );
 }
 
 // =========================================================
@@ -179,7 +222,11 @@ namespace a {
 "#,
     );
 
-    assert!(diags.iter().all(|d| d.code != "E0001"), "unexpected duplicate errors: {:?}", diags);
+    assert!(
+        diags.iter().all(|d| d.code != "E0001"),
+        "unexpected duplicate errors: {:?}",
+        diags
+    );
 
     assert!(def_map.get("a::b::X").is_some(), "a::b::X");
     assert!(def_map.get("a::Y").is_some(), "a::Y");
@@ -210,10 +257,20 @@ pub struct Weapon { pub damage: int }
         ),
     ]);
 
-    assert!(diags.iter().all(|d| d.code != "E0001"), "unexpected duplicate errors: {:?}", diags);
+    assert!(
+        diags.iter().all(|d| d.code != "E0001"),
+        "unexpected duplicate errors: {:?}",
+        diags
+    );
 
-    assert!(def_map.get("survival::Potion").is_some(), "survival::Potion");
-    assert!(def_map.get("survival::Weapon").is_some(), "survival::Weapon");
+    assert!(
+        def_map.get("survival::Potion").is_some(),
+        "survival::Potion"
+    );
+    assert!(
+        def_map.get("survival::Weapon").is_some(),
+        "survival::Weapon"
+    );
 
     // Both should be in the same namespace member list
     let members = def_map.pub_members_of("survival");
@@ -235,7 +292,11 @@ pub struct PublicPotion { pub name: string }
     );
 
     // No errors expected (no explicit "priv" keyword needed — default is private)
-    assert!(diags.iter().all(|d| d.code != "E0001"), "unexpected errors: {:?}", diags);
+    assert!(
+        diags.iter().all(|d| d.code != "E0001"),
+        "unexpected errors: {:?}",
+        diags
+    );
 
     // Public def is in by_fqn
     assert!(def_map.get("survival::PublicPotion").is_some());
@@ -256,34 +317,61 @@ pub struct PublicPotion { pub name: string }
 #[test]
 fn prelude_shadow_types() {
     let (_, diags) = collect_src("pub struct Option {}");
-    assert!(has_error_code(&diags, "E0002"), "Option should trigger prelude shadow");
+    assert!(
+        has_error_code(&diags, "E0002"),
+        "Option should trigger prelude shadow"
+    );
 
     let (_, diags) = collect_src("pub struct Entity {}");
-    assert!(has_error_code(&diags, "E0002"), "Entity should trigger prelude shadow");
+    assert!(
+        has_error_code(&diags, "E0002"),
+        "Entity should trigger prelude shadow"
+    );
 
     let (_, diags) = collect_src("pub struct Result {}");
-    assert!(has_error_code(&diags, "E0002"), "Result should trigger prelude shadow");
+    assert!(
+        has_error_code(&diags, "E0002"),
+        "Result should trigger prelude shadow"
+    );
 
     let (_, diags) = collect_src("pub struct Array {}");
-    assert!(has_error_code(&diags, "E0002"), "Array should trigger prelude shadow");
+    assert!(
+        has_error_code(&diags, "E0002"),
+        "Array should trigger prelude shadow"
+    );
 
     let (_, diags) = collect_src("pub struct Range {}");
-    assert!(has_error_code(&diags, "E0002"), "Range should trigger prelude shadow");
+    assert!(
+        has_error_code(&diags, "E0002"),
+        "Range should trigger prelude shadow"
+    );
 }
 
 #[test]
 fn prelude_shadow_contracts() {
     let (_, diags) = collect_src("pub contract Add { fn add(self, other: int) -> int; }");
-    assert!(has_error_code(&diags, "E0002"), "Add should trigger prelude shadow");
+    assert!(
+        has_error_code(&diags, "E0002"),
+        "Add should trigger prelude shadow"
+    );
 
     let (_, diags) = collect_src("pub contract Eq { fn eq(self, other: int) -> bool; }");
-    assert!(has_error_code(&diags, "E0002"), "Eq should trigger prelude shadow");
+    assert!(
+        has_error_code(&diags, "E0002"),
+        "Eq should trigger prelude shadow"
+    );
 
     let (_, diags) = collect_src("pub contract Iterator { fn next(mut self) -> int; }");
-    assert!(has_error_code(&diags, "E0002"), "Iterator should trigger prelude shadow");
+    assert!(
+        has_error_code(&diags, "E0002"),
+        "Iterator should trigger prelude shadow"
+    );
 
     let (_, diags) = collect_src("pub contract Error { fn message(self) -> string; }");
-    assert!(has_error_code(&diags, "E0002"), "Error should trigger prelude shadow");
+    assert!(
+        has_error_code(&diags, "E0002"),
+        "Error should trigger prelude shadow"
+    );
 }
 
 // =========================================================
@@ -299,7 +387,10 @@ pub struct Foo {}
 "#,
     );
 
-    assert!(has_error_code(&diags, "E0001"), "duplicate Foo should produce E0001");
+    assert!(
+        has_error_code(&diags, "E0001"),
+        "duplicate Foo should produce E0001"
+    );
 }
 
 #[test]
@@ -323,7 +414,10 @@ pub struct Item {}
         ),
     ]);
 
-    assert!(has_error_code(&diags, "E0001"), "duplicate shared::Item should produce E0001");
+    assert!(
+        has_error_code(&diags, "E0001"),
+        "duplicate shared::Item should produce E0001"
+    );
 }
 
 // =========================================================
@@ -386,14 +480,19 @@ fn prelude_coverage() {
 
     // All 18 contracts
     for name in PRELUDE_CONTRACT_NAMES {
-        assert!(is_prelude_name(name), "contract {name} should be in prelude");
+        assert!(
+            is_prelude_name(name),
+            "contract {name} should be in prelude"
+        );
     }
-    assert!(is_prelude_name("Speaker"), "Speaker contract should be in prelude");
+    assert!(
+        is_prelude_name("Speaker"),
+        "Speaker contract should be in prelude"
+    );
 
     // 28 total
-    let total = PRELUDE_PRIMITIVE_NAMES.len()
-        + PRELUDE_TYPE_NAMES.len()
-        + PRELUDE_CONTRACT_NAMES.len();
+    let total =
+        PRELUDE_PRIMITIVE_NAMES.len() + PRELUDE_TYPE_NAMES.len() + PRELUDE_CONTRACT_NAMES.len();
     assert_eq!(total, 28, "prelude should have 28 names total");
 
     // Non-prelude
@@ -415,7 +514,10 @@ fn resolve_src(src: &'static str) -> (resolve::ir::NameResolvedAst, Vec<Diagnost
     resolve_src_with_path(src, "src/test.writ")
 }
 
-fn resolve_src_with_path(src: &'static str, path: &str) -> (resolve::ir::NameResolvedAst, Vec<Diagnostic>) {
+fn resolve_src_with_path(
+    src: &'static str,
+    path: &str,
+) -> (resolve::ir::NameResolvedAst, Vec<Diagnostic>) {
     let ast = parse_and_lower(src);
     let file_id = FileId(0);
     let asts: Vec<(FileId, &writ_compiler::ast::Ast)> = vec![(file_id, &ast)];
@@ -423,14 +525,17 @@ fn resolve_src_with_path(src: &'static str, path: &str) -> (resolve::ir::NameRes
     resolve::resolve(&asts, &file_paths, &[])
 }
 
-fn resolve_multi(files: &[(&str, &'static str, &str)]) -> (resolve::ir::NameResolvedAst, Vec<Diagnostic>) {
+fn resolve_multi(
+    files: &[(&str, &'static str, &str)],
+) -> (resolve::ir::NameResolvedAst, Vec<Diagnostic>) {
     let mut asts_owned = Vec::new();
     for (i, (_, src, _)) in files.iter().enumerate() {
         let ast = parse_and_lower(src);
         asts_owned.push((FileId(i as u32), ast));
     }
 
-    let asts: Vec<(FileId, &writ_compiler::ast::Ast)> = asts_owned.iter().map(|(id, ast)| (*id, ast)).collect();
+    let asts: Vec<(FileId, &writ_compiler::ast::Ast)> =
+        asts_owned.iter().map(|(id, ast)| (*id, ast)).collect();
     let file_paths: Vec<(FileId, &str)> = files
         .iter()
         .enumerate()
@@ -442,13 +547,18 @@ fn resolve_multi(files: &[(&str, &'static str, &str)]) -> (resolve::ir::NameReso
 
 #[test]
 fn scope_resolve_primitive_types() {
-    let (resolved, diags) = resolve_src(
-        "pub fn foo(x: int, y: float, z: bool, s: string) {}",
-    );
+    let (resolved, diags) = resolve_src("pub fn foo(x: int, y: float, z: bool, s: string) {}");
     // No errors expected for primitive types
     let type_errors: Vec<_> = diags.iter().filter(|d| d.code == "E0003").collect();
-    assert!(type_errors.is_empty(), "primitive types should resolve: {:?}", type_errors);
-    assert!(!resolved.decls.is_empty(), "should have resolved declarations");
+    assert!(
+        type_errors.is_empty(),
+        "primitive types should resolve: {:?}",
+        type_errors
+    );
+    assert!(
+        !resolved.decls.is_empty(),
+        "should have resolved declarations"
+    );
 }
 
 #[test]
@@ -461,7 +571,11 @@ pub fn make_point() -> Point { return new Point { x: 0, y: 0 }; }
 "#,
     );
     let type_errors: Vec<_> = diags.iter().filter(|d| d.code == "E0003").collect();
-    assert!(type_errors.is_empty(), "Point should resolve in same namespace: {:?}", type_errors);
+    assert!(
+        type_errors.is_empty(),
+        "Point should resolve in same namespace: {:?}",
+        type_errors
+    );
 }
 
 #[test]
@@ -542,7 +656,10 @@ pub fn use_helper(h: PrivateHelper) {}
         ),
     ]);
     // PrivateHelper is private and should cause E0005 or E0003
-    let errors: Vec<_> = diags.iter().filter(|d| d.code == "E0005" || d.code == "E0003").collect();
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.code == "E0005" || d.code == "E0003")
+        .collect();
     assert!(
         !errors.is_empty(),
         "using private type from another file should produce an error"
@@ -598,17 +715,22 @@ pub fn use_it(p: HealthPotion) {}
     assert!(
         !has_error_code(&diags, "W0001"),
         "used import should NOT produce W0001: {:?}",
-        diags.iter().filter(|d| d.code == "W0001").collect::<Vec<_>>()
+        diags
+            .iter()
+            .filter(|d| d.code == "W0001")
+            .collect::<Vec<_>>()
     );
 }
 
 #[test]
 fn scope_resolve_array_type() {
-    let (_, diags) = resolve_src(
-        "pub fn foo(xs: int[]) {}",
-    );
+    let (_, diags) = resolve_src("pub fn foo(xs: int[]) {}");
     let type_errors: Vec<_> = diags.iter().filter(|d| d.code == "E0003").collect();
-    assert!(type_errors.is_empty(), "int[] should resolve: {:?}", type_errors);
+    assert!(
+        type_errors.is_empty(),
+        "int[] should resolve: {:?}",
+        type_errors
+    );
 }
 
 #[test]
@@ -619,7 +741,11 @@ pub struct Container<T> { pub value: T }
 "#,
     );
     let type_errors: Vec<_> = diags.iter().filter(|d| d.code == "E0003").collect();
-    assert!(type_errors.is_empty(), "generic T should resolve inside Container: {:?}", type_errors);
+    assert!(
+        type_errors.is_empty(),
+        "generic T should resolve inside Container: {:?}",
+        type_errors
+    );
 }
 
 #[test]
@@ -632,9 +758,16 @@ impl Drawable for Point { fn draw(self) {} }
 "#,
     );
     let type_errors: Vec<_> = diags.iter().filter(|d| d.code == "E0003").collect();
-    assert!(type_errors.is_empty(), "impl target and contract should resolve: {:?}", type_errors);
+    assert!(
+        type_errors.is_empty(),
+        "impl target and contract should resolve: {:?}",
+        type_errors
+    );
     // Check that we got an Impl decl
-    let has_impl = resolved.decls.iter().any(|d| matches!(d, resolve::ir::ResolvedDecl::Impl { .. }));
+    let has_impl = resolved
+        .decls
+        .iter()
+        .any(|d| matches!(d, resolve::ir::ResolvedDecl::Impl { .. }));
     assert!(has_impl, "should have a resolved Impl decl");
 }
 
@@ -692,7 +825,10 @@ pub entity GameManager { pub score: int }
     assert!(
         !has_error_code(&diags, "E0006"),
         "[Singleton] on entity should NOT produce E0006: {:?}",
-        diags.iter().filter(|d| d.code == "E0006").collect::<Vec<_>>()
+        diags
+            .iter()
+            .filter(|d| d.code == "E0006")
+            .collect::<Vec<_>>()
     );
 }
 
@@ -735,7 +871,10 @@ pub fn maybe_run() {}
     assert!(
         !has_error_code(&diags, "E0006"),
         "[Conditional] on fn should NOT produce E0006: {:?}",
-        diags.iter().filter(|d| d.code == "E0006").collect::<Vec<_>>()
+        diags
+            .iter()
+            .filter(|d| d.code == "E0006")
+            .collect::<Vec<_>>()
     );
 }
 
@@ -827,7 +966,10 @@ pub struct Container<T> { pub value: T }
     assert!(
         !has_error_code(&diags, "W0003"),
         "generic T should NOT produce W0003 since there's no existing type T: {:?}",
-        diags.iter().filter(|d| d.code == "W0003").collect::<Vec<_>>()
+        diags
+            .iter()
+            .filter(|d| d.code == "W0003")
+            .collect::<Vec<_>>()
     );
 }
 
@@ -906,11 +1048,23 @@ pub fn test(value: int) {}
 pub fn test(value: string) {}
 "#,
     );
-    let errors: Vec<_> = diags.iter().filter(|d| d.severity == Severity::Error).collect();
-    assert!(errors.is_empty(), "overloaded functions should not produce errors, got: {:?}", errors);
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "overloaded functions should not produce errors, got: {:?}",
+        errors
+    );
     // Should have overload set with 2 candidates
     let candidates = def_map.get_fn_candidates("test");
-    assert_eq!(candidates.len(), 2, "expected 2 overload candidates, got {}", candidates.len());
+    assert_eq!(
+        candidates.len(),
+        2,
+        "expected 2 overload candidates, got {}",
+        candidates.len()
+    );
 }
 
 /// Non-function duplicate (e.g., two structs) should still produce E0001.
@@ -922,8 +1076,15 @@ pub struct Foo {}
 pub struct Foo {}
 "#,
     );
-    let errors: Vec<_> = diags.iter().filter(|d| d.severity == Severity::Error).collect();
-    assert_eq!(errors.len(), 1, "duplicate struct should still produce E0001");
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    assert_eq!(
+        errors.len(),
+        1,
+        "duplicate struct should still produce E0001"
+    );
 }
 
 /// Mixed function + struct with same name should produce E0001.
@@ -935,8 +1096,15 @@ pub fn Foo() {}
 pub struct Foo {}
 "#,
     );
-    let errors: Vec<_> = diags.iter().filter(|d| d.severity == Severity::Error).collect();
-    assert_eq!(errors.len(), 1, "fn + struct with same name should produce E0001");
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    assert_eq!(
+        errors.len(),
+        1,
+        "fn + struct with same name should produce E0001"
+    );
 }
 
 /// Overloaded functions resolve to distinct DefIds.
@@ -948,11 +1116,17 @@ pub fn greet(name: string) {}
 pub fn greet(age: int) {}
 "#,
     );
-    let errors: Vec<_> = diags.iter().filter(|d| d.severity == Severity::Error).collect();
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
     assert!(errors.is_empty(), "should not error: {:?}", errors);
     let candidates = def_map.get_fn_candidates("greet");
     assert_eq!(candidates.len(), 2);
-    assert_ne!(candidates[0], candidates[1], "overloads should have distinct DefIds");
+    assert_ne!(
+        candidates[0], candidates[1],
+        "overloads should have distinct DefIds"
+    );
 }
 
 /// Overloaded functions should each resolve to their correct DefId during full resolution.
@@ -968,13 +1142,97 @@ fn main() {
 }
 "#,
     );
-    let errors: Vec<_> = diags.iter().filter(|d| d.severity == Severity::Error).collect();
-    assert!(errors.is_empty(), "overloaded fn resolution should not error: {:?}", errors);
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "overloaded fn resolution should not error: {:?}",
+        errors
+    );
     // Should have 3 Fn decls resolved (test(int), test(string), main)
-    let fn_count = resolved.decls.iter().filter(|d| {
-        matches!(d, resolve::ir::ResolvedDecl::Fn { .. })
-    }).count();
-    assert_eq!(fn_count, 3, "expected 3 resolved Fn decls, got {}", fn_count);
+    let fn_count = resolved
+        .decls
+        .iter()
+        .filter(|d| matches!(d, resolve::ir::ResolvedDecl::Fn { .. }))
+        .count();
+    assert_eq!(
+        fn_count, 3,
+        "expected 3 resolved Fn decls, got {}",
+        fn_count
+    );
+}
+
+#[test]
+fn public_overload_resolution_uses_file_and_span_identity() {
+    let (resolved, diags) = resolve_multi(&[
+        ("src/first.writ", "pub fn choose(value: int) {}", "first"),
+        (
+            "src/second.writ",
+            "pub fn choose(value: string) {}",
+            "second",
+        ),
+    ]);
+    assert!(
+        !diags.iter().any(|diag| diag.severity == Severity::Error),
+        "unexpected diagnostics: {diags:?}"
+    );
+    let ids: Vec<_> = resolved
+        .decls
+        .iter()
+        .filter_map(|decl| match decl {
+            resolve::ir::ResolvedDecl::Fn { def_id } => Some(*def_id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ids.len(), 2);
+    assert_ne!(
+        ids[0], ids[1],
+        "equal numeric spans in different files are not equal declarations"
+    );
+    assert_eq!(resolved.def_map.get_entry(ids[0]).file_id, FileId(0));
+    assert_eq!(resolved.def_map.get_entry(ids[1]).file_id, FileId(1));
+}
+
+#[test]
+fn private_overload_resolution_uses_file_and_span_identity() {
+    let source = "fn choose(value: int) {}\nfn choose(value: string) {}";
+    let (resolved, diags) = resolve_multi(&[
+        ("src/first.writ", source, "first"),
+        ("src/second.writ", source, "second"),
+    ]);
+    assert!(
+        !diags.iter().any(|diag| diag.severity == Severity::Error),
+        "unexpected diagnostics: {diags:?}"
+    );
+    let ids: Vec<_> = resolved
+        .decls
+        .iter()
+        .filter_map(|decl| match decl {
+            resolve::ir::ResolvedDecl::Fn { def_id } => Some(*def_id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ids.len(), 4);
+    for (index, id) in ids.iter().enumerate() {
+        assert!(
+            ids.iter().skip(index + 1).all(|other| other != id),
+            "each private overload declaration must retain a distinct DefId"
+        );
+    }
+    assert_eq!(
+        ids.iter()
+            .filter(|id| resolved.def_map.get_entry(**id).file_id == FileId(0))
+            .count(),
+        2
+    );
+    assert_eq!(
+        ids.iter()
+            .filter(|id| resolved.def_map.get_entry(**id).file_id == FileId(1))
+            .count(),
+        2
+    );
 }
 
 // =========================================================
@@ -989,13 +1247,20 @@ pub attribute Quest(name: string, level: int);
 "#,
     );
 
-    let errors: Vec<_> = diags.iter().filter(|d| d.severity == Severity::Error).collect();
+    let errors: Vec<_> = diags
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .collect();
     assert!(errors.is_empty(), "unexpected errors: {:?}", errors);
 
     let id = def_map.get("Quest");
     assert!(id.is_some(), "Quest should be in DefMap as pub");
     let entry = def_map.get_entry(id.unwrap());
-    assert_eq!(entry.kind, DefKind::AttributeDef, "Quest should be DefKind::AttributeDef");
+    assert_eq!(
+        entry.kind,
+        DefKind::AttributeDef,
+        "Quest should be DefKind::AttributeDef"
+    );
 }
 
 #[test]
@@ -1007,7 +1272,11 @@ attribute Deprecated(msg: string);
     );
 
     let has_e0008 = has_error_code(&diags, "E0008");
-    assert!(has_e0008, "shadowing builtin attribute should produce E0008, got: {:?}", diags);
+    assert!(
+        has_e0008,
+        "shadowing builtin attribute should produce E0008, got: {:?}",
+        diags
+    );
 
     // Deprecated must NOT be inserted into the def map
     assert!(

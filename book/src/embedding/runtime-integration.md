@@ -1,6 +1,6 @@
 # Runtime Integration
 
-This chapter covers how to embed the Writ runtime in a Rust host application -- a game engine, app framework, or any system that needs to run Writ scripts.
+This chapter covers how to embed the Writ runtime in a Rust host application -- a game engine, app framework, or any system that needs to run Writ scripts. For precompiled `.writc` execution in a browser or Web Worker, use the separate [Browser and Web Worker Runtime](wasm-runtime.md), which preserves this API behind a JavaScript-safe adapter.
 
 ## Architecture
 

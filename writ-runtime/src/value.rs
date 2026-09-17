@@ -65,9 +65,11 @@ pub enum Value {
     Bool(bool),
     Ref(HeapRef),
     Entity(EntityId),
-    Struct { type_idx: u32, href: HeapRef },
+    Struct {
+        type_idx: u32,
+        href: HeapRef,
+    },
 }
-
 
 impl PartialEq for Value {
     fn eq(&self, other: &Self) -> bool {
@@ -78,7 +80,16 @@ impl PartialEq for Value {
             (Value::Bool(a), Value::Bool(b)) => a == b,
             (Value::Ref(a), Value::Ref(b)) => a == b,
             (Value::Entity(a), Value::Entity(b)) => a == b,
-            (Value::Struct { type_idx: a, href: ha }, Value::Struct { type_idx: b, href: hb }) => a == b && ha == hb,
+            (
+                Value::Struct {
+                    type_idx: a,
+                    href: ha,
+                },
+                Value::Struct {
+                    type_idx: b,
+                    href: hb,
+                },
+            ) => a == b && ha == hb,
             _ => false,
         }
     }

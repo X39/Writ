@@ -1,6 +1,7 @@
 use std::io::Cursor;
 use writ_module::Instruction;
 use writ_module::error::DecodeError;
+use writ_module::instruction::ArrayDefaultKind;
 
 /// Encode an instruction to bytes, then decode it back, and assert equality.
 fn round_trip(instr: &Instruction) -> Instruction {
@@ -9,7 +10,8 @@ fn round_trip(instr: &Instruction) -> Instruction {
     let mut cursor = Cursor::new(&buf[..]);
     let decoded = Instruction::decode(&mut cursor).expect("decode should succeed");
     assert_eq!(
-        *instr, decoded,
+        *instr,
+        decoded,
         "round-trip failed for opcode 0x{:04X}",
         instr.opcode()
     );
@@ -119,98 +121,204 @@ fn test_array_len_round_trip() {
 
 #[test]
 fn test_array_resize_round_trip() {
-    round_trip(&Instruction::ArrayResize { r_arr: 2, r_new_len: 3 });
+    round_trip(&Instruction::ArrayResize {
+        r_arr: 2,
+        r_new_len: 3,
+    });
 }
 
 #[test]
 fn test_array_copy_round_trip() {
-    round_trip(&Instruction::ArrayCopy { r_dst_arr: 0, r_dst_idx: 1, r_src_arr: 2, r_src_idx: 3, r_len: 4 });
+    round_trip(&Instruction::ArrayCopy {
+        r_dst_arr: 0,
+        r_dst_idx: 1,
+        r_src_arr: 2,
+        r_src_idx: 3,
+        r_len: 4,
+    });
 }
 
 // ── Shape RRR ──────────────────────────────────────────────────
 
 #[test]
 fn test_add_i_round_trip() {
-    round_trip(&Instruction::AddI { r_dst: 0, r_a: 1, r_b: 2 });
+    round_trip(&Instruction::AddI {
+        r_dst: 0,
+        r_a: 1,
+        r_b: 2,
+    });
 }
 
 #[test]
 fn test_str_concat_round_trip() {
-    round_trip(&Instruction::StrConcat { r_dst: 7, r_a: 8, r_b: 9 });
+    round_trip(&Instruction::StrConcat {
+        r_dst: 7,
+        r_a: 8,
+        r_b: 9,
+    });
 }
 
 #[test]
 fn test_array_load_round_trip() {
-    round_trip(&Instruction::ArrayLoad { r_dst: 0, r_arr: 1, r_idx: 2 });
+    round_trip(&Instruction::ArrayLoad {
+        r_dst: 0,
+        r_arr: 1,
+        r_idx: 2,
+    });
 }
 
 #[test]
 fn test_array_store_round_trip() {
-    round_trip(&Instruction::ArrayStore { r_arr: 3, r_idx: 4, r_val: 5 });
+    round_trip(&Instruction::ArrayStore {
+        r_arr: 3,
+        r_idx: 4,
+        r_val: 5,
+    });
 }
 
 #[test]
 fn test_new_array_sized_round_trip() {
-    round_trip(&Instruction::NewArraySized { r_dst: 0, elem_type: 0x04_000001, r_len: 5 });
+    round_trip(&Instruction::NewArraySized {
+        r_dst: 0,
+        default_kind: ArrayDefaultKind::Float.operand(),
+        r_len: 5,
+    });
 }
 
 #[test]
 fn test_new_array_filled_round_trip() {
-    round_trip(&Instruction::NewArrayFilled { r_dst: 0, elem_type: 0x04_000001, r_len: 5, r_fill: 3 });
+    round_trip(&Instruction::NewArrayFilled {
+        r_dst: 0,
+        default_kind: ArrayDefaultKind::String.operand(),
+        r_len: 5,
+        r_fill: 3,
+    });
+}
+
+#[test]
+fn test_array_default_kind_operands_round_trip() {
+    let kinds = [
+        ArrayDefaultKind::Int,
+        ArrayDefaultKind::Float,
+        ArrayDefaultKind::Bool,
+        ArrayDefaultKind::String,
+        ArrayDefaultKind::NullReference,
+        ArrayDefaultKind::Unavailable,
+    ];
+    for kind in kinds {
+        round_trip(&Instruction::NewArray {
+            r_dst: 7,
+            default_kind: kind.operand(),
+        });
+        assert_eq!(ArrayDefaultKind::from_operand(kind.operand()), Some(kind));
+    }
+    assert_eq!(ArrayDefaultKind::from_operand(5), None);
 }
 
 // ── Shape RI32 ─────────────────────────────────────────────────
 
 #[test]
 fn test_load_string_round_trip() {
-    round_trip(&Instruction::LoadString { r_dst: 0, string_idx: 100 });
+    round_trip(&Instruction::LoadString {
+        r_dst: 0,
+        string_idx: 100,
+    });
 }
 
 #[test]
 fn test_new_round_trip() {
-    round_trip(&Instruction::New { r_dst: 1, type_idx: 0x02_000001 });
+    let instruction = Instruction::New {
+        r_dst: 1,
+        type_idx: 0x02_000001,
+        field_count: 2,
+        r_base: 3,
+    };
+    let mut encoded = Vec::new();
+    instruction.encode(&mut encoded).unwrap();
+
+    assert_eq!(encoded.len(), 12);
+    round_trip(&instruction);
+}
+
+#[test]
+fn test_spawn_entity_decoder_preserves_zero_count_base_register() {
+    let instruction = Instruction::SpawnEntity {
+        r_dst: 7,
+        type_idx: 0x02_000002,
+        field_count: 0,
+        r_base: u16::MAX,
+    };
+    let mut encoded = Vec::new();
+    instruction.encode(&mut encoded).unwrap();
+
+    assert_eq!(encoded.len(), 12);
+    assert_eq!(round_trip(&instruction), instruction);
 }
 
 #[test]
 fn test_br_true_round_trip() {
-    round_trip(&Instruction::BrTrue { r_cond: 0, offset: 42 });
+    round_trip(&Instruction::BrTrue {
+        r_cond: 0,
+        offset: 42,
+    });
 }
 
 #[test]
 fn test_br_false_negative_offset_round_trip() {
-    round_trip(&Instruction::BrFalse { r_cond: 3, offset: -10 });
+    round_trip(&Instruction::BrFalse {
+        r_cond: 3,
+        offset: -10,
+    });
 }
 
 // ── Shape RI64 ─────────────────────────────────────────────────
 
 #[test]
 fn test_load_int_round_trip() {
-    round_trip(&Instruction::LoadInt { r_dst: 0, value: 42 });
+    round_trip(&Instruction::LoadInt {
+        r_dst: 0,
+        value: 42,
+    });
 }
 
 #[test]
 fn test_load_int_max_round_trip() {
-    round_trip(&Instruction::LoadInt { r_dst: 1, value: i64::MAX });
+    round_trip(&Instruction::LoadInt {
+        r_dst: 1,
+        value: i64::MAX,
+    });
 }
 
 #[test]
 fn test_load_int_min_round_trip() {
-    round_trip(&Instruction::LoadInt { r_dst: 2, value: i64::MIN });
+    round_trip(&Instruction::LoadInt {
+        r_dst: 2,
+        value: i64::MIN,
+    });
 }
 
 #[test]
 fn test_load_float_round_trip() {
-    round_trip(&Instruction::LoadFloat { r_dst: 0, value: std::f64::consts::PI });
+    round_trip(&Instruction::LoadFloat {
+        r_dst: 0,
+        value: std::f64::consts::PI,
+    });
 }
 
 #[test]
 fn test_load_float_neg_zero_round_trip() {
-    round_trip(&Instruction::LoadFloat { r_dst: 1, value: -0.0f64 });
+    round_trip(&Instruction::LoadFloat {
+        r_dst: 1,
+        value: -0.0f64,
+    });
 }
 
 #[test]
 fn test_load_float_nan_round_trip() {
-    let instr = Instruction::LoadFloat { r_dst: 2, value: f64::NAN };
+    let instr = Instruction::LoadFloat {
+        r_dst: 2,
+        value: f64::NAN,
+    };
     let mut buf = Vec::new();
     instr.encode(&mut buf).unwrap();
     let decoded = Instruction::decode(&mut Cursor::new(&buf[..])).unwrap();
@@ -239,192 +347,480 @@ fn test_br_negative_offset_round_trip() {
 
 #[test]
 fn test_call_round_trip() {
-    round_trip(&Instruction::Call { r_dst: 0, method_idx: 0x07_000001, r_base: 1, argc: 3 });
+    round_trip(&Instruction::Call {
+        r_dst: 0,
+        method_idx: 0x07_000001,
+        r_base: 1,
+        argc: 3,
+    });
 }
 
 #[test]
 fn test_call_extern_round_trip() {
-    round_trip(&Instruction::CallExtern { r_dst: 5, extern_idx: 0x10_000002, r_base: 6, argc: 1 });
+    round_trip(&Instruction::CallExtern {
+        r_dst: 5,
+        extern_idx: 0x10_000002,
+        r_base: 6,
+        argc: 1,
+    });
 }
 
 #[test]
 fn test_spawn_task_round_trip() {
-    round_trip(&Instruction::SpawnTask { r_dst: 0, method_idx: 100, r_base: 1, argc: 2 });
+    round_trip(&Instruction::SpawnTask {
+        r_dst: 0,
+        method_idx: 100,
+        r_base: 1,
+        argc: 2,
+    });
 }
 
 #[test]
-fn test_spawn_detached_round_trip() {
-    round_trip(&Instruction::SpawnDetached { r_dst: 3, method_idx: 200, r_base: 4, argc: 0 });
+fn retired_spawn_detached_opcode_is_rejected() {
+    let bytes = 0x0B01_u16.to_le_bytes();
+    let err = Instruction::decode(&mut &bytes[..]).expect_err("0x0B01 must stay unassigned");
+    match err {
+        DecodeError::InvalidOpcode(op) => assert_eq!(op, 0x0B01),
+        other => panic!("expected InvalidOpcode, got {other:?}"),
+    }
 }
 
 // ── Variable-layout ────────────────────────────────────────────
 
 #[test]
 fn test_switch_empty_round_trip() {
-    round_trip(&Instruction::Switch { r_tag: 0, offsets: vec![] });
+    round_trip(&Instruction::Switch {
+        r_tag: 0,
+        offsets: vec![],
+    });
 }
 
 #[test]
 fn test_switch_one_round_trip() {
-    round_trip(&Instruction::Switch { r_tag: 1, offsets: vec![42] });
+    round_trip(&Instruction::Switch {
+        r_tag: 1,
+        offsets: vec![42],
+    });
 }
 
 #[test]
 fn test_switch_five_round_trip() {
-    round_trip(&Instruction::Switch { r_tag: 2, offsets: vec![10, -20, 30, -40, 50] });
+    round_trip(&Instruction::Switch {
+        r_tag: 2,
+        offsets: vec![10, -20, 30, -40, 50],
+    });
 }
 
 #[test]
 fn test_call_virt_round_trip() {
     round_trip(&Instruction::CallVirt {
-        r_dst: 0, r_obj: 1, contract_idx: 0x0A_000003, slot: 2, r_base: 3, argc: 1,
+        r_dst: 0,
+        r_obj: 1,
+        contract_idx: 0x0A_000003,
+        slot: 2,
+        r_base: 3,
+        argc: 1,
     });
 }
 
 #[test]
 fn test_new_delegate_round_trip() {
-    round_trip(&Instruction::NewDelegate { r_dst: 0, method_idx: 0x07_000005, r_target: 1 });
+    round_trip(&Instruction::NewDelegate {
+        r_dst: 0,
+        method_idx: 0x07_000005,
+        r_target: 1,
+    });
 }
 
 #[test]
 fn test_call_indirect_round_trip() {
-    round_trip(&Instruction::CallIndirect { r_dst: 0, r_delegate: 1, r_base: 2, argc: 3 });
+    round_trip(&Instruction::CallIndirect {
+        r_dst: 0,
+        r_delegate: 1,
+        r_base: 2,
+        argc: 3,
+    });
 }
 
 #[test]
 fn test_tail_call_round_trip() {
-    round_trip(&Instruction::TailCall { method_idx: 0x07_000010, r_base: 0, argc: 2 });
+    round_trip(&Instruction::TailCall {
+        method_idx: 0x07_000010,
+        r_base: 0,
+        argc: 2,
+    });
 }
 
 #[test]
 fn test_get_field_round_trip() {
-    round_trip(&Instruction::GetField { r_dst: 0, r_obj: 1, field_idx: 0x05_000001 });
+    round_trip(&Instruction::GetField {
+        r_dst: 0,
+        r_obj: 1,
+        field_token: 0x05_000001,
+    });
 }
 
 #[test]
 fn test_set_field_round_trip() {
-    round_trip(&Instruction::SetField { r_obj: 1, field_idx: 0x05_000002, r_val: 2 });
+    round_trip(&Instruction::SetField {
+        r_obj: 1,
+        field_token: 0x05_000002,
+        r_val: 2,
+    });
 }
 
 #[test]
 fn test_get_component_round_trip() {
-    round_trip(&Instruction::GetComponent { r_dst: 0, r_entity: 1, comp_type_idx: 0x02_000003 });
+    round_trip(&Instruction::GetComponent {
+        r_dst: 0,
+        r_entity: 1,
+        comp_type_idx: 0x02_000003,
+    });
 }
 
 #[test]
 fn test_array_init_round_trip() {
-    round_trip(&Instruction::ArrayInit { r_dst: 0, elem_type: 0x04_000001, count: 5, r_base: 1 });
+    round_trip(&Instruction::ArrayInit {
+        r_dst: 0,
+        default_kind: ArrayDefaultKind::Bool.operand(),
+        count: 5,
+        r_base: 1,
+    });
 }
 
 #[test]
 fn test_array_slice_round_trip() {
-    round_trip(&Instruction::ArraySlice { r_dst: 0, r_arr: 1, r_start: 2, r_end: 3 });
+    round_trip(&Instruction::ArraySlice {
+        r_dst: 0,
+        r_arr: 1,
+        r_start: 2,
+        r_end: 3,
+    });
 }
 
 #[test]
 fn test_new_enum_round_trip() {
-    round_trip(&Instruction::NewEnum { r_dst: 0, type_idx: 0x02_000005, tag: 3, field_count: 2, r_base: 1 });
+    round_trip(&Instruction::NewEnum {
+        r_dst: 0,
+        type_idx: 0x02_000005,
+        tag: 3,
+        field_count: 2,
+        r_base: 1,
+    });
 }
 
 #[test]
 fn test_extract_field_round_trip() {
-    round_trip(&Instruction::ExtractField { r_dst: 0, r_enum: 1, field_idx: 2 });
+    round_trip(&Instruction::ExtractField {
+        r_dst: 0,
+        r_enum: 1,
+        field_idx: 2,
+    });
 }
 
 #[test]
 fn test_store_global_round_trip() {
-    round_trip(&Instruction::StoreGlobal { global_idx: 0x0F_000001, r_src: 5 });
+    round_trip(&Instruction::StoreGlobal {
+        global_idx: 0x0F_000001,
+        r_src: 5,
+    });
 }
 
 #[test]
 fn test_convert_round_trip() {
-    round_trip(&Instruction::Convert { r_dst: 0, r_src: 1, target_type: 0x04_000002 });
+    round_trip(&Instruction::Convert {
+        r_dst: 0,
+        r_src: 1,
+        target_type: 0x04_000002,
+    });
 }
 
 #[test]
 fn test_str_build_round_trip() {
-    round_trip(&Instruction::StrBuild { r_dst: 0, count: 3, r_base: 1 });
+    round_trip(&Instruction::StrBuild {
+        r_dst: 0,
+        count: 3,
+        r_base: 1,
+    });
 }
 
-// ── Comprehensive all-91 test ──────────────────────────────────
+// ── Comprehensive opcode test ──────────────────────────────────
 
 #[test]
-fn test_all_91_opcodes_round_trip() {
+fn test_all_opcodes_round_trip() {
     let instructions: Vec<Instruction> = vec![
         // 0x00 Meta (2)
         Instruction::Nop,
         Instruction::Crash { r_msg: 1 },
         // 0x01 Data Movement (7)
         Instruction::Mov { r_dst: 0, r_src: 1 },
-        Instruction::LoadInt { r_dst: 0, value: 999 },
-        Instruction::LoadFloat { r_dst: 0, value: 3.14 },
+        Instruction::LoadInt {
+            r_dst: 0,
+            value: 999,
+        },
+        Instruction::LoadFloat {
+            r_dst: 0,
+            value: 3.14,
+        },
         Instruction::LoadTrue { r_dst: 0 },
         Instruction::LoadFalse { r_dst: 0 },
-        Instruction::LoadString { r_dst: 0, string_idx: 42 },
+        Instruction::LoadString {
+            r_dst: 0,
+            string_idx: 42,
+        },
         Instruction::LoadNull { r_dst: 0 },
         // 0x02 Integer Arithmetic (6)
-        Instruction::AddI { r_dst: 0, r_a: 1, r_b: 2 },
-        Instruction::SubI { r_dst: 0, r_a: 1, r_b: 2 },
-        Instruction::MulI { r_dst: 0, r_a: 1, r_b: 2 },
-        Instruction::DivI { r_dst: 0, r_a: 1, r_b: 2 },
-        Instruction::ModI { r_dst: 0, r_a: 1, r_b: 2 },
+        Instruction::AddI {
+            r_dst: 0,
+            r_a: 1,
+            r_b: 2,
+        },
+        Instruction::SubI {
+            r_dst: 0,
+            r_a: 1,
+            r_b: 2,
+        },
+        Instruction::MulI {
+            r_dst: 0,
+            r_a: 1,
+            r_b: 2,
+        },
+        Instruction::DivI {
+            r_dst: 0,
+            r_a: 1,
+            r_b: 2,
+        },
+        Instruction::ModI {
+            r_dst: 0,
+            r_a: 1,
+            r_b: 2,
+        },
         Instruction::NegI { r_dst: 0, r_src: 1 },
         // 0x03 Float Arithmetic (6)
-        Instruction::AddF { r_dst: 0, r_a: 1, r_b: 2 },
-        Instruction::SubF { r_dst: 0, r_a: 1, r_b: 2 },
-        Instruction::MulF { r_dst: 0, r_a: 1, r_b: 2 },
-        Instruction::DivF { r_dst: 0, r_a: 1, r_b: 2 },
-        Instruction::ModF { r_dst: 0, r_a: 1, r_b: 2 },
+        Instruction::AddF {
+            r_dst: 0,
+            r_a: 1,
+            r_b: 2,
+        },
+        Instruction::SubF {
+            r_dst: 0,
+            r_a: 1,
+            r_b: 2,
+        },
+        Instruction::MulF {
+            r_dst: 0,
+            r_a: 1,
+            r_b: 2,
+        },
+        Instruction::DivF {
+            r_dst: 0,
+            r_a: 1,
+            r_b: 2,
+        },
+        Instruction::ModF {
+            r_dst: 0,
+            r_a: 1,
+            r_b: 2,
+        },
         Instruction::NegF { r_dst: 0, r_src: 1 },
         // 0x04 Bitwise & Logical (5)
-        Instruction::BitAnd { r_dst: 0, r_a: 1, r_b: 2 },
-        Instruction::BitOr { r_dst: 0, r_a: 1, r_b: 2 },
-        Instruction::Shl { r_dst: 0, r_a: 1, r_b: 2 },
-        Instruction::Shr { r_dst: 0, r_a: 1, r_b: 2 },
+        Instruction::BitAnd {
+            r_dst: 0,
+            r_a: 1,
+            r_b: 2,
+        },
+        Instruction::BitOr {
+            r_dst: 0,
+            r_a: 1,
+            r_b: 2,
+        },
+        Instruction::Shl {
+            r_dst: 0,
+            r_a: 1,
+            r_b: 2,
+        },
+        Instruction::Shr {
+            r_dst: 0,
+            r_a: 1,
+            r_b: 2,
+        },
         Instruction::Not { r_dst: 0, r_src: 1 },
         // 0x05 Comparison (6)
-        Instruction::CmpEqI { r_dst: 0, r_a: 1, r_b: 2 },
-        Instruction::CmpEqF { r_dst: 0, r_a: 1, r_b: 2 },
-        Instruction::CmpEqB { r_dst: 0, r_a: 1, r_b: 2 },
-        Instruction::CmpEqS { r_dst: 0, r_a: 1, r_b: 2 },
-        Instruction::CmpLtI { r_dst: 0, r_a: 1, r_b: 2 },
-        Instruction::CmpLtF { r_dst: 0, r_a: 1, r_b: 2 },
+        Instruction::CmpEqI {
+            r_dst: 0,
+            r_a: 1,
+            r_b: 2,
+        },
+        Instruction::CmpEqF {
+            r_dst: 0,
+            r_a: 1,
+            r_b: 2,
+        },
+        Instruction::CmpEqB {
+            r_dst: 0,
+            r_a: 1,
+            r_b: 2,
+        },
+        Instruction::CmpEqS {
+            r_dst: 0,
+            r_a: 1,
+            r_b: 2,
+        },
+        Instruction::CmpLtI {
+            r_dst: 0,
+            r_a: 1,
+            r_b: 2,
+        },
+        Instruction::CmpLtF {
+            r_dst: 0,
+            r_a: 1,
+            r_b: 2,
+        },
         // 0x06 Control Flow (6)
         Instruction::Br { offset: 10 },
-        Instruction::BrTrue { r_cond: 0, offset: 20 },
-        Instruction::BrFalse { r_cond: 0, offset: -5 },
-        Instruction::Switch { r_tag: 0, offsets: vec![1, 2, 3] },
+        Instruction::BrTrue {
+            r_cond: 0,
+            offset: 20,
+        },
+        Instruction::BrFalse {
+            r_cond: 0,
+            offset: -5,
+        },
+        Instruction::Switch {
+            r_tag: 0,
+            offsets: vec![1, 2, 3],
+        },
         Instruction::Ret { r_src: 0 },
         Instruction::RetVoid,
         // 0x07 Calls & Delegates (6)
-        Instruction::Call { r_dst: 0, method_idx: 100, r_base: 1, argc: 2 },
-        Instruction::CallVirt { r_dst: 0, r_obj: 1, contract_idx: 200, slot: 0, r_base: 2, argc: 1 },
-        Instruction::CallExtern { r_dst: 0, extern_idx: 300, r_base: 1, argc: 0 },
-        Instruction::NewDelegate { r_dst: 0, method_idx: 400, r_target: 1 },
-        Instruction::CallIndirect { r_dst: 0, r_delegate: 1, r_base: 2, argc: 3 },
-        Instruction::TailCall { method_idx: 500, r_base: 0, argc: 1 },
+        Instruction::Call {
+            r_dst: 0,
+            method_idx: 100,
+            r_base: 1,
+            argc: 2,
+        },
+        Instruction::CallVirt {
+            r_dst: 0,
+            r_obj: 1,
+            contract_idx: 200,
+            slot: 0,
+            r_base: 2,
+            argc: 1,
+        },
+        Instruction::CallExtern {
+            r_dst: 0,
+            extern_idx: 300,
+            r_base: 1,
+            argc: 0,
+        },
+        Instruction::NewDelegate {
+            r_dst: 0,
+            method_idx: 400,
+            r_target: 1,
+        },
+        Instruction::CallIndirect {
+            r_dst: 0,
+            r_delegate: 1,
+            r_base: 2,
+            argc: 3,
+        },
+        Instruction::TailCall {
+            method_idx: 500,
+            r_base: 0,
+            argc: 1,
+        },
         // 0x08 Object Model (10)
-        Instruction::New { r_dst: 0, type_idx: 100 },
-        Instruction::GetField { r_dst: 0, r_obj: 1, field_idx: 200 },
-        Instruction::SetField { r_obj: 1, field_idx: 300, r_val: 2 },
-        Instruction::SpawnEntity { r_dst: 0, type_idx: 400 },
+        Instruction::New {
+            r_dst: 0,
+            type_idx: 100,
+            field_count: 2,
+            r_base: 1,
+        },
+        Instruction::GetField {
+            r_dst: 0,
+            r_obj: 1,
+            field_token: 0x05_0000C8,
+        },
+        Instruction::SetField {
+            r_obj: 1,
+            field_token: 0x05_00012C,
+            r_val: 2,
+        },
+        Instruction::SpawnEntity {
+            r_dst: 0,
+            type_idx: 400,
+            field_count: 3,
+            r_base: 2,
+        },
         Instruction::InitEntity { r_entity: 0 },
-        Instruction::GetComponent { r_dst: 0, r_entity: 1, comp_type_idx: 500 },
-        Instruction::GetOrCreate { r_dst: 0, type_idx: 600 },
-        Instruction::FindAll { r_dst: 0, type_idx: 700 },
+        Instruction::GetComponent {
+            r_dst: 0,
+            r_entity: 1,
+            comp_type_idx: 500,
+        },
+        Instruction::GetOrCreate {
+            r_dst: 0,
+            type_idx: 600,
+        },
+        Instruction::FindAll {
+            r_dst: 0,
+            type_idx: 700,
+        },
         Instruction::DestroyEntity { r_entity: 0 },
-        Instruction::EntityIsAlive { r_dst: 0, r_entity: 1 },
+        Instruction::EntityIsAlive {
+            r_dst: 0,
+            r_entity: 1,
+        },
         // 0x09 Arrays (10)
-        Instruction::NewArray { r_dst: 0, elem_type: 100 },
-        Instruction::ArrayInit { r_dst: 0, elem_type: 200, count: 5, r_base: 1 },
-        Instruction::ArrayLoad { r_dst: 0, r_arr: 1, r_idx: 2 },
-        Instruction::ArrayStore { r_arr: 0, r_idx: 1, r_val: 2 },
+        Instruction::NewArray {
+            r_dst: 0,
+            default_kind: ArrayDefaultKind::Int.operand(),
+        },
+        Instruction::ArrayInit {
+            r_dst: 0,
+            default_kind: ArrayDefaultKind::Unavailable.operand(),
+            count: 5,
+            r_base: 1,
+        },
+        Instruction::ArrayLoad {
+            r_dst: 0,
+            r_arr: 1,
+            r_idx: 2,
+        },
+        Instruction::ArrayStore {
+            r_arr: 0,
+            r_idx: 1,
+            r_val: 2,
+        },
         Instruction::ArrayLen { r_dst: 0, r_arr: 1 },
-        Instruction::ArrayResize { r_arr: 0, r_new_len: 1 },
-        Instruction::ArrayCopy { r_dst_arr: 0, r_dst_idx: 1, r_src_arr: 2, r_src_idx: 3, r_len: 4 },
-        Instruction::ArraySlice { r_dst: 0, r_arr: 1, r_start: 2, r_end: 3 },
-        Instruction::NewArraySized { r_dst: 0, elem_type: 100, r_len: 5 },
-        Instruction::NewArrayFilled { r_dst: 0, elem_type: 100, r_len: 5, r_fill: 3 },
+        Instruction::ArrayResize {
+            r_arr: 0,
+            r_new_len: 1,
+        },
+        Instruction::ArrayCopy {
+            r_dst_arr: 0,
+            r_dst_idx: 1,
+            r_src_arr: 2,
+            r_src_idx: 3,
+            r_len: 4,
+        },
+        Instruction::ArraySlice {
+            r_dst: 0,
+            r_arr: 1,
+            r_start: 2,
+            r_end: 3,
+        },
+        Instruction::NewArraySized {
+            r_dst: 0,
+            default_kind: ArrayDefaultKind::Float.operand(),
+            r_len: 5,
+        },
+        Instruction::NewArrayFilled {
+            r_dst: 0,
+            default_kind: ArrayDefaultKind::String.operand(),
+            r_len: 5,
+            r_fill: 3,
+        },
         // 0x0A Option (4)
         Instruction::WrapSome { r_dst: 0, r_val: 1 },
         Instruction::Unwrap { r_dst: 0, r_opt: 1 },
@@ -433,27 +829,71 @@ fn test_all_91_opcodes_round_trip() {
         // 0x0A Result (6)
         Instruction::WrapOk { r_dst: 0, r_val: 1 },
         Instruction::WrapErr { r_dst: 0, r_err: 1 },
-        Instruction::UnwrapOk { r_dst: 0, r_result: 1 },
-        Instruction::IsOk { r_dst: 0, r_result: 1 },
-        Instruction::IsErr { r_dst: 0, r_result: 1 },
-        Instruction::ExtractErr { r_dst: 0, r_result: 1 },
+        Instruction::UnwrapOk {
+            r_dst: 0,
+            r_result: 1,
+        },
+        Instruction::IsOk {
+            r_dst: 0,
+            r_result: 1,
+        },
+        Instruction::IsErr {
+            r_dst: 0,
+            r_result: 1,
+        },
+        Instruction::ExtractErr {
+            r_dst: 0,
+            r_result: 1,
+        },
         // 0x0A Enum (3)
-        Instruction::NewEnum { r_dst: 0, type_idx: 100, tag: 1, field_count: 2, r_base: 1 },
-        Instruction::GetTag { r_dst: 0, r_enum: 1 },
-        Instruction::ExtractField { r_dst: 0, r_enum: 1, field_idx: 0 },
+        Instruction::NewEnum {
+            r_dst: 0,
+            type_idx: 100,
+            tag: 1,
+            field_count: 2,
+            r_base: 1,
+        },
+        Instruction::GetTag {
+            r_dst: 0,
+            r_enum: 1,
+        },
+        Instruction::ExtractField {
+            r_dst: 0,
+            r_enum: 1,
+            field_idx: 0,
+        },
         // 0x0A Reflection (1)
-        Instruction::TypeOf { r_dst: 0, type_idx: 42 },
-        // 0x0B Concurrency (7)
-        Instruction::SpawnTask { r_dst: 0, method_idx: 100, r_base: 1, argc: 2 },
-        Instruction::SpawnDetached { r_dst: 0, method_idx: 200, r_base: 1, argc: 0 },
-        Instruction::Join { r_dst: 0, r_task: 1 },
+        Instruction::TypeOf {
+            r_dst: 0,
+            type_idx: 42,
+        },
+        // 0x0B Concurrency (6)
+        Instruction::SpawnTask {
+            r_dst: 0,
+            method_idx: 100,
+            r_base: 1,
+            argc: 2,
+        },
+        Instruction::Join {
+            r_dst: 0,
+            r_task: 1,
+        },
         Instruction::Cancel { r_task: 0 },
-        Instruction::DeferPush { r_dst: 0, method_idx: 300 },
+        Instruction::DeferPush {
+            r_dst: 0,
+            method_idx: 300,
+        },
         Instruction::DeferPop,
         Instruction::DeferEnd,
         // 0x0C Globals & Atomics (4)
-        Instruction::LoadGlobal { r_dst: 0, global_idx: 100 },
-        Instruction::StoreGlobal { global_idx: 200, r_src: 1 },
+        Instruction::LoadGlobal {
+            r_dst: 0,
+            global_idx: 100,
+        },
+        Instruction::StoreGlobal {
+            global_idx: 200,
+            r_src: 1,
+        },
         Instruction::AtomicBegin,
         Instruction::AtomicEnd,
         // 0x0D Conversion (6)
@@ -462,20 +902,37 @@ fn test_all_91_opcodes_round_trip() {
         Instruction::I2s { r_dst: 0, r_src: 1 },
         Instruction::F2s { r_dst: 0, r_src: 1 },
         Instruction::B2s { r_dst: 0, r_src: 1 },
-        Instruction::Convert { r_dst: 0, r_src: 1, target_type: 300 },
+        Instruction::Convert {
+            r_dst: 0,
+            r_src: 1,
+            target_type: 300,
+        },
         // 0x0E Strings (3)
-        Instruction::StrConcat { r_dst: 0, r_a: 1, r_b: 2 },
-        Instruction::StrBuild { r_dst: 0, count: 3, r_base: 1 },
+        Instruction::StrConcat {
+            r_dst: 0,
+            r_a: 1,
+            r_b: 2,
+        },
+        Instruction::StrBuild {
+            r_dst: 0,
+            count: 3,
+            r_base: 1,
+        },
         Instruction::StrLen { r_dst: 0, r_str: 1 },
         // 0x0F Boxing (2)
         Instruction::Box { r_dst: 0, r_val: 1 },
-        Instruction::Unbox { r_dst: 0, r_boxed: 1 },
+        Instruction::Unbox {
+            r_dst: 0,
+            r_boxed: 1,
+        },
     ];
 
-    // The plan references "93 opcodes" in the doc comment. The actual opcode assignment table
-    // (spec section 4.2) defines 100 distinct opcodes when fully counted across all categories
-    // (array group now has 10 opcodes: 0x0900-0x0909).
-    assert_eq!(instructions.len(), 100, "expected exactly 100 instructions (all opcodes from spec section 4.2)");
+    // The opcode assignment table in spec section 4.2 defines 99 instructions.
+    assert_eq!(
+        instructions.len(),
+        99,
+        "expected exactly 99 instructions (all opcodes from spec section 4.2)"
+    );
 
     for instr in &instructions {
         round_trip(instr);
@@ -486,7 +943,10 @@ fn test_all_91_opcodes_round_trip() {
 
 #[test]
 fn test_typeof_round_trip() {
-    round_trip(&Instruction::TypeOf { r_dst: 3, type_idx: 42 });
+    round_trip(&Instruction::TypeOf {
+        r_dst: 3,
+        type_idx: 42,
+    });
 }
 
 // ── Error cases ────────────────────────────────────────────────

@@ -41,17 +41,15 @@ expression: "(ast, errors)"
                             },
                             span: 27..35,
                         },
-                        Return {
-                            value: Some(
-                                Call {
-                                    callee: Ident {
-                                        name: "farewell",
-                                        span: 17..25,
-                                    },
-                                    args: [],
-                                    span: 14..25,
+                        Transition {
+                            call: Call {
+                                callee: Ident {
+                                    name: "farewell",
+                                    span: 17..25,
                                 },
-                            ),
+                                args: [],
+                                span: 14..25,
+                            },
                             span: 14..25,
                         },
                         Expr {

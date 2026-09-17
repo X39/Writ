@@ -1,41 +1,40 @@
 .module "main" "0.1.0" {
     .extern "writ-runtime" "1.0.0"
     .type "Dog" struct {
-        .field "name" string
+        .field "name" string readonly
     }
     .contract "Animal" {
         .method "speak" () -> string slot 0
     }
-    .impl Dog : contract_167772179 {
-    }
-    .impl ? : ? {
+    .impl Dog : contract_50331684 {
         .method "get_type" () -> Type pub {
             .reg r0 int
             .reg r1 int
             TYPEOF r1, 33554433
             RET r1
         }
-        .method "speak" () -> string pub mut {
+    }
+    .impl ? : ? {
+        .method "speak" () -> string pub static {
             .reg r0 string
-            LOAD_STRING r0, 185  ; line:11 col:9
+            LOAD_STRING r0, 2470  ; line:11 col:9
             RET r0
         }
-        .method "main" () -> void mut {
-            .locals {
-                r0: ? "static_type" [8, 44)
-                r1: Dog "dog" [34, 44)
-                r3: ? "dynamic_type" [42, 44)
-            }
-            .reg r0 ?
-            .reg r1 Dog
-            .reg r2 string
-            .reg r3 ?
-            TYPEOF r0, 167772161  ; line:16 col:5
-            NEW r1, 33554433  ; line:17 col:5
-            LOAD_STRING r2, 193
-            SET_FIELD r1, 0, r2
-            TYPEOF r3, 33554433  ; line:18 col:5
-            RET_VOID
+    }
+    .method "main" () -> void static {
+        .locals {
+            r0: writ::Type<type_167772161> "static_type" [8, 38)
+            r2: Dog "dog" [28, 38)
+            r3: writ::Type<Dog> "dynamic_type" [36, 38)
         }
+        .reg r0 writ::Type<type_167772161>
+        .reg r1 string
+        .reg r2 Dog
+        .reg r3 writ::Type<Dog>
+        TYPEOF r0, 167772161  ; line:16 col:5
+        LOAD_STRING r1, 2478  ; line:17 col:5
+        NEW r2, 33554433, 1, r1
+        TYPEOF r3, 33554433  ; line:18 col:5
+        RET_VOID
     }
 }

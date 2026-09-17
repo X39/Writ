@@ -1,6 +1,6 @@
 //! `writ run` subcommand — execute a binary .writc module.
 
-use writ_module::{heap::read_string, Module};
+use writ_module::{Module, heap::read_string};
 use writ_runtime::{ExecutionLimit, RuntimeBuilder, TickResult};
 
 use crate::cli_host::CliHost;
@@ -19,8 +19,7 @@ pub fn cmd_run(
     interactive: bool,
     verbose: bool,
 ) -> Result<(), String> {
-    let bytes =
-        std::fs::read(&input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
+    let bytes = std::fs::read(&input).map_err(|e| format!("failed to read '{}': {}", input, e))?;
 
     let module =
         Module::from_bytes(&bytes).map_err(|e| format!("failed to parse module: {e:?}"))?;
@@ -28,14 +27,9 @@ pub fn cmd_run(
     // Find the named export (pub functions appear in export_defs).
     // If not found, fall back to searching method_defs directly by name.
     // This allows `fn main()` (without `pub`) to work as an entry point.
-    let method_idx = if let Some(export) = module
-        .export_defs
-        .iter()
-        .find(|e| {
-            read_string(&module.string_heap, e.name).unwrap_or("") == entry.as_str()
-                && e.item_kind == 0 // kind=0 is Method
-        })
-    {
+    let method_idx = if let Some(export) = module.export_defs.iter().find(|e| {
+        read_string(&module.string_heap, e.name).unwrap_or("") == entry.as_str() && e.item_kind == 0 // kind=0 is Method
+    }) {
         // Convert 1-based MetadataToken to 0-based method index
         (export.item.0 & 0x00FF_FFFF) as usize - 1
     } else {
@@ -95,10 +89,7 @@ pub fn cmd_run(
         TickResult::TasksSuspended(pending) => {
             // CliHost handles all requests synchronously in on_request.
             // Tasks should never truly suspend. If they do, warn and exit.
-            eprintln!(
-                "warning: {} task(s) suspended unexpectedly",
-                pending.len()
-            );
+            eprintln!("warning: {} task(s) suspended unexpectedly", pending.len());
         }
         TickResult::ExecutionLimitReached => {
             // Should not occur with ExecutionLimit::None

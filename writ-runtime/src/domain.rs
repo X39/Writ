@@ -8,7 +8,8 @@
 //! O(1) lookup at runtime.
 
 use rustc_hash::FxHashMap;
-use writ_module::heap::read_string;
+use writ_module::heap::{read_blob, read_string};
+use writ_module::signature::TypeSignature;
 use writ_module::token::MetadataToken;
 
 use crate::error::RuntimeError;
@@ -39,8 +40,12 @@ pub struct ResolvedMethod {
 pub struct ResolvedField {
     /// Index into Domain::modules.
     pub module_idx: usize,
+    /// 0-based index into the target module's TypeDef table.
+    pub owner_type_idx: usize,
     /// 0-based index into the target module's field_defs table.
     pub field_idx: usize,
+    /// 0-based offset within the owning type's object layout.
+    pub field_offset: usize,
 }
 
 /// Resolved cross-module contract reference: points to a ContractDef in a specific module.
@@ -55,12 +60,92 @@ pub struct ResolvedContract {
     pub contractdef_idx: usize,
 }
 
+#[derive(Debug, Clone)]
+enum MethodRefParent {
+    Module {
+        module_idx: usize,
+    },
+    Bare {
+        module_idx: usize,
+        type_idx: usize,
+    },
+    Specialized {
+        source_module_idx: usize,
+        signature: TypeSignature,
+        base_module_idx: usize,
+        base_type_idx: usize,
+    },
+}
+
+#[derive(Debug, Clone, Copy)]
+struct MethodCandidate {
+    module_idx: usize,
+    method_idx: usize,
+    inherent: bool,
+    specificity: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct ModuleVersion {
+    major: u64,
+    minor: u64,
+    patch: u64,
+}
+
+impl ModuleVersion {
+    fn parse(value: &str) -> Option<Self> {
+        fn component(value: &str) -> Option<u64> {
+            if value.is_empty()
+                || !value.bytes().all(|byte| byte.is_ascii_digit())
+                || (value.len() > 1 && value.starts_with('0'))
+            {
+                return None;
+            }
+            value.parse().ok()
+        }
+
+        let mut parts = value.split('.');
+        let major = component(parts.next()?)?;
+        let minor = component(parts.next()?)?;
+        let patch = component(parts.next()?)?;
+        if parts.next().is_some() {
+            return None;
+        }
+        Some(Self {
+            major,
+            minor,
+            patch,
+        })
+    }
+
+    fn satisfies(self, minimum: Self) -> bool {
+        self.major == minimum.major && self >= minimum
+    }
+}
+
+fn type_signature_specificity(signature: &TypeSignature) -> usize {
+    match signature {
+        TypeSignature::GenericParam(_) => 0,
+        TypeSignature::Generic { args, .. } => {
+            1 + args.iter().map(type_signature_specificity).sum::<usize>()
+        }
+        TypeSignature::Array(element) => 1 + type_signature_specificity(element),
+        TypeSignature::Function { params, ret } => {
+            1 + params.iter().map(type_signature_specificity).sum::<usize>()
+                + type_signature_specificity(ret)
+        }
+        _ => 1,
+    }
+}
+
 /// Per-module resolution results for cross-module references.
 ///
 /// Maps are keyed by the 0-based row index in the source module's
 /// TypeRef/MethodRef/FieldRef tables.
 #[derive(Debug, Clone, Default)]
 pub struct ResolvedRefs {
+    /// ModuleRef row index (0-based) -> resolved Domain::modules index.
+    pub modules: FxHashMap<u32, usize>,
     /// TypeRef row index (0-based) -> resolved (module_idx, typedef_idx).
     pub types: FxHashMap<u32, ResolvedType>,
     /// TypeRef row index (0-based) -> resolved (module_idx, contractdef_idx).
@@ -120,8 +205,19 @@ impl Domain {
     /// Returns an error for the first unresolvable reference encountered.
     pub fn resolve_refs(&mut self) -> Result<(), RuntimeError> {
         let module_count = self.modules.len();
+        for module_idx in 0..module_count {
+            self.module_identity(module_idx)?;
+        }
         for src_idx in 0..module_count {
-            let resolved = self.resolve_module_refs(src_idx)?;
+            let resolved = self.resolve_dependency_refs(src_idx)?;
+            self.modules[src_idx].resolved_refs = resolved;
+        }
+        for src_idx in 0..module_count {
+            let resolved = self.resolve_type_refs(src_idx)?;
+            self.modules[src_idx].resolved_refs = resolved;
+        }
+        for src_idx in 0..module_count {
+            let resolved = self.resolve_member_refs(src_idx)?;
             self.modules[src_idx].resolved_refs = resolved;
         }
         Ok(())
@@ -129,114 +225,209 @@ impl Domain {
 
     // ── Resolution implementation ─────────────────────────────────
 
-    /// Resolve all cross-module references for a single module.
-    fn resolve_module_refs(&self, src_idx: usize) -> Result<ResolvedRefs, RuntimeError> {
+    /// Resolve every declared dependency before TypeRefs and MethodRefs use it.
+    fn resolve_dependency_refs(&self, src_idx: usize) -> Result<ResolvedRefs, RuntimeError> {
         let mut resolved = ResolvedRefs::new();
+        for row in 0..self.modules[src_idx].module.module_refs.len() {
+            let target_idx = self.resolve_module_ref_row(src_idx, row)?;
+            resolved.modules.insert(row as u32, target_idx);
+        }
+        Ok(resolved)
+    }
+
+    /// Resolve TypeRefs for every module before signatures or TypeSpecs use
+    /// them during member resolution.
+    fn resolve_type_refs(&self, src_idx: usize) -> Result<ResolvedRefs, RuntimeError> {
+        let mut resolved = self.modules[src_idx].resolved_refs.clone();
         let src_module = &self.modules[src_idx].module;
-
-        // ── TypeRef resolution ────────────────────────────────────
         for (ref_idx, type_ref) in src_module.type_refs.iter().enumerate() {
-            // Get the ModuleRef scope to find the target module
-            let scope_row = type_ref.scope.row_index()
-                .ok_or_else(|| RuntimeError::ExecutionError(
-                    "TypeRef has null scope token".into()
-                ))?;
-            let scope_0based = (scope_row - 1) as usize;
-            if scope_0based >= src_module.module_refs.len() {
-                return Err(RuntimeError::ExecutionError(format!(
-                    "TypeRef scope index {} out of range (module has {} ModuleRef rows)",
-                    scope_0based, src_module.module_refs.len()
-                )));
+            if type_ref.scope.table_id() != 1 {
+                return Err(RuntimeError::ExecutionError(
+                    "TypeRef scope is not a ModuleRef token".into(),
+                ));
             }
-            let mod_ref = &src_module.module_refs[scope_0based];
-            let target_mod_name = read_string(&src_module.string_heap, mod_ref.name)
-                .map_err(|_| RuntimeError::ExecutionError("invalid ModuleRef name".into()))?;
-
-            let target_mod_idx = self.find_module_by_name(target_mod_name)
-                .ok_or_else(|| RuntimeError::ExecutionError(format!(
-                    "unresolved module reference: '{}'", target_mod_name
-                )))?;
-
-            let ref_name = read_string(&src_module.string_heap, type_ref.name)
+            let scope_row = type_ref.scope.row_index().ok_or_else(|| {
+                RuntimeError::ExecutionError("TypeRef has null scope token".into())
+            })?;
+            let scope = (scope_row - 1) as usize;
+            let target_idx = *resolved.modules.get(&(scope as u32)).ok_or_else(|| {
+                RuntimeError::ExecutionError(format!(
+                    "TypeRef scope index {} is not a resolved ModuleRef",
+                    scope
+                ))
+            })?;
+            let name = read_string(&src_module.string_heap, type_ref.name)
                 .map_err(|_| RuntimeError::ExecutionError("invalid TypeRef name".into()))?;
-            let ref_ns = read_string(&src_module.string_heap, type_ref.namespace)
+            let namespace = read_string(&src_module.string_heap, type_ref.namespace)
                 .map_err(|_| RuntimeError::ExecutionError("invalid TypeRef namespace".into()))?;
-
-            let target_module = &self.modules[target_mod_idx].module;
-            if let Some(typedef_idx) = Self::find_type_def_by_name(target_module, ref_ns, ref_name) {
-                resolved.types.insert(ref_idx as u32, ResolvedType {
-                    module_idx: target_mod_idx,
-                    typedef_idx,
-                });
-            } else if let Some(contractdef_idx) = Self::find_contract_def_by_name(target_module, ref_ns, ref_name) {
-                // TypeRef points to a ContractDef, not a TypeDef.
-                // Store in the contracts map for dispatch table resolution.
-                resolved.contracts.insert(ref_idx as u32, ResolvedContract {
-                    module_idx: target_mod_idx,
-                    contractdef_idx,
-                });
+            let target = &self.modules[target_idx].module;
+            if let Some(type_idx) = Self::find_type_def_by_name(target, namespace, name) {
+                resolved.types.insert(
+                    ref_idx as u32,
+                    ResolvedType {
+                        module_idx: target_idx,
+                        typedef_idx: type_idx,
+                    },
+                );
+            } else if let Some(contract_idx) =
+                Self::find_contract_def_by_name(target, namespace, name)
+            {
+                resolved.contracts.insert(
+                    ref_idx as u32,
+                    ResolvedContract {
+                        module_idx: target_idx,
+                        contractdef_idx: contract_idx,
+                    },
+                );
             } else {
                 return Err(RuntimeError::ExecutionError(format!(
                     "unresolved type reference: '{}::{}' in module '{}'",
-                    ref_ns, ref_name, target_mod_name
+                    namespace,
+                    name,
+                    self.module_identity(target_idx)?.0
                 )));
             }
         }
+        Ok(resolved)
+    }
+
+    /// Resolve member references after dependencies and TypeRefs are resolved.
+    fn resolve_member_refs(&self, src_idx: usize) -> Result<ResolvedRefs, RuntimeError> {
+        let mut resolved = self.modules[src_idx].resolved_refs.clone();
+        let src_module = &self.modules[src_idx].module;
 
         // ── MethodRef resolution ──────────────────────────────────
         for (ref_idx, method_ref) in src_module.method_refs.iter().enumerate() {
-            let (target_mod_idx, type_idx) = self.resolve_parent_type(
-                src_idx, method_ref.parent, &resolved
-            )?;
-
+            let unknown_flags =
+                method_ref.flags & !writ_module::tables::METHOD_REF_FLAG_HAS_RECEIVER;
+            if unknown_flags != 0 {
+                return Err(RuntimeError::ExecutionError(format!(
+                    "invalid MethodRef flags: 0x{:04X}",
+                    method_ref.flags
+                )));
+            }
+            let has_receiver =
+                method_ref.flags & writ_module::tables::METHOD_REF_FLAG_HAS_RECEIVER != 0;
+            let parent = self.resolve_method_parent(src_idx, method_ref.parent)?;
             let method_name = read_string(&src_module.string_heap, method_ref.name)
                 .map_err(|_| RuntimeError::ExecutionError("invalid MethodRef name".into()))?;
-
-            let target_module = &self.modules[target_mod_idx].module;
-            let method_idx = Self::find_method_in_type(target_module, type_idx, method_name)
-                .ok_or_else(|| {
-                    let type_name = read_string(
-                        &target_module.string_heap,
-                        target_module.type_defs[type_idx].name,
-                    ).unwrap_or("<unknown>");
-                    RuntimeError::ExecutionError(format!(
-                        "unresolved method reference: '{}' on type '{}'",
-                        method_name, type_name
-                    ))
+            let signature_blob =
+                read_blob(&src_module.blob_heap, method_ref.signature).map_err(|_| {
+                    RuntimeError::ExecutionError("invalid MethodRef signature blob offset".into())
                 })?;
-
-            resolved.methods.insert(ref_idx as u32, ResolvedMethod {
-                module_idx: target_mod_idx,
-                method_idx,
-            });
+            let signature = writ_module::signature::decode_method_signature(signature_blob)
+                .map_err(|_| RuntimeError::ExecutionError("invalid MethodRef signature".into()))?;
+            let candidate = self.resolve_method_candidate(
+                &parent,
+                src_idx,
+                method_name,
+                &signature,
+                has_receiver,
+            )?;
+            resolved.methods.insert(
+                ref_idx as u32,
+                ResolvedMethod {
+                    module_idx: candidate.module_idx,
+                    method_idx: candidate.method_idx,
+                },
+            );
         }
 
         // ── FieldRef resolution ───────────────────────────────────
         for (ref_idx, field_ref) in src_module.field_refs.iter().enumerate() {
-            let (target_mod_idx, type_idx) = self.resolve_parent_type(
-                src_idx, field_ref.parent, &resolved
-            )?;
+            let (target_mod_idx, type_idx) =
+                self.resolve_parent_type(src_idx, field_ref.parent, &resolved)?;
 
             let field_name = read_string(&src_module.string_heap, field_ref.name)
                 .map_err(|_| RuntimeError::ExecutionError("invalid FieldRef name".into()))?;
+            let reference_blob =
+                read_blob(&src_module.blob_heap, field_ref.type_sig).map_err(|_| {
+                    RuntimeError::ExecutionError(
+                        "invalid FieldRef type signature blob offset".into(),
+                    )
+                })?;
+            let reference_signature = writ_module::signature::decode_type_signature(reference_blob)
+                .map_err(|_| {
+                    RuntimeError::ExecutionError("invalid FieldRef type signature".into())
+                })?;
 
             let target_module = &self.modules[target_mod_idx].module;
-            let field_idx = Self::find_field_in_type(target_module, type_idx, field_name)
+            let (field_start, field_end) = Self::type_field_range(target_module, type_idx)
                 .ok_or_else(|| {
+                    RuntimeError::ExecutionError("FieldRef parent TypeDef is out of range".into())
+                })?;
+            let mut candidates = Vec::new();
+            for (field_offset, field_idx) in (field_start..field_end).enumerate() {
+                let definition = &target_module.field_defs[field_idx];
+                let definition_name = read_string(&target_module.string_heap, definition.name)
+                    .map_err(|_| {
+                        RuntimeError::ExecutionError(format!(
+                            "invalid FieldDef name at row {}",
+                            field_idx + 1
+                        ))
+                    })?;
+                if definition_name != field_name {
+                    continue;
+                }
+                let definition_blob = read_blob(&target_module.blob_heap, definition.type_sig)
+                    .map_err(|_| {
+                        RuntimeError::ExecutionError(format!(
+                            "invalid FieldDef type signature blob offset at row {}",
+                            field_idx + 1
+                        ))
+                    })?;
+                let definition_signature = writ_module::signature::decode_type_signature(
+                    definition_blob,
+                )
+                .map_err(|_| {
+                    RuntimeError::ExecutionError(format!(
+                        "invalid FieldDef type signature at row {}",
+                        field_idx + 1
+                    ))
+                })?;
+                if crate::type_specs::type_signatures_equal(
+                    &reference_signature,
+                    src_idx,
+                    &definition_signature,
+                    target_mod_idx,
+                    crate::type_specs::NominalSpace::Any,
+                    &self.modules,
+                ) {
+                    candidates.push((field_idx, field_offset));
+                }
+            }
+
+            let (field_idx, field_offset) = match candidates.as_slice() {
+                [candidate] => *candidate,
+                [] => {
                     let type_name = read_string(
                         &target_module.string_heap,
                         target_module.type_defs[type_idx].name,
-                    ).unwrap_or("<unknown>");
-                    RuntimeError::ExecutionError(format!(
-                        "unresolved field reference: '{}' on type '{}'",
+                    )
+                    .unwrap_or("<unknown>");
+                    return Err(RuntimeError::ExecutionError(format!(
+                        "unresolved field reference: '{}' on type '{}' with the requested type signature",
                         field_name, type_name
-                    ))
-                })?;
+                    )));
+                }
+                _ => {
+                    return Err(RuntimeError::ExecutionError(format!(
+                        "ambiguous field reference: '{}' has {} matching definitions",
+                        field_name,
+                        candidates.len()
+                    )));
+                }
+            };
 
-            resolved.fields.insert(ref_idx as u32, ResolvedField {
-                module_idx: target_mod_idx,
-                field_idx,
-            });
+            resolved.fields.insert(
+                ref_idx as u32,
+                ResolvedField {
+                    module_idx: target_mod_idx,
+                    owner_type_idx: type_idx,
+                    field_idx,
+                    field_offset,
+                },
+            );
         }
 
         Ok(resolved)
@@ -255,10 +446,9 @@ impl Domain {
         resolved: &ResolvedRefs,
     ) -> Result<(usize, usize), RuntimeError> {
         let table_id = parent.table_id();
-        let row_idx = parent.row_index()
-            .ok_or_else(|| RuntimeError::ExecutionError(
-                "parent token is null".into()
-            ))?;
+        let row_idx = parent
+            .row_index()
+            .ok_or_else(|| RuntimeError::ExecutionError("parent token is null".into()))?;
         let row_0based = row_idx - 1;
 
         match table_id {
@@ -268,36 +458,405 @@ impl Domain {
             }
             3 => {
                 // TypeRef -- look up in already-resolved types map
-                let rt = resolved.types.get(&row_0based)
-                    .ok_or_else(|| RuntimeError::ExecutionError(format!(
-                        "parent TypeRef row {} not yet resolved", row_0based
-                    )))?;
+                let rt = resolved.types.get(&row_0based).ok_or_else(|| {
+                    RuntimeError::ExecutionError(format!(
+                        "parent TypeRef row {} not yet resolved",
+                        row_0based
+                    ))
+                })?;
                 Ok((rt.module_idx, rt.typedef_idx))
             }
+            4 => Err(RuntimeError::ExecutionError(
+                "FieldRef TypeSpec parents are not supported; use a TypeDef or TypeRef parent"
+                    .into(),
+            )),
             _ => Err(RuntimeError::ExecutionError(format!(
-                "unexpected parent token table ID: {}", table_id
-            )))
+                "unexpected parent token table ID: {}",
+                table_id
+            ))),
         }
     }
 
     // ── Name-matching helpers ─────────────────────────────────────
 
-    /// Find a module in the domain by its name.
-    fn find_module_by_name(&self, name: &str) -> Option<usize> {
-        for (idx, m) in self.modules.iter().enumerate() {
-            let mod_name = read_string(
-                &m.module.string_heap,
-                m.module.module_defs.first().map_or(0, |d| d.name),
-            ).unwrap_or("");
-            if mod_name == name {
-                return Some(idx);
+    fn resolve_method_parent(
+        &self,
+        src_idx: usize,
+        parent: MetadataToken,
+    ) -> Result<MethodRefParent, RuntimeError> {
+        match parent.table_id() {
+            1 => {
+                let row = parent
+                    .row_index()
+                    .and_then(|row| row.checked_sub(1))
+                    .ok_or_else(|| {
+                        RuntimeError::ExecutionError("invalid MethodRef ModuleRef parent".into())
+                    })? as u32;
+                let module_idx = *self.modules[src_idx]
+                    .resolved_refs
+                    .modules
+                    .get(&row)
+                    .ok_or_else(|| {
+                        RuntimeError::ExecutionError(
+                            "MethodRef ModuleRef parent is not resolved".into(),
+                        )
+                    })?;
+                Ok(MethodRefParent::Module { module_idx })
+            }
+            2 | 3 => {
+                let (module_idx, type_idx) =
+                    crate::type_specs::resolve_type_location(src_idx, parent, &self.modules)
+                        .ok_or_else(|| {
+                            RuntimeError::ExecutionError("unresolved MethodRef parent type".into())
+                        })?;
+                Ok(MethodRefParent::Bare {
+                    module_idx,
+                    type_idx,
+                })
+            }
+            4 => {
+                let signature =
+                    crate::type_specs::type_spec_signature(src_idx, parent, &self.modules)
+                        .ok_or_else(|| {
+                            RuntimeError::ExecutionError("invalid MethodRef parent TypeSpec".into())
+                        })?;
+                let (base_module_idx, base_type_idx) =
+                    crate::type_specs::resolve_type_location(src_idx, parent, &self.modules)
+                        .ok_or_else(|| {
+                            RuntimeError::ExecutionError(
+                                "unresolved MethodRef parent TypeSpec".into(),
+                            )
+                        })?;
+                Ok(MethodRefParent::Specialized {
+                    source_module_idx: src_idx,
+                    signature,
+                    base_module_idx,
+                    base_type_idx,
+                })
+            }
+            table => Err(RuntimeError::ExecutionError(format!(
+                "unexpected MethodRef parent token table ID: {}",
+                table
+            ))),
+        }
+    }
+
+    fn resolve_method_candidate(
+        &self,
+        parent: &MethodRefParent,
+        reference_module_idx: usize,
+        method_name: &str,
+        reference_signature: &(Vec<TypeSignature>, TypeSignature),
+        reference_has_receiver: bool,
+    ) -> Result<MethodCandidate, RuntimeError> {
+        let mut candidates = Vec::new();
+        match parent {
+            MethodRefParent::Module { module_idx } => {
+                self.append_method_candidates(
+                    *module_idx,
+                    self.modules[*module_idx].module.top_level_method_indices(),
+                    true,
+                    0,
+                    None,
+                    None,
+                    reference_module_idx,
+                    method_name,
+                    reference_signature,
+                    reference_has_receiver,
+                    &mut candidates,
+                );
+            }
+            MethodRefParent::Bare {
+                module_idx,
+                type_idx,
+            } => {
+                self.append_method_candidates(
+                    *module_idx,
+                    self.modules[*module_idx]
+                        .module
+                        .type_method_indices(*type_idx),
+                    true,
+                    0,
+                    None,
+                    None,
+                    reference_module_idx,
+                    method_name,
+                    reference_signature,
+                    reference_has_receiver,
+                    &mut candidates,
+                );
+                for (impl_module_idx, loaded) in self.modules.iter().enumerate() {
+                    for (impl_idx, implementation) in loaded.module.impl_defs.iter().enumerate() {
+                        if !matches!(implementation.type_token.table_id(), 2 | 3)
+                            || crate::type_specs::resolve_type_location(
+                                impl_module_idx,
+                                implementation.type_token,
+                                &self.modules,
+                            ) != Some((*module_idx, *type_idx))
+                        {
+                            continue;
+                        }
+                        self.append_method_candidates(
+                            impl_module_idx,
+                            loaded.module.impl_method_indices(impl_idx),
+                            implementation.contract.is_null(),
+                            0,
+                            None,
+                            None,
+                            reference_module_idx,
+                            method_name,
+                            reference_signature,
+                            reference_has_receiver,
+                            &mut candidates,
+                        );
+                    }
+                }
+            }
+            MethodRefParent::Specialized {
+                source_module_idx,
+                signature,
+                base_module_idx,
+                base_type_idx,
+            } => {
+                for (impl_module_idx, loaded) in self.modules.iter().enumerate() {
+                    for (impl_idx, implementation) in loaded.module.impl_defs.iter().enumerate() {
+                        if implementation.type_token.table_id() != 4
+                            || crate::type_specs::resolve_type_location(
+                                impl_module_idx,
+                                implementation.type_token,
+                                &self.modules,
+                            ) != Some((*base_module_idx, *base_type_idx))
+                        {
+                            continue;
+                        }
+                        let Some(target_signature) = crate::type_specs::type_spec_signature(
+                            impl_module_idx,
+                            implementation.type_token,
+                            &self.modules,
+                        ) else {
+                            continue;
+                        };
+                        if !crate::type_specs::matches_impl_specialization(
+                            Some((impl_module_idx, &target_signature)),
+                            Some((*source_module_idx, signature)),
+                            None,
+                            None,
+                            &self.modules,
+                        ) {
+                            continue;
+                        }
+                        self.append_method_candidates(
+                            impl_module_idx,
+                            loaded.module.impl_method_indices(impl_idx),
+                            implementation.contract.is_null(),
+                            type_signature_specificity(&target_signature),
+                            Some((impl_module_idx, &target_signature)),
+                            Some((*source_module_idx, signature)),
+                            reference_module_idx,
+                            method_name,
+                            reference_signature,
+                            reference_has_receiver,
+                            &mut candidates,
+                        );
+                    }
+                }
             }
         }
-        None
+        if candidates.iter().any(|candidate| candidate.inherent) {
+            candidates.retain(|candidate| candidate.inherent);
+        }
+        if let Some(max_specificity) = candidates
+            .iter()
+            .map(|candidate| candidate.specificity)
+            .max()
+        {
+            candidates.retain(|candidate| candidate.specificity == max_specificity);
+        }
+        match candidates.as_slice() {
+            [candidate] => Ok(*candidate),
+            [] => Err(RuntimeError::ExecutionError(format!(
+                "unresolved method reference: '{}'",
+                method_name
+            ))),
+            _ => Err(RuntimeError::ExecutionError(format!(
+                "ambiguous method reference: '{}' matched {} definitions",
+                method_name,
+                candidates.len()
+            ))),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn append_method_candidates(
+        &self,
+        module_idx: usize,
+        method_indices: Vec<usize>,
+        inherent: bool,
+        specificity: usize,
+        pattern_parent: Option<(usize, &TypeSignature)>,
+        actual_parent: Option<(usize, &TypeSignature)>,
+        reference_module_idx: usize,
+        method_name: &str,
+        reference_signature: &(Vec<TypeSignature>, TypeSignature),
+        reference_has_receiver: bool,
+        candidates: &mut Vec<MethodCandidate>,
+    ) {
+        let module = &self.modules[module_idx].module;
+        for method_idx in method_indices {
+            let Some(method) = module.method_defs.get(method_idx) else {
+                continue;
+            };
+            let definition_has_receiver = !method.owner.is_null()
+                && method.flags & writ_module::tables::METHOD_FLAG_STATIC == 0;
+            if definition_has_receiver != reference_has_receiver
+                || read_string(&module.string_heap, method.name).ok() != Some(method_name)
+                || !self.method_signature_matches(
+                    pattern_parent,
+                    actual_parent,
+                    reference_module_idx,
+                    reference_signature,
+                    module_idx,
+                    method.signature,
+                )
+            {
+                continue;
+            }
+            candidates.push(MethodCandidate {
+                module_idx,
+                method_idx,
+                inherent,
+                specificity,
+            });
+        }
+    }
+
+    fn method_signature_matches(
+        &self,
+        pattern_parent: Option<(usize, &TypeSignature)>,
+        actual_parent: Option<(usize, &TypeSignature)>,
+        reference_module_idx: usize,
+        reference: &(Vec<TypeSignature>, TypeSignature),
+        definition_module_idx: usize,
+        definition_offset: u32,
+    ) -> bool {
+        let (reference_params, reference_ret) = reference;
+        let module = &self.modules[definition_module_idx].module;
+        let Some((definition_params, definition_ret)) =
+            read_blob(&module.blob_heap, definition_offset)
+                .ok()
+                .and_then(|blob| writ_module::signature::decode_method_signature(blob).ok())
+        else {
+            return false;
+        };
+        crate::type_specs::matches_method_specialization(
+            pattern_parent,
+            actual_parent,
+            &definition_params,
+            &definition_ret,
+            definition_module_idx,
+            reference_params,
+            reference_ret,
+            reference_module_idx,
+            &self.modules,
+        )
+    }
+
+    fn module_identity(
+        &self,
+        module_idx: usize,
+    ) -> Result<(&str, &str, ModuleVersion), RuntimeError> {
+        let module = &self
+            .modules
+            .get(module_idx)
+            .ok_or_else(|| {
+                RuntimeError::ExecutionError(format!("module index {} is out of range", module_idx))
+            })?
+            .module;
+        let definition = module.module_defs.first().ok_or_else(|| {
+            RuntimeError::ExecutionError(format!(
+                "module at index {} has no ModuleDef row",
+                module_idx
+            ))
+        })?;
+        let name = read_string(&module.string_heap, definition.name).map_err(|_| {
+            RuntimeError::ExecutionError(format!(
+                "module at index {} has an invalid ModuleDef name",
+                module_idx
+            ))
+        })?;
+        let version_text = read_string(&module.string_heap, definition.version).map_err(|_| {
+            RuntimeError::ExecutionError(format!(
+                "module '{}' has an invalid ModuleDef version string",
+                name
+            ))
+        })?;
+        let version = ModuleVersion::parse(version_text).ok_or_else(|| {
+            RuntimeError::ExecutionError(format!(
+                "module '{}' has malformed version '{}'; expected MAJOR.MINOR.PATCH",
+                name, version_text
+            ))
+        })?;
+        Ok((name, version_text, version))
+    }
+
+    fn resolve_module_ref_row(&self, src_idx: usize, row: usize) -> Result<usize, RuntimeError> {
+        let source = &self.modules[src_idx].module;
+        let module_ref = source.module_refs.get(row).ok_or_else(|| {
+            RuntimeError::ExecutionError(format!("ModuleRef row {} is out of range", row))
+        })?;
+        let name = read_string(&source.string_heap, module_ref.name)
+            .map_err(|_| RuntimeError::ExecutionError("invalid ModuleRef name".into()))?;
+        let minimum_text = read_string(&source.string_heap, module_ref.min_version)
+            .map_err(|_| RuntimeError::ExecutionError("invalid ModuleRef min_version".into()))?;
+        let minimum = ModuleVersion::parse(minimum_text).ok_or_else(|| {
+            RuntimeError::ExecutionError(format!(
+                "ModuleRef '{}' has malformed minimum version '{}'; expected MAJOR.MINOR.PATCH",
+                name, minimum_text
+            ))
+        })?;
+
+        let mut named = 0usize;
+        let mut compatible = Vec::new();
+        for module_idx in 0..self.modules.len() {
+            // ModuleRef edges are dependencies and cannot point back to the
+            // source module in the required acyclic module graph.
+            if module_idx == src_idx {
+                continue;
+            }
+            let (candidate_name, _, candidate_version) = self.module_identity(module_idx)?;
+            if candidate_name != name {
+                continue;
+            }
+            named += 1;
+            if candidate_version.satisfies(minimum) {
+                compatible.push(module_idx);
+            }
+        }
+
+        match compatible.as_slice() {
+            [module_idx] => Ok(*module_idx),
+            [] if named == 0 => Err(RuntimeError::ExecutionError(format!(
+                "unresolved module reference: '{}'",
+                name
+            ))),
+            [] => Err(RuntimeError::ExecutionError(format!(
+                "no compatible module '{}' satisfies minimum version '{}' with major {}",
+                name, minimum_text, minimum.major
+            ))),
+            _ => Err(RuntimeError::ExecutionError(format!(
+                "ambiguous module reference: '{}' has {} compatible loaded modules",
+                name,
+                compatible.len()
+            ))),
+        }
     }
 
     /// Find a TypeDef by (namespace, name) in a module.
-    fn find_type_def_by_name(module: &writ_module::Module, namespace: &str, name: &str) -> Option<usize> {
+    fn find_type_def_by_name(
+        module: &writ_module::Module,
+        namespace: &str,
+        name: &str,
+    ) -> Option<usize> {
         for (idx, td) in module.type_defs.iter().enumerate() {
             let td_name = read_string(&module.string_heap, td.name).unwrap_or("");
             let td_ns = read_string(&module.string_heap, td.namespace).unwrap_or("");
@@ -309,7 +868,11 @@ impl Domain {
     }
 
     /// Find a ContractDef by (namespace, name) in a module.
-    fn find_contract_def_by_name(module: &writ_module::Module, namespace: &str, name: &str) -> Option<usize> {
+    fn find_contract_def_by_name(
+        module: &writ_module::Module,
+        namespace: &str,
+        name: &str,
+    ) -> Option<usize> {
         for (idx, cd) in module.contract_defs.iter().enumerate() {
             let cd_name = read_string(&module.string_heap, cd.name).unwrap_or("");
             let cd_ns = read_string(&module.string_heap, cd.namespace).unwrap_or("");
@@ -320,42 +883,18 @@ impl Domain {
         None
     }
 
-    /// Find a MethodDef by name within a type's method range.
-    fn find_method_in_type(module: &writ_module::Module, type_idx: usize, method_name: &str) -> Option<usize> {
-        let td = &module.type_defs[type_idx];
-        let method_start = td.method_list.saturating_sub(1) as usize;
-        let method_end = if type_idx + 1 < module.type_defs.len() {
-            module.type_defs[type_idx + 1].method_list.saturating_sub(1) as usize
-        } else {
-            module.method_defs.len()
-        };
-        for idx in method_start..method_end {
-            let md_name = read_string(&module.string_heap, module.method_defs[idx].name).unwrap_or("");
-            if md_name == method_name {
-                return Some(idx);
-            }
-        }
-        None
-    }
-
-    /// Find a FieldDef by name within a type's field range.
-    fn find_field_in_type(module: &writ_module::Module, type_idx: usize, field_name: &str) -> Option<usize> {
-        let td = &module.type_defs[type_idx];
+    /// Return the absolute FieldDef range owned by a TypeDef.
+    fn type_field_range(module: &writ_module::Module, type_idx: usize) -> Option<(usize, usize)> {
+        let td = module.type_defs.get(type_idx)?;
         let field_start = td.field_list.saturating_sub(1) as usize;
         let field_end = if type_idx + 1 < module.type_defs.len() {
             module.type_defs[type_idx + 1].field_list.saturating_sub(1) as usize
         } else {
             module.field_defs.len()
         };
-        for idx in field_start..field_end {
-            let fd_name = read_string(&module.string_heap, module.field_defs[idx].name).unwrap_or("");
-            if fd_name == field_name {
-                return Some(idx);
-            }
-        }
-        None
+        (field_start <= field_end && field_end <= module.field_defs.len())
+            .then_some((field_start, field_end))
     }
-
 }
 
 // ──── Attribute Query API ──────────────────────────────────────────────
@@ -423,7 +962,7 @@ impl Domain {
         module_idx: usize,
         typedef_idx: usize,
     ) -> Vec<DomainAttributeMatch> {
-        use writ_module::tables::{TableId, ATTR_OWNER_KIND_DECL};
+        use writ_module::tables::{ATTR_OWNER_KIND_DECL, TableId};
 
         if module_idx >= self.modules.len() {
             return Vec::new();
@@ -473,12 +1012,16 @@ impl Domain {
         }
         let module = &self.modules[module_idx].module;
 
-        module.attribute_defs.iter().find(|row| {
-            row.owner_kind != ATTR_OWNER_KIND_DECL
-                && row.owner == owner_token
-                && writ_module::heap::read_string(&module.string_heap, row.name).ok()
-                    == Some(attr_name)
-        }).map(|row| decode_row_args(module, row))
+        module
+            .attribute_defs
+            .iter()
+            .find(|row| {
+                row.owner_kind != ATTR_OWNER_KIND_DECL
+                    && row.owner == owner_token
+                    && writ_module::heap::read_string(&module.string_heap, row.name).ok()
+                        == Some(attr_name)
+            })
+            .map(|row| decode_row_args(module, row))
     }
 }
 
@@ -499,14 +1042,13 @@ fn decode_row_args(
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::dispatch::{DispatchTarget, IntrinsicId};
     use writ_module::module::MethodBody;
     use writ_module::tables::TypeDefKind;
-    use writ_module::ModuleBuilder;
+    use writ_module::{Instruction, ModuleBuilder};
 
     fn empty_body() -> MethodBody {
         MethodBody {
@@ -515,6 +1057,14 @@ mod tests {
             debug_locals: vec![],
             source_spans: vec![],
         }
+    }
+
+    fn void_signature() -> Vec<u8> {
+        writ_module::signature::encode_method_signature(
+            &[],
+            &writ_module::signature::TypeSignature::Void,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -542,6 +1092,135 @@ mod tests {
         assert_eq!(idx1, 0);
         assert_eq!(idx2, 1);
         assert_eq!(domain.modules.len(), 2);
+    }
+
+    #[test]
+    fn module_ref_accepts_exact_version_for_typeref() {
+        let mut library = ModuleBuilder::new("versioned-library").version("1.2.3");
+        library.add_type_def("Widget", "lib", TypeDefKind::Class, 0);
+        let mut user = ModuleBuilder::new("versioned-user");
+        let library_ref = user.add_module_ref("versioned-library", "1.2.3");
+        user.add_type_ref(library_ref, "Widget", "lib");
+
+        let mut domain = Domain::new();
+        domain.add_module(library.build()).unwrap();
+        domain.add_module(user.build()).unwrap();
+        domain.resolve_refs().unwrap();
+
+        let resolved = &domain.modules[1].resolved_refs;
+        assert_eq!(resolved.modules[&0], 0);
+        assert_eq!(resolved.types[&0].module_idx, 0);
+    }
+
+    #[test]
+    fn module_ref_accepts_higher_compatible_version_for_all_parent_kinds() {
+        let signature = void_signature();
+        let mut library = ModuleBuilder::new("versioned-library").version("1.4.1");
+        library.add_type_def("Widget", "lib", TypeDefKind::Class, 0);
+        library.add_method("ping", &signature, 0, 0, empty_body());
+        let mut user = ModuleBuilder::new("versioned-user");
+        let library_ref = user.add_module_ref("versioned-library", "1.3.9");
+        user.add_type_ref(library_ref, "Widget", "lib");
+        user.add_method_ref_with_flags(library_ref, "ping", &signature, 0);
+
+        let mut domain = Domain::new();
+        domain.add_module(library.build()).unwrap();
+        domain.add_module(user.build()).unwrap();
+        domain.resolve_refs().unwrap();
+
+        let resolved = &domain.modules[1].resolved_refs;
+        assert_eq!(resolved.modules[&0], 0);
+        assert_eq!(resolved.types[&0].module_idx, resolved.modules[&0]);
+        assert_eq!(resolved.methods[&0].module_idx, resolved.modules[&0]);
+    }
+
+    #[test]
+    fn module_ref_rejects_wrong_major_version() {
+        let library = ModuleBuilder::new("versioned-library")
+            .version("2.0.0")
+            .build();
+        let mut user = ModuleBuilder::new("versioned-user");
+        user.add_module_ref("versioned-library", "1.0.0");
+
+        let mut domain = Domain::new();
+        domain.add_module(library).unwrap();
+        domain.add_module(user.build()).unwrap();
+        let error = domain.resolve_refs().unwrap_err().to_string();
+        assert!(error.contains("no compatible module"), "{error}");
+    }
+
+    #[test]
+    fn module_ref_rejects_too_low_minor_version() {
+        let library = ModuleBuilder::new("versioned-library")
+            .version("1.1.9")
+            .build();
+        let mut user = ModuleBuilder::new("versioned-user");
+        user.add_module_ref("versioned-library", "1.2.0");
+
+        let mut domain = Domain::new();
+        domain.add_module(library).unwrap();
+        domain.add_module(user.build()).unwrap();
+        let error = domain.resolve_refs().unwrap_err().to_string();
+        assert!(error.contains("no compatible module"), "{error}");
+    }
+
+    #[test]
+    fn module_ref_rejects_too_low_patch_version() {
+        let library = ModuleBuilder::new("versioned-library")
+            .version("1.2.2")
+            .build();
+        let mut user = ModuleBuilder::new("versioned-user");
+        user.add_module_ref("versioned-library", "1.2.3");
+
+        let mut domain = Domain::new();
+        domain.add_module(library).unwrap();
+        domain.add_module(user.build()).unwrap();
+        let error = domain.resolve_refs().unwrap_err().to_string();
+        assert!(error.contains("no compatible module"), "{error}");
+    }
+
+    #[test]
+    fn module_ref_rejects_malformed_module_version() {
+        let library = ModuleBuilder::new("versioned-library")
+            .version("01.0.0")
+            .build();
+        let mut domain = Domain::new();
+        domain.add_module(library).unwrap();
+        let error = domain.resolve_refs().unwrap_err().to_string();
+        assert!(error.contains("malformed version"), "{error}");
+    }
+
+    #[test]
+    fn module_ref_rejects_malformed_minimum_version() {
+        let library = ModuleBuilder::new("versioned-library").build();
+        let mut user = ModuleBuilder::new("versioned-user");
+        user.add_module_ref("versioned-library", "1.0");
+
+        let mut domain = Domain::new();
+        domain.add_module(library).unwrap();
+        domain.add_module(user.build()).unwrap();
+        let error = domain.resolve_refs().unwrap_err().to_string();
+        assert!(error.contains("malformed minimum version"), "{error}");
+    }
+
+    #[test]
+    fn module_ref_rejects_ambiguous_compatible_duplicate_modules() {
+        let first = ModuleBuilder::new("versioned-library")
+            .version("1.0.0")
+            .build();
+        let second = ModuleBuilder::new("versioned-library")
+            .version("1.5.0")
+            .build();
+        let mut user = ModuleBuilder::new("versioned-user");
+        user.add_module_ref("versioned-library", "1.0.0");
+
+        let mut domain = Domain::new();
+        domain.add_module(first).unwrap();
+        domain.add_module(second).unwrap();
+        domain.add_module(user.build()).unwrap();
+        let error = domain.resolve_refs().unwrap_err().to_string();
+        assert!(error.contains("ambiguous module reference"), "{error}");
+        assert!(error.contains("2 compatible"), "{error}");
     }
 
     #[test]
@@ -581,7 +1260,10 @@ mod tests {
 
         let resolved = &domain.modules[1].resolved_refs;
         assert_eq!(resolved.types.len(), 1);
-        let rt = resolved.types.get(&0).expect("TypeRef 0 should be resolved");
+        let rt = resolved
+            .types
+            .get(&0)
+            .expect("TypeRef 0 should be resolved");
         assert_eq!(rt.module_idx, 0, "should point to mod-a");
         assert_eq!(rt.typedef_idx, 0, "should point to first TypeDef");
     }
@@ -592,24 +1274,505 @@ mod tests {
 
         // Module A: has TypeDef "Foo" with method "bar"
         let mut builder_a = ModuleBuilder::new("mod-a");
-        builder_a.add_type_def("Foo", "ns", TypeDefKind::Struct, 0);
-        builder_a.add_method("bar", &[], 0, 0, empty_body());
+        let foo = builder_a.add_type_def("Foo", "ns", TypeDefKind::Struct, 0);
+        let signature = void_signature();
+        builder_a.add_type_method(foo, "bar", &signature, 0, 0, empty_body());
         domain.add_module(builder_a.build()).unwrap();
 
         // Module B: references "bar" on Foo from mod-a
         let mut builder_b = ModuleBuilder::new("mod-b");
         let mod_ref = builder_b.add_module_ref("mod-a", "1.0.0");
         let type_ref = builder_b.add_type_ref(mod_ref, "Foo", "ns");
-        builder_b.add_method_ref(type_ref, "bar", &[]);
+        builder_b.add_method_ref(type_ref, "bar", &signature);
         domain.add_module(builder_b.build()).unwrap();
 
         domain.resolve_refs().unwrap();
 
         let resolved = &domain.modules[1].resolved_refs;
         assert_eq!(resolved.methods.len(), 1);
-        let rm = resolved.methods.get(&0).expect("MethodRef 0 should be resolved");
+        let rm = resolved
+            .methods
+            .get(&0)
+            .expect("MethodRef 0 should be resolved");
         assert_eq!(rm.module_idx, 0, "should point to mod-a");
         assert_eq!(rm.method_idx, 0, "should point to first MethodDef");
+    }
+
+    #[test]
+    fn methodref_overloads_resolve_by_canonical_signature() {
+        use writ_module::signature::{TypeSignature, encode_method_signature};
+
+        let mut library = ModuleBuilder::new("overload-library");
+        let argument = library.add_type_def("Argument", "lib", TypeDefKind::Class, 0);
+        let picker = library.add_type_def("Picker", "lib", TypeDefKind::Class, 0);
+        let implementation = library.add_impl_def(picker, MetadataToken::NULL);
+        let named_definition =
+            encode_method_signature(&[TypeSignature::Named(argument)], &TypeSignature::Int)
+                .unwrap();
+        let bool_signature =
+            encode_method_signature(&[TypeSignature::Bool], &TypeSignature::Int).unwrap();
+        let named_method = library.add_impl_method(
+            implementation,
+            "choose",
+            &named_definition,
+            0,
+            2,
+            empty_body(),
+        );
+        let bool_method = library.add_impl_method(
+            implementation,
+            "choose",
+            &bool_signature,
+            0,
+            2,
+            empty_body(),
+        );
+
+        let mut user = ModuleBuilder::new("overload-user");
+        let library_ref = user.add_module_ref("overload-library", "1.0.0");
+        let argument_ref = user.add_type_ref(library_ref, "Argument", "lib");
+        let picker_ref = user.add_type_ref(library_ref, "Picker", "lib");
+        let named_reference =
+            encode_method_signature(&[TypeSignature::Named(argument_ref)], &TypeSignature::Int)
+                .unwrap();
+        user.add_method_ref(picker_ref, "choose", &named_reference);
+        user.add_method_ref(picker_ref, "choose", &bool_signature);
+
+        let mut domain = Domain::new();
+        domain.add_module(library.build()).unwrap();
+        domain.add_module(user.build()).unwrap();
+        domain.resolve_refs().unwrap();
+        let resolved = &domain.modules[1].resolved_refs.methods;
+        assert_eq!(
+            resolved[&0].method_idx,
+            named_method.row_index().unwrap() as usize - 1
+        );
+        assert_eq!(
+            resolved[&1].method_idx,
+            bool_method.row_index().unwrap() as usize - 1
+        );
+    }
+
+    #[test]
+    fn methodref_receiver_abi_selects_static_and_instance_definitions() {
+        use writ_module::tables::{METHOD_FLAG_STATIC, METHOD_REF_FLAG_HAS_RECEIVER};
+
+        let signature = void_signature();
+        let mut library = ModuleBuilder::new("receiver-library");
+        let utility = library.add_type_def("Utility", "lib", TypeDefKind::Class, 0);
+        let implementation = library.add_impl_def(utility, MetadataToken::NULL);
+        let instance =
+            library.add_impl_method(implementation, "identity", &signature, 0, 1, empty_body());
+        let static_method = library.add_impl_method(
+            implementation,
+            "identity",
+            &signature,
+            METHOD_FLAG_STATIC,
+            0,
+            empty_body(),
+        );
+
+        let mut user = ModuleBuilder::new("receiver-user");
+        let library_ref = user.add_module_ref("receiver-library", "1.0.0");
+        let utility_ref = user.add_type_ref(library_ref, "Utility", "lib");
+        user.add_method_ref_with_flags(
+            utility_ref,
+            "identity",
+            &signature,
+            METHOD_REF_FLAG_HAS_RECEIVER,
+        );
+        user.add_method_ref_with_flags(utility_ref, "identity", &signature, 0);
+
+        let mut domain = Domain::new();
+        domain.add_module(library.build()).unwrap();
+        domain.add_module(user.build()).unwrap();
+        domain.resolve_refs().unwrap();
+        let resolved = &domain.modules[1].resolved_refs.methods;
+        assert_eq!(
+            resolved[&0].method_idx,
+            instance.row_index().unwrap() as usize - 1
+        );
+        assert_eq!(
+            resolved[&1].method_idx,
+            static_method.row_index().unwrap() as usize - 1
+        );
+    }
+
+    #[test]
+    fn stale_static_methodref_does_not_bind_instance_definition() {
+        let signature = void_signature();
+        let mut library = ModuleBuilder::new("receiver-library");
+        let utility = library.add_type_def("Utility", "lib", TypeDefKind::Class, 0);
+        let implementation = library.add_impl_def(utility, MetadataToken::NULL);
+        library.add_impl_method(implementation, "identity", &signature, 0, 1, empty_body());
+
+        let mut user = ModuleBuilder::new("receiver-user");
+        let library_ref = user.add_module_ref("receiver-library", "1.0.0");
+        let utility_ref = user.add_type_ref(library_ref, "Utility", "lib");
+        user.add_method_ref_with_flags(utility_ref, "identity", &signature, 0);
+
+        let mut domain = Domain::new();
+        domain.add_module(library.build()).unwrap();
+        domain.add_module(user.build()).unwrap();
+        let error = domain.resolve_refs().unwrap_err().to_string();
+        assert!(
+            error.contains("unresolved method reference: 'identity'"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn equally_specific_inherent_methodrefs_remain_ambiguous() {
+        let signature = void_signature();
+        let mut library = ModuleBuilder::new("ambiguous-library");
+        let utility = library.add_type_def("Utility", "lib", TypeDefKind::Class, 0);
+        for _ in 0..2 {
+            let implementation = library.add_impl_def(utility, MetadataToken::NULL);
+            library.add_impl_method(implementation, "identity", &signature, 0, 1, empty_body());
+        }
+
+        let mut user = ModuleBuilder::new("ambiguous-user");
+        let library_ref = user.add_module_ref("ambiguous-library", "1.0.0");
+        let utility_ref = user.add_type_ref(library_ref, "Utility", "lib");
+        user.add_method_ref(utility_ref, "identity", &signature);
+
+        let mut domain = Domain::new();
+        domain.add_module(library.build()).unwrap();
+        domain.add_module(user.build()).unwrap();
+        let error = domain.resolve_refs().unwrap_err().to_string();
+        assert!(
+            error.contains("ambiguous method reference: 'identity' matched 2 definitions"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn reserved_methodref_flags_fail_closed() {
+        let signature = void_signature();
+        let mut library = ModuleBuilder::new("flag-library");
+        library.add_type_def("Utility", "lib", TypeDefKind::Class, 0);
+        let mut user = ModuleBuilder::new("receiver-user");
+        let library_ref = user.add_module_ref("flag-library", "1.0.0");
+        let utility_ref = user.add_type_ref(library_ref, "Utility", "lib");
+        user.add_method_ref_with_flags(utility_ref, "identity", &signature, 1 << 15);
+
+        let mut domain = Domain::new();
+        domain.add_module(library.build()).unwrap();
+        domain.add_module(user.build()).unwrap();
+        let error = domain.resolve_refs().unwrap_err().to_string();
+        assert!(error.contains("invalid MethodRef flags: 0x8000"), "{error}");
+    }
+
+    #[test]
+    fn malformed_methodref_signature_fails_closed() {
+        use writ_module::signature::{TypeSignature, encode_method_signature};
+
+        let mut library = ModuleBuilder::new("ambiguous-library");
+        let picker = library.add_type_def("Picker", "lib", TypeDefKind::Class, 0);
+        let implementation = library.add_impl_def(picker, MetadataToken::NULL);
+        let signature =
+            encode_method_signature(&[TypeSignature::Int], &TypeSignature::Int).unwrap();
+        library.add_impl_method(implementation, "choose", &signature, 0, 2, empty_body());
+        let mut user = ModuleBuilder::new("ambiguous-user");
+        let module_ref = user.add_module_ref("ambiguous-library", "1.0.0");
+        let picker_ref = user.add_type_ref(module_ref, "Picker", "lib");
+        user.add_method_ref(picker_ref, "choose", &[]);
+
+        let mut domain = Domain::new();
+        domain.add_module(library.build()).unwrap();
+        domain.add_module(user.build()).unwrap();
+        let error = domain.resolve_refs().unwrap_err().to_string();
+        assert!(error.contains("invalid MethodRef signature"), "{error}");
+    }
+
+    #[test]
+    fn methodref_typespec_parent_selects_exact_specialized_impl() {
+        use writ_module::signature::{
+            TypeSignature, encode_method_signature, encode_type_signature,
+        };
+
+        let method_signature = encode_method_signature(&[], &TypeSignature::Int).unwrap();
+        let int_parent = TypeSignature::Generic {
+            namespace: "lib".into(),
+            name: "Crate".into(),
+            args: vec![TypeSignature::Int],
+        };
+        let string_parent = TypeSignature::Generic {
+            namespace: "lib".into(),
+            name: "Crate".into(),
+            args: vec![TypeSignature::String],
+        };
+        let mut library = ModuleBuilder::new("specialized-library");
+        library.add_type_def("Crate", "lib", TypeDefKind::Class, 0);
+        let int_spec = library.add_type_spec(&encode_type_signature(&int_parent).unwrap());
+        let string_spec = library.add_type_spec(&encode_type_signature(&string_parent).unwrap());
+        let int_impl = library.add_impl_def(int_spec, MetadataToken::NULL);
+        let int_method =
+            library.add_impl_method(int_impl, "marker", &method_signature, 0, 1, empty_body());
+        let string_impl = library.add_impl_def(string_spec, MetadataToken::NULL);
+        library.add_impl_method(string_impl, "marker", &method_signature, 0, 1, empty_body());
+
+        let mut user = ModuleBuilder::new("specialized-user");
+        let module_ref = user.add_module_ref("specialized-library", "1.0.0");
+        user.add_type_ref(module_ref, "Crate", "lib");
+        let int_spec = user.add_type_spec(&encode_type_signature(&int_parent).unwrap());
+        user.add_method_ref(int_spec, "marker", &method_signature);
+
+        let mut domain = Domain::new();
+        domain.add_module(library.build()).unwrap();
+        domain.add_module(user.build()).unwrap();
+        domain.resolve_refs().unwrap();
+        assert_eq!(
+            domain.modules[1].resolved_refs.methods[&0].method_idx,
+            int_method.row_index().unwrap() as usize - 1
+        );
+    }
+
+    #[test]
+    fn methodref_open_impl_substitutes_parent_and_method_generics() {
+        use writ_module::signature::{
+            TypeSignature, encode_method_signature, encode_type_signature,
+        };
+
+        let open_parent = TypeSignature::Generic {
+            namespace: "lib".into(),
+            name: "Crate".into(),
+            args: vec![TypeSignature::GenericParam(0)],
+        };
+        let concrete_parent = TypeSignature::Generic {
+            namespace: "lib".into(),
+            name: "Crate".into(),
+            args: vec![TypeSignature::Int],
+        };
+        let definition_signature = encode_method_signature(
+            &[
+                TypeSignature::GenericParam(0),
+                TypeSignature::GenericParam(1),
+            ],
+            &TypeSignature::GenericParam(1),
+        )
+        .unwrap();
+        let reference_signature = encode_method_signature(
+            &[TypeSignature::Int, TypeSignature::String],
+            &TypeSignature::String,
+        )
+        .unwrap();
+
+        let mut library = ModuleBuilder::new("generic-library");
+        library.add_type_def("Crate", "lib", TypeDefKind::Class, 0);
+        let open_spec = library.add_type_spec(&encode_type_signature(&open_parent).unwrap());
+        let implementation = library.add_impl_def(open_spec, MetadataToken::NULL);
+        let selected = library.add_impl_method(
+            implementation,
+            "choose",
+            &definition_signature,
+            0,
+            3,
+            empty_body(),
+        );
+
+        let mut user = ModuleBuilder::new("generic-user");
+        let module_ref = user.add_module_ref("generic-library", "1.0.0");
+        user.add_type_ref(module_ref, "Crate", "lib");
+        let concrete_spec = user.add_type_spec(&encode_type_signature(&concrete_parent).unwrap());
+        user.add_method_ref(concrete_spec, "choose", &reference_signature);
+
+        let mut domain = Domain::new();
+        domain.add_module(library.build()).unwrap();
+        domain.add_module(user.build()).unwrap();
+        domain.resolve_refs().unwrap();
+        assert_eq!(
+            domain.modules[1].resolved_refs.methods[&0].method_idx,
+            selected.row_index().unwrap() as usize - 1
+        );
+    }
+
+    #[test]
+    fn methodref_discovers_extension_impl_in_another_module() {
+        use writ_module::signature::{TypeSignature, encode_method_signature};
+
+        let signature = encode_method_signature(&[], &TypeSignature::Int).unwrap();
+        let mut base = ModuleBuilder::new("base-library");
+        base.add_type_def("Foreign", "lib", TypeDefKind::Class, 0);
+        let mut extension = ModuleBuilder::new("extension-library");
+        let base_ref = extension.add_module_ref("base-library", "1.0.0");
+        let foreign_ref = extension.add_type_ref(base_ref, "Foreign", "lib");
+        let implementation = extension.add_impl_def(foreign_ref, MetadataToken::NULL);
+        let extension_method =
+            extension.add_impl_method(implementation, "marker", &signature, 0, 1, empty_body());
+        let mut user = ModuleBuilder::new("extension-user");
+        let base_ref = user.add_module_ref("base-library", "1.0.0");
+        let foreign_ref = user.add_type_ref(base_ref, "Foreign", "lib");
+        user.add_method_ref(foreign_ref, "marker", &signature);
+
+        let mut domain = Domain::new();
+        domain.add_module(base.build()).unwrap();
+        domain.add_module(extension.build()).unwrap();
+        domain.add_module(user.build()).unwrap();
+        domain.resolve_refs().unwrap();
+        let resolved = domain.modules[2].resolved_refs.methods[&0];
+        assert_eq!(resolved.module_idx, 1);
+        assert_eq!(
+            resolved.method_idx,
+            extension_method.row_index().unwrap() as usize - 1
+        );
+    }
+
+    #[test]
+    fn call_methodref_executes_impl_method_in_library_module() {
+        fn body(instructions: &[Instruction], reg_count: usize) -> MethodBody {
+            let mut code = Vec::new();
+            for instruction in instructions {
+                instruction.encode(&mut code).unwrap();
+            }
+            MethodBody {
+                register_types: vec![0; reg_count],
+                code,
+                debug_locals: vec![],
+                source_spans: vec![],
+            }
+        }
+
+        let mut library = ModuleBuilder::new("test-library");
+        let counter = library.add_type_def("Counter", "lib", TypeDefKind::Class, 0);
+        let counter_impl = library.add_impl_def(counter, MetadataToken::NULL);
+        let get_signature = writ_module::signature::encode_method_signature(
+            &[],
+            &writ_module::signature::TypeSignature::Int,
+        )
+        .unwrap();
+        library.add_impl_method(
+            counter_impl,
+            "get",
+            &get_signature,
+            0,
+            2,
+            body(
+                &[
+                    Instruction::LoadInt {
+                        r_dst: 1,
+                        value: 42,
+                    },
+                    Instruction::Ret { r_src: 1 },
+                ],
+                2,
+            ),
+        );
+        let library = library.build();
+
+        let mut user = ModuleBuilder::new("test-user");
+        let library_ref = user.add_module_ref("test-library", "1.0.0");
+        let counter_ref = user.add_type_ref(library_ref, "Counter", "lib");
+        let get_ref = user.add_method_ref(counter_ref, "get", &get_signature);
+        user.add_method(
+            "main",
+            &get_signature,
+            0,
+            2,
+            body(
+                &[
+                    Instruction::New {
+                        r_dst: 0,
+                        type_idx: counter_ref.0,
+                        field_count: 0,
+                        r_base: 0,
+                    },
+                    Instruction::Call {
+                        r_dst: 1,
+                        method_idx: get_ref.0,
+                        r_base: 0,
+                        argc: 1,
+                    },
+                    Instruction::Ret { r_src: 1 },
+                ],
+                2,
+            ),
+        );
+
+        let mut runtime = crate::RuntimeBuilder::new(user.build())
+            .with_library(library)
+            .build()
+            .unwrap();
+        let task_id = runtime.spawn_task(0, vec![]).unwrap();
+        runtime.tick(0.0, crate::ExecutionLimit::None);
+
+        assert_eq!(
+            runtime.task_state(task_id),
+            Some(crate::TaskState::Completed)
+        );
+        assert_eq!(runtime.return_value(task_id), Some(crate::Value::Int(42)));
+    }
+
+    #[test]
+    fn compiled_xmod_static_generic_and_top_level_calls_execute() {
+        let library_source: &'static str = r#"
+            pub class Utility {}
+            impl Utility {
+                pub fn identity(value: int) -> int { return value; }
+            }
+            pub class Crate<T> { pub value: T }
+            impl<T> Crate<T> {
+                pub fn choose<U>(self, value: U) -> U { return value; }
+            }
+            pub fn make_crate() -> Crate<int> {
+                return new Crate<int> { value: 0 };
+            }
+            pub fn add_ints(left: int, right: int) -> int {
+                return left + right;
+            }
+        "#;
+        let library_bytes = writ_compiler::compile_source(library_source).unwrap();
+        let library = writ_module::Module::from_bytes(&library_bytes).unwrap();
+        let user_source: &'static str = r#"
+            pub fn main() -> int {
+                let crate = make_crate();
+                let chosen = crate.choose(9);
+                let total = add_ints(chosen, 1);
+                let utility = new Utility {};
+                let result = utility.identity(total);
+                return result;
+            }
+        "#;
+        let user_bytes = writ_compiler::compile_with_libraries(user_source, &[&library])
+            .expect("cross-module calls should compile");
+        let user = writ_module::Module::from_bytes(&user_bytes).unwrap();
+        let main_idx = user
+            .top_level_method_indices()
+            .into_iter()
+            .find(|index| {
+                read_string(&user.string_heap, user.method_defs[*index].name).ok() == Some("main")
+            })
+            .unwrap();
+        let body = &user.method_bodies[main_idx];
+        let mut cursor = std::io::Cursor::new(&body.code);
+        let calls: Vec<_> = std::iter::from_fn(|| {
+            ((cursor.position() as usize) < body.code.len())
+                .then(|| Instruction::decode(&mut cursor).unwrap())
+        })
+        .filter_map(|instruction| match instruction {
+            Instruction::Call {
+                method_idx,
+                r_base,
+                argc,
+                ..
+            } => Some((method_idx, r_base, argc)),
+            _ => None,
+        })
+        .collect();
+        assert!(calls.iter().all(|(method, _, _)| *method != 0));
+        assert!(calls.iter().any(|(_, _, argc)| *argc == 1));
+
+        let mut runtime = crate::RuntimeBuilder::new(user)
+            .with_library(library)
+            .build()
+            .unwrap();
+        let task_id = runtime.spawn_task(main_idx, vec![]).unwrap();
+        runtime.tick(0.0, crate::ExecutionLimit::None);
+        assert_eq!(
+            runtime.task_state(task_id),
+            Some(crate::TaskState::Completed)
+        );
+        assert_eq!(runtime.return_value(task_id), Some(crate::Value::Int(10)));
     }
 
     #[test]
@@ -633,7 +1796,10 @@ mod tests {
 
         let resolved = &domain.modules[1].resolved_refs;
         assert_eq!(resolved.fields.len(), 1);
-        let rf = resolved.fields.get(&0).expect("FieldRef 0 should be resolved");
+        let rf = resolved
+            .fields
+            .get(&0)
+            .expect("FieldRef 0 should be resolved");
         assert_eq!(rf.module_idx, 0, "should point to mod-a");
         assert_eq!(rf.field_idx, 0, "should point to first FieldDef");
     }
@@ -655,8 +1821,16 @@ mod tests {
         let err = domain.resolve_refs().unwrap_err();
         let msg = format!("{}", err);
         assert!(msg.contains("unresolved type reference"), "error: {}", msg);
-        assert!(msg.contains("Bar"), "error should mention type name: {}", msg);
-        assert!(msg.contains("mod-a"), "error should mention module name: {}", msg);
+        assert!(
+            msg.contains("Bar"),
+            "error should mention type name: {}",
+            msg
+        );
+        assert!(
+            msg.contains("mod-a"),
+            "error should mention module name: {}",
+            msg
+        );
     }
 
     #[test]
@@ -672,13 +1846,21 @@ mod tests {
         let mut builder_b = ModuleBuilder::new("mod-b");
         let mod_ref = builder_b.add_module_ref("mod-a", "1.0.0");
         let type_ref = builder_b.add_type_ref(mod_ref, "Foo", "ns");
-        builder_b.add_method_ref(type_ref, "baz", &[]);
+        builder_b.add_method_ref(type_ref, "baz", &void_signature());
         domain.add_module(builder_b.build()).unwrap();
 
         let err = domain.resolve_refs().unwrap_err();
         let msg = format!("{}", err);
-        assert!(msg.contains("unresolved method reference"), "error: {}", msg);
-        assert!(msg.contains("baz"), "error should mention method name: {}", msg);
+        assert!(
+            msg.contains("unresolved method reference"),
+            "error: {}",
+            msg
+        );
+        assert!(
+            msg.contains("baz"),
+            "error should mention method name: {}",
+            msg
+        );
     }
 
     #[test]
@@ -693,8 +1875,16 @@ mod tests {
 
         let err = domain.resolve_refs().unwrap_err();
         let msg = format!("{}", err);
-        assert!(msg.contains("unresolved module reference"), "error: {}", msg);
-        assert!(msg.contains("mod-c"), "error should mention module name: {}", msg);
+        assert!(
+            msg.contains("unresolved module reference"),
+            "error: {}",
+            msg
+        );
+        assert!(
+            msg.contains("mod-c"),
+            "error should mention module name: {}",
+            msg
+        );
     }
 
     #[test]
@@ -737,9 +1927,10 @@ mod tests {
         // Single module with a TypeDef and a MethodRef pointing to a local method
         let mut builder = ModuleBuilder::new("self-contained");
         let type_token = builder.add_type_def("MyType", "app", TypeDefKind::Struct, 0);
-        builder.add_method("do_thing", &[], 0, 0, empty_body());
+        let signature = void_signature();
+        builder.add_type_method(type_token, "do_thing", &signature, 0, 0, empty_body());
         // MethodRef with parent pointing to local TypeDef
-        builder.add_method_ref(type_token, "do_thing", &[]);
+        builder.add_method_ref(type_token, "do_thing", &signature);
         domain.add_module(builder.build()).unwrap();
 
         domain.resolve_refs().unwrap();
@@ -771,7 +1962,11 @@ mod tests {
         let err = domain.resolve_refs().unwrap_err();
         let msg = format!("{}", err);
         assert!(msg.contains("unresolved field reference"), "error: {}", msg);
-        assert!(msg.contains("y"), "error should mention field name: {}", msg);
+        assert!(
+            msg.contains("y"),
+            "error should mention field name: {}",
+            msg
+        );
     }
 
     // ── Dispatch table tests ──────────────────────────────────────
@@ -785,14 +1980,18 @@ mod tests {
         domain.resolve_refs().unwrap();
 
         let table = domain.build_dispatch_table();
-        // FIX-02: Specialization-specific contract tokens in the virtual module assign
-        // distinct type_args_hash values per generic specialization. All ImplDef entries
-        // now produce distinct DispatchKeys (no collisions).
+        // Synthetic specialization contracts in the virtual module have distinct
+        // canonical contract keys. Compiler TypeSpecs are additionally indexed by
+        // structural target and contract patterns.
         // 36 original + 4 Reflectable impls + 22 Phase-103 reflection method impls
         // + 2 Phase 107 dynamic invocation impls (FieldInfo.set, MethodInfo.invoke) = 64
         // + 3 Phase 108 generic reflection impls (Type.type_args, MethodInfo.attributes, FieldInfo.attributes) = 67
         // + 4 Phase 116 Hashable impls (int, float, bool, string) = 71
-        assert_eq!(table.len(), 71, "expected 71 dispatch entries (no generic collisions)");
+        assert_eq!(
+            table.len(),
+            71,
+            "expected 71 dispatch entries (no generic collisions)"
+        );
     }
 
     #[test]
@@ -807,21 +2006,28 @@ mod tests {
 
         // Find type_key for Int
         let module = &domain.modules[0].module;
-        let int_idx = module.type_defs.iter().enumerate()
+        let int_idx = module
+            .type_defs
+            .iter()
+            .enumerate()
             .find(|(_, td)| read_string(&module.string_heap, td.name).unwrap_or("") == "Int")
             .map(|(i, _)| i)
             .expect("Int type should exist");
         let type_key = (0u32 << 16) | (int_idx as u32);
 
         // Find Add contract index for ContractDef-based key
-        let add_idx = module.contract_defs.iter().enumerate()
+        let add_idx = module
+            .contract_defs
+            .iter()
+            .enumerate()
             .find(|(_, cd)| read_string(&module.string_heap, cd.name).unwrap_or("") == "Add")
             .map(|(i, _)| i)
             .expect("Add contract should exist");
         let contract_key = (0u32 << 16) | (add_idx as u32);
 
-        // Use get_any() since type_args_hash = impl_def.contract.0 (non-zero after FIX-02)
-        let target = table.get_any(type_key, contract_key, 0)
+        // Compatibility lookup ignores the legacy TypeSpec shape hash.
+        let target = table
+            .get_any(type_key, contract_key, 0)
             .expect("should have dispatch entry for Int:Add");
         match target {
             DispatchTarget::Intrinsic(IntrinsicId::IntAdd) => {} // expected
@@ -840,21 +2046,28 @@ mod tests {
         let table = domain.build_dispatch_table();
 
         let module = &domain.modules[0].module;
-        let bool_idx = module.type_defs.iter().enumerate()
+        let bool_idx = module
+            .type_defs
+            .iter()
+            .enumerate()
             .find(|(_, td)| read_string(&module.string_heap, td.name).unwrap_or("") == "Bool")
             .map(|(i, _)| i)
             .expect("Bool type should exist");
         let type_key = (0u32 << 16) | (bool_idx as u32);
 
         // Find Eq contract index
-        let eq_idx = module.contract_defs.iter().enumerate()
+        let eq_idx = module
+            .contract_defs
+            .iter()
+            .enumerate()
             .find(|(_, cd)| read_string(&module.string_heap, cd.name).unwrap_or("") == "Eq")
             .map(|(i, _)| i)
             .expect("Eq contract should exist");
         let contract_key = (0u32 << 16) | (eq_idx as u32);
 
-        // Use get_any() since type_args_hash = impl_def.contract.0 (non-zero after FIX-02)
-        let target = table.get_any(type_key, contract_key, 0)
+        // Compatibility lookup ignores the legacy TypeSpec shape hash.
+        let target = table
+            .get_any(type_key, contract_key, 0)
             .expect("should have dispatch entry for Bool:Eq");
         match target {
             DispatchTarget::Intrinsic(IntrinsicId::BoolEq) => {} // expected
@@ -873,7 +2086,10 @@ mod tests {
         let table = domain.build_dispatch_table();
 
         // Use an impossible key (also try get_any for completeness)
-        assert!(table.get_any(0xFFFF_FFFF, 0xFFFF_FFFF, 99).is_none(), "non-existent key should return None");
+        assert!(
+            table.get_any(0xFFFF_FFFF, 0xFFFF_FFFF, 99).is_none(),
+            "non-existent key should return None"
+        );
     }
 
     #[test]
@@ -886,9 +2102,9 @@ mod tests {
         let my_contract = builder.add_contract_def("MyContract", "app");
         builder.add_contract_method("do_it", &[], 0);
 
-        builder.add_impl_def(my_type, my_contract);
+        let impl_token = builder.add_impl_def(my_type, my_contract);
         // Non-intrinsic method (flags=0)
-        builder.add_method("do_it", &[], 0, 0, empty_body());
+        builder.add_impl_method(impl_token, "do_it", &[], 0, 0, empty_body());
 
         domain.add_module(builder.build()).unwrap();
         domain.resolve_refs().unwrap();
@@ -898,10 +2114,13 @@ mod tests {
 
         // type_key = (0 << 16) | typedef_idx(0)
         // contract_key = (0 << 16) | contractdef_idx(0)
-        // Use get_any() since type_args_hash = impl_def.contract.0 (non-zero after FIX-02)
+        // Compatibility lookup ignores the legacy TypeSpec shape hash.
         let target = table.get_any(0, 0, 0).expect("should have dispatch entry");
         match target {
-            DispatchTarget::Method { module_idx, method_idx } => {
+            DispatchTarget::Method {
+                module_idx,
+                method_idx,
+            } => {
                 assert_eq!(*module_idx, 0);
                 assert_eq!(*method_idx, 0);
             }
@@ -930,25 +2149,41 @@ mod tests {
         let module = &domain.modules[0].module;
 
         // Float:Mul
-        let float_idx = module.type_defs.iter().enumerate()
+        let float_idx = module
+            .type_defs
+            .iter()
+            .enumerate()
             .find(|(_, td)| read_string(&module.string_heap, td.name).unwrap_or("") == "Float")
-            .map(|(i, _)| i).unwrap();
-        let mul_idx = module.contract_defs.iter().enumerate()
+            .map(|(i, _)| i)
+            .unwrap();
+        let mul_idx = module
+            .contract_defs
+            .iter()
+            .enumerate()
             .find(|(_, cd)| read_string(&module.string_heap, cd.name).unwrap_or("") == "Mul")
-            .map(|(i, _)| i).unwrap();
-        // Use get_any() since type_args_hash = impl_def.contract.0 (non-zero after FIX-02)
+            .map(|(i, _)| i)
+            .unwrap();
+        // Compatibility lookup ignores the legacy TypeSpec shape hash.
         match table.get_any(float_idx as u32, mul_idx as u32, 0) {
             Some(DispatchTarget::Intrinsic(IntrinsicId::FloatMul)) => {}
             other => panic!("expected Intrinsic(FloatMul), got {:?}", other),
         }
 
         // String:Eq
-        let string_idx = module.type_defs.iter().enumerate()
+        let string_idx = module
+            .type_defs
+            .iter()
+            .enumerate()
             .find(|(_, td)| read_string(&module.string_heap, td.name).unwrap_or("") == "String")
-            .map(|(i, _)| i).unwrap();
-        let eq_idx = module.contract_defs.iter().enumerate()
+            .map(|(i, _)| i)
+            .unwrap();
+        let eq_idx = module
+            .contract_defs
+            .iter()
+            .enumerate()
             .find(|(_, cd)| read_string(&module.string_heap, cd.name).unwrap_or("") == "Eq")
-            .map(|(i, _)| i).unwrap();
+            .map(|(i, _)| i)
+            .unwrap();
         match table.get_any(string_idx as u32, eq_idx as u32, 0) {
             Some(DispatchTarget::Intrinsic(IntrinsicId::StringEq)) => {}
             other => panic!("expected Intrinsic(StringEq), got {:?}", other),
@@ -964,17 +2199,9 @@ mod tests {
     /// This mirrors the virtual module's `Int:Into<Float>` vs `Int:Into<String>`
     /// situation: both use the `into` contract but represent different specializations.
     ///
-    /// FIX-02 adds `type_args_hash` to DispatchKey using `impl_def.contract.0` as
-    /// the discriminator. Since both ImplDefs have the same contract token, the
-    /// virtual module needs to assign distinct contract tokens per specialization.
-    ///
-    /// For user code with a proper compiler: the compiler emits distinct TypeRef
-    /// tokens per specialization (e.g., `Into<Float>` and `Into<String>` are
-    /// different tokens), so `impl_def.contract.0` differs and they produce
-    /// distinct keys.
-    ///
-    /// This test uses distinct contract tokens (simulating compiler-generated output)
-    /// and verifies the two-entry result.
+    /// The virtual module uses distinct synthetic contract definitions for its
+    /// built-in monomorphizations. Compiler-emitted TypeSpecs instead use the
+    /// structural dispatch index exercised by integration tests.
     #[test]
     fn two_same_contract_different_token_specializations_produce_two_entries() {
         let mut domain = Domain::new();
@@ -995,12 +2222,19 @@ mod tests {
         builder.add_contract_method("into", &[], 0);
 
         // ImplDef 1: MyType implements Into<Float> (distinct contract token)
-        builder.add_impl_def(my_type, into_float);
-        builder.add_method("into_float_impl", &[], 0, 0, empty_body());
+        let into_float_impl = builder.add_impl_def(my_type, into_float);
+        builder.add_impl_method(into_float_impl, "into_float_impl", &[], 0, 0, empty_body());
 
         // ImplDef 2: MyType implements Into<String> (distinct contract token)
-        builder.add_impl_def(my_type, into_string);
-        builder.add_method("into_string_impl", &[], 0, 0, empty_body());
+        let into_string_impl = builder.add_impl_def(my_type, into_string);
+        builder.add_impl_method(
+            into_string_impl,
+            "into_string_impl",
+            &[],
+            0,
+            0,
+            empty_body(),
+        );
 
         // The base into_contract is unused in impls above but exists for reference
         let _ = into_contract;
@@ -1029,8 +2263,8 @@ mod tests {
         let my_contract = builder.add_contract_def("Eq", "app");
         builder.add_contract_method("eq", &[], 0);
 
-        builder.add_impl_def(my_type, my_contract);
-        builder.add_method("eq_impl", &[], 0, 0, empty_body());
+        let impl_token = builder.add_impl_def(my_type, my_contract);
+        builder.add_impl_method(impl_token, "eq_impl", &[], 0, 0, empty_body());
 
         domain.add_module(builder.build()).unwrap();
         domain.resolve_refs().unwrap();

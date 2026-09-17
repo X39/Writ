@@ -12,15 +12,16 @@
 pub mod ast;
 pub mod check;
 pub mod config;
+mod core_library;
 pub mod emit;
 pub mod lower;
 pub mod resolve;
 
 // Public API re-exports
 pub use ast::Ast;
-pub use lower::lower;
-pub use lower::error::LoweringError;
 pub use lower::context::LoweringContext;
+pub use lower::error::LoweringError;
+pub use lower::lower;
 
 // Emit API
 pub use emit::emit_bodies;
@@ -64,8 +65,12 @@ pub fn compile_source(src: &'static str) -> Result<Vec<u8>, String> {
     let asts_refs: Vec<(writ_diagnostics::FileId, &Ast)> = vec![(file_id, &ast)];
     let path_refs: Vec<(writ_diagnostics::FileId, &str)> = vec![(file_id, "<source>")];
     let (resolved, resolve_diags) = resolve::resolve(&asts_refs, &path_refs, &[]);
-    if resolve_diags.iter().any(|d| d.severity == writ_diagnostics::Severity::Error) {
-        let msgs: Vec<String> = resolve_diags.iter()
+    if resolve_diags
+        .iter()
+        .any(|d| d.severity == writ_diagnostics::Severity::Error)
+    {
+        let msgs: Vec<String> = resolve_diags
+            .iter()
             .filter(|d| d.severity == writ_diagnostics::Severity::Error)
             .map(|d| d.message.clone())
             .collect();
@@ -74,8 +79,12 @@ pub fn compile_source(src: &'static str) -> Result<Vec<u8>, String> {
 
     // Stage 4: Type checking
     let (typed_ast, interner, _type_env, type_diags) = check::typecheck(resolved, &asts_refs, &[]);
-    if type_diags.iter().any(|d| d.severity == writ_diagnostics::Severity::Error) {
-        let msgs: Vec<String> = type_diags.iter()
+    if type_diags
+        .iter()
+        .any(|d| d.severity == writ_diagnostics::Severity::Error)
+    {
+        let msgs: Vec<String> = type_diags
+            .iter()
             .filter(|d| d.severity == writ_diagnostics::Severity::Error)
             .map(|d| d.message.clone())
             .collect();
@@ -85,11 +94,18 @@ pub fn compile_source(src: &'static str) -> Result<Vec<u8>, String> {
     // Stage 5: IL codegen
     let sources: Vec<(writ_diagnostics::FileId, &str)> = vec![(file_id, src)];
     let active_conditions = std::collections::HashSet::new();
-    emit_bodies(&typed_ast, &interner, &asts_refs, false, &sources, &active_conditions)
-        .map_err(|diags| {
-            let msgs: Vec<String> = diags.iter().map(|d| d.message.clone()).collect();
-            format!("codegen error(s): {}", msgs.join("; "))
-        })
+    emit_bodies(
+        &typed_ast,
+        &interner,
+        &asts_refs,
+        false,
+        &sources,
+        &active_conditions,
+    )
+    .map_err(|diags| {
+        let msgs: Vec<String> = diags.iter().map(|d| d.message.clone()).collect();
+        format!("codegen error(s): {}", msgs.join("; "))
+    })
 }
 
 /// Compile Writ source code against pre-compiled library modules.
@@ -100,6 +116,8 @@ pub fn compile_source(src: &'static str) -> Result<Vec<u8>, String> {
 ///
 /// `library_modules` is a slice of decoded `Module` objects (from `Module::from_bytes`)
 /// that provide type definitions callable from the user source.
+/// `writ-runtime` is implicit: the first explicitly supplied core module wins,
+/// duplicates are ignored, and the canonical module is appended when absent.
 ///
 /// **Stack note:** Same as `compile_source` — consider a 16 MB stack thread for
 /// deeply recursive programs.
@@ -127,8 +145,12 @@ pub fn compile_with_libraries(
     let asts_refs: Vec<(writ_diagnostics::FileId, &Ast)> = vec![(file_id, &ast)];
     let path_refs: Vec<(writ_diagnostics::FileId, &str)> = vec![(file_id, "<source>")];
     let (resolved, resolve_diags) = resolve::resolve(&asts_refs, &path_refs, library_modules);
-    if resolve_diags.iter().any(|d| d.severity == writ_diagnostics::Severity::Error) {
-        let msgs: Vec<String> = resolve_diags.iter()
+    if resolve_diags
+        .iter()
+        .any(|d| d.severity == writ_diagnostics::Severity::Error)
+    {
+        let msgs: Vec<String> = resolve_diags
+            .iter()
             .filter(|d| d.severity == writ_diagnostics::Severity::Error)
             .map(|d| d.message.clone())
             .collect();
@@ -138,8 +160,12 @@ pub fn compile_with_libraries(
     // Stage 4: Type checking (with library method signatures injected into TypeEnv)
     let (typed_ast, interner, _type_env, type_diags) =
         check::typecheck(resolved, &asts_refs, library_modules);
-    if type_diags.iter().any(|d| d.severity == writ_diagnostics::Severity::Error) {
-        let msgs: Vec<String> = type_diags.iter()
+    if type_diags
+        .iter()
+        .any(|d| d.severity == writ_diagnostics::Severity::Error)
+    {
+        let msgs: Vec<String> = type_diags
+            .iter()
             .filter(|d| d.severity == writ_diagnostics::Severity::Error)
             .map(|d| d.message.clone())
             .collect();
@@ -149,9 +175,17 @@ pub fn compile_with_libraries(
     // Stage 5: IL codegen
     let sources: Vec<(writ_diagnostics::FileId, &str)> = vec![(file_id, src)];
     let active_conditions = std::collections::HashSet::new();
-    emit_bodies(&typed_ast, &interner, &asts_refs, false, &sources, &active_conditions)
-        .map_err(|diags| {
-            let msgs: Vec<String> = diags.iter().map(|d| d.message.clone()).collect();
-            format!("codegen error(s): {}", msgs.join("; "))
-        })
+    emit::emit_bodies_with_libraries(
+        &typed_ast,
+        &interner,
+        &asts_refs,
+        false,
+        &sources,
+        &active_conditions,
+        library_modules,
+    )
+    .map_err(|diags| {
+        let msgs: Vec<String> = diags.iter().map(|d| d.message.clone()).collect();
+        format!("codegen error(s): {}", msgs.join("; "))
+    })
 }

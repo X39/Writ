@@ -3,9 +3,7 @@
 //! Currently supports:
 //! - **E0123** (`IncompleteContractImpl`): generates method stubs for missing contract methods.
 
-use lsp_types::{
-    CodeAction, CodeActionKind, NumberOrString, TextEdit, Url, WorkspaceEdit,
-};
+use lsp_types::{CodeAction, CodeActionKind, NumberOrString, TextEdit, Url, WorkspaceEdit};
 use std::collections::HashMap;
 
 use writ_compiler::check::env::TypeEnv;

@@ -1,5 +1,29 @@
 use crate::token::MetadataToken;
 
+/// FieldDef flag: the field is visible outside its declaring scope.
+pub const FIELD_FLAG_PUBLIC: u16 = 1 << 0;
+/// FieldDef flag: the field has a declaration-time default value.
+pub const FIELD_FLAG_HAS_DEFAULT: u16 = 1 << 1;
+/// FieldDef flag: the field belongs to a component definition.
+pub const FIELD_FLAG_COMPONENT: u16 = 1 << 2;
+/// FieldDef flag: the field may be initialized during atomic construction, but
+/// must not be changed afterward by `SET_FIELD` or reflection.
+///
+/// Source fields are read-only unless declared with the `mut` field modifier.
+/// Runtime-provided and programmatically-authored modules use the same flag.
+pub const FIELD_FLAG_READONLY: u16 = 1 << 3;
+
+/// MethodDef flag: the method is visible outside its declaring scope.
+pub const METHOD_FLAG_PUBLIC: u16 = 1 << 0;
+/// MethodDef flag: the method has no implicit instance receiver.
+pub const METHOD_FLAG_STATIC: u16 = 1 << 1;
+/// MethodDef flag: the method is implemented by the runtime, not by IL bytecode.
+pub const METHOD_FLAG_INTRINSIC: u16 = 1 << 7;
+/// MethodDef flag: the top-level function originated from a dialogue declaration.
+pub const METHOD_FLAG_DIALOGUE: u16 = 1 << 8;
+/// MethodRef flag: the referenced method uses an implicit instance receiver.
+pub const METHOD_REF_FLAG_HAS_RECEIVER: u16 = 1 << 0;
+
 /// TypeDef kind discriminant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -123,11 +147,11 @@ pub struct ModuleRefRow {
 /// Table 2: Types defined in this module.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeDefRow {
-    pub name: u32,        // string heap offset
-    pub namespace: u32,   // string heap offset
-    pub kind: u8,         // TypeDefKind discriminant
+    pub name: u32,      // string heap offset
+    pub namespace: u32, // string heap offset
+    pub kind: u8,       // TypeDefKind discriminant
     pub flags: u16,
-    pub field_list: u32,  // index of first FieldDef row (1-based)
+    pub field_list: u32,  // next-index start in FieldDef (1-based; 0 is invalid)
     pub method_list: u32, // index of first MethodDef row (1-based)
 }
 
@@ -164,13 +188,16 @@ pub struct FieldRefRow {
 /// Table 7: Methods/functions defined here.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MethodDefRow {
-    pub name: u32,        // string heap offset
-    pub signature: u32,   // blob heap offset
+    pub name: u32,      // string heap offset
+    pub signature: u32, // blob heap offset
     pub flags: u16,
     pub body_offset: u32,
     pub body_size: u32,
     pub reg_count: u16,
     pub param_count: u16, // count of parameter registers r0..r(param_count-1)
+    /// Explicit method owner. NULL denotes a top-level function; otherwise this
+    /// is a TypeDef or ImplDef metadata token.
+    pub owner: MetadataToken,
 }
 
 /// Table 8: Methods in other modules (resolved at load time).
@@ -179,6 +206,7 @@ pub struct MethodRefRow {
     pub parent: MetadataToken,
     pub name: u32,      // string heap offset
     pub signature: u32, // blob heap offset
+    pub flags: u16,
 }
 
 /// Table 9: Method parameters.
@@ -192,9 +220,9 @@ pub struct ParamDefRow {
 /// Table 10: Contract declarations.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ContractDefRow {
-    pub name: u32,              // string heap offset
-    pub namespace: u32,         // string heap offset
-    pub method_list: u32,       // index of first ContractMethod row
+    pub name: u32,               // string heap offset
+    pub namespace: u32,          // string heap offset
+    pub method_list: u32,        // index of first ContractMethod row
     pub generic_param_list: u32, // index of first GenericParam row
 }
 
@@ -233,8 +261,8 @@ pub struct GenericConstraintRow {
 /// Table 15: Constants and `global mut` variables.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GlobalDefRow {
-    pub name: u32,       // string heap offset
-    pub type_sig: u32,   // blob heap offset
+    pub name: u32,     // string heap offset
+    pub type_sig: u32, // blob heap offset
     pub flags: u16,
     pub init_value: u32, // blob heap offset
 }

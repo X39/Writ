@@ -1,7 +1,7 @@
 //! Resolution error types and conversion to diagnostics.
 
 use chumsky::span::SimpleSpan;
-use writ_diagnostics::{code, Diagnostic, FileId};
+use writ_diagnostics::{Diagnostic, FileId, code};
 
 /// Errors produced during name resolution.
 #[derive(Debug, Clone)]

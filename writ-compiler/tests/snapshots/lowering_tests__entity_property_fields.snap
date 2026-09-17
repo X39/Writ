@@ -13,6 +13,7 @@ Ast {
                 properties: [
                     AstStructField {
                         vis: None,
+                        is_mutable: false,
                         name: "name",
                         name_span: 15..19,
                         ty: Named {
@@ -24,6 +25,7 @@ Ast {
                     },
                     AstStructField {
                         vis: None,
+                        is_mutable: false,
                         name: "level",
                         name_span: 29..34,
                         ty: Named {

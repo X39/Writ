@@ -22,7 +22,12 @@ use super::expr::emit_expr;
 /// - Other -> chain of comparisons
 pub fn emit_match(emitter: &mut BodyEmitter<'_>, expr: &TypedExpr) -> u16 {
     let (ty, scrutinee, arms) = match expr {
-        TypedExpr::Match { ty, scrutinee, arms, .. } => (*ty, scrutinee.as_ref(), arms),
+        TypedExpr::Match {
+            ty,
+            scrutinee,
+            arms,
+            ..
+        } => (*ty, scrutinee.as_ref(), arms),
         _ => panic!("emit_match called on non-Match expression"),
     };
 
@@ -47,7 +52,10 @@ fn emit_enum_match(
 ) -> u16 {
     // GET_TAG r_tag, r_enum
     let r_tag = emitter.alloc_reg(crate::check::ty::Ty(0)); // Int type for tag
-    emitter.emit(Instruction::GetTag { r_dst: r_tag, r_enum: r_scrutinee });
+    emitter.emit(Instruction::GetTag {
+        r_dst: r_tag,
+        r_enum: r_scrutinee,
+    });
 
     // Allocate result register
     let r_result = emitter.alloc_reg(result_ty);
@@ -109,7 +117,10 @@ fn emit_enum_match(
         let r_arm = emit_expr(emitter, &arm.body);
 
         // MOV result
-        emitter.emit(Instruction::Mov { r_dst: r_result, r_src: r_arm });
+        emitter.emit(Instruction::Mov {
+            r_dst: r_result,
+            r_src: r_arm,
+        });
 
         // BR to end
         let br_idx = emitter.instructions.len();
@@ -125,7 +136,10 @@ fn emit_enum_match(
             emitter.locals.insert(name.clone(), r_scrutinee);
         }
         let r_arm = emit_expr(emitter, &arm.body);
-        emitter.emit(Instruction::Mov { r_dst: r_result, r_src: r_arm });
+        emitter.emit(Instruction::Mov {
+            r_dst: r_result,
+            r_src: r_arm,
+        });
     }
 
     // Patch SWITCH offsets now that all arm labels are marked.
@@ -163,7 +177,8 @@ fn is_option_propagation(arms: &[crate::check::ir::TypedArm]) -> bool {
         return false;
     }
     // Check if one arm has a Return body
-    arms.iter().any(|arm| matches!(&arm.body, TypedExpr::Return { .. }))
+    arms.iter()
+        .any(|arm| matches!(&arm.body, TypedExpr::Return { .. }))
         && arms.iter().any(|arm| {
             matches!(&arm.pattern, TypedPattern::EnumVariant { variant_name, .. }
                 if variant_name == "Some" || variant_name == "Ok")
@@ -186,7 +201,8 @@ fn is_result_propagation(arms: &[crate::check::ir::TypedArm]) -> bool {
     if arms.len() != 2 {
         return false;
     }
-    arms.iter().any(|arm| matches!(&arm.body, TypedExpr::Return { .. }))
+    arms.iter()
+        .any(|arm| matches!(&arm.body, TypedExpr::Return { .. }))
         && arms.iter().any(|arm| {
             matches!(&arm.pattern, TypedPattern::EnumVariant { variant_name, .. }
                 if variant_name == "Err")
@@ -203,11 +219,17 @@ fn emit_option_propagation(
         // Optimized: IS_NONE + BR_FALSE + early_ret + UNWRAP
         let bool_ty = crate::check::ty::Ty(2);
         let r_is_none = emitter.alloc_reg(bool_ty);
-        emitter.emit(Instruction::IsNone { r_dst: r_is_none, r_opt: r_scrutinee });
+        emitter.emit(Instruction::IsNone {
+            r_dst: r_is_none,
+            r_opt: r_scrutinee,
+        });
 
         let skip_label = emitter.new_label();
         let brf_idx = emitter.instructions.len();
-        emitter.emit(Instruction::BrFalse { r_cond: r_is_none, offset: 0 });
+        emitter.emit(Instruction::BrFalse {
+            r_cond: r_is_none,
+            offset: 0,
+        });
         emitter.add_fixup(brf_idx, skip_label);
 
         // None branch: load null + ret
@@ -220,18 +242,26 @@ fn emit_option_propagation(
 
         // Unwrap the Some value
         let r_unwrapped = emitter.alloc_reg(result_ty);
-        emitter.emit(Instruction::Unwrap { r_dst: r_unwrapped, r_opt: r_scrutinee });
+        emitter.emit(Instruction::Unwrap {
+            r_dst: r_unwrapped,
+            r_opt: r_scrutinee,
+        });
 
         // Register the unwrapped value as the Some binding if present
         for arm in arms {
-            if let TypedPattern::EnumVariant { variant_name, bindings, .. } = &arm.pattern
-                && variant_name == "Some" {
-                    for binding in bindings {
-                        if let TypedPattern::Variable { name, .. } = binding {
-                            emitter.locals.insert(name.clone(), r_unwrapped);
-                        }
+            if let TypedPattern::EnumVariant {
+                variant_name,
+                bindings,
+                ..
+            } = &arm.pattern
+                && variant_name == "Some"
+            {
+                for binding in bindings {
+                    if let TypedPattern::Variable { name, .. } = binding {
+                        emitter.locals.insert(name.clone(), r_unwrapped);
                     }
                 }
+            }
         }
 
         r_unwrapped
@@ -243,19 +273,28 @@ fn emit_option_propagation(
         // When the option is Some, we unwrap and bind the variable.
         let bool_ty = crate::check::ty::Ty(2);
         let r_is_none = emitter.alloc_reg(bool_ty);
-        emitter.emit(Instruction::IsNone { r_dst: r_is_none, r_opt: r_scrutinee });
+        emitter.emit(Instruction::IsNone {
+            r_dst: r_is_none,
+            r_opt: r_scrutinee,
+        });
 
         // If NOT None (i.e., Some), skip to the crash label's complement: jump past crash.
         // Equivalently: if is_none, fall through to CRASH; if !is_none, skip to UNWRAP.
         let some_label = emitter.new_label();
         let brf_idx = emitter.instructions.len();
-        emitter.emit(Instruction::BrFalse { r_cond: r_is_none, offset: 0 });
+        emitter.emit(Instruction::BrFalse {
+            r_cond: r_is_none,
+            offset: 0,
+        });
         emitter.add_fixup(brf_idx, some_label);
 
         // None branch: emit the Crash arm body
         let r_result = emitter.alloc_reg(result_ty);
         let r_crash = emit_expr(emitter, &arms[1].body);
-        emitter.emit(Instruction::Mov { r_dst: r_result, r_src: r_crash });
+        emitter.emit(Instruction::Mov {
+            r_dst: r_result,
+            r_src: r_crash,
+        });
 
         let end_label = emitter.new_label();
         let br_idx = emitter.instructions.len();
@@ -265,7 +304,10 @@ fn emit_option_propagation(
         // Some branch: UNWRAP and bind the variable
         emitter.mark_label_here(some_label);
         let r_unwrapped = emitter.alloc_reg(result_ty);
-        emitter.emit(Instruction::Unwrap { r_dst: r_unwrapped, r_opt: r_scrutinee });
+        emitter.emit(Instruction::Unwrap {
+            r_dst: r_unwrapped,
+            r_opt: r_scrutinee,
+        });
 
         // Register the binding name from the Variable pattern
         if let TypedPattern::Variable { name, .. } = &arms[0].pattern {
@@ -274,7 +316,10 @@ fn emit_option_propagation(
 
         // Emit the success arm body (typically just a Var reference to the binding)
         let r_val = emit_expr(emitter, &arms[0].body);
-        emitter.emit(Instruction::Mov { r_dst: r_result, r_src: r_val });
+        emitter.emit(Instruction::Mov {
+            r_dst: r_result,
+            r_src: r_val,
+        });
 
         emitter.mark_label_here(end_label);
         r_result
@@ -294,39 +339,59 @@ fn emit_result_propagation(
         // Optimized: IS_ERR + BR_FALSE + EXTRACT_ERR + WRAP_ERR + RET + UNWRAP_OK
         let bool_ty = crate::check::ty::Ty(2);
         let r_is_err = emitter.alloc_reg(bool_ty);
-        emitter.emit(Instruction::IsErr { r_dst: r_is_err, r_result: r_scrutinee });
+        emitter.emit(Instruction::IsErr {
+            r_dst: r_is_err,
+            r_result: r_scrutinee,
+        });
 
         let skip_label = emitter.new_label();
         let brf_idx = emitter.instructions.len();
-        emitter.emit(Instruction::BrFalse { r_cond: r_is_err, offset: 0 });
+        emitter.emit(Instruction::BrFalse {
+            r_cond: r_is_err,
+            offset: 0,
+        });
         emitter.add_fixup(brf_idx, skip_label);
 
         // Err branch: extract err + wrap + ret
         // Find the Err arm's binding type for allocating the right register type
         let err_ty = result_ty; // fallback; ideally get from Err binding
         let r_err_val = emitter.alloc_reg(err_ty);
-        emitter.emit(Instruction::ExtractErr { r_dst: r_err_val, r_result: r_scrutinee });
+        emitter.emit(Instruction::ExtractErr {
+            r_dst: r_err_val,
+            r_result: r_scrutinee,
+        });
 
         let r_wrapped = emitter.alloc_reg(result_ty);
-        emitter.emit(Instruction::WrapErr { r_dst: r_wrapped, r_err: r_err_val });
+        emitter.emit(Instruction::WrapErr {
+            r_dst: r_wrapped,
+            r_err: r_err_val,
+        });
         emitter.emit(Instruction::Ret { r_src: r_wrapped });
 
         emitter.mark_label_here(skip_label);
 
         // Unwrap the Ok value
         let r_ok = emitter.alloc_reg(result_ty);
-        emitter.emit(Instruction::UnwrapOk { r_dst: r_ok, r_result: r_scrutinee });
+        emitter.emit(Instruction::UnwrapOk {
+            r_dst: r_ok,
+            r_result: r_scrutinee,
+        });
 
         // Register Ok binding if present
         for arm in arms {
-            if let TypedPattern::EnumVariant { variant_name, bindings, .. } = &arm.pattern
-                && variant_name == "Ok" {
-                    for binding in bindings {
-                        if let TypedPattern::Variable { name, .. } = binding {
-                            emitter.locals.insert(name.clone(), r_ok);
-                        }
+            if let TypedPattern::EnumVariant {
+                variant_name,
+                bindings,
+                ..
+            } = &arm.pattern
+                && variant_name == "Ok"
+            {
+                for binding in bindings {
+                    if let TypedPattern::Variable { name, .. } = binding {
+                        emitter.locals.insert(name.clone(), r_ok);
                     }
                 }
+            }
         }
 
         r_ok
@@ -356,7 +421,10 @@ fn emit_literal_match(
                 let r_lit = match value {
                     crate::check::ir::TypedLiteral::Int(v) => {
                         let r = emitter.alloc_reg(ty_int);
-                        emitter.emit(Instruction::LoadInt { r_dst: r, value: *v });
+                        emitter.emit(Instruction::LoadInt {
+                            r_dst: r,
+                            value: *v,
+                        });
                         r
                     }
                     crate::check::ir::TypedLiteral::Bool(true) => {
@@ -377,15 +445,25 @@ fn emit_literal_match(
                 };
 
                 let r_cmp = emitter.alloc_reg(ty_bool);
-                emitter.emit(Instruction::CmpEqI { r_dst: r_cmp, r_a: r_scrutinee, r_b: r_lit });
+                emitter.emit(Instruction::CmpEqI {
+                    r_dst: r_cmp,
+                    r_a: r_scrutinee,
+                    r_b: r_lit,
+                });
 
                 let next_label = emitter.new_label();
                 let brf_idx = emitter.instructions.len();
-                emitter.emit(Instruction::BrFalse { r_cond: r_cmp, offset: 0 });
+                emitter.emit(Instruction::BrFalse {
+                    r_cond: r_cmp,
+                    offset: 0,
+                });
                 emitter.add_fixup(brf_idx, next_label);
 
                 let r_arm = emit_expr(emitter, &arm.body);
-                emitter.emit(Instruction::Mov { r_dst: r_result, r_src: r_arm });
+                emitter.emit(Instruction::Mov {
+                    r_dst: r_result,
+                    r_src: r_arm,
+                });
                 let br_idx = emitter.instructions.len();
                 emitter.emit(Instruction::Br { offset: 0 });
                 emitter.add_fixup(br_idx, end_label);
@@ -398,7 +476,10 @@ fn emit_literal_match(
                     emitter.locals.insert(name.clone(), r_scrutinee);
                 }
                 let r_arm = emit_expr(emitter, &arm.body);
-                emitter.emit(Instruction::Mov { r_dst: r_result, r_src: r_arm });
+                emitter.emit(Instruction::Mov {
+                    r_dst: r_result,
+                    r_src: r_arm,
+                });
                 let br_idx = emitter.instructions.len();
                 emitter.emit(Instruction::Br { offset: 0 });
                 emitter.add_fixup(br_idx, end_label);

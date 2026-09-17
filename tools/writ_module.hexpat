@@ -140,10 +140,11 @@ enum Opcode : u16 {
     ARRAY_LOAD    = 0x0902,
     ARRAY_STORE   = 0x0903,
     ARRAY_LEN     = 0x0904,
-    ARRAY_ADD     = 0x0905,
-    ARRAY_REMOVE  = 0x0906,
-    ARRAY_INSERT  = 0x0907,
-    ARRAY_SLICE   = 0x0908,
+    ARRAY_RESIZE  = 0x0905,
+    ARRAY_COPY    = 0x0906,
+    ARRAY_SLICE   = 0x0907,
+    NEW_ARRAY_SIZED = 0x0908,
+    NEW_ARRAY_FILLED = 0x0909,
     // 0x0A Type Operations - Option
     WRAP_SOME     = 0x0A00,
     UNWRAP        = 0x0A01,
@@ -162,7 +163,6 @@ enum Opcode : u16 {
     EXTRACT_FIELD = 0x0A22,
     // 0x0B Concurrency
     SPAWN_TASK    = 0x0B00,
-    SPAWN_DETACHED = 0x0B01,
     JOIN          = 0x0B02,
     CANCEL        = 0x0B03,
     DEFER_PUSH    = 0x0B04,
@@ -211,7 +211,8 @@ bitfield FieldDefFlags {
     is_pub            : 1;
     has_default       : 1;
     is_component_field : 1;
-    reserved          : 13;
+    readonly          : 1;
+    reserved          : 12;
 };
 
 // ============================================================================
@@ -573,8 +574,7 @@ struct ILInstruction {
     else if (op == Opcode::MOV || op == Opcode::NEG_I || op == Opcode::NEG_F ||
              op == Opcode::NOT || op == Opcode::I2F || op == Opcode::F2I ||
              op == Opcode::I2S || op == Opcode::F2S || op == Opcode::B2S ||
-             op == Opcode::ARRAY_LEN || op == Opcode::ARRAY_ADD ||
-             op == Opcode::ARRAY_REMOVE ||
+             op == Opcode::ARRAY_LEN || op == Opcode::ARRAY_RESIZE ||
              op == Opcode::WRAP_SOME || op == Opcode::UNWRAP ||
              op == Opcode::IS_SOME || op == Opcode::IS_NONE ||
              op == Opcode::WRAP_OK || op == Opcode::WRAP_ERR ||
@@ -597,8 +597,7 @@ struct ILInstruction {
              op == Opcode::CMP_EQ_B || op == Opcode::CMP_EQ_S ||
              op == Opcode::CMP_LT_I || op == Opcode::CMP_LT_F ||
              op == Opcode::STR_CONCAT ||
-             op == Opcode::ARRAY_LOAD || op == Opcode::ARRAY_STORE ||
-             op == Opcode::ARRAY_INSERT) {
+             op == Opcode::ARRAY_LOAD || op == Opcode::ARRAY_STORE) {
         // Shape RRR: 3 registers (8B total)
         u16 r_dst;
         u16 r_a;
@@ -609,9 +608,8 @@ struct ILInstruction {
         u16 r_dst;
         u64 imm64;
     }
-    else if (op == Opcode::LOAD_STRING || op == Opcode::NEW ||
-             op == Opcode::SPAWN_ENTITY || op == Opcode::GET_OR_CREATE ||
-             op == Opcode::FIND_ALL || op == Opcode::NEW_ARRAY ||
+    else if (op == Opcode::LOAD_STRING || op == Opcode::GET_OR_CREATE ||
+             op == Opcode::FIND_ALL ||
              op == Opcode::DEFER_PUSH || op == Opcode::LOAD_GLOBAL ||
              op == Opcode::BR_TRUE || op == Opcode::BR_FALSE) {
         // Shape RI32: register + 32-bit value (8B total)
@@ -624,7 +622,7 @@ struct ILInstruction {
         s32 offset;
     }
     else if (op == Opcode::CALL || op == Opcode::CALL_EXTERN ||
-             op == Opcode::SPAWN_TASK || op == Opcode::SPAWN_DETACHED) {
+             op == Opcode::SPAWN_TASK) {
         // Shape CALL: r_dst, method_idx(u32), r_base, argc (12B total)
         u16 r_dst;
         u32 method_idx  [[format("format_token")]];
@@ -659,30 +657,56 @@ struct ILInstruction {
         u16 r_base;
         u16 argc;
     }
+    else if (op == Opcode::NEW || op == Opcode::SPAWN_ENTITY) {
+        // 12B: r_dst, type_idx(u32), field_count, r_base
+        u16 r_dst;
+        u32 type_idx [[format("format_token")]];
+        u16 field_count;
+        u16 r_base;
+    }
     else if (op == Opcode::SWITCH) {
         // Variable: r_tag, n(u16), offsets[n] (6 + 4n B)
         u16 r_tag;
         u16 n;
         s32 offsets[n];
     }
-    else if (op == Opcode::GET_FIELD || op == Opcode::GET_COMPONENT) {
-        // 10B: r_dst, r_obj, field_idx(u32)
+    else if (op == Opcode::GET_FIELD) {
+        // 10B: r_dst, r_obj, field_token(u32; FieldDef or FieldRef)
         u16 r_dst;
         u16 r_obj;
-        u32 field_idx   [[format("format_token")]];
+        u32 field_token [[format("format_token")]];
     }
     else if (op == Opcode::SET_FIELD) {
-        // 10B: r_obj, field_idx(u32), r_val
+        // 10B: r_obj, field_token(u32; FieldDef or FieldRef), r_val
         u16 r_obj;
-        u32 field_idx   [[format("format_token")]];
+        u32 field_token [[format("format_token")]];
         u16 r_val;
     }
-    else if (op == Opcode::ARRAY_INIT) {
-        // 12B: r_dst, elem_type(u32), count, r_base
+    else if (op == Opcode::GET_COMPONENT) {
+        // 10B: r_dst, r_entity, component_type(u32)
         u16 r_dst;
-        u32 elem_type;
+        u16 r_entity;
+        u32 component_type [[format("format_token")]];
+    }
+    else if (op == Opcode::ARRAY_INIT) {
+        // 12B: r_dst, default_kind(u32), count, r_base
+        u16 r_dst;
+        u32 default_kind;
         u16 count;
         u16 r_base;
+    }
+    else if (op == Opcode::NEW_ARRAY) {
+        // 8B: r_dst, default_kind(u32)
+        u16 r_dst;
+        u32 default_kind;
+    }
+    else if (op == Opcode::ARRAY_COPY) {
+        // 12B: destination array/index, source array/index, count
+        u16 r_dst_arr;
+        u16 r_dst_idx;
+        u16 r_src_arr;
+        u16 r_src_idx;
+        u16 r_len;
     }
     else if (op == Opcode::ARRAY_SLICE) {
         // 10B: r_dst, r_arr, r_start, r_end
@@ -690,6 +714,19 @@ struct ILInstruction {
         u16 r_arr;
         u16 r_start;
         u16 r_end;
+    }
+    else if (op == Opcode::NEW_ARRAY_SIZED) {
+        // 10B: r_dst, default_kind(u32), r_len
+        u16 r_dst;
+        u32 default_kind;
+        u16 r_len;
+    }
+    else if (op == Opcode::NEW_ARRAY_FILLED) {
+        // 12B: r_dst, default_kind(u32), r_len, r_fill
+        u16 r_dst;
+        u32 default_kind;
+        u16 r_len;
+        u16 r_fill;
     }
     else if (op == Opcode::NEW_ENUM) {
         // 14B: r_dst, type_idx(u32), tag, field_count, r_base

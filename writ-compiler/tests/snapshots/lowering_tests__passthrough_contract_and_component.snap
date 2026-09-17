@@ -70,6 +70,7 @@ Ast {
                         Field(
                             AstStructField {
                                 vis: None,
+                                is_mutable: false,
                                 name: "current",
                                 name_span: 89..96,
                                 ty: Named {
@@ -83,6 +84,7 @@ Ast {
                         Field(
                             AstStructField {
                                 vis: None,
+                                is_mutable: false,
                                 name: "max",
                                 name_span: 107..110,
                                 ty: Named {

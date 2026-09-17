@@ -2,6 +2,8 @@
 
 This guide covers how to embed the Writ runtime in a host application (game engine, app framework, etc.).
 
+This guide describes native Rust embedding. For browsers and Web Workers, see the [WASM runtime integration guide](../book/src/embedding/wasm-runtime.md).
+
 ## Quick Start
 
 ### From Source (requires `compiler` feature)
@@ -383,8 +385,8 @@ The runtime has DAP (Debug Adapter Protocol) integration for breakpoints and ste
 impl RuntimeHost for MyDebugHost {
     fn debug_enabled() -> bool { true }
 
-    fn before_instruction(&mut self, task_id, method_idx, pc, line, col) -> DebugAction {
-        if self.breakpoints.contains(&(method_idx, line)) {
+    fn before_instruction(&mut self, task_id, module_idx, method_idx, pc, line, col) -> DebugAction {
+        if self.breakpoints.contains(&(module_idx, method_idx, line)) {
             DebugAction::Break  // suspends the task
         } else {
             DebugAction::Continue
@@ -397,8 +399,8 @@ rt.resume_debug(task_id)?;
 
 // Inspect call stack
 if let Some(frames) = rt.call_stack_frames(task_id) {
-    for (method_idx, pc) in &frames {
-        println!("  at method {} pc {}", method_idx, pc);
+    for frame in &frames {
+        println!("  at module {} method {} pc {}", frame.module_idx, frame.method_idx, frame.pc);
     }
 }
 

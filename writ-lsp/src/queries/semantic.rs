@@ -62,7 +62,9 @@ pub fn collect_semantic_tokens(
                     push_token_for_span(&mut tokens, source, &entry.name_span, TOKEN_TYPE_ENTITY);
                 }
             }
-            TypedDecl::Struct { def_id } | TypedDecl::Class { def_id } | TypedDecl::Enum { def_id } => {
+            TypedDecl::Struct { def_id }
+            | TypedDecl::Class { def_id }
+            | TypedDecl::Enum { def_id } => {
                 let entry = ast.def_map.get_entry(*def_id);
                 if entry.file_id == file_id {
                     push_token_for_span(&mut tokens, source, &entry.name_span, TOKEN_TYPE_TYPE);
@@ -92,7 +94,12 @@ pub fn collect_semantic_tokens(
             TypedDecl::Component { def_id } | TypedDecl::ExternComponent { def_id } => {
                 let entry = ast.def_map.get_entry(*def_id);
                 if entry.file_id == file_id {
-                    push_token_for_span(&mut tokens, source, &entry.name_span, TOKEN_TYPE_COMPONENT);
+                    push_token_for_span(
+                        &mut tokens,
+                        source,
+                        &entry.name_span,
+                        TOKEN_TYPE_COMPONENT,
+                    );
                 }
             }
             TypedDecl::Contract { def_id } => {
@@ -133,11 +140,19 @@ fn collect_tokens_in_expr(
     match expr {
         TypedExpr::Var { ty, span, .. } => {
             // Entity-typed variable references get the entity token type
-            if matches!(interner.kind(*ty), writ_compiler::check::ty::TyKind::Entity(_)) {
+            if matches!(
+                interner.kind(*ty),
+                writ_compiler::check::ty::TyKind::Entity(_)
+            ) {
                 push_token_for_span(tokens, source, span, TOKEN_TYPE_ENTITY);
             }
         }
-        TypedExpr::ComponentAccess { span, component, receiver, .. } => {
+        TypedExpr::ComponentAccess {
+            span,
+            component,
+            receiver,
+            ..
+        } => {
             // Recurse into the receiver
             collect_tokens_in_expr(receiver, interner, source, tokens);
             // For the component name portion: compute offset from end of span.
@@ -145,7 +160,11 @@ fn collect_tokens_in_expr(
             let comp_len = component.len();
             if span.end >= comp_len {
                 let comp_start = span.end - comp_len;
-                let comp_span = SimpleSpan { start: comp_start, end: span.end, context: () };
+                let comp_span = SimpleSpan {
+                    start: comp_start,
+                    end: span.end,
+                    context: (),
+                };
                 push_token_for_span(tokens, source, &comp_span, TOKEN_TYPE_COMPONENT);
             }
         }
@@ -158,7 +177,9 @@ fn collect_tokens_in_expr(
         TypedExpr::Field { receiver, .. } => {
             collect_tokens_in_expr(receiver, interner, source, tokens);
         }
-        TypedExpr::Index { receiver, index, .. } => {
+        TypedExpr::Index {
+            receiver, index, ..
+        } => {
             collect_tokens_in_expr(receiver, interner, source, tokens);
             collect_tokens_in_expr(index, interner, source, tokens);
         }
@@ -169,13 +190,20 @@ fn collect_tokens_in_expr(
         TypedExpr::UnaryPrefix { expr: inner, .. } => {
             collect_tokens_in_expr(inner, interner, source, tokens);
         }
-        TypedExpr::Match { scrutinee, arms, .. } => {
+        TypedExpr::Match {
+            scrutinee, arms, ..
+        } => {
             collect_tokens_in_expr(scrutinee, interner, source, tokens);
             for arm in arms {
                 collect_tokens_in_expr(&arm.body, interner, source, tokens);
             }
         }
-        TypedExpr::If { condition, then_branch, else_branch, .. } => {
+        TypedExpr::If {
+            condition,
+            then_branch,
+            else_branch,
+            ..
+        } => {
             collect_tokens_in_expr(condition, interner, source, tokens);
             collect_tokens_in_expr(then_branch, interner, source, tokens);
             if let Some(eb) = else_branch {
@@ -214,7 +242,6 @@ fn collect_tokens_in_expr(
             }
         }
         TypedExpr::Spawn { expr: inner, .. }
-        | TypedExpr::SpawnDetached { expr: inner, .. }
         | TypedExpr::Join { expr: inner, .. }
         | TypedExpr::Cancel { expr: inner, .. }
         | TypedExpr::Defer { expr: inner, .. } => {
@@ -258,7 +285,9 @@ fn collect_tokens_in_stmt(
             collect_tokens_in_expr(iterable, interner, source, tokens);
             collect_tokens_in_stmts(body, interner, source, tokens);
         }
-        TypedStmt::While { condition, body, .. } => {
+        TypedStmt::While {
+            condition, body, ..
+        } => {
             collect_tokens_in_expr(condition, interner, source, tokens);
             collect_tokens_in_stmts(body, interner, source, tokens);
         }
@@ -269,6 +298,9 @@ fn collect_tokens_in_stmt(
             if let Some(v) = value {
                 collect_tokens_in_expr(v, interner, source, tokens);
             }
+        }
+        TypedStmt::Transition { call, .. } => {
+            collect_tokens_in_expr(call, interner, source, tokens);
         }
         TypedStmt::Break { value, .. } => {
             if let Some(v) = value {
@@ -328,7 +360,9 @@ pub fn collect_dialogue_speaker_tokens(source: &str) -> Vec<RawSemanticToken> {
 
     // Re-parse source; gracefully handle errors -- partial CSTs may still yield items.
     let (items_opt, _parse_errs) = writ_parser::parse(src_static);
-    let Some(items) = items_opt else { return tokens };
+    let Some(items) = items_opt else {
+        return tokens;
+    };
 
     // Walk top-level items looking for dlg declarations
     for (item, _item_span) in &items {
@@ -347,7 +381,9 @@ fn collect_speaker_tokens_in_dlg_body(
 ) {
     for (line, _line_span) in lines {
         match line {
-            DlgLine::SpeakerLine { speaker: (_, span), .. } => {
+            DlgLine::SpeakerLine {
+                speaker: (_, span), ..
+            } => {
                 push_token_for_span(tokens, source, span, TOKEN_TYPE_DIALOGUE_SPEAKER);
             }
             DlgLine::SpeakerTag((_, span)) => {
@@ -367,9 +403,7 @@ fn collect_speaker_tokens_in_dlg_body(
                     collect_speaker_tokens_in_dlg_body(&arm.body, source, tokens);
                 }
             }
-            DlgLine::TextLine { .. }
-            | DlgLine::CodeEscape(_)
-            | DlgLine::Transition(_) => {}
+            DlgLine::TextLine { .. } | DlgLine::CodeEscape(_) | DlgLine::Transition(_) => {}
         }
     }
 }
@@ -395,7 +429,10 @@ fn collect_dlg_if_else_speakers(
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_semantic_tokens, collect_dialogue_speaker_tokens, TOKEN_TYPE_ENTITY, TOKEN_TYPE_TYPE, TOKEN_TYPE_DIALOGUE_SPEAKER};
+    use super::{
+        TOKEN_TYPE_DIALOGUE_SPEAKER, TOKEN_TYPE_ENTITY, TOKEN_TYPE_TYPE,
+        collect_dialogue_speaker_tokens, collect_semantic_tokens,
+    };
     use writ_compiler::check::ir::TypedAst;
     use writ_compiler::check::ty::TyInterner;
     use writ_diagnostics::{FileId, Severity};
@@ -413,16 +450,17 @@ mod tests {
         let (ast, lower_errs) = writ_compiler::lower(cst);
         assert!(lower_errs.is_empty(), "lower errors: {:?}", lower_errs);
 
-        let (resolved, resolve_diags) = writ_compiler::resolve::resolve(
-            &[(file_id, &ast)],
-            &[(file_id, "test.writ")],
-            &[],
-        );
+        let (resolved, resolve_diags) =
+            writ_compiler::resolve::resolve(&[(file_id, &ast)], &[(file_id, "test.writ")], &[]);
         let resolve_errors: Vec<_> = resolve_diags
             .iter()
             .filter(|d| d.severity == Severity::Error)
             .collect();
-        assert!(resolve_errors.is_empty(), "resolve errors: {:?}", resolve_errors);
+        assert!(
+            resolve_errors.is_empty(),
+            "resolve errors: {:?}",
+            resolve_errors
+        );
 
         let (typed_ast, interner, type_env, type_diags) =
             writ_compiler::check::typecheck(resolved, &[(file_id, &ast)], &[]);
@@ -456,7 +494,10 @@ mod tests {
         assert!(
             entity_token.is_some(),
             "expected a token at 'Player' position, got tokens: {:?}",
-            tokens.iter().map(|t| (t.line, t.start_char, t.token_type)).collect::<Vec<_>>()
+            tokens
+                .iter()
+                .map(|t| (t.line, t.start_char, t.token_type))
+                .collect::<Vec<_>>()
         );
         assert_eq!(
             entity_token.unwrap().token_type,
@@ -480,10 +521,7 @@ mod tests {
             .iter()
             .find(|t| t.line == point_pos.line && t.start_char == point_pos.character);
 
-        assert!(
-            type_token.is_some(),
-            "expected a token at 'Point' position"
-        );
+        assert!(type_token.is_some(), "expected a token at 'Point' position");
         assert_eq!(
             type_token.unwrap().token_type,
             TOKEN_TYPE_TYPE,
@@ -512,7 +550,10 @@ fn main() { let n: Npc = new Npc { hp: 10 }; n }
         assert!(
             entity_var_token.is_some(),
             "expected an entity token for variable 'n', tokens: {:?}",
-            tokens.iter().map(|t| (t.line, t.start_char, t.token_type)).collect::<Vec<_>>()
+            tokens
+                .iter()
+                .map(|t| (t.line, t.start_char, t.token_type))
+                .collect::<Vec<_>>()
         );
         assert_eq!(
             entity_var_token.unwrap().token_type,
@@ -536,7 +577,10 @@ fn main() { let n: Npc = new Npc { hp: 10 }; n }
             assert!(
                 (a.line, a.start_char) <= (b.line, b.start_char),
                 "tokens out of order: ({},{}) before ({},{})",
-                a.line, a.start_char, b.line, b.start_char
+                a.line,
+                a.start_char,
+                b.line,
+                b.start_char
             );
         }
 
@@ -556,20 +600,27 @@ fn main() { let n: Npc = new Npc { hp: 10 }; n }
 
         let tokens = collect_dialogue_speaker_tokens(src);
 
-        assert_eq!(tokens.len(), 2, "expected 2 speaker tokens, got {:?}",
-            tokens.iter().map(|t| (t.line, t.start_char, t.token_type)).collect::<Vec<_>>());
+        assert_eq!(
+            tokens.len(),
+            2,
+            "expected 2 speaker tokens, got {:?}",
+            tokens
+                .iter()
+                .map(|t| (t.line, t.start_char, t.token_type))
+                .collect::<Vec<_>>()
+        );
 
         // Alice is on line 1 (0-indexed), after 4 spaces of indent
         assert_eq!(tokens[0].token_type, TOKEN_TYPE_DIALOGUE_SPEAKER);
         assert_eq!(tokens[0].line, 1);
         assert_eq!(tokens[0].start_char, 5); // "@Alice" -> @ at col 4, "Alice" at col 5
-        assert_eq!(tokens[0].length, 5);     // "Alice" = 5 chars
+        assert_eq!(tokens[0].length, 5); // "Alice" = 5 chars
 
         // Bob is on line 2
         assert_eq!(tokens[1].token_type, TOKEN_TYPE_DIALOGUE_SPEAKER);
         assert_eq!(tokens[1].line, 2);
         assert_eq!(tokens[1].start_char, 5); // "@Bob" -> @ at col 4, "Bob" at col 5
-        assert_eq!(tokens[1].length, 3);     // "Bob" = 3 chars
+        assert_eq!(tokens[1].length, 3); // "Bob" = 3 chars
     }
 
     #[test]
@@ -585,11 +636,8 @@ fn main() { let n: Npc = new Npc { hp: 10 }; n }
         let (cst_opt, _parse_errs) = writ_parser::parse(src_static);
         let cst = cst_opt.expect("parse returned no output");
         let (ast, _lower_errs) = writ_compiler::lower(cst);
-        let (resolved, _resolve_diags) = writ_compiler::resolve::resolve(
-            &[(file_id, &ast)],
-            &[(file_id, "test.writ")],
-            &[],
-        );
+        let (resolved, _resolve_diags) =
+            writ_compiler::resolve::resolve(&[(file_id, &ast)], &[(file_id, "test.writ")], &[]);
         // Accept type errors (Entity.getOrCreate is a runtime builtin, unavailable in tests)
         let (typed_ast, interner, _type_env, _type_diags) =
             writ_compiler::check::typecheck(resolved, &[(file_id, &ast)], &[]);
@@ -597,9 +645,14 @@ fn main() { let n: Npc = new Npc { hp: 10 }; n }
         let tokens = collect_semantic_tokens(&typed_ast, &interner, src, file_id);
 
         let has_entity = tokens.iter().any(|t| t.token_type == TOKEN_TYPE_ENTITY);
-        let has_speaker = tokens.iter().any(|t| t.token_type == TOKEN_TYPE_DIALOGUE_SPEAKER);
+        let has_speaker = tokens
+            .iter()
+            .any(|t| t.token_type == TOKEN_TYPE_DIALOGUE_SPEAKER);
         assert!(has_entity, "expected entity token for Alice declaration");
-        assert!(has_speaker, "expected dialogue speaker token for @Alice in dlg");
+        assert!(
+            has_speaker,
+            "expected dialogue speaker token for @Alice in dlg"
+        );
     }
 
     #[test]
@@ -617,8 +670,19 @@ fn main() { let n: Npc = new Npc { hp: 10 }; n }
         let tokens = collect_dialogue_speaker_tokens(src);
 
         // Should find 2 speakers: @NPC at top level, @NPC inside choice arm
-        assert_eq!(tokens.len(), 2, "expected 2 speaker tokens (top-level + nested), got {:?}",
-            tokens.iter().map(|t| (t.line, t.start_char, t.token_type)).collect::<Vec<_>>());
-        assert!(tokens.iter().all(|t| t.token_type == TOKEN_TYPE_DIALOGUE_SPEAKER));
+        assert_eq!(
+            tokens.len(),
+            2,
+            "expected 2 speaker tokens (top-level + nested), got {:?}",
+            tokens
+                .iter()
+                .map(|t| (t.line, t.start_char, t.token_type))
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            tokens
+                .iter()
+                .all(|t| t.token_type == TOKEN_TYPE_DIALOGUE_SPEAKER)
+        );
     }
 }

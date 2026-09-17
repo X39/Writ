@@ -80,26 +80,24 @@ Ast {
                         },
                         span: 26..42,
                     },
-                    Return {
-                        value: Some(
-                            Call {
-                                callee: Ident {
-                                    name: "farewell",
-                                    span: 46..54,
-                                },
-                                args: [
-                                    AstArg {
-                                        name: None,
-                                        value: Ident {
-                                            name: "name",
-                                            span: 55..59,
-                                        },
-                                        span: 43..60,
-                                    },
-                                ],
-                                span: 43..60,
+                    Transition {
+                        call: Call {
+                            callee: Ident {
+                                name: "farewell",
+                                span: 46..54,
                             },
-                        ),
+                            args: [
+                                AstArg {
+                                    name: None,
+                                    value: Ident {
+                                        name: "name",
+                                        span: 55..59,
+                                    },
+                                    span: 43..60,
+                                },
+                            ],
+                            span: 43..60,
+                        },
                         span: 43..60,
                     },
                 ],

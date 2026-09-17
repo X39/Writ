@@ -20,14 +20,18 @@ pub fn const_fold(expr: &TypedExpr, interner: &TyInterner) -> Option<TypedLitera
         TypedExpr::Literal { value, .. } => Some(value.clone()),
 
         // ── Binary arithmetic/logic ───────────────────────────────────────────
-        TypedExpr::Binary { left, op, right, .. } => {
+        TypedExpr::Binary {
+            left, op, right, ..
+        } => {
             let l = const_fold(left, interner)?;
             let r = const_fold(right, interner)?;
             fold_binary(op, l, r)
         }
 
         // ── Unary negation ────────────────────────────────────────────────────
-        TypedExpr::UnaryPrefix { op, expr: inner, .. } => {
+        TypedExpr::UnaryPrefix {
+            op, expr: inner, ..
+        } => {
             let v = const_fold(inner, interner)?;
             match op {
                 PrefixOp::Neg => match v {

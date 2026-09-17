@@ -62,8 +62,9 @@ engine's logic loop — the host processes changes on its own tick, not asynchro
 
 This means:
 
-- `SPAWN_ENTITY` -> runtime allocates entity in its heap, then notifies host with component initial values.
-- `SET_FIELD` on script field -> runtime updates heap directly.
+- `SPAWN_ENTITY` validates and atomically installs the complete script-field vector before registering the pending
+  entity or notifying the host. The host provisions components from ComponentSlot metadata.
+- `SET_FIELD` on a mutable script field -> runtime updates heap directly. A read-only field crashes before mutation.
 - `SET_FIELD` on component field -> runtime proxies to host, suspends until host confirms.
 - `GET_COMPONENT` -> runtime proxies to host.
 - `DESTROY_ENTITY` -> runtime fires `on_destroy`, runs defers, removes from registry, notifies host.

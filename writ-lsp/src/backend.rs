@@ -20,7 +20,7 @@ use lsp_types::*;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tower_lsp::{jsonrpc, Client, LanguageServer};
+use tower_lsp::{Client, LanguageServer, jsonrpc};
 use url::Url;
 use writ_diagnostics::FileId;
 
@@ -58,10 +58,7 @@ impl Backend {
 
 #[tower_lsp::async_trait]
 impl LanguageServer for Backend {
-    async fn initialize(
-        &self,
-        params: InitializeParams,
-    ) -> jsonrpc::Result<InitializeResult> {
+    async fn initialize(&self, params: InitializeParams) -> jsonrpc::Result<InitializeResult> {
         // Determine workspace root from workspace_folders (preferred) or root_uri (fallback).
         let root: Option<PathBuf> = params
             .workspace_folders
@@ -166,13 +163,15 @@ impl LanguageServer for Backend {
         self.published_uris.remove(&uri_str);
         // Remove cached analysis so stale data is not returned.
         self.analysis_cache.remove(&uri_str);
-        self.client
-            .publish_diagnostics(uri, vec![], None)
-            .await;
+        self.client.publish_diagnostics(uri, vec![], None).await;
     }
 
     async fn hover(&self, params: HoverParams) -> jsonrpc::Result<Option<Hover>> {
-        let uri_str = params.text_document_position_params.text_document.uri.to_string();
+        let uri_str = params
+            .text_document_position_params
+            .text_document
+            .uri
+            .to_string();
         let pos = params.text_document_position_params.position;
 
         let source = match self.document_map.get(&uri_str) {
@@ -198,16 +197,15 @@ impl LanguageServer for Backend {
         };
 
         let trigger_uri = &params.text_document_position_params.text_document.uri;
-        let trigger_file_id = resolve_trigger_file_id(
-            &cache_entry.file_sources,
-            &uri_str,
-            trigger_uri,
-        );
+        let trigger_file_id =
+            resolve_trigger_file_id(&cache_entry.file_sources, &uri_str, trigger_uri);
 
         // Priority 1: Binding name (let, for, fn param) — checked BEFORE expr
         // because expr_at_offset always returns the enclosing Block for any position
         // inside a function body, masking binding names.
-        if let Some(binding) = crate::queries::binding_at_offset(typed_ast, byte_offset, type_env, trigger_file_id) {
+        if let Some(binding) =
+            crate::queries::binding_at_offset(typed_ast, byte_offset, type_env, trigger_file_id)
+        {
             let ty_str = interner.display_named(binding.ty, &typed_ast.def_map);
             let hover_text = format!("```writ\n{}: {}\n```", binding.name, ty_str);
             return Ok(Some(Hover {
@@ -220,7 +218,9 @@ impl LanguageServer for Backend {
         }
 
         // Priority 2: Declaration name (fn/enum/struct/const declaration site)
-        if let Some(def_id) = crate::queries::def_at_offset(&typed_ast.def_map, byte_offset, trigger_file_id) {
+        if let Some(def_id) =
+            crate::queries::def_at_offset(&typed_ast.def_map, byte_offset, trigger_file_id)
+        {
             let hover_text = crate::queries::hover_text_for_def(
                 def_id,
                 &typed_ast.def_map,
@@ -245,7 +245,12 @@ impl LanguageServer for Backend {
         let expr_hover = crate::queries::expr_at_offset(typed_ast, byte_offset, trigger_file_id)
             .map(|expr| {
                 let hover_text = crate::queries::hover_text_for_expr(
-                    expr, &typed_ast.def_map, interner, type_env, &source, typed_ast,
+                    expr,
+                    &typed_ast.def_map,
+                    interner,
+                    type_env,
+                    &source,
+                    typed_ast,
                 );
                 (expr, hover_text)
             })
@@ -262,7 +267,9 @@ impl LanguageServer for Backend {
         }
 
         // Priority 4: Match arm pattern (e.g., QuestStatus::Completed in match arm)
-        if let Some(pattern_info) = crate::queries::pattern_at_offset(typed_ast, byte_offset, trigger_file_id) {
+        if let Some(pattern_info) =
+            crate::queries::pattern_at_offset(typed_ast, byte_offset, trigger_file_id)
+        {
             return Ok(Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
                     kind: MarkupKind::Markdown,
@@ -305,11 +312,8 @@ impl LanguageServer for Backend {
         };
 
         let trigger_uri = &params.text_document_position_params.text_document.uri;
-        let trigger_file_id = resolve_trigger_file_id(
-            &cache_entry.file_sources,
-            &uri_str,
-            trigger_uri,
-        );
+        let trigger_file_id =
+            resolve_trigger_file_id(&cache_entry.file_sources, &uri_str, trigger_uri);
 
         // 1. Try expr-based def lookup (existing path)
         let def_id = crate::queries::expr_at_offset(typed_ast, byte_offset, trigger_file_id)
@@ -362,15 +366,8 @@ impl LanguageServer for Backend {
         })))
     }
 
-    async fn references(
-        &self,
-        params: ReferenceParams,
-    ) -> jsonrpc::Result<Option<Vec<Location>>> {
-        let uri_str = params
-            .text_document_position
-            .text_document
-            .uri
-            .to_string();
+    async fn references(&self, params: ReferenceParams) -> jsonrpc::Result<Option<Vec<Location>>> {
+        let uri_str = params.text_document_position.text_document.uri.to_string();
         let pos = params.text_document_position.position;
 
         let source = match self.document_map.get(&uri_str) {
@@ -392,11 +389,8 @@ impl LanguageServer for Backend {
         };
 
         let trigger_uri = &params.text_document_position.text_document.uri;
-        let trigger_file_id = resolve_trigger_file_id(
-            &cache_entry.file_sources,
-            &uri_str,
-            trigger_uri,
-        );
+        let trigger_file_id =
+            resolve_trigger_file_id(&cache_entry.file_sources, &uri_str, trigger_uri);
 
         // 1. Try expr-based def lookup (existing path)
         let def_id = crate::queries::expr_at_offset(typed_ast, byte_offset, trigger_file_id)
@@ -412,8 +406,7 @@ impl LanguageServer for Backend {
             None => return Ok(None),
         };
 
-        let ref_spans =
-            crate::queries::collect_references(typed_ast, def_id, &typed_ast.def_map);
+        let ref_spans = crate::queries::collect_references(typed_ast, def_id, &typed_ast.def_map);
 
         let trigger_uri = params.text_document_position.text_document.uri;
         let mut locations = Vec::new();
@@ -426,11 +419,14 @@ impl LanguageServer for Backend {
                     .file_sources
                     .iter()
                     .find(|(fid, _, _)| *fid == entry.file_id)
-                {
-                    let def_uri = display_path_to_url(path, &trigger_uri);
-                    let range = crate::convert::span_to_range(src, &entry.name_span);
-                    locations.push(Location { uri: def_uri, range });
-                }
+            {
+                let def_uri = display_path_to_url(path, &trigger_uri);
+                let range = crate::convert::span_to_range(src, &entry.name_span);
+                locations.push(Location {
+                    uri: def_uri,
+                    range,
+                });
+            }
         }
 
         // Add all reference spans. Try to match spans to file sources by containment.
@@ -440,7 +436,10 @@ impl LanguageServer for Backend {
                 if span.start < src.len() && span.end <= src.len() {
                     let ref_uri = display_path_to_url(path, &trigger_uri);
                     let range = crate::convert::span_to_range(src, span);
-                    locations.push(Location { uri: ref_uri, range });
+                    locations.push(Location {
+                        uri: ref_uri,
+                        range,
+                    });
                     matched = true;
                     break;
                 }
@@ -448,7 +447,10 @@ impl LanguageServer for Backend {
             if !matched {
                 // Fallback: use trigger URI with best-effort conversion.
                 let range = crate::convert::span_to_range(&source, span);
-                locations.push(Location { uri: trigger_uri.clone(), range });
+                locations.push(Location {
+                    uri: trigger_uri.clone(),
+                    range,
+                });
             }
         }
 
@@ -515,11 +517,14 @@ impl LanguageServer for Backend {
                 Err(_) => return Ok(None),
             };
 
-            let (typed_ast, interner, type_env) =
-                match (&analysis.typed_ast, &analysis.ty_interner, &analysis.type_env) {
-                    (Some(t), Some(i), Some(e)) => (t, i, e),
-                    _ => return Ok(None),
-                };
+            let (typed_ast, interner, type_env) = match (
+                &analysis.typed_ast,
+                &analysis.ty_interner,
+                &analysis.type_env,
+            ) {
+                (Some(t), Some(i), Some(e)) => (t, i, e),
+                _ => return Ok(None),
+            };
 
             // Find the receiver expression at (dot_offset - 1) in the modified source.
             // For standalone dot-completion analysis, use FileId(0) since analyze_standalone
@@ -527,11 +532,14 @@ impl LanguageServer for Backend {
             if dot_offset == 0 {
                 return Ok(None);
             }
-            let receiver_expr =
-                match crate::queries::expr_at_offset(typed_ast, dot_offset.saturating_sub(1), FileId(0)) {
-                    Some(e) => e,
-                    None => return Ok(None),
-                };
+            let receiver_expr = match crate::queries::expr_at_offset(
+                typed_ast,
+                dot_offset.saturating_sub(1),
+                FileId(0),
+            ) {
+                Some(e) => e,
+                None => return Ok(None),
+            };
 
             let receiver_ty = receiver_expr.ty();
             let items = crate::queries::build_dot_completions(
@@ -557,19 +565,17 @@ impl LanguageServer for Backend {
                 Some(o) => o,
                 None => return Ok(None),
             };
-            if let Some(namespace) =
-                crate::queries::extract_namespace_prefix(&source, byte_offset)
+            if let Some(namespace) = crate::queries::extract_namespace_prefix(&source, byte_offset)
             {
                 // Use cached analysis — no re-analysis needed for :: completions
                 let cache_entry = match self.analysis_cache.get(&uri_str) {
                     Some(e) => e.clone(),
                     None => return Ok(None),
                 };
-                let (typed_ast, type_env) =
-                    match (&cache_entry.typed_ast, &cache_entry.type_env) {
-                        (Some(t), Some(e)) => (t, e),
-                        _ => return Ok(None),
-                    };
+                let (typed_ast, type_env) = match (&cache_entry.typed_ast, &cache_entry.type_env) {
+                    (Some(t), Some(e)) => (t, e),
+                    _ => return Ok(None),
+                };
                 let items = crate::queries::build_namespace_completions(
                     &namespace,
                     &typed_ast.def_map,
@@ -659,9 +665,10 @@ impl LanguageServer for Backend {
                 // Match by URI comparison
                 let p = std::path::Path::new(path);
                 if p.is_absolute()
-                    && let Ok(u) = Url::from_file_path(p) {
-                        return u.to_string() == uri_str;
-                    }
+                    && let Ok(u) = Url::from_file_path(p)
+                {
+                    return u.to_string() == uri_str;
+                }
                 false
             })
             .map(|(fid, _, _)| *fid)
@@ -767,13 +774,14 @@ impl Backend {
         let result = tokio::task::spawn_blocking(move || {
             // Project mode if the workspace root contains a writ.toml.
             if let Some(ref root) = workspace_root
-                && root.join("writ.toml").exists() {
-                    return crate::analysis_host::AnalysisHost::analyze_project(
-                        root,
-                        Some(&display_path),
-                        Some(source),
-                    );
-                }
+                && root.join("writ.toml").exists()
+            {
+                return crate::analysis_host::AnalysisHost::analyze_project(
+                    root,
+                    Some(&display_path),
+                    Some(source),
+                );
+            }
             // Fallback: standalone analysis of the single file.
             crate::analysis_host::AnalysisHost::analyze_standalone(source, display_path)
         })
@@ -782,7 +790,8 @@ impl Backend {
         match result {
             Ok(analysis_result) => {
                 let arc_result = Arc::new(analysis_result);
-                self.analysis_cache.insert(uri_str.clone(), arc_result.clone());
+                self.analysis_cache
+                    .insert(uri_str.clone(), arc_result.clone());
                 self.publish_grouped_diagnostics(&uri, &arc_result).await;
             }
             Err(e) => {
@@ -827,20 +836,15 @@ impl Backend {
                 .cloned()
                 .unwrap_or_else(|| trigger_uri.clone())
         };
-        let source_for_file = |fid: FileId| -> &'static str {
-            file_id_to_source.get(&fid).copied().unwrap_or("")
-        };
+        let source_for_file =
+            |fid: FileId| -> &'static str { file_id_to_source.get(&fid).copied().unwrap_or("") };
 
         // Group LSP diagnostics by their target URI string.
         let mut by_uri: HashMap<String, Vec<lsp_types::Diagnostic>> = HashMap::new();
 
         for diag in &result.diagnostics {
             let target_uri = uri_for_file(diag.primary_file);
-            let lsp_diag = crate::convert::writ_diag_to_lsp(
-                diag,
-                &uri_for_file,
-                &source_for_file,
-            );
+            let lsp_diag = crate::convert::writ_diag_to_lsp(diag, &uri_for_file, &source_for_file);
             by_uri
                 .entry(target_uri.to_string())
                 .or_default()
@@ -848,8 +852,7 @@ impl Backend {
         }
 
         // Publish diagnostics for every URI that has new results.
-        let mut current_uris: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        let mut current_uris: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         for (uri_str, diags) in &by_uri {
             if let Ok(publish_uri) = Url::parse(uri_str) {
@@ -883,13 +886,12 @@ impl Backend {
         // If the trigger file itself had zero diagnostics and is not in by_uri,
         // ensure we clear any previously published diagnostics for it.
         let trigger_str = trigger_uri.to_string();
-        if !current_uris.contains(&trigger_str)
-            && self.published_uris.contains_key(&trigger_str) {
-                self.client
-                    .publish_diagnostics(trigger_uri.clone(), vec![], None)
-                    .await;
-                self.published_uris.remove(&trigger_str);
-            }
+        if !current_uris.contains(&trigger_str) && self.published_uris.contains_key(&trigger_str) {
+            self.client
+                .publish_diagnostics(trigger_uri.clone(), vec![], None)
+                .await;
+            self.published_uris.remove(&trigger_str);
+        }
     }
 
     /// Build identifier completions from the cached analysis for `uri_str`.
@@ -915,13 +917,19 @@ impl Backend {
                     Some(e) => e.clone(),
                     None => return Ok(Some(CompletionResponse::Array(vec![]))),
                 };
-                let (typed_ast, interner, type_env) =
-                    match (&cache_entry.typed_ast, &cache_entry.ty_interner, &cache_entry.type_env) {
-                        (Some(t), Some(i), Some(e)) => (t, i, e),
-                        _ => return Ok(Some(CompletionResponse::Array(vec![]))),
-                    };
-                let items =
-                    crate::queries::build_new_keyword_completions(&typed_ast.def_map, interner, type_env);
+                let (typed_ast, interner, type_env) = match (
+                    &cache_entry.typed_ast,
+                    &cache_entry.ty_interner,
+                    &cache_entry.type_env,
+                ) {
+                    (Some(t), Some(i), Some(e)) => (t, i, e),
+                    _ => return Ok(Some(CompletionResponse::Array(vec![]))),
+                };
+                let items = crate::queries::build_new_keyword_completions(
+                    &typed_ast.def_map,
+                    interner,
+                    type_env,
+                );
                 return Ok(Some(CompletionResponse::Array(items)));
             }
         }
@@ -938,21 +946,19 @@ impl Backend {
             }
         };
 
-        let (typed_ast, interner) =
-            match (&cache_entry.typed_ast, &cache_entry.ty_interner) {
-                (Some(t), Some(i)) => (t, i),
-                _ => {
-                    // Parse/resolve failed — still return keyword completions
-                    let items = crate::queries::build_identifier_completions(
-                        &writ_compiler::resolve::def_map::DefMap::new(),
-                        &writ_compiler::check::ty::TyInterner::new(),
-                    );
-                    return Ok(Some(CompletionResponse::Array(items)));
-                }
-            };
+        let (typed_ast, interner) = match (&cache_entry.typed_ast, &cache_entry.ty_interner) {
+            (Some(t), Some(i)) => (t, i),
+            _ => {
+                // Parse/resolve failed — still return keyword completions
+                let items = crate::queries::build_identifier_completions(
+                    &writ_compiler::resolve::def_map::DefMap::new(),
+                    &writ_compiler::check::ty::TyInterner::new(),
+                );
+                return Ok(Some(CompletionResponse::Array(items)));
+            }
+        };
 
-        let items =
-            crate::queries::build_identifier_completions(&typed_ast.def_map, interner);
+        let items = crate::queries::build_identifier_completions(&typed_ast.def_map, interner);
         Ok(Some(CompletionResponse::Array(items)))
     }
 }
@@ -981,7 +987,9 @@ pub(crate) fn resolve_trigger_file_id(
                 }
                 // Fall back to case-insensitive string comparison for paths that
                 // don't exist on disk (e.g., unsaved buffers)
-                return tp.to_string_lossy().eq_ignore_ascii_case(&source_path.to_string_lossy());
+                return tp
+                    .to_string_lossy()
+                    .eq_ignore_ascii_case(&source_path.to_string_lossy());
             }
             false
         })
@@ -997,9 +1005,10 @@ fn display_path_to_url(display_path: &str, trigger_uri: &Url) -> Url {
     // Prefer converting via std::path if it looks like a real path.
     let p = std::path::Path::new(display_path);
     if p.is_absolute()
-        && let Ok(u) = Url::from_file_path(p) {
-            return u;
-        }
+        && let Ok(u) = Url::from_file_path(p)
+    {
+        return u;
+    }
     // Fall back: try parsing as a URL directly (for virtual URIs).
     if let Ok(u) = Url::parse(display_path) {
         return u;

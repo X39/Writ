@@ -77,7 +77,10 @@ fn raw_string<'src>(lex: &mut logos::Lexer<'src, Token<'src>>) -> bool {
                 }
                 // Everything from j..quote_start must be whitespace
                 let prefix = &bytes[j..quote_start];
-                if !prefix.iter().all(|&b| b == b' ' || b == b'\t' || b == b'\r') {
+                if !prefix
+                    .iter()
+                    .all(|&b| b == b' ' || b == b'\t' || b == b'\r')
+                {
                     return false; // closing delimiter not on its own line
                 }
 
@@ -111,7 +114,16 @@ fn formattable_string<'src>(lex: &mut logos::Lexer<'src, Token<'src>>) -> bool {
             b'\\' => {
                 i += 1; // skip the backslash
                 if i < bytes.len() {
-                    if bytes[i] == b'u' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+                    if bytes[i] == b'\n' {
+                        // Escaped LF line continuation.
+                        i += 1;
+                    } else if bytes[i] == b'\r' {
+                        // A CR is only valid as part of an escaped CRLF continuation.
+                        if i + 1 >= bytes.len() || bytes[i + 1] != b'\n' {
+                            return false;
+                        }
+                        i += 2;
+                    } else if bytes[i] == b'u' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
                         // \u{...} unicode escape — skip past the closing }
                         // Do NOT increment brace_depth
                         i += 2; // skip 'u' and '{'
@@ -126,6 +138,7 @@ fn formattable_string<'src>(lex: &mut logos::Lexer<'src, Token<'src>>) -> bool {
                     }
                 }
             }
+            b'\r' | b'\n' => return false,
             b'{' => {
                 brace_depth += 1;
                 i += 1;
@@ -190,7 +203,10 @@ fn formattable_raw_string<'src>(lex: &mut logos::Lexer<'src, Token<'src>>) -> bo
                     j -= 1;
                 }
                 let prefix = &bytes[j..quote_start];
-                if !prefix.iter().all(|&b| b == b' ' || b == b'\t' || b == b'\r') {
+                if !prefix
+                    .iter()
+                    .all(|&b| b == b' ' || b == b'\t' || b == b'\r')
+                {
                     return false; // closing delimiter not on its own line
                 }
 
@@ -299,8 +315,6 @@ pub enum Token<'src> {
     // =========================================================
     #[token("spawn")]
     KwSpawn,
-    #[token("detached")]
-    KwDetached,
     #[token("join")]
     KwJoin,
     #[token("cancel")]
@@ -367,8 +381,11 @@ pub enum Token<'src> {
     #[token("$\"", formattable_string)]
     FormattableStringLit,
 
-    /// Basic string: "..." with escape sequences
-    #[regex(r#""([^"\\]|\\.)*""#)]
+    /// Basic string: "..." with escape sequences.
+    ///
+    /// A backslash at end-of-line is a line continuation, so it is allowed
+    /// inside the token even though bare newlines are not.
+    #[regex(r#""([^"\\\r\n]|\\([^\r\n]|\r?\n))*""#)]
     StringLit(&'src str),
 
     // =========================================================

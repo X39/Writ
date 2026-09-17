@@ -3,15 +3,15 @@
 //! Consumes `TypedAst` + `TyInterner` + original ASTs and produces a populated
 //! `ModuleBuilder` with all 21 metadata tables filled.
 
-pub mod metadata;
-pub mod heaps;
-pub mod type_sig;
-pub mod error;
-pub mod module_builder;
-pub mod slots;
-pub mod collect;
 pub mod body;
+pub mod collect;
+pub mod error;
+pub mod heaps;
+pub mod metadata;
+pub mod module_builder;
 pub mod serialize;
+pub mod slots;
+pub mod type_sig;
 
 use writ_diagnostics::{Diagnostic, FileId};
 
@@ -37,27 +37,27 @@ pub fn emit(
 ) -> (ModuleBuilder, Vec<Diagnostic>) {
     let mut builder = ModuleBuilder::new();
     let mut diags = Vec::new();
+    let canonical_core = writ_module::build_writ_runtime_module();
+    let library_modules = crate::core_library::normalize_libraries(&[], &canonical_core);
 
     // Pass 1: collect all definitions into provisional rows.
     // The `emit` function is used for metadata-only (no conditions needed here).
     let empty_conditions = std::collections::HashSet::new();
-    let reflectable_infos = collect::collect_defs(typed_ast, asts, interner, &mut builder, &mut diags, &empty_conditions);
+    let (_reflectable_infos, _skipped_def_ids) = collect::collect_defs(
+        typed_ast,
+        asts,
+        interner,
+        &mut builder,
+        &mut diags,
+        &empty_conditions,
+        &library_modules,
+    );
 
     // Assign CALL_VIRT slot indices from contract declaration order.
     slots::assign_vtable_slots(&mut builder);
 
     // Pass 2: finalize — assign contiguous row indices, populate def_token_map.
     builder.finalize();
-
-    // Post-finalize: fix up Reflectable auto-impl ImplDef.method_list values.
-    // After finalize(), TypeDef.method_list points to the first MethodDef row for each type.
-    // The Reflectable get_type() MethodDef is the first method added to each TypeDef
-    // (added immediately after collect_struct/class/entity/enum, before any user impl methods),
-    // so TypeDef.method_list equals the get_type() MethodDef's row index.
-    for info in &reflectable_infos {
-        let method_list = builder.typedef_method_list_by_handle(info.typedef_handle);
-        builder.set_impl_def_method_list(info.impl_handle, method_list);
-    }
 
     // Post-finalize: collect exports and attributes that depend on resolved tokens.
     collect::collect_post_finalize(typed_ast, asts, &mut builder);
@@ -89,7 +89,31 @@ pub fn emit_bodies(
     sources: &[(FileId, &str)],
     active_conditions: &std::collections::HashSet<String>,
 ) -> Result<Vec<u8>, Vec<Diagnostic>> {
+    emit_bodies_with_libraries(
+        typed_ast,
+        interner,
+        asts,
+        emit_debug_info,
+        sources,
+        active_conditions,
+        &[],
+    )
+}
+
+/// Emit method bodies while preserving metadata references to supplied libraries.
+pub fn emit_bodies_with_libraries(
+    typed_ast: &TypedAst,
+    interner: &TyInterner,
+    asts: &[(FileId, &Ast)],
+    emit_debug_info: bool,
+    sources: &[(FileId, &str)],
+    active_conditions: &std::collections::HashSet<String>,
+    library_modules: &[&writ_module::Module],
+) -> Result<Vec<u8>, Vec<Diagnostic>> {
     let mut diags = Vec::new();
+    let canonical_core = writ_module::build_writ_runtime_module();
+    let library_modules =
+        crate::core_library::normalize_libraries(library_modules, &canonical_core);
 
     // Build metadata tables
     let mut builder = ModuleBuilder::new();
@@ -97,7 +121,15 @@ pub fn emit_bodies(
 
     // Pass 1: collect all definitions (TypeDef, MethodDef, FieldDef, ExternDef, etc.)
     // When asts is non-empty, this populates all 21 metadata tables including exports.
-    let reflectable_infos = collect::collect_defs(typed_ast, asts, interner, &mut builder, &mut diags, active_conditions);
+    let (reflectable_infos, skipped_def_ids) = collect::collect_defs(
+        typed_ast,
+        asts,
+        interner,
+        &mut builder,
+        &mut diags,
+        active_conditions,
+        &library_modules,
+    );
 
     if !diags.is_empty() {
         return Err(diags);
@@ -107,29 +139,38 @@ pub fn emit_bodies(
     slots::assign_vtable_slots(&mut builder);
 
     // Pre-scan lambdas before finalize (must run before builder.finalize())
-    let lambda_infos = body::closure::pre_scan_lambdas(typed_ast, interner, &mut builder);
+    let lambda_infos = body::closure::pre_scan_lambdas_excluding(
+        typed_ast,
+        interner,
+        &mut builder,
+        &skipped_def_ids,
+    );
 
     // Finalize: assign contiguous row indices, populate def_token_map.
     builder.finalize();
-
-    // Post-finalize: fix up Reflectable auto-impl ImplDef.method_list values.
-    // After finalize(), TypeDef.method_list points to the first MethodDef row for each type.
-    // Reflectable get_type() MethodDef is added first (before any user impl methods),
-    // so TypeDef.method_list == get_type() row index for each type.
-    for info in &reflectable_infos {
-        let method_list = builder.typedef_method_list_by_handle(info.typedef_handle);
-        builder.set_impl_def_method_list(info.impl_handle, method_list);
-    }
 
     // Post-finalize: collect exports and attributes that depend on resolved tokens.
     // This populates ExportDef rows for all pub-visible items.
     collect::collect_post_finalize(typed_ast, asts, &mut builder);
 
+    // Calls are checked against the fallback DefId regardless of build conditions.
+    // Once metadata-dependent exports and attributes are stable, redirect that DefId
+    // to the emitted conditional MethodDef when the condition is active.
+    collect::bind_active_conditional_call_targets(typed_ast, active_conditions, &mut builder);
+
     // Emit all method bodies (including lambda bodies via lambda_infos and synthetic
     // Reflectable get_type() bodies via reflectable_infos).
     // Per-function error nodes cause that function's body to be skipped with an E9001
     // diagnostic; other functions in the same file are still emitted.
-    let (mut bodies, body_diags) = body::emit_all_bodies(typed_ast, interner, &builder, &lambda_infos, &typed_ast.struct_field_types, &reflectable_infos);
+    let (mut bodies, body_diags) = body::emit_all_bodies_excluding(
+        typed_ast,
+        interner,
+        &builder,
+        &lambda_infos,
+        &typed_ast.struct_field_types,
+        &reflectable_infos,
+        &skipped_def_ids,
+    );
     diags.extend(body_diags);
 
     // Only return Err if there are ZERO valid bodies AND there are diagnostics.
@@ -150,7 +191,10 @@ pub fn emit_bodies(
         let pending = std::mem::take(&mut body.pending_strings);
         for (instr_idx, s) in pending {
             let string_idx = builder.string_heap.intern(&s);
-            if let Some(writ_module::instruction::Instruction::LoadString { string_idx: idx, .. }) = body.instructions.get_mut(instr_idx) {
+            if let Some(writ_module::instruction::Instruction::LoadString {
+                string_idx: idx, ..
+            }) = body.instructions.get_mut(instr_idx)
+            {
                 *idx = string_idx;
             }
         }
@@ -161,7 +205,11 @@ pub fn emit_bodies(
         Ok(bytes) => Ok(bytes),
         Err(e) => {
             diags.push(
-                writ_diagnostics::Diagnostic::error("E9001", format!("Serialization failed: {}", e)).build()
+                writ_diagnostics::Diagnostic::error(
+                    "E9001",
+                    format!("Serialization failed: {}", e),
+                )
+                .build(),
             );
             Err(diags)
         }

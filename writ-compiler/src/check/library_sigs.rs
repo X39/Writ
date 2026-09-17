@@ -10,108 +10,336 @@ use chumsky::span::SimpleSpan;
 use rustc_hash::FxHashMap;
 use writ_diagnostics::FileId;
 use writ_module::Module;
-use writ_module::tables::TypeDefKind;
+use writ_module::signature::TypeSignature;
+use writ_module::tables::{FIELD_FLAG_HAS_DEFAULT, FIELD_FLAG_READONLY, TypeDefKind};
 
 use crate::resolve::def_map::{DefEntry, DefId, DefKind, DefMap, DefVis};
 
-use super::env::{FnSig, ImplEntry, TypeEnv};
+use super::env::{FieldSig, FnSig, ImplEntry, TypeEnv};
 use super::ty::{Ty, TyInterner, TyKind};
 
 // =============================================================================
 // Type blob decoder
 // =============================================================================
 
+#[derive(Clone, Copy)]
+enum LibraryTypeKind {
+    Struct,
+    Class,
+    Entity,
+    Enum,
+    Contract,
+    Component,
+}
+
+#[derive(Clone, Copy)]
+struct LibraryType {
+    def_id: DefId,
+    kind: LibraryTypeKind,
+}
+
+impl LibraryType {
+    fn from_type_def(def_id: DefId, kind: TypeDefKind) -> Self {
+        let kind = match kind {
+            TypeDefKind::Struct => LibraryTypeKind::Struct,
+            TypeDefKind::Class => LibraryTypeKind::Class,
+            TypeDefKind::Entity => LibraryTypeKind::Entity,
+            TypeDefKind::Enum => LibraryTypeKind::Enum,
+            TypeDefKind::Component => LibraryTypeKind::Component,
+        };
+        Self { def_id, kind }
+    }
+}
+
+fn library_type_for_def(def_id: DefId, def_map: &DefMap) -> Option<LibraryType> {
+    let kind = match def_map.get_entry(def_id).kind {
+        DefKind::Struct => LibraryTypeKind::Struct,
+        DefKind::Class => LibraryTypeKind::Class,
+        DefKind::Entity => LibraryTypeKind::Entity,
+        DefKind::Enum => LibraryTypeKind::Enum,
+        DefKind::Contract => LibraryTypeKind::Contract,
+        DefKind::Component | DefKind::ExternComponent => LibraryTypeKind::Component,
+        _ => return None,
+    };
+    Some(LibraryType { def_id, kind })
+}
+
+fn lookup_constructor<'a, T>(
+    types: &'a FxHashMap<String, T>,
+    namespace: &str,
+    name: &str,
+) -> Option<&'a T> {
+    if namespace.is_empty() {
+        types.get(name)
+    } else {
+        types.get(&format!("{}::{}", namespace, name))
+    }
+}
+
 /// Decode a type from a blob at `cursor`, advancing the cursor past the decoded bytes.
 ///
 /// Mirrors the encoding in `writ-compiler/src/emit/type_sig.rs`.
+fn type_signature_to_ty(
+    signature: &TypeSignature,
+    lib_type_token_map: &FxHashMap<u32, LibraryType>,
+    lib_type_name_map: &FxHashMap<String, LibraryType>,
+    interner: &mut TyInterner,
+) -> Ty {
+    match signature {
+        TypeSignature::Void => interner.void(),
+        TypeSignature::Int => interner.int(),
+        TypeSignature::Float => interner.float(),
+        TypeSignature::Bool => interner.bool_ty(),
+        TypeSignature::String => interner.string_ty(),
+        TypeSignature::Entity => interner.any_entity(),
+        TypeSignature::Named(token) => lib_type_token_map
+            .get(&token.0)
+            .copied()
+            .map(|named| nominal_ty(named, interner))
+            .unwrap_or_else(|| interner.error()),
+        TypeSignature::Generic {
+            namespace,
+            name,
+            args,
+        } => {
+            let decoded_args: Vec<Ty> = args
+                .iter()
+                .map(|arg| {
+                    type_signature_to_ty(arg, lib_type_token_map, lib_type_name_map, interner)
+                })
+                .collect();
+            match (namespace.as_str(), name.as_str(), decoded_args.as_slice()) {
+                ("writ" | "", "Option", [inner]) => interner.option(*inner),
+                ("writ" | "", "Result", [ok, err]) => interner.result(*ok, *err),
+                ("writ" | "", "TaskHandle", [inner]) => interner.task_handle(*inner),
+                ("writ" | "", "Type", [inner]) => interner.reflection_type(*inner),
+                _ => lookup_constructor(lib_type_name_map, namespace, name)
+                    .copied()
+                    .map(|named| {
+                        let base = nominal_ty(named, interner);
+                        interner.generic_instance(
+                            base,
+                            namespace.clone(),
+                            name.clone(),
+                            decoded_args,
+                        )
+                    })
+                    .unwrap_or_else(|| interner.error()),
+            }
+        }
+        TypeSignature::GenericParam(ordinal) => {
+            interner.intern(TyKind::GenericParam(u32::from(*ordinal)))
+        }
+        TypeSignature::Array(element) => {
+            let element =
+                type_signature_to_ty(element, lib_type_token_map, lib_type_name_map, interner);
+            interner.array(element)
+        }
+        TypeSignature::Function { params, ret } => {
+            let params = params
+                .iter()
+                .map(|param| {
+                    type_signature_to_ty(param, lib_type_token_map, lib_type_name_map, interner)
+                })
+                .collect();
+            let ret = type_signature_to_ty(ret, lib_type_token_map, lib_type_name_map, interner);
+            interner.func(params, ret)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{impl_generic_param_count, lookup_constructor, method_param_ranges};
+    use rustc_hash::FxHashMap;
+    use writ_module::module::MethodBody;
+    use writ_module::{MetadataToken, ModuleBuilder};
+
+    #[test]
+    fn namespaced_constructor_lookup_never_falls_back_to_short_name() {
+        let mut types = FxHashMap::default();
+        types.insert("List".to_string(), 1);
+        types.insert("alpha::List".to_string(), 2);
+
+        assert_eq!(lookup_constructor(&types, "alpha", "List"), Some(&2));
+        assert_eq!(lookup_constructor(&types, "beta", "List"), None);
+        assert_eq!(lookup_constructor(&types, "", "List"), Some(&1));
+    }
+
+    #[test]
+    fn impl_generic_prefix_uses_owned_method_generic_ordinals() {
+        let mut builder = ModuleBuilder::new("impl-prefix");
+        let implementation = builder.add_impl_def(MetadataToken::NULL, MetadataToken::NULL);
+        let method = builder.add_impl_method(
+            implementation,
+            "pick",
+            &[],
+            0,
+            0,
+            MethodBody {
+                register_types: vec![],
+                code: vec![],
+                debug_locals: vec![],
+                source_spans: vec![],
+            },
+        );
+        builder.add_generic_param(method, 1, 1, "U");
+        let module = builder.build();
+
+        assert_eq!(impl_generic_param_count(&module, [], &[0]), 1);
+    }
+
+    fn two_method_module() -> writ_module::Module {
+        fn empty_body() -> MethodBody {
+            MethodBody {
+                register_types: vec![0],
+                code: Vec::new(),
+                debug_locals: Vec::new(),
+                source_spans: Vec::new(),
+            }
+        }
+
+        let mut builder = ModuleBuilder::new("param_ranges");
+        builder.add_method("broken", &[1, 0, 0x01, 0x01], 1 << 1, 1, empty_body());
+        builder.add_param_def("first", &[0x01], 0);
+        builder.add_method("later", &[1, 0, 0x02, 0x02], 1 << 1, 1, empty_body());
+        builder.add_param_def("second", &[0x02], 0);
+        builder.build()
+    }
+
+    #[test]
+    fn malformed_signature_payload_preserves_later_paramdef_range() {
+        let mut module = two_method_module();
+        let signature = module.method_defs[0].signature as usize;
+        module.blob_heap[signature + 4 + 2] = 0xff;
+        let blob = writ_module::heap::read_blob(&module.blob_heap, module.method_defs[0].signature)
+            .unwrap();
+        assert!(writ_module::signature::decode_method_signature(blob).is_err());
+
+        let ranges = method_param_ranges(&module);
+        assert_eq!(ranges, vec![(0, 1), (1, 2)]);
+        let later_param = &module.param_defs[ranges[1].0];
+        assert_eq!(
+            writ_module::heap::read_string(&module.string_heap, later_param.name).unwrap(),
+            "second"
+        );
+    }
+
+    #[test]
+    fn unreadable_signature_prefix_invalidates_later_paramdef_ranges() {
+        let mut module = two_method_module();
+        module.method_defs[0].signature = u32::MAX;
+
+        assert_eq!(method_param_ranges(&module), vec![(0, 0), (2, 2)]);
+    }
+}
+
+fn nominal_ty(named: LibraryType, interner: &mut TyInterner) -> Ty {
+    match named.kind {
+        LibraryTypeKind::Struct => interner.intern(TyKind::Struct(named.def_id)),
+        LibraryTypeKind::Class => interner.intern(TyKind::Class(named.def_id)),
+        LibraryTypeKind::Entity => interner.intern(TyKind::Entity(named.def_id)),
+        LibraryTypeKind::Enum => interner.intern(TyKind::Enum(named.def_id)),
+        LibraryTypeKind::Contract => interner.intern(TyKind::Contract(named.def_id)),
+        LibraryTypeKind::Component => interner.intern(TyKind::Struct(named.def_id)),
+    }
+}
+
 fn decode_type_from_blob(
     blob: &[u8],
     cursor: &mut usize,
-    lib_type_def_id_map: &FxHashMap<u32, (DefId, TypeDefKind)>,
+    lib_type_token_map: &FxHashMap<u32, LibraryType>,
+    lib_type_name_map: &FxHashMap<String, LibraryType>,
     interner: &mut TyInterner,
 ) -> Ty {
-    if *cursor >= blob.len() {
-        return interner.error();
+    let bytes = blob.get(*cursor..).unwrap_or_default();
+    match writ_module::signature::decode_type_signature(bytes) {
+        Ok(signature) => {
+            *cursor = blob.len();
+            type_signature_to_ty(&signature, lib_type_token_map, lib_type_name_map, interner)
+        }
+        Err(_) => interner.error(),
     }
-    let tag = blob[*cursor];
-    *cursor += 1;
+}
 
-    match tag {
-        0x00 => interner.void(),
-        0x01 => interner.int(),
-        0x02 => interner.float(),
-        0x03 => interner.bool_ty(),
-        0x04 => interner.string_ty(),
-        0x05 => interner.any_entity(),
-
-        0x10 => {
-            // Named type: u32 1-based TypeDef row index
-            if *cursor + 4 > blob.len() {
-                return interner.error();
-            }
-            let row = u32::from_le_bytes([
-                blob[*cursor],
-                blob[*cursor + 1],
-                blob[*cursor + 2],
-                blob[*cursor + 3],
-            ]);
-            *cursor += 4;
-            if let Some(&(def_id, kind)) = lib_type_def_id_map.get(&row) {
-                match kind {
-                    TypeDefKind::Struct => interner.intern(TyKind::Struct(def_id)),
-                    TypeDefKind::Class => interner.intern(TyKind::Class(def_id)),
-                    TypeDefKind::Entity => interner.intern(TyKind::Entity(def_id)),
-                    TypeDefKind::Enum => interner.intern(TyKind::Enum(def_id)),
-                    TypeDefKind::Component => interner.intern(TyKind::Struct(def_id)), // components are struct-like
-                }
-            } else {
-                interner.error()
-            }
+fn decode_impl_type_token(
+    token: writ_module::MetadataToken,
+    module: &Module,
+    lib_type_token_map: &FxHashMap<u32, LibraryType>,
+    lib_type_name_map: &FxHashMap<String, LibraryType>,
+    interner: &mut TyInterner,
+) -> Option<Ty> {
+    match token.table_id() {
+        2 | 3 | 10 => lib_type_token_map
+            .get(&token.0)
+            .copied()
+            .map(|named| nominal_ty(named, interner)),
+        4 => {
+            let index = token.row_index()?.checked_sub(1)? as usize;
+            let type_spec = module.type_specs.get(index)?;
+            let blob = writ_module::heap::read_blob(&module.blob_heap, type_spec.signature).ok()?;
+            let signature = writ_module::signature::decode_type_signature(blob).ok()?;
+            Some(type_signature_to_ty(
+                &signature,
+                lib_type_token_map,
+                lib_type_name_map,
+                interner,
+            ))
         }
+        _ => None,
+    }
+}
 
-        0x11 => {
-            // TypeSpec placeholder (Option/Result/TaskHandle stub) — skip 4-byte row
-            if *cursor + 4 <= blob.len() {
-                *cursor += 4;
-            }
-            // Can't reconstruct these without more context — return Error (safe: suppresses errors)
-            interner.error()
-        }
+fn impl_generic_param_count(
+    module: &Module,
+    tokens: impl IntoIterator<Item = writ_module::MetadataToken>,
+    owned_method_indices: &[usize],
+) -> u32 {
+    let descriptor_count = tokens
+        .into_iter()
+        .filter(|token| token.table_id() == 4)
+        .filter_map(|token| {
+            let index = token.row_index()?.checked_sub(1)? as usize;
+            let type_spec = module.type_specs.get(index)?;
+            let blob = writ_module::heap::read_blob(&module.blob_heap, type_spec.signature).ok()?;
+            writ_module::signature::decode_type_signature(blob).ok()
+        })
+        .filter_map(|signature| max_generic_param_ordinal(&signature))
+        .max()
+        .map_or(0, |ordinal| u32::from(ordinal) + 1);
 
-        0x12 => {
-            // Generic param: u16 index
-            if *cursor + 2 > blob.len() {
-                return interner.error();
-            }
-            let idx = u16::from_le_bytes([blob[*cursor], blob[*cursor + 1]]) as u32;
-            *cursor += 2;
-            interner.intern(TyKind::GenericParam(idx))
-        }
+    // Method-level generic ordinals are emitted after the impl-generic
+    // prefix. This preserves the prefix even when an impl parameter does not
+    // occur in either the target or contract descriptor.
+    let method_prefix = module
+        .generic_params
+        .iter()
+        .filter(|param| param.owner_kind == 1)
+        .filter_map(|param| {
+            let method_idx = param.owner.row_index()?.checked_sub(1)? as usize;
+            owned_method_indices
+                .contains(&method_idx)
+                .then_some(u32::from(param.ordinal))
+        })
+        .min()
+        .unwrap_or(0);
 
-        0x20 => {
-            // Array<T>: recursive element type
-            let elem = decode_type_from_blob(blob, cursor, lib_type_def_id_map, interner);
-            interner.array(elem)
-        }
+    descriptor_count.max(method_prefix)
+}
 
-        0x30 => {
-            // Func: u32 blob_offset into the blob heap (in the outer module's blob_heap)
-            // The function signature sub-blob format is: u16(param_count) + TypeRef[] + TypeRef(ret)
-            // NOTE: The offset here is INTO the outer module's blob heap, but we are already
-            // working within a sub-blob. Since we don't have the blob_heap here, we skip.
-            // This is rare in practice (function-typed fields/params); return Func{[],void} as placeholder.
-            if *cursor + 4 <= blob.len() {
-                *cursor += 4;
-            }
-            let params: Vec<Ty> = Vec::new();
-            let ret = interner.void();
-            interner.intern(TyKind::Func { params, ret })
+fn max_generic_param_ordinal(signature: &TypeSignature) -> Option<u16> {
+    match signature {
+        TypeSignature::GenericParam(ordinal) => Some(*ordinal),
+        TypeSignature::Generic { args, .. } => {
+            args.iter().filter_map(max_generic_param_ordinal).max()
         }
-
-        _ => {
-            // Unknown tag — bail out (no way to skip unknown size)
-            interner.error()
-        }
+        TypeSignature::Array(element) => max_generic_param_ordinal(element),
+        TypeSignature::Function { params, ret } => params
+            .iter()
+            .chain(std::iter::once(ret.as_ref()))
+            .filter_map(max_generic_param_ordinal)
+            .max(),
+        _ => None,
     }
 }
 
@@ -124,22 +352,23 @@ fn decode_type_from_blob(
 /// Blob format: u16(param_count) + TypeRef[param_count] + TypeRef(return_type).
 fn decode_method_sig(
     blob: &[u8],
-    lib_type_def_id_map: &FxHashMap<u32, (DefId, TypeDefKind)>,
+    lib_type_token_map: &FxHashMap<u32, LibraryType>,
+    lib_type_name_map: &FxHashMap<String, LibraryType>,
     interner: &mut TyInterner,
 ) -> (Vec<Ty>, Ty) {
-    if blob.len() < 2 {
-        return (Vec::new(), interner.void());
+    match writ_module::signature::decode_method_signature(blob) {
+        Ok((params, ret)) => {
+            let params = params
+                .iter()
+                .map(|param| {
+                    type_signature_to_ty(param, lib_type_token_map, lib_type_name_map, interner)
+                })
+                .collect();
+            let ret = type_signature_to_ty(&ret, lib_type_token_map, lib_type_name_map, interner);
+            (params, ret)
+        }
+        Err(_) => (Vec::new(), interner.error()),
     }
-    let param_count = u16::from_le_bytes([blob[0], blob[1]]) as usize;
-    let mut cursor = 2;
-
-    let mut param_tys = Vec::with_capacity(param_count);
-    for _ in 0..param_count {
-        let ty = decode_type_from_blob(blob, &mut cursor, lib_type_def_id_map, interner);
-        param_tys.push(ty);
-    }
-    let ret = decode_type_from_blob(blob, &mut cursor, lib_type_def_id_map, interner);
-    (param_tys, ret)
 }
 
 /// Build a `FnSig` from a `MethodDefRow` plus associated `ParamDefRow`s.
@@ -152,29 +381,37 @@ fn build_fn_sig_from_binary(
     module: &Module,
     param_start: usize,
     param_end: usize,
-    lib_type_def_id_map: &FxHashMap<u32, (DefId, TypeDefKind)>,
+    lib_type_token_map: &FxHashMap<u32, LibraryType>,
+    lib_type_name_map: &FxHashMap<String, LibraryType>,
     interner: &mut TyInterner,
     lib_file_id: FileId,
     method_generics: Vec<String>,
 ) -> FnSig {
-    let synthetic_span = SimpleSpan { start: 0, end: 0, context: () };
+    let synthetic_span = SimpleSpan {
+        start: 0,
+        end: 0,
+        context: (),
+    };
 
     // Decode the method signature blob
-    let (param_tys, ret_ty) = match writ_module::heap::read_blob(&module.blob_heap, method.signature) {
-        Ok(blob) => decode_method_sig(blob, lib_type_def_id_map, interner),
-        Err(_) => (Vec::new(), interner.void()),
-    };
+    let (param_tys, ret_ty) =
+        match writ_module::heap::read_blob(&module.blob_heap, method.signature) {
+            Ok(blob) => decode_method_sig(blob, lib_type_token_map, lib_type_name_map, interner),
+            Err(_) => (Vec::new(), interner.void()),
+        };
 
     // Build (name, ty) pairs from ParamDef rows
     let mut params: Vec<(String, Ty)> = Vec::new();
-    let mut self_param: Option<bool> = None;
+    let mut self_param = if !method.owner.is_null() && method.flags & (1 << 1) == 0 {
+        Some(method.flags & (1 << 2) != 0)
+    } else {
+        None
+    };
 
     let param_rows = &module.param_defs[param_start..param_end.min(module.param_defs.len())];
 
-    // The param_tys are in order: first comes self (if any), then regular params.
-    // We need to match them up with param rows. But the method's param_count field
-    // may differ from what's in param_tys (self is encoded separately in the param table).
-    // Strategy: iterate param rows in sequence order; use param_tys index to decode.
+    // Signature types and ParamDef rows both cover regular parameters only. Self
+    // is represented by MethodDef ownership/flags and occupies no ParamDef row.
     let mut param_ty_idx = 0;
     for param_row in param_rows {
         let param_name = writ_module::heap::read_string(&module.string_heap, param_row.name)
@@ -183,7 +420,6 @@ fn build_fn_sig_from_binary(
 
         if param_name == "self" || param_name == "self_" {
             self_param = Some(false);
-            // self is not in param_tys (it's implicit)
         } else if param_name == "mut_self" {
             self_param = Some(true);
         } else {
@@ -198,8 +434,9 @@ fn build_fn_sig_from_binary(
         }
     }
 
-    // If no param rows but we have types, fall back to positional assignment
-    if params.is_empty() && self_param.is_none() && !param_tys.is_empty() {
+    // If ParamDef metadata is unavailable but the signature decoded, retain the
+    // regular parameter types with synthetic names. Self is represented separately.
+    if params.is_empty() && !param_tys.is_empty() {
         for (i, ty) in param_tys.into_iter().enumerate() {
             params.push((format!("p{}", i), ty));
         }
@@ -216,6 +453,52 @@ fn build_fn_sig_from_binary(
         bound_decl_spans: vec![synthetic_span; generic_count],
         fn_file: lib_file_id,
     }
+}
+
+/// Compute each method's ParamDef range from the signature's regular-parameter
+/// count. A malformed type payload still has a usable count prefix; an unreadable
+/// prefix makes ownership of all remaining ParamDefs unknowable, so later ranges
+/// stay empty instead of being associated with the wrong methods.
+fn method_param_ranges(module: &Module) -> Vec<(usize, usize)> {
+    let param_len = module.param_defs.len();
+    let mut ranges = Vec::with_capacity(module.method_defs.len());
+    let mut param_cursor = 0usize;
+    let mut ranges_valid = true;
+
+    for method in &module.method_defs {
+        if !ranges_valid {
+            ranges.push((param_len, param_len));
+            continue;
+        }
+
+        let start = param_cursor.min(param_len);
+        let count = match writ_module::heap::read_blob(&module.blob_heap, method.signature)
+            .ok()
+            .and_then(|blob| blob.get(..2))
+        {
+            Some(bytes) => u16::from_le_bytes([bytes[0], bytes[1]]) as usize,
+            None => {
+                ranges.push((start, start));
+                ranges_valid = false;
+                continue;
+            }
+        };
+
+        let Some(raw_end) = start.checked_add(count) else {
+            ranges.push((start, start));
+            ranges_valid = false;
+            continue;
+        };
+        let end = raw_end.min(param_len);
+        ranges.push((start, end));
+        if raw_end > param_len {
+            ranges_valid = false;
+        } else {
+            param_cursor = end;
+        }
+    }
+
+    ranges
 }
 
 // =============================================================================
@@ -236,14 +519,19 @@ pub fn inject_library_sigs(
     type_env: &mut TypeEnv,
     interner: &mut TyInterner,
 ) {
-    let synthetic_span = SimpleSpan { start: 0, end: 0, context: () };
+    let synthetic_span = SimpleSpan {
+        start: 0,
+        end: 0,
+        context: (),
+    };
 
     for (lib_index, module) in library_modules.iter().enumerate() {
         let lib_file_id = FileId(u32::MAX - 1 - lib_index as u32);
 
-        // Build lib_type_def_id_map: 1-based TypeDef row -> (DefId, TypeDefKind)
-        // This maps binary type references back to DefIds in the DefMap.
-        let mut lib_type_def_id_map: FxHashMap<u32, (DefId, TypeDefKind)> = FxHashMap::default();
+        // Map full TypeDef/TypeRef tokens and namespace-qualified constructor
+        // names back to the DefIds injected during resolution.
+        let mut lib_type_token_map: FxHashMap<u32, LibraryType> = FxHashMap::default();
+        let mut lib_type_name_map: FxHashMap<String, LibraryType> = FxHashMap::default();
         for (type_idx, type_def) in module.type_defs.iter().enumerate() {
             let row_1based = (type_idx + 1) as u32;
             let name = writ_module::heap::read_string(&module.string_heap, type_def.name)
@@ -258,16 +546,42 @@ pub fn inject_library_sigs(
             }
 
             let fqn = if namespace.is_empty() {
-                name
+                name.clone()
             } else {
                 format!("{}::{}", namespace, name)
             };
 
             if let Some(def_id) = def_map.get(&fqn) {
-                let kind = TypeDefKind::from_u8(type_def.kind)
-                    .unwrap_or(TypeDefKind::Struct);
-                lib_type_def_id_map.insert(row_1based, (def_id, kind));
+                let kind = TypeDefKind::from_u8(type_def.kind).unwrap_or(TypeDefKind::Struct);
+                let named = LibraryType::from_type_def(def_id, kind);
+                let token = writ_module::MetadataToken::new(2, row_1based);
+                lib_type_token_map.insert(token.0, named);
+                lib_type_name_map.insert(fqn, named);
+                lib_type_name_map.entry(name).or_insert(named);
             }
+        }
+
+        for (type_ref_idx, type_ref) in module.type_refs.iter().enumerate() {
+            let name = writ_module::heap::read_string(&module.string_heap, type_ref.name)
+                .unwrap_or("")
+                .to_string();
+            let namespace = writ_module::heap::read_string(&module.string_heap, type_ref.namespace)
+                .unwrap_or("")
+                .to_string();
+            let fqn = if namespace.is_empty() {
+                name.clone()
+            } else {
+                format!("{}::{}", namespace, name)
+            };
+            let Some(def_id) = def_map.get(&fqn) else {
+                continue;
+            };
+            let Some(named) = library_type_for_def(def_id, def_map) else {
+                continue;
+            };
+            let token = writ_module::MetadataToken::new(3, (type_ref_idx + 1) as u32);
+            lib_type_token_map.insert(token.0, named);
+            lib_type_name_map.entry(fqn).or_insert(named);
         }
 
         // Build contract_def_id_map: 1-based ContractDef row -> DefId
@@ -277,22 +591,31 @@ pub fn inject_library_sigs(
             let name = writ_module::heap::read_string(&module.string_heap, contract_def.name)
                 .unwrap_or("")
                 .to_string();
-            let namespace = writ_module::heap::read_string(&module.string_heap, contract_def.namespace)
-                .unwrap_or("")
-                .to_string();
+            let namespace =
+                writ_module::heap::read_string(&module.string_heap, contract_def.namespace)
+                    .unwrap_or("")
+                    .to_string();
 
             if name.is_empty() {
                 continue;
             }
 
             let fqn = if namespace.is_empty() {
-                name
+                name.clone()
             } else {
                 format!("{}::{}", namespace, name)
             };
 
             if let Some(def_id) = def_map.get(&fqn) {
                 lib_contract_def_id_map.insert(row_1based, def_id);
+                let named = LibraryType {
+                    def_id,
+                    kind: LibraryTypeKind::Contract,
+                };
+                let token = writ_module::MetadataToken::new(10, row_1based);
+                lib_type_token_map.insert(token.0, named);
+                lib_type_name_map.insert(fqn, named);
+                lib_type_name_map.entry(name).or_insert(named);
             }
         }
 
@@ -312,7 +635,9 @@ pub fn inject_library_sigs(
                 let param_name = writ_module::heap::read_string(&module.string_heap, param.name)
                     .unwrap_or("")
                     .to_string();
-                map.entry(method_idx).or_default().push((param.ordinal, param_name));
+                map.entry(method_idx)
+                    .or_default()
+                    .push((param.ordinal, param_name));
             }
             map.into_iter()
                 .map(|(k, mut v)| {
@@ -322,26 +647,12 @@ pub fn inject_library_sigs(
                 .collect()
         };
 
-        // Compute param_def ranges for each method:
+        // Compute ParamDef ranges for each method:
         // method_param_ranges[method_idx] = (start, end) in module.param_defs (0-based)
-        // The param_count field in MethodDefRow tells how many params, but we need the
-        // start offset. We rely on the fact that params are ordered by method.
-        // Actually, there's no direct "param_list" in MethodDefRow (unlike TypeDef.field_list).
-        // We use param sequence numbers and match by method index ordering.
-        // Simpler: params are laid out sequentially; method i's params follow method i-1's params.
-        // Use method.param_count to build ranges.
-        let method_param_ranges: Vec<(usize, usize)> = {
-            let mut ranges = Vec::with_capacity(module.method_defs.len());
-            let mut param_cursor = 0usize;
-            for method in &module.method_defs {
-                let start = param_cursor;
-                let count = method.param_count as usize;
-                let end = start + count;
-                ranges.push((start, end));
-                param_cursor = end;
-            }
-            ranges
-        };
+        // ParamDefs are ordered by method but have no parent token or list pointer.
+        // MethodDef.param_count cannot size these ranges because it includes self;
+        // the signature prefix is the authoritative regular-parameter count.
+        let method_param_ranges = method_param_ranges(module);
 
         // ---- Struct fields ----
         for (type_idx, type_def) in module.type_defs.iter().enumerate() {
@@ -349,17 +660,26 @@ pub fn inject_library_sigs(
             let kind = TypeDefKind::from_u8(type_def.kind).unwrap_or(TypeDefKind::Struct);
 
             // Only Struct and Class have fields (Entity has properties but that's separate)
-            if !matches!(kind, TypeDefKind::Struct | TypeDefKind::Class | TypeDefKind::Entity) {
+            if !matches!(
+                kind,
+                TypeDefKind::Struct | TypeDefKind::Class | TypeDefKind::Entity
+            ) {
                 continue;
             }
 
-            let def_id = match lib_type_def_id_map.get(&row_1based) {
-                Some(&(def_id, _)) => def_id,
+            let type_token = writ_module::MetadataToken::new(2, row_1based);
+            let def_id = match lib_type_token_map.get(&type_token.0) {
+                Some(named) => named.def_id,
                 None => continue,
             };
+            let field_owner = def_map.get_entry(def_id);
+            let decl_file = field_owner.file_id;
+            let decl_namespace = field_owner.namespace.clone();
 
             // Already has fields from user AST? Skip (library overrides user is wrong)
-            if type_env.struct_fields.contains_key(&def_id) || type_env.entity_fields.contains_key(&def_id) {
+            if type_env.struct_fields.contains_key(&def_id)
+                || type_env.entity_fields.contains_key(&def_id)
+            {
                 continue;
             }
 
@@ -380,21 +700,40 @@ pub fn inject_library_sigs(
                 module.field_defs.len()
             };
 
-            let mut fields: Vec<(String, Ty, SimpleSpan)> = Vec::new();
-            for field_def in &module.field_defs[field_start..field_end.min(module.field_defs.len())] {
-                let field_name = writ_module::heap::read_string(&module.string_heap, field_def.name)
-                    .unwrap_or("_")
-                    .to_string();
+            let mut fields: Vec<FieldSig> = Vec::new();
+            for field_def in &module.field_defs[field_start..field_end.min(module.field_defs.len())]
+            {
+                let field_name =
+                    writ_module::heap::read_string(&module.string_heap, field_def.name)
+                        .unwrap_or("_")
+                        .to_string();
 
-                let field_ty = match writ_module::heap::read_blob(&module.blob_heap, field_def.type_sig) {
-                    Ok(blob) => {
-                        let mut cursor = 0;
-                        decode_type_from_blob(blob, &mut cursor, &lib_type_def_id_map, interner)
-                    }
-                    Err(_) => interner.error(),
-                };
+                let field_ty =
+                    match writ_module::heap::read_blob(&module.blob_heap, field_def.type_sig) {
+                        Ok(blob) => {
+                            let mut cursor = 0;
+                            decode_type_from_blob(
+                                blob,
+                                &mut cursor,
+                                &lib_type_token_map,
+                                &lib_type_name_map,
+                                interner,
+                            )
+                        }
+                        Err(_) => interner.error(),
+                    };
 
-                fields.push((field_name, field_ty, synthetic_span));
+                fields.push(FieldSig {
+                    name: field_name,
+                    ty: field_ty,
+                    span: synthetic_span,
+                    is_mutable: field_def.flags & FIELD_FLAG_READONLY == 0,
+                    has_default: field_def.flags & FIELD_FLAG_HAS_DEFAULT != 0,
+                    default: None,
+                    decl_file,
+                    decl_namespace: decl_namespace.clone(),
+                    decl_generics: FxHashMap::default(),
+                });
             }
 
             if matches!(kind, TypeDefKind::Entity) {
@@ -406,35 +745,49 @@ pub fn inject_library_sigs(
 
         // ---- Impl blocks (method signatures) ----
         for (impl_idx, impl_def) in module.impl_defs.iter().enumerate() {
-            // Get the type DefId this impl is for
-            let type_def_id = match impl_def.type_token.row_index() {
-                Some(row_1based) => match lib_type_def_id_map.get(&row_1based) {
-                    Some(&(def_id, _)) => def_id,
-                    None => continue,
-                },
+            let target_ty = match decode_impl_type_token(
+                impl_def.type_token,
+                module,
+                &lib_type_token_map,
+                &lib_type_name_map,
+                interner,
+            ) {
+                Some(ty) => ty,
                 None => continue,
             };
+            let type_def_id = match interner.kind(target_ty) {
+                TyKind::Struct(def_id)
+                | TyKind::Class(def_id)
+                | TyKind::Entity(def_id)
+                | TyKind::Enum(def_id) => *def_id,
+                _ => continue,
+            };
 
-            // Get the contract DefId (if any)
-            let contract_def_id = impl_def.contract.row_index()
-                .and_then(|row| lib_contract_def_id_map.get(&row).copied());
+            let contract_ty = (!impl_def.contract.is_null())
+                .then(|| {
+                    decode_impl_type_token(
+                        impl_def.contract,
+                        module,
+                        &lib_type_token_map,
+                        &lib_type_name_map,
+                        interner,
+                    )
+                })
+                .flatten();
+            let contract_def_id = contract_ty.and_then(|ty| match interner.kind(ty) {
+                TyKind::Contract(def_id) => Some(*def_id),
+                _ => None,
+            });
 
-            // Compute method range
-            let method_start = if impl_def.method_list == 0 {
+            let owned_methods = module.impl_method_indices(impl_idx);
+            if owned_methods.is_empty() {
                 continue;
-            } else {
-                (impl_def.method_list - 1) as usize
-            };
-            let method_end = if impl_idx + 1 < module.impl_defs.len() {
-                let next_ml = module.impl_defs[impl_idx + 1].method_list;
-                if next_ml == 0 {
-                    module.method_defs.len()
-                } else {
-                    (next_ml - 1) as usize
-                }
-            } else {
-                module.method_defs.len()
-            };
+            }
+            let impl_generic_count = impl_generic_param_count(
+                module,
+                [impl_def.type_token, impl_def.contract],
+                &owned_methods,
+            );
 
             // Create a synthetic DefId for this impl block by allocating a DefEntry
             let impl_entry_def_id = {
@@ -453,7 +806,7 @@ pub fn inject_library_sigs(
             };
 
             let mut methods: Vec<(String, FnSig)> = Vec::new();
-            for method_idx in method_start..method_end.min(module.method_defs.len()) {
+            for method_idx in owned_methods.iter().copied() {
                 let method = &module.method_defs[method_idx];
                 let method_name = writ_module::heap::read_string(&module.string_heap, method.name)
                     .unwrap_or("_")
@@ -476,7 +829,8 @@ pub fn inject_library_sigs(
                     module,
                     param_start,
                     param_end,
-                    &lib_type_def_id_map,
+                    &lib_type_token_map,
+                    &lib_type_name_map,
                     interner,
                     lib_file_id,
                     generics,
@@ -486,11 +840,15 @@ pub fn inject_library_sigs(
 
             let impl_entry = ImplEntry {
                 impl_def_id: impl_entry_def_id,
+                impl_generic_count,
+                target_ty,
                 contract_def_id,
+                contract_ty,
                 methods,
             };
 
-            type_env.impl_index
+            type_env
+                .impl_index
                 .entry(type_def_id)
                 .or_default()
                 .push(impl_entry);
@@ -500,58 +858,33 @@ pub fn inject_library_sigs(
         // Top-level functions were injected into DefMap by inject_module_types as DefKind::Fn.
         // Inject their FnSig into type_env.fn_sigs so call expressions type-check.
         //
-        // A method is top-level if its 0-based index is NOT owned by any TypeDef or ImplDef.
-        // We reuse the same ownership detection logic as inject_module_types.
-
-        // Build type method ranges (same logic as inject_module_types)
-        let type_method_ranges: Vec<(usize, usize)> = {
-            let mut ranges = Vec::new();
-            for (i, type_def) in module.type_defs.iter().enumerate() {
-                if type_def.method_list == 0 { continue; }
-                let start = (type_def.method_list - 1) as usize;
-                let end = if i + 1 < module.type_defs.len() {
-                    let next = module.type_defs[i + 1].method_list;
-                    if next == 0 { module.method_defs.len() } else { (next - 1) as usize }
-                } else { module.method_defs.len() };
-                if start < end { ranges.push((start, end)); }
-            }
-            ranges
-        };
-        let impl_method_ranges: Vec<(usize, usize)> = {
-            let mut ranges = Vec::new();
-            for (i, impl_def) in module.impl_defs.iter().enumerate() {
-                if impl_def.method_list == 0 { continue; }
-                let start = (impl_def.method_list - 1) as usize;
-                let end = if i + 1 < module.impl_defs.len() {
-                    let next = module.impl_defs[i + 1].method_list;
-                    if next == 0 { module.method_defs.len() } else { (next - 1) as usize }
-                } else { module.method_defs.len() };
-                if start < end { ranges.push((start, end)); }
-            }
-            ranges
-        };
-        let is_owned = |method_idx: usize| -> bool {
-            for &(s, e) in &type_method_ranges { if method_idx >= s && method_idx < e { return true; } }
-            for &(s, e) in &impl_method_ranges { if method_idx >= s && method_idx < e { return true; } }
-            false
-        };
-
-        for (method_idx, method) in module.method_defs.iter().enumerate() {
-            if is_owned(method_idx) { continue; }
+        for method_idx in module.top_level_method_indices() {
+            let method = &module.method_defs[method_idx];
 
             let method_name = writ_module::heap::read_string(&module.string_heap, method.name)
                 .unwrap_or("")
                 .to_string();
-            if method_name.is_empty() { continue; }
+            if method_name.is_empty() {
+                continue;
+            }
 
-            // Look up DefId in DefMap (was registered by inject_module_types)
-            let def_id = match def_map.get(&method_name) {
+            // Resolve this exact MethodDef row. A name-only lookup would bind
+            // every overload to the first declaration and leave later
+            // signatures unavailable to overload resolution.
+            let def_id = match crate::resolve::inject_library::library_top_level_method_def_id(
+                def_map,
+                lib_file_id,
+                method_idx,
+                &method_name,
+            ) {
                 Some(id) => id,
                 None => continue,
             };
 
             // Skip if we already have a sig (user code shadows or multiple loads)
-            if type_env.fn_sigs.contains_key(&def_id) { continue; }
+            if type_env.fn_sigs.contains_key(&def_id) {
+                continue;
+            }
 
             let (param_start, param_end) = if method_idx < method_param_ranges.len() {
                 method_param_ranges[method_idx]
@@ -570,7 +903,8 @@ pub fn inject_library_sigs(
                 module,
                 param_start,
                 param_end,
-                &lib_type_def_id_map,
+                &lib_type_token_map,
+                &lib_type_name_map,
                 interner,
                 lib_file_id,
                 generics,
@@ -613,10 +947,16 @@ pub fn inject_library_sigs(
                 let cm_name = writ_module::heap::read_string(&module.string_heap, cm.name)
                     .unwrap_or("_")
                     .to_string();
-                let (param_tys, ret_ty) = match writ_module::heap::read_blob(&module.blob_heap, cm.signature) {
-                    Ok(blob) => decode_method_sig(blob, &lib_type_def_id_map, interner),
-                    Err(_) => (Vec::new(), interner.void()),
-                };
+                let (param_tys, ret_ty) =
+                    match writ_module::heap::read_blob(&module.blob_heap, cm.signature) {
+                        Ok(blob) => decode_method_sig(
+                            blob,
+                            &lib_type_token_map,
+                            &lib_type_name_map,
+                            interner,
+                        ),
+                        Err(_) => (Vec::new(), interner.void()),
+                    };
                 let params: Vec<(String, Ty)> = param_tys
                     .into_iter()
                     .enumerate()

@@ -57,8 +57,10 @@ The following operations are compiler-known and provided by the runtime. The arr
 | `arr[i] = val`                               | write                                                 | Write element at zero-based index. Out-of-bounds crashes the task.                                          |
 | `.len()`                                     | `fn() -> int`                                         | Returns the number of elements.                                                                             |
 | `.slice(start, end)`                         | `fn(start: int, end: int) -> T[]`                     | Returns a new sub-array copy from index `start` (inclusive) to `end` (exclusive).                          |
-| `.resize(n)`                                 | `fn(n: int)`                                          | Reallocates to `n` elements. New slots are filled with type defaults; excess elements are truncated.        |
+| `.resize(n)`                                 | `fn(n: int)`                                          | Reallocates to `n` elements. Growth uses the element default and crashes if none is available; shrinking truncates excess elements. |
 | `.copy_from(src, src_idx, dst_idx, len)`     | `fn(src: T[], src_idx: int, dst_idx: int, len: int)`  | Bulk-copies `len` elements from `src[src_idx..]` into the receiver at `[dst_idx..]`. OOB crashes the task. |
+
+Growing requires the array to carry a runtime-constructible element default: `0`, `0.0`, `false`, and `""` for the primitive categories, or `null` for reference types. An erased generic array or value-struct array whose default category is still unavailable crashes when growth is requested; shrinking remains valid. An existing or explicit fill value may establish the category before a later resize. See §3.9 for the IL descriptor rules.
 
 ```writ
 let mut items = [10, 20, 30];
